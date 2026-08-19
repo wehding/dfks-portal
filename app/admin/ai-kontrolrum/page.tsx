@@ -2416,20 +2416,23 @@ function OverenskomsterTab() {
                                                                             </div>
                                                                             <p className="text-[10px] text-muted-foreground">Af: {k.basis} · Gælder: {k.trigger_condition}</p>
                                                                             <div className="grid grid-cols-2 gap-1">
-                                                                                <div><Label className="text-[9px]">Betegnelse</Label><Input className="h-5 text-[10px]" value={k.label} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label: e.target.value, label_key: suggestLabelKey(e.target.value) } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Betegnelse</Label><Input className="h-5 text-[10px]" value={k.label} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label: e.target.value, label_key: c.label_key || suggestLabelKey(e.target.value) } : c))} /></div>
                                                                                 <div><Label className="text-[9px]">Procent</Label><Input type="number" step="0.01" className="h-5 text-[10px]" value={k.percent} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, percent: e.target.value } : c))} /></div>
                                                                                 <div><Label className="text-[9px]">Beregningsgrundlag</Label><Input className="h-5 text-[10px]" value={k.basis} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, basis: e.target.value } : c))} /></div>
                                                                                 <div><Label className="text-[9px]">Gyldig fra</Label><Input type="date" className="h-5 text-[10px]" value={k.valid_from} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, valid_from: e.target.value } : c))} /></div>
                                                                                 <div className="col-span-2"><Label className="text-[9px]">Nøgleord (til automatisk opslag)</Label>
-                                                                                    <select className="w-full h-5 rounded border bg-background text-[10px] px-1" value={k.label_key} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label_key: e.target.value } : c))}>
-                                                                                        <option value="">Ingen (rent informativ)</option>
-                                                                                        <option value="royalty">royalty</option>
-                                                                                        <option value="beta_pulje">beta_pulje</option>
-                                                                                        <option value="helligdagsbetaling">helligdagsbetaling</option>
-                                                                                        <option value="svod">svod</option>
-                                                                                        <option value="copydan">copydan</option>
-                                                                                        <option value="feriepenge">feriepenge</option>
-                                                                                    </select>
+                                                                                    <Select value={k.label_key} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label_key: v } : c))}>
+                                                                                        <SelectTrigger className="h-5 text-[10px]"><SelectValue placeholder="Ingen (rent informativ)" /></SelectTrigger>
+                                                                                        <SelectContent>
+                                                                                            <SelectItem value="">Ingen (rent informativ)</SelectItem>
+                                                                                            <SelectItem value="royalty">royalty</SelectItem>
+                                                                                            <SelectItem value="beta_pulje">beta_pulje</SelectItem>
+                                                                                            <SelectItem value="helligdagsbetaling">helligdagsbetaling</SelectItem>
+                                                                                            <SelectItem value="svod">svod</SelectItem>
+                                                                                            <SelectItem value="copydan">copydan</SelectItem>
+                                                                                            <SelectItem value="feriepenge">feriepenge</SelectItem>
+                                                                                        </SelectContent>
+                                                                                    </Select>
                                                                                 </div>
                                                                             </div>
                                                                             {k.section_reference && <p className="text-[9px] text-muted-foreground">§ {k.section_reference}</p>}
