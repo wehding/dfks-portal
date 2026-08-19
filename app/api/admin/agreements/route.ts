@@ -260,6 +260,37 @@ export async function PATCH(req: NextRequest) {
     }
 }
 
+// GET /api/admin/agreements?percentageNotes=<agreementCode>
+// Henter label_key + fortolkningsnote for én overenskomst via service-role
+// (undgår RLS-begrænsning på agreements-tabellen for ikke-jurist/superadmin-brugere)
+export async function GET(req: NextRequest) {
+    try {
+        const auth = await requireAdminApi(ADMIN_ROLES)
+        if (!auth.ok) return auth.response
+
+        const agreementCode = req.nextUrl.searchParams.get("percentageNotes")
+        if (!agreementCode) return NextResponse.json({ error: "percentageNotes parameter mangler" }, { status: 400 })
+
+        const { data, error } = await sb()
+            .from("agreement_percentage_rules")
+            .select("label_key,fortolkningsnote,agreements!inner(code)")
+            .eq("agreements.code", agreementCode)
+            .not("fortolkningsnote", "is", null)
+            .not("label_key", "is", null)
+            .in("status", ["approved", "archived"])
+
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+        const notes: Record<string, string> = {}
+        for (const row of (data ?? []) as Array<{ label_key: string | null; fortolkningsnote: string | null }>) {
+            if (row.label_key && row.fortolkningsnote) notes[row.label_key] = row.fortolkningsnote
+        }
+        return NextResponse.json({ notes })
+    } catch (e: unknown) {
+        return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
+    }
+}
+
 // DELETE /api/admin/agreements — slet eller arkivér individuel løn/pensionsregel
 // Draft-regler slettes hårdt; approved-regler arkiveres for sporbarhed
 export async function DELETE(req: NextRequest) {

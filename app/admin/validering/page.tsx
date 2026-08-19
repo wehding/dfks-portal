@@ -422,25 +422,13 @@ function AdminValideringPageInner() {
             if (ed._sources) setSources(normaliseSources(ed._sources))
             if (validation?.masked_text) setContractText(validation.masked_text as string)
 
-            // Hent fortolkningsnote for overenskomstens procentsatser
+            // Hent fortolkningsnote via server-rute (undgår RLS-begrænsning på agreements)
             const agreementCode = ed._resolvedAgreementCode ?? null
             setPctRuleNotes({})
             if (agreementCode) {
-                const supabase = createClient()
-                supabase
-                    .from("agreement_percentage_rules")
-                    .select("label_key,fortolkningsnote,agreements!inner(code)")
-                    .eq("agreements.code", agreementCode)
-                    .not("fortolkningsnote", "is", null)
-                    .not("label_key", "is", null)
-                    .in("status", ["approved", "archived"])
-                    .then(({ data }) => {
-                        const notes: Record<string, string> = {}
-                        for (const row of (data ?? []) as Array<{ label_key: string | null; fortolkningsnote: string | null }>) {
-                            if (row.label_key && row.fortolkningsnote) notes[row.label_key] = row.fortolkningsnote
-                        }
-                        setPctRuleNotes(notes)
-                    })
+                fetch(`/api/admin/agreements?percentageNotes=${encodeURIComponent(agreementCode)}`)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(json => { if (json?.notes) setPctRuleNotes(json.notes) })
             }
         })
     }, [reviewingId]) // eslint-disable-line react-hooks/exhaustive-deps
