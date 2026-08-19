@@ -1,11 +1,12 @@
 /**
  * Deterministisk royalty-opslag — samme arkitektur som agreement-pension.ts.
  *
- * Royaltyprocenten hentes fra agreement_percentage_rules (label_key = 'royalty')
- * for den relevante overenskomst og produktionstype. Hvis ingen godkendt regel
- * findes, forbliver royaltyPercent uændret (null, eller hvad AI fandt i kontrakten).
+ * Registreret godkendt regel vinder over AI's boolean og procentsats — både
+ * royalty: true og royaltyPercent sættes fra reglen, uanset om AI'en selv
+ * nåede frem til royalty: true. Fallback til AI's vurdering kun hvis ingen
+ * godkendt regel findes (individuelt forhandlet royalty i selve kontrakten).
  *
- * En eksplicit procentsats i selve kontrakten har altid forrang.
+ * En eksplicit procentsats i selve kontrakten har altid forrang over reglen.
  */
 
 
@@ -59,14 +60,11 @@ export function applyAgreementRoyalty(
     };
   }
 
-  // Ingen royalty-flag → ikke relevant
-  if (!input.royalty) {
-    return { applied: false, reason: "royalty_not_flagged", data: input };
-  }
-
   // _resolvedAgreementCode injiceres af server-wrapper via dato-bevidst opslag
   const resolvedCode = typeof input._resolvedAgreementCode === "string" ? input._resolvedAgreementCode : null;
   if (!resolvedCode) {
+    // Ingen overenskomst resolveret — fald tilbage til AI's vurdering
+    if (!input.royalty) return { applied: false, reason: "royalty_not_flagged", data: input };
     return { applied: false, reason: "agreement_ambiguous", data: input };
   }
 
@@ -84,6 +82,7 @@ export function applyAgreementRoyalty(
   );
 
   if (!candidates.length) {
+    // Ingen godkendt regel — bevar AI's vurdering uændret (individuelt forhandlet royalty)
     return { applied: false, reason: "no_approved_royalty_rule", data: input };
   }
 
@@ -93,6 +92,7 @@ export function applyAgreementRoyalty(
     candidates.find(r => r.productionType == null);
 
   if (!rule) {
+    // Regel findes, men matcher ikke produktionstype — bevar AI's vurdering
     return { applied: false, reason: "no_matching_production_type", data: input };
   }
 
@@ -101,6 +101,8 @@ export function applyAgreementRoyalty(
     reason: "approved_agreement_rule",
     data: {
       ...input,
+      // Registreret regel vinder over AI's boolean — sæt royalty: true uanset AI's vurdering
+      royalty: true,
       royaltyPercent: rule.percent,
       royaltySourceType: "collective_agreement",
       royaltyAgreementCode: rule.agreementCode,
