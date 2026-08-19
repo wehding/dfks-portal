@@ -15,6 +15,7 @@ import { createAiUsageRun, finishAiUsageRun, type AiTokenUsage } from "@/lib/ai-
 import { detectPdfSignature } from "@/lib/pdf-signature-detection"
 import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
 import { applyApprovedAgreementRoyalty } from "@/lib/agreement-royalty-server"
+import { applyApprovedHolidayPay, applyApprovedBetaContribution } from "@/lib/agreement-percentage-rule-server"
 import { getAgreementSatserForContext } from "@/lib/agreement-wage-server"
 import { resolveAgreementByDate } from "@/lib/agreement-version-resolver"
 import {
@@ -337,6 +338,20 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
         extracted = royalty.data
     } catch (error) {
         console.warn("[contract-extract] Royaltyregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
+    }
+
+    try {
+        const holidayPay = await applyApprovedHolidayPay(extracted)
+        extracted = holidayPay.data
+    } catch (error) {
+        console.warn("[contract-extract] Helligdagsbetalingsregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
+    }
+
+    try {
+        const beta = await applyApprovedBetaContribution(extracted)
+        extracted = beta.data
+    } catch (error) {
+        console.warn("[contract-extract] BETA-fondsregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
     }
 
     const meta: ContractExtractionMetadata = {
