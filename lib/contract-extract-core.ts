@@ -15,6 +15,7 @@ import { createAiUsageRun, finishAiUsageRun, type AiTokenUsage } from "@/lib/ai-
 import { detectPdfSignature } from "@/lib/pdf-signature-detection"
 import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
 import { applyApprovedAgreementRoyalty } from "@/lib/agreement-royalty-server"
+import { getAgreementSatserForContext } from "@/lib/agreement-wage-server"
 import { resolveAgreementByDate } from "@/lib/agreement-version-resolver"
 import {
     CONTRACT_EXTRACTION_MIN_TEXT_CHARS,
@@ -180,6 +181,23 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
         console.warn("[contract-extract] Klassifikation fejlede, fortsætter uden overenskomst-kontekst:", e)
     }
 
+    // Trin 1.5: Hent overenskomstsatser til injektion i Trin 2's prompt
+    let agreementSatserForPrompt: { agreementCode: string; satser: Array<{ beskrivelse: string; vaerdi: number; enhed: string }> } | null = null
+    if (detectedOverenskomst && detectedOverenskomst !== "ingen" && detectedOverenskomst !== "ukendt") {
+        try {
+            const versionResult = await resolveAgreementByDate(detectedOverenskomst, detectedContractDate)
+            if (versionResult.found && versionResult.code) {
+                const satser = await getAgreementSatserForContext(versionResult.code)
+                if (satser.length > 0) {
+                    agreementSatserForPrompt = { agreementCode: versionResult.code, satser }
+                    console.log("[contract-extract] satser hentet til prompt:", { code: versionResult.code, antal: satser.length })
+                }
+            }
+        } catch (e) {
+            console.warn("[contract-extract] Kunne ikke hente satser til prompt:", e)
+        }
+    }
+
     // Trin 2: Hent reference docs + relevante overenskomst-chunks baseret på klassifikation
     let systemPrompt = buildContractExtractionPrompt()
     try {
@@ -231,7 +249,7 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             overenskomstQuery,
         ])
         console.log("[contract-extract] chunks hentet:", { count: overenskomstChunks?.length ?? 0, error: chunksError?.message ?? null, kategorier: overenskomstChunks?.map(c => c.kategori) })
-        systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined, overenskomstChunks ?? undefined, context.layout ?? undefined)
+        systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined, overenskomstChunks ?? undefined, context.layout ?? undefined, agreementSatserForPrompt ?? undefined)
     } catch (e) {
         console.warn("[contract-extract] Kunne ikke hente reference docs:", e)
     }

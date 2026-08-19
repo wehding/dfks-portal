@@ -118,8 +118,17 @@ export function buildContractExtractionPrompt(
     referenceDocs?: Array<{ title: string; doc_subtype: string | null; content_text: string | null }>,
     overenskomstChunks?: Array<{ kilde_titel: string; tekst: string; overenskomst: string | null; kategori: string | null }>,
     layout?: ContractLayout | null,
+    agreementSatser?: { agreementCode: string; satser: Array<{ beskrivelse: string; vaerdi: number; enhed: string }> } | null,
 ) {
     let prompt = `${CONTRACT_EXTRACTION_SYSTEM_PROMPT}\n\n${CONTRACT_EXTRACTION_SCHEMA_PROMPT}`
+
+    if (agreementSatser?.satser?.length) {
+        prompt += `\n\n══════════════════════════════════════\nOVEREENSKOMST-SATSER (${agreementSatser.agreementCode.toUpperCase()}):\n══════════════════════════════════════`
+        prompt += "\nDisse satser er verificerede og gælder for netop denne kontrakt. Brug dem som den autoritative kilde for løn, pension og procentsatser — aldrig hardcodede tal fra din træning:"
+        for (const s of agreementSatser.satser) {
+            prompt += `\n• ${s.beskrivelse}: ${s.vaerdi} ${s.enhed}`
+        }
+    }
 
     if (referenceDocs?.length) {
         prompt += "\n\n──────────────────────────────────────\nREFERENCEDOKUMENTER — BRUG SOM BAGGRUNDSVIDEN:\n──────────────────────────────────────"
