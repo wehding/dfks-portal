@@ -1323,6 +1323,7 @@ type PercentageRuleItem = {
     source_url: string | null
     source_checked_at: string | null
     source_note: string | null
+    label_key: string | null
     fortolkningsnote: string | null
     valid_from: string
     valid_to: string | null
@@ -1426,6 +1427,7 @@ function OverenskomsterTab() {
     const [newPctForm, setNewPctForm] = useState({ label: "", percent: "", basis: "", trigger_condition: "", category: "overarbejde", valid_from: "", section_reference: "", source_title: "", label_key: "", fortolkningsnote: "" })
     const [editingPctRule, setEditingPctRule] = useState<PercentageRuleItem | null>(null)
     const [editPctNote, setEditPctNote] = useState("")
+    const [editPctLabelKey, setEditPctLabelKey] = useState("")
     const [ruleSaving, setRuleSaving] = useState(false)
 
     // ── AI-udtræk af satser ────────────────────────────────────
@@ -2629,7 +2631,7 @@ function OverenskomsterTab() {
                                                         {rule.fortolkningsnote && <p className="mt-1 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded px-2 py-1">⚠ {rule.fortolkningsnote}</p>}
                                                             </div>
                                                             <div className="flex gap-1 shrink-0">
-                                                                <button type="button" className="text-[10px] text-blue-600 underline hover:text-blue-700" onClick={() => { setEditingPctRule(rule); setEditPctNote(rule.fortolkningsnote ?? "") }}>rediger</button>
+                                                                <button type="button" className="text-[10px] text-blue-600 underline hover:text-blue-700" onClick={() => { setEditingPctRule(rule); setEditPctNote(rule.fortolkningsnote ?? ""); setEditPctLabelKey(rule.label_key ?? "") }}>rediger</button>
                                                                 {rule.status === "draft" && (
                                                                     <button type="button" className="text-[10px] text-green-600 underline hover:text-green-700" disabled={ruleSaving} onClick={async () => {
                                                                         setRuleSaving(true)
@@ -2731,7 +2733,21 @@ function OverenskomsterTab() {
                                             <div className="space-y-2 text-xs">
                                                 {editingPctRule && (editingPctRule.status === "approved" || editingPctRule.status === "archived") ? (
                                                     <>
-                                                        <p className="text-muted-foreground">Godkendte regler kan kun ændres i fortolkningsnoten. Øvrige felter kræver arkivering og ny oprettelse.</p>
+                                                        <p className="text-muted-foreground">Godkendte regler: kun nøgleord og fortolkningsnote kan ændres. Øvrige felter kræver arkivering og ny oprettelse.</p>
+                                                        <div><Label className="text-[10px]">Nøgleord (til automatisk opslag)</Label>
+                                                            <Select value={editPctLabelKey} onValueChange={setEditPctLabelKey}>
+                                                                <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Ingen (rent informativ)" /></SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem value="">Ingen (rent informativ)</SelectItem>
+                                                                    <SelectItem value="royalty">royalty</SelectItem>
+                                                                    <SelectItem value="beta_pulje">beta_pulje</SelectItem>
+                                                                    <SelectItem value="helligdagsbetaling">helligdagsbetaling</SelectItem>
+                                                                    <SelectItem value="svod">svod</SelectItem>
+                                                                    <SelectItem value="copydan">copydan</SelectItem>
+                                                                    <SelectItem value="feriepenge">feriepenge</SelectItem>
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
                                                         <div><Label className="text-[10px]">Fortolkningsnote (vises som advarsel på valideringssiden)</Label><textarea className="w-full rounded-md border bg-background px-2 py-1.5 text-xs min-h-[80px] resize-y" value={editPctNote} onChange={e => setEditPctNote(e.target.value)} /></div>
                                                     </>
                                                 ) : editingPctRule ? (
@@ -2746,7 +2762,7 @@ function OverenskomsterTab() {
                                                         const res = await fetch("/api/admin/agreements", {
                                                             method: "PATCH",
                                                             headers: { "Content-Type": "application/json" },
-                                                            body: JSON.stringify({ percentageRuleId: editingPctRule.id, fortolkningsnote: editPctNote || null }),
+                                                            body: JSON.stringify({ percentageRuleId: editingPctRule.id, label_key: editPctLabelKey || null, fortolkningsnote: editPctNote || null }),
                                                         })
                                                         setRuleSaving(false)
                                                         if (res.ok) { toast.success("Note gemt"); setEditingPctRule(null); refreshAktive() }
