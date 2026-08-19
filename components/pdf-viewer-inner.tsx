@@ -215,7 +215,27 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     highlightsRef.current = highlights
     sectionHighlightsRef.current = sectionHighlights
 
+    // Lag 5 og tekst-søgning er gensidigt udelukkende: hvis koordinat-boksen
+    // dækker det aktive felt, skal HVERKEN den grønne ord-markering ELLER
+    // sectionHighlights' gule paragraf-markering vises. Løftet til komponent-
+    // niveau, så begge effekter (tekst-søgnings-navigation og highlighting)
+    // bruger samme, konsistente beregning.
+    const hasCoordinateBox = !!(
+        activeClauseId && layout &&
+        layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)?.pdfBbox
+    )
+    const effectiveActiveHighlight = hasCoordinateBox ? null : activeHighlight
+    const effectiveSectionHighlights = hasCoordinateBox ? [] : sectionHighlights
+    const effectiveActiveHighlightRef = useRef(effectiveActiveHighlight)
+    const effectiveSectionHighlightsRef = useRef(effectiveSectionHighlights)
+    effectiveActiveHighlightRef.current = effectiveActiveHighlight
+    effectiveSectionHighlightsRef.current = effectiveSectionHighlights
+
     useEffect(() => {
+        // Koordinat-boksen håndterer sin egen sidenavigation (Lag 5 nedenfor) —
+        // den ældre tekst-søgnings-navigation skal ikke også køre og potentielt
+        // navigere et andet sted hen eller efterlade en gul/grøn tekst-markering.
+        if (hasCoordinateBox) return
         if (!activeHighlight || !pdfDoc || !numPages) return
         const navSource = pageNavigationHint ?? activeHighlight
         const candidates = navSource.split("||").map(s => s.trim()).filter(Boolean)
@@ -231,11 +251,11 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                 setPageNumber(targetPage)
             } else {
                 if (containerRef.current) {
-                    applyHighlights(containerRef.current, highlightsRef.current, activeHighlightRef.current, sectionHighlightsRef.current)
+                    applyHighlights(containerRef.current, highlightsRef.current, effectiveActiveHighlightRef.current, effectiveSectionHighlightsRef.current)
                 }
             }
         })
-    }, [activeHighlight, pageNavigationHint, pdfDoc, numPages]) // eslint-disable-line
+    }, [activeHighlight, pageNavigationHint, pdfDoc, numPages, hasCoordinateBox]) // eslint-disable-line
 
     // Lag 5: naviger til klausulens side ved activeClauseId-skift
     useEffect(() => {
@@ -281,13 +301,8 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
 
     useEffect(() => {
         if (!containerRef.current || !pageRendered) return
-        // Lag 5 og tekst-søgning er gensidigt udelukkende:
-        // hvis koordinat-boksen dækker det aktive felt, undertrykkes den grønne ord-markering.
-        const hasCoordinateBox = !!(
-            activeClauseId && layout &&
-            layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)?.pdfBbox
-        )
-        const effectiveActiveHighlight = hasCoordinateBox ? null : activeHighlight
+        // hasCoordinateBox/effectiveActiveHighlight/effectiveSectionHighlights er
+        // løftet til komponent-niveau ovenfor — samme beregning genbruges her.
         let attempts = 0
         let timer: ReturnType<typeof setTimeout>
         const tryApply = () => {
@@ -298,7 +313,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             if (!hasPageContent) {
                 if (attempts++ < 15) { timer = setTimeout(tryApply, 200); return }
             }
-            applyHighlights(containerRef.current, highlights, effectiveActiveHighlight, sectionHighlights)
+            applyHighlights(containerRef.current, highlights, effectiveActiveHighlight, effectiveSectionHighlights)
         }
         timer = setTimeout(tryApply, 300)
         return () => clearTimeout(timer)
