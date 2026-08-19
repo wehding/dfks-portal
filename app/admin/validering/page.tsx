@@ -1397,7 +1397,10 @@ setActiveField(fieldId)
                                                 <span>{pctRuleNotes["svod"]}</span>
                                             </div>
                                         )}
-                                        <p className="text-[10px] text-muted-foreground -mt-1 px-0.5">SVOD kan være svær at afgøre sikkert fra kontrakten alene — tjek altid manuelt, uanset indstillingen ovenfor.</p>
+                                        <div className="flex items-start gap-1 -mt-1 px-0.5">
+                                            <p className="text-[10px] text-muted-foreground">SVOD kan være svær at afgøre sikkert fra kontrakten alene — tjek altid manuelt, uanset indstillingen ovenfor.</p>
+                                            <SourceBtn quote={svodSrc ?? undefined} active={activeField === "svod"} onClick={() => activateSource("svod", svodSrc)} />
+                                        </div>
                                         <div className={`flex items-center justify-between rounded-md px-2.5 py-2 -mx-2.5 ${isLocked("copydan") ? "bg-muted/40" : formData.overenskomst === "de4-fiktion" ? "bg-amber-50 dark:bg-amber-950/25" : formData.copydan ? "bg-blue-50 dark:bg-blue-950/25" : ""}`}>
                                             <div>
                                                 <span className="text-sm flex items-center gap-1">Copydan{copydanMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={copydanSrc ?? undefined} active={activeField === "copydan"} onClick={() => activateSource("copydan", copydanSrc)} /></span>
