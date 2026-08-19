@@ -54,7 +54,7 @@ export function applyAgreementRoyalty(
       reason: "explicit_contract_term",
       data: {
         ...input,
-        royaltySourceType: "contract",
+        royaltySourceType: "individually_negotiated",
         royaltyTag: `Royalty ${explicitPercent.toLocaleString("da-DK")}% · kontraktvilkår`,
       },
     };

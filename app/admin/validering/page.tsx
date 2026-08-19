@@ -408,6 +408,7 @@ function AdminValideringPageInner() {
                 copydan: impliedByCopydan,
                 royalty: impliedByRoyalty,
                 royaltyPercent: ed.royaltyPercent ?? "",
+                royaltySourceType: ed.royaltySourceType ?? null,
                 aiDataMiningClause: ed.aiDataMiningClause ?? false,
                 distribution: Array.isArray(ed.distribution) ? ed.distribution.join(", ") : (ed.distribution ?? ""),
                 collectiveAgreementName: ed.collectiveAgreementName ?? "",
@@ -658,6 +659,7 @@ function AdminValideringPageInner() {
             copydan:                       !!ed.copydan,
             royalty:                       !!ed.royalty,
             royaltyPercent:                ed.royaltyPercent ?? "",
+            royaltySourceType:             ed.royaltySourceType ?? null,
             aiDataMiningClause:            !!ed.aiDataMiningClause,
             distribution:                  Array.isArray(ed.distribution) ? ed.distribution.join(", ") : (ed.distribution ?? ""),
             collectiveAgreementName:       ed.collectiveAgreementName ?? "",
@@ -1422,7 +1424,12 @@ setActiveField(fieldId)
                                                 <Switch checked={formData.royalty ?? false} onCheckedChange={(v) => setField("royalty", v)} />
                                             </div>
                                         </div>
-                                        <p className="text-[10px] text-muted-foreground -mt-1 px-0.5">Royaltyprocenten er udledt fra den registrerede overenskomstsats — tjek altid selv om særlige betingelser (fx indtjeningstærskler) gør sig gældende for denne kontrakt.</p>
+                                        {formData.royalty && formData.royaltySourceType === "collective_agreement" && (
+                                            <p className="text-[10px] text-muted-foreground -mt-1 px-0.5">Royaltyprocenten er udledt fra den registrerede overenskomstsats — tjek altid selv om særlige betingelser (fx indtjeningstærskler) gør sig gældende for denne kontrakt.</p>
+                                        )}
+                                        {formData.royalty && formData.royaltySourceType === "individually_negotiated" && (
+                                            <p className="text-[10px] text-muted-foreground -mt-1 px-0.5">Royaltyprocenten er hentet direkte fra kontrakten. Bemærk: en individuelt forhandlet sats kan lovligt være højere end overenskomstens minimumssats.</p>
+                                        )}
                                     </div>
                                 </div>
                                 <Separator />
