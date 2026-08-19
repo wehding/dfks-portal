@@ -138,6 +138,8 @@ function AdminValideringPageInner() {
         { value: "faf",           label: "FAF (fiktion)"    },
         { value: "faf-dokumentar",label: "FAF (dokumentar)" },
     ])
+    // Fortolkningsnote pr. label_key for den aktive kontrakts matchede overenskomst
+    const [pctRuleNotes, setPctRuleNotes] = useState<Record<string, string>>({})
 
     // Opret ny producent dialog
     const [showNewEmployer, setShowNewEmployer] = useState(false)
@@ -419,6 +421,27 @@ function AdminValideringPageInner() {
             })
             if (ed._sources) setSources(normaliseSources(ed._sources))
             if (validation?.masked_text) setContractText(validation.masked_text as string)
+
+            // Hent fortolkningsnote for overenskomstens procentsatser
+            const agreementCode = ed._resolvedAgreementCode ?? null
+            setPctRuleNotes({})
+            if (agreementCode) {
+                const supabase = createClient()
+                supabase
+                    .from("agreement_percentage_rules")
+                    .select("label_key,fortolkningsnote,agreements!inner(code)")
+                    .eq("agreements.code", agreementCode)
+                    .not("fortolkningsnote", "is", null)
+                    .not("label_key", "is", null)
+                    .in("status", ["approved", "archived"])
+                    .then(({ data }) => {
+                        const notes: Record<string, string> = {}
+                        for (const row of (data ?? []) as Array<{ label_key: string | null; fortolkningsnote: string | null }>) {
+                            if (row.label_key && row.fortolkningsnote) notes[row.label_key] = row.fortolkningsnote
+                        }
+                        setPctRuleNotes(notes)
+                    })
+            }
         })
     }, [reviewingId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1377,13 +1400,25 @@ setActiveField(fieldId)
                                             </div>
                                             <Switch checked={formData.svod ?? false} onCheckedChange={(v) => setField("svod", v)} />
                                         </div>
+                                        {pctRuleNotes["svod"] && (
+                                            <div className="flex gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 -mt-1">
+                                                <span className="shrink-0">⚠</span>
+                                                <span>{pctRuleNotes["svod"]}</span>
+                                            </div>
+                                        )}
                                         <div className={`flex items-center justify-between rounded-md px-2.5 py-2 -mx-2.5 ${isLocked("copydan") ? "bg-muted/40" : formData.overenskomst === "de4-fiktion" ? "bg-amber-50 dark:bg-amber-950/25" : formData.copydan ? "bg-blue-50 dark:bg-blue-950/25" : ""}`}>
                                             <div>
-                                                <span className="text-sm flex items-center gap-1">Copydan{copydanMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={copydanSrc ?? undefined} active={activeField === "copydan"} onClick={() => activateSource("copydan", copydanSrc)} /></span>
+                                                <span className="text-sm flex items-center gap-1">Copydan{copydanMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibent">⚠</span>}<SourceBtn quote={copydanSrc ?? undefined} active={activeField === "copydan"} onClick={() => activateSource("copydan", copydanSrc)} /></span>
                                                 <p className="text-[10px] text-muted-foreground">Kollektivt vederlag</p>
                                             </div>
                                             <Switch checked={formData.copydan ?? false} onCheckedChange={(v) => setField("copydan", v)} />
                                         </div>
+                                        {pctRuleNotes["copydan"] && (
+                                            <div className="flex gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 -mt-1">
+                                                <span className="shrink-0">⚠</span>
+                                                <span>{pctRuleNotes["copydan"]}</span>
+                                            </div>
+                                        )}
                                         <div className={`flex items-center justify-between rounded-md px-2.5 py-2 -mx-2.5 ${isLocked("royalty") ? "bg-muted/40" : ["feature","documentary","short"].includes(formData.productionType ?? "") ? "bg-amber-50 dark:bg-amber-950/25" : formData.royalty ? "bg-blue-50 dark:bg-blue-950/25" : ""}`}>
                                             <div>
                                                 <span className="text-sm flex items-center gap-1">Royalty{royaltyMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={royaltySrc ?? undefined} active={activeField === "royalty"} onClick={() => activateSource("royalty", royaltySrc)} /></span>

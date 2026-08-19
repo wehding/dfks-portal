@@ -1323,6 +1323,7 @@ type PercentageRuleItem = {
     source_url: string | null
     source_checked_at: string | null
     source_note: string | null
+    fortolkningsnote: string | null
     valid_from: string
     valid_to: string | null
     status: "draft" | "approved" | "archived"
@@ -1422,7 +1423,7 @@ function OverenskomsterTab() {
     const [newPensionAgreementId, setNewPensionAgreementId] = useState<string | null>(null)
     const [newPensionForm, setNewPensionForm] = useState<PensionRuleForm>(emptyPensionForm())
     const [newPctAgreementId, setNewPctAgreementId] = useState<string | null>(null)
-    const [newPctForm, setNewPctForm] = useState({ label: "", percent: "", basis: "", trigger_condition: "", category: "overarbejde", valid_from: "", section_reference: "", source_title: "", label_key: "" })
+    const [newPctForm, setNewPctForm] = useState({ label: "", percent: "", basis: "", trigger_condition: "", category: "overarbejde", valid_from: "", section_reference: "", source_title: "", label_key: "", fortolkningsnote: "" })
     const [ruleSaving, setRuleSaving] = useState(false)
 
     // ── AI-udtræk af satser ────────────────────────────────────
@@ -2595,6 +2596,7 @@ function OverenskomsterTab() {
                                                                 <p className="font-medium">{rule.label}: {Number(rule.percent).toLocaleString("da-DK")}%</p>
                                                                 <p className="text-muted-foreground">Af {rule.basis} · {rule.trigger_condition}</p>
                                                                 <p className="text-muted-foreground">{rule.section_reference && `${rule.section_reference} · `}fra {rule.valid_from}{rule.status === "approved" ? " · godkendt" : rule.status === "archived" ? " · arkiveret" : " · afventer godkendelse"}</p>
+                                                        {rule.fortolkningsnote && <p className="mt-1 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded px-2 py-1">⚠ {rule.fortolkningsnote}</p>}
                                                             </div>
                                                             <div className="flex gap-1 shrink-0">
                                                                 {rule.status === "draft" && (
@@ -2662,9 +2664,13 @@ function OverenskomsterTab() {
                                                             <SelectItem value="beta_pulje">BETA-puljen</SelectItem>
                                                             <SelectItem value="helligdagsbetaling">Helligdagsbetaling</SelectItem>
                                                             <SelectItem value="feriepenge">Feriepenge/ferietillæg</SelectItem>
+                                                            <SelectItem value="royalty">Royalty</SelectItem>
+                                                            <SelectItem value="svod">SVOD-tillæg</SelectItem>
+                                                            <SelectItem value="copydan">Copydan</SelectItem>
                                                         </SelectContent>
                                                     </Select>
                                                 </div>
+                                                <div><Label className="text-[10px]">Fortolkningsnote (vises som advarsel på valideringssiden)</Label><textarea className="w-full rounded-md border bg-background px-2 py-1.5 text-xs min-h-[60px] resize-y" placeholder="Fx: Tilstedeværelse af denne klausul betyder at rettigheder IKKE er bevaret — det er en buy-out." value={newPctForm.fortolkningsnote} onChange={e => setNewPctForm(f => ({ ...f, fortolkningsnote: e.target.value }))} /></div>
                                             </div>
                                             <DialogFooter className="pt-2 gap-2">
                                                 <Button variant="outline" size="sm" onClick={() => setNewPctAgreementId(null)}>Annuller</Button>
@@ -2677,7 +2683,7 @@ function OverenskomsterTab() {
                                                     const res = await fetch("/api/admin/agreements", {
                                                         method: "POST",
                                                         headers: { "Content-Type": "application/json" },
-                                                        body: JSON.stringify({ percentageRule: { agreementId: agreement.id, rate_key: `${slugify(newPctForm.label)}-${newPctForm.valid_from}`, ...newPctForm, percent: Number(newPctForm.percent), label_key: newPctForm.label_key || null } }),
+                                                        body: JSON.stringify({ percentageRule: { agreementId: agreement.id, rate_key: `${slugify(newPctForm.label)}-${newPctForm.valid_from}`, ...newPctForm, percent: Number(newPctForm.percent), label_key: newPctForm.label_key || null, fortolkningsnote: newPctForm.fortolkningsnote || null } }),
                                                     })
                                                     setRuleSaving(false)
                                                     if (res.ok) { toast.success("Procentregel oprettet som kladde"); setNewPctAgreementId(null); refreshAktive() }

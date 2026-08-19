@@ -112,6 +112,7 @@ export async function POST(req: NextRequest) {
                     source_checked_at: r.source_checked_at ?? null,
                     source_note: r.source_note ?? null,
                     label_key: r.label_key ?? null,
+                    fortolkningsnote: r.fortolkningsnote ?? null,
                     valid_from: r.valid_from,
                     valid_to: r.valid_to ?? null,
                     status: "draft",
