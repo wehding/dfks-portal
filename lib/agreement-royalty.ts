@@ -15,7 +15,8 @@ export type AgreementRoyaltyRule = {
   agreementCode: string;
   agreementTitle: string;
   agreementStatus: "draft" | "approved" | "archived";
-  productionType: string | null;   // null = gælder alle produktionstyper
+  productionType: string | null;    // null = gælder alle produktionstyper
+  distributionType: string | null;  // null = gælder alle distributionstyper
   percent: number;
   basis: string;
   sectionReference: string | null;
@@ -70,6 +71,8 @@ export function applyAgreementRoyalty(
 
   const effectiveDate = dateOnly(input.startDate) ?? dateOnly(input.contractDate);
   const productionType = String(input.productionType ?? "");
+  // _workDistributionType injiceres af server-wrapper fra det matchede works-felt
+  const workDistributionType = typeof input._workDistributionType === "string" ? input._workDistributionType : null;
 
   // Regler er allerede pre-filtreret på agreement_id af server-wrapperen — status-filter er tilstrækkeligt
   const candidates = rules.filter(rule =>
@@ -94,6 +97,18 @@ export function applyAgreementRoyalty(
   if (!rule) {
     // Regel findes, men matcher ikke produktionstype — bevar AI's vurdering
     return { applied: false, reason: "no_matching_production_type", data: input };
+  }
+
+  // Distributions-filter: en regel med sat distributionType skal matche værkets type
+  if (rule.distributionType != null) {
+    if (workDistributionType == null) {
+      // Regelkravet kendes, men værkets distributionstype er ikke sat — kan ikke bekræfte
+      return { applied: false, reason: "distribution_type_unknown", data: input };
+    }
+    if (workDistributionType !== rule.distributionType) {
+      // Regelkravet matcher ikke den kendte distributionstype
+      return { applied: false, reason: "no_matching_distribution_type", data: input };
+    }
   }
 
   return {

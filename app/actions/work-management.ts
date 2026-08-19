@@ -66,6 +66,8 @@ type AdminWorkData = WorkCorrectionData & {
   dfi_original_title?: string | null;
   dfi_category?: string | null;
   dfi_type?: string | null;
+  distribution_type?: "biograf" | "streaming" | "broadcast" | null;
+  distribution_type_source?: "manual" | null;
 };
 
 type CreateWorkData = WorkCorrectionData & {
@@ -149,6 +151,8 @@ const ADMIN_EDITABLE_KEYS: (keyof AdminWorkData)[] = [
   "dfi_original_title",
   "dfi_category",
   "dfi_type",
+  "distribution_type",
+  "distribution_type_source",
 ];
 
 function cleanText(value: string | null | undefined) {

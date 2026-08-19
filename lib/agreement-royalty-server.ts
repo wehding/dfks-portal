@@ -10,6 +10,7 @@ type RoyaltyRuleRow = {
   percent: number | string;
   basis: string;
   production_type: string | null;
+  distribution_type: string | null;
   section_reference: string | null;
   valid_from: string;
   valid_to: string | null;
@@ -33,7 +34,7 @@ export async function getApprovedAgreementRoyaltyRules(agreementId?: string | nu
   const db = createServiceClient();
   let query = db
     .from("agreement_percentage_rules")
-    .select("id,percent,basis,production_type,section_reference,valid_from,valid_to,status,agreements!inner(code,title,status)")
+    .select("id,percent,basis,production_type,distribution_type,section_reference,valid_from,valid_to,status,agreements!inner(code,title,status)")
     .eq("label_key", "royalty")
     .in("status", ["approved", "archived"])
     .in("agreements.status", ["approved", "archived"]);
@@ -58,6 +59,7 @@ export async function getApprovedAgreementRoyaltyRules(agreementId?: string | nu
       agreementTitle: agreement.title,
       agreementStatus: agreement.status,
       productionType: row.production_type,
+      distributionType: row.distribution_type,
       percent: Number(row.percent),
       basis: row.basis,
       sectionReference: row.section_reference,
@@ -71,6 +73,19 @@ export async function getApprovedAgreementRoyaltyRules(agreementId?: string | nu
 function dateOnly(value: unknown): string | null {
   const raw = String(value ?? "").slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) && !Number.isNaN(Date.parse(raw)) ? raw : null;
+}
+
+async function getWorkDistributionType(workTitle: string | null | undefined): Promise<string | null> {
+  if (!workTitle || typeof workTitle !== "string") return null;
+  const db = createServiceClient();
+  const { data } = await db
+    .from("works")
+    .select("distribution_type")
+    .ilike("title", workTitle.trim())
+    .not("distribution_type", "is", null)
+    .limit(1)
+    .maybeSingle();
+  return (data as { distribution_type: string | null } | null)?.distribution_type ?? null;
 }
 
 export async function applyApprovedAgreementRoyalty(data: Record<string, unknown>) {
@@ -88,9 +103,16 @@ export async function applyApprovedAgreementRoyalty(data: Record<string, unknown
     }
   }
 
-  const rules = await getApprovedAgreementRoyaltyRules(agreementId);
-  return applyAgreementRoyalty(
-    resolvedCode ? { ...data, _resolvedAgreementCode: resolvedCode } : data,
-    rules,
-  );
+  const [rules, workDistributionType] = await Promise.all([
+    getApprovedAgreementRoyaltyRules(agreementId),
+    getWorkDistributionType(data.workTitle as string | null),
+  ]);
+
+  const enriched: Record<string, unknown> = {
+    ...data,
+    ...(resolvedCode ? { _resolvedAgreementCode: resolvedCode } : {}),
+    ...(workDistributionType ? { _workDistributionType: workDistributionType } : {}),
+  };
+
+  return applyAgreementRoyalty(enriched, rules);
 }

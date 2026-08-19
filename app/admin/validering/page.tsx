@@ -409,6 +409,7 @@ function AdminValideringPageInner() {
                 royalty: impliedByRoyalty,
                 royaltyPercent: ed.royaltyPercent ?? "",
                 royaltySourceType: ed.royaltySourceType ?? null,
+                royaltyResolutionReason: ed._royaltyResolution?.reason ?? null,
                 aiDataMiningClause: ed.aiDataMiningClause ?? false,
                 distribution: Array.isArray(ed.distribution) ? ed.distribution.join(", ") : (ed.distribution ?? ""),
                 collectiveAgreementName: ed.collectiveAgreementName ?? "",
@@ -660,6 +661,7 @@ function AdminValideringPageInner() {
             royalty:                       !!ed.royalty,
             royaltyPercent:                ed.royaltyPercent ?? "",
             royaltySourceType:             ed.royaltySourceType ?? null,
+            royaltyResolutionReason:       ed._royaltyResolution?.reason ?? null,
             aiDataMiningClause:            !!ed.aiDataMiningClause,
             distribution:                  Array.isArray(ed.distribution) ? ed.distribution.join(", ") : (ed.distribution ?? ""),
             collectiveAgreementName:       ed.collectiveAgreementName ?? "",
@@ -1429,6 +1431,12 @@ setActiveField(fieldId)
                                         )}
                                         {formData.royalty && formData.royaltySourceType === "individually_negotiated" && (
                                             <p className="text-[10px] text-muted-foreground -mt-1 px-0.5">Royaltyprocenten er hentet direkte fra kontrakten. Bemærk: en individuelt forhandlet sats kan lovligt være højere end overenskomstens minimumssats.</p>
+                                        )}
+                                        {formData.royaltyResolutionReason === "distribution_type_unknown" && (
+                                            <p className="text-[10px] text-amber-600 dark:text-amber-400 -mt-1 px-0.5">Overenskomsten har en royalty-regel, men den kræver et distributionskanal-match — værkets distributionstype er ikke sat, og reglen er ikke anvendt automatisk. Sæt distributionskanal på værket, eller bekræft royalty manuelt.</p>
+                                        )}
+                                        {formData.royaltyResolutionReason === "no_matching_distribution_type" && (
+                                            <p className="text-[10px] text-amber-600 dark:text-amber-400 -mt-1 px-0.5">Overenskomstens royalty-regel gælder ikke for denne distributionskanal — reglen er ikke anvendt. Bekræft manuelt om royalty er relevant for denne kontrakt.</p>
                                         )}
                                     </div>
                                 </div>
