@@ -2423,10 +2423,10 @@ function OverenskomsterTab() {
                                                                                 <div><Label className="text-[9px]">Beregningsgrundlag</Label><Input className="h-5 text-[10px]" value={k.basis} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, basis: e.target.value } : c))} /></div>
                                                                                 <div><Label className="text-[9px]">Gyldig fra</Label><Input type="date" className="h-5 text-[10px]" value={k.valid_from} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, valid_from: e.target.value } : c))} /></div>
                                                                                 <div className="col-span-2"><Label className="text-[9px]">Nøgleord (til automatisk opslag)</Label>
-                                                                                    <Select value={k.label_key} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label_key: v } : c))}>
+                                                                                    <Select value={k.label_key || "none"} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label_key: v === "none" ? "" : v } : c))}>
                                                                                         <SelectTrigger className="h-5 text-[10px]"><SelectValue placeholder="Ingen (rent informativ)" /></SelectTrigger>
                                                                                         <SelectContent>
-                                                                                            <SelectItem value="">Ingen (rent informativ)</SelectItem>
+                                                                                            <SelectItem value="none">Ingen (rent informativ)</SelectItem>
                                                                                             <SelectItem value="royalty">royalty</SelectItem>
                                                                                             <SelectItem value="beta_pulje">beta_pulje</SelectItem>
                                                                                             <SelectItem value="helligdagsbetaling">helligdagsbetaling</SelectItem>
@@ -2690,10 +2690,10 @@ function OverenskomsterTab() {
                                                 </div>
                                                 <div><Label className="text-[10px]">Kilde-titel</Label><Input className="h-7 text-xs" value={newPctForm.source_title} onChange={e => setNewPctForm(f => ({ ...f, source_title: e.target.value }))} /></div>
                                                 <div><Label className="text-[10px]">Kendt begreb (valgfrit — sikrer korrekt nøgleordsmatching)</Label>
-                                                    <Select value={newPctForm.label_key} onValueChange={v => setNewPctForm(f => ({ ...f, label_key: v }))}>
+                                                    <Select value={newPctForm.label_key || "none"} onValueChange={v => setNewPctForm(f => ({ ...f, label_key: v === "none" ? "" : v }))}>
                                                         <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Ingen (de fleste regler)" /></SelectTrigger>
                                                         <SelectContent>
-                                                            <SelectItem value="">Ingen</SelectItem>
+                                                            <SelectItem value="none">Ingen</SelectItem>
                                                             <SelectItem value="beta_pulje">BETA-puljen</SelectItem>
                                                             <SelectItem value="helligdagsbetaling">Helligdagsbetaling</SelectItem>
                                                             <SelectItem value="feriepenge">Feriepenge/ferietillæg</SelectItem>
@@ -2735,10 +2735,10 @@ function OverenskomsterTab() {
                                                     <>
                                                         <p className="text-muted-foreground">Godkendte regler: kun nøgleord og fortolkningsnote kan ændres. Øvrige felter kræver arkivering og ny oprettelse.</p>
                                                         <div><Label className="text-[10px]">Nøgleord (til automatisk opslag)</Label>
-                                                            <Select value={editPctLabelKey} onValueChange={setEditPctLabelKey}>
+                                                            <Select value={editPctLabelKey || "none"} onValueChange={v => setEditPctLabelKey(v === "none" ? "" : v)}>
                                                                 <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Ingen (rent informativ)" /></SelectTrigger>
                                                                 <SelectContent>
-                                                                    <SelectItem value="">Ingen (rent informativ)</SelectItem>
+                                                                    <SelectItem value="none">Ingen (rent informativ)</SelectItem>
                                                                     <SelectItem value="royalty">royalty</SelectItem>
                                                                     <SelectItem value="beta_pulje">beta_pulje</SelectItem>
                                                                     <SelectItem value="helligdagsbetaling">helligdagsbetaling</SelectItem>
