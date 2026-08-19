@@ -367,7 +367,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                                 return (
                                     <div key={activeClauseId}
                                         ref={(el) => { if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }) }}
-                                        style={{ ...style, background: "rgba(74,222,128,0.25)", border: "2px solid rgba(21,128,61,0.8)", borderRadius: 2, zIndex: 10 }}
+                                        style={{ ...style, background: "rgba(74,222,128,0.25)", border: "1px solid rgba(21,128,61,0.35)", borderRadius: 2, zIndex: 10 }}
                                         title={`Klausul ${activeClauseId}`}
                                     />
                                 )

@@ -1093,11 +1093,6 @@ setActiveField(fieldId)
                                     </F>
                                 )}
 
-                                {/* Kreditering */}
-                                <F src={fieldSrc("creditedRoles")} label={<>Kreditering{creditHl && <SourceBtn quote={creditHl} active={activeField === "creditedRoles"} onClick={() => activateSource("creditedRoles", creditHl)} />}</>}>
-                                    <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor, Supervising Editor..." />
-                                </F>
-
                                 <Separator />
 
                                 <F
@@ -1226,6 +1221,11 @@ setActiveField(fieldId)
                                         )}
                                     </F>
                                 )}
+
+                                {/* Kreditering — placeret ved siden af medarbejder/klipper */}
+                                <F src={fieldSrc("creditedRoles")} label={<>Kreditering{creditHl && <SourceBtn quote={creditHl} active={activeField === "creditedRoles"} onClick={() => activateSource("creditedRoles", creditHl)} />}</>}>
+                                    <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor, Supervising Editor..." />
+                                </F>
 
                                 <Separator />
 
