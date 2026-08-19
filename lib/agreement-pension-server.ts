@@ -1,7 +1,8 @@
 import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { applyAgreementPension, type AgreementPensionRule } from "@/lib/agreement-pension";
+import { applyAgreementPension, classifyToShortCode, type AgreementPensionRule } from "@/lib/agreement-pension";
+import { resolveAgreementByDate } from "@/lib/agreement-version-resolver";
 
 type RuleRow = {
   id: string;
@@ -36,13 +37,19 @@ function relation<T>(value: T | T[]) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-export async function getApprovedAgreementPensionRules() {
+export async function getApprovedAgreementPensionRules(agreementId?: string | null) {
   const db = createServiceClient();
-  const { data: rows, error } = await db
+  let query = db
     .from("agreement_pension_rules")
     .select("id,employment_form,employer_percent,employee_percent,basis,scheme_kind,valid_from,valid_to,section_reference,source_note,status,agreements!inner(code,title,status,source_url,production_types,profession_roles)")
     .in("status", ["approved", "archived"])
     .in("agreements.status", ["approved", "archived"]);
+
+  if (agreementId) {
+    query = query.eq("agreement_id", agreementId);
+  }
+
+  const { data: rows, error } = await query;
 
   if (error) {
     // Migrationen kan mangle i et lokalt miljø. AI-aflæsning skal stadig virke,
@@ -77,6 +84,29 @@ export async function getApprovedAgreementPensionRules() {
 
 }
 
+function dateOnly(value: unknown): string | null {
+  const raw = String(value ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) && !Number.isNaN(Date.parse(raw)) ? raw : null;
+}
+
 export async function applyApprovedAgreementPension(data: Record<string, unknown>) {
-  return applyAgreementPension(data, await getApprovedAgreementPensionRules());
+  const shortCode = classifyToShortCode(data);
+  const contractDate = dateOnly(data.startDate) ?? dateOnly(data.contractDate);
+
+  let agreementId: string | null = null;
+  let resolvedCode: string | null = null;
+
+  if (shortCode) {
+    const version = await resolveAgreementByDate(shortCode, contractDate);
+    if (version.found) {
+      agreementId = version.id;
+      resolvedCode = version.code;
+    }
+  }
+
+  const rules = await getApprovedAgreementPensionRules(agreementId);
+  return applyAgreementPension(
+    resolvedCode ? { ...data, _resolvedAgreementCode: resolvedCode } : data,
+    rules,
+  );
 }

@@ -8,7 +8,6 @@
  * En eksplicit procentsats i selve kontrakten har altid forrang.
  */
 
-import { identifyAgreementCode } from "@/lib/agreement-pension";
 
 export type AgreementRoyaltyRule = {
   id: string;
@@ -65,17 +64,18 @@ export function applyAgreementRoyalty(
     return { applied: false, reason: "royalty_not_flagged", data: input };
   }
 
-  const agreementCode = identifyAgreementCode(input);
-  if (!agreementCode) {
+  // _resolvedAgreementCode injiceres af server-wrapper via dato-bevidst opslag
+  const resolvedCode = typeof input._resolvedAgreementCode === "string" ? input._resolvedAgreementCode : null;
+  if (!resolvedCode) {
     return { applied: false, reason: "agreement_ambiguous", data: input };
   }
 
   const effectiveDate = dateOnly(input.startDate) ?? dateOnly(input.contractDate);
   const productionType = String(input.productionType ?? "");
 
+  // Regler er allerede pre-filtreret på agreement_id af server-wrapperen — status-filter er tilstrækkeligt
   const candidates = rules.filter(rule =>
-    rule.agreementCode === agreementCode
-    && rule.agreementStatus !== "draft"
+    rule.agreementStatus !== "draft"
     && rule.status !== "draft"
     && (effectiveDate == null || (
       rule.validFrom <= effectiveDate
