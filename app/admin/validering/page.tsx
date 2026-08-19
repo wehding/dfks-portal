@@ -418,6 +418,7 @@ function AdminValideringPageInner() {
                 collectiveAgreement: ed.collectiveAgreement ?? false,
                 isFreelanceContract: ed.isFreelanceContract ?? false,
                 collectiveAgreementByReference: ed.collectiveAgreementByReference ?? false,
+                rightsOverview: ed.rightsOverview ?? null,
             })
             if (ed._sources) setSources(normaliseSources(ed._sources))
             if (validation?.masked_text) setContractText(validation.masked_text as string)
@@ -1390,6 +1391,12 @@ setActiveField(fieldId)
                                             <div className="flex gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 -mt-1">
                                                 <span className="shrink-0">⚠</span>
                                                 <span>{pctRuleNotes["svod"]}</span>
+                                            </div>
+                                        )}
+                                        {formData.productionType === "feature" && formData.rightsOverview?.streamingforbehold === "nej" && (
+                                            <div className="flex gap-2 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2 text-xs text-blue-800 dark:text-blue-300 -mt-1">
+                                                <span className="shrink-0">👁</span>
+                                                <span>Spillefilm uden navngivet streamingtjeneste — dobbelttjek om SVOD-feltet er korrekt sat. Distribution til biograf kan betyde at SVOD ikke er relevant.</span>
                                             </div>
                                         )}
                                         <div className={`flex items-center justify-between rounded-md px-2.5 py-2 -mx-2.5 ${isLocked("copydan") ? "bg-muted/40" : formData.overenskomst === "de4-fiktion" ? "bg-amber-50 dark:bg-amber-950/25" : formData.copydan ? "bg-blue-50 dark:bg-blue-950/25" : ""}`}>
