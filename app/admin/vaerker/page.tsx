@@ -3364,8 +3364,8 @@ function DistributionEditor({ value, onChange, options }: { value: DistributionD
   const update = (index: number, patch: Partial<DistributionDraft>) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
   return (
     <div className="space-y-3 rounded-md border p-3">
-      <div className="flex items-center justify-between gap-2"><Label>Broadcastere og streamere</Label><Button type="button" size="sm" variant="outline" onClick={() => onChange([...value, { broadcasterName: "", distributionType: "both", validFromYear: "", validToYear: "", inherited: false }])}><Plus className="mr-1 h-4 w-4" />Tilføj</Button></div>
-      {value.length === 0 ? <p className="text-xs text-muted-foreground">Ingen broadcastere eller streamere tilknyttet.</p> : value.map((item, index) => (
+      <div className="flex items-center justify-between gap-2"><Label>Primær distribution</Label><Button type="button" size="sm" variant="outline" onClick={() => onChange([...value, { broadcasterName: "", distributionType: "both", validFromYear: "", validToYear: "", inherited: false }])}><Plus className="mr-1 h-4 w-4" />Tilføj</Button></div>
+      {value.length === 0 ? <p className="text-xs text-muted-foreground">Ingen primær distribution tilknyttet.</p> : value.map((item, index) => (
         <div key={index} className="grid gap-2 rounded border p-2 sm:grid-cols-[minmax(180px,1fr)_100px_100px_auto]">
           <div><Select disabled={item.inherited} value={item.broadcasterName} onValueChange={broadcasterName => update(index, { broadcasterName })}><SelectTrigger><SelectValue placeholder="Vælg broadcaster" /></SelectTrigger><SelectContent>{options.map(option => <SelectItem key={option.name} value={option.name}>{option.name}</SelectItem>)}</SelectContent></Select>{item.inherited && <p className="mt-1 text-xs text-muted-foreground">Fra producent</p>}</div>
           <Input disabled={item.inherited} inputMode="numeric" placeholder="Fra år" value={item.validFromYear} onChange={event => update(index, { validFromYear: event.target.value })} />
