@@ -223,7 +223,7 @@ export function normalizeContractExtraction(value: unknown) {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   const result: Record<string, unknown> = {};
   for (const key of Object.keys(properties)) {
-    if (!(key in raw)) continue;
+    if (!(key in raw)) { result[key] = null; continue; }
     if (key === "_sources") {
       const sources = raw._sources && typeof raw._sources === "object" ? raw._sources as Record<string, unknown> : {};
       result._sources = Object.fromEntries(sourceKeys.map(sourceKey => {
