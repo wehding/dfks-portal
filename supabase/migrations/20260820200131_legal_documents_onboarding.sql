@@ -149,7 +149,9 @@ with defaults(document_type, audience, title, body) as (
 
 Inden systemet laeser dokumentet, maskerer vi automatisk CPR-nummer og bankoplysninger. Kontrakten behandles i et lukket system, som ikke bruges til at traene offentlige AI-modeller.
 
-Som medlem er du oplyst om, at foreningen bruger overordnede kontrakt- og loenoplysninger til anonymiseret statistikarbejde. Statistikken bruges kun samlet og under faste diskretionsgraenser.'),
+Som medlem er du oplyst om, at foreningen bruger overordnede kontrakt- og loenoplysninger til anonymiseret statistikarbejde. Statistikken bruges kun samlet og under faste diskretionsgraenser.
+
+Laes den fulde privatlivspolitik: https://danskfilmklipperselskab.dk/privatlivspolitik/'),
   ('terms_of_service', 'member', 'Brugervilkaar for Portalen',
    'Portalen leverer digital softwareinfrastruktur, der understoetter organisationens sagsbehandling og raadgivning. Platformen, herunder AI-baserede kontraktanalyse- og statistikvaerktoejer, leverer alene raadgivende og beslutningsstoettende analyser.
 
@@ -169,7 +171,9 @@ Analysen bruges til at finde relevante kontraktpunkter og mulige risici. En fagl
 
 Da du ikke er medlem, opbevarer vi din kontrakt sikkert som juridisk dokumentation, saa vi kan varetage dine ophavsrettigheder og sikre udbetaling af dine Copydan- og streamingmidler.
 
-Dit CPR-nummer og dine bankoplysninger maskeres automatisk, inden systemet analyserer dokumentet. Din kontrakt behandles i et lukket system og benyttes aldrig til at traene offentlige AI-modeller.'),
+Dit CPR-nummer og dine bankoplysninger maskeres automatisk, inden systemet analyserer dokumentet. Din kontrakt behandles i et lukket system og benyttes aldrig til at traene offentlige AI-modeller.
+
+Laes den fulde privatlivspolitik for rettighedshavere: https://danskfilmklipperselskab.dk/privatlivspolitik/'),
   ('terms_of_service', 'non_member', 'Brugervilkaar for Portalen',
    'Portalen leverer digital softwareinfrastruktur, der understoetter organisationens rettighedsarbejde og raadgivning. Platformen, herunder AI-baserede kontraktanalyse- og statistikvaerktoejer, leverer alene raadgivende og beslutningsstoettende analyser.
 

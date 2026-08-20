@@ -20,7 +20,7 @@ import { SeriesEpisodeSelector } from "@/components/works/series-episode-selecto
 import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 import { seasonLookupMessage } from "@/lib/season-selection";
-import { LEGAL_DOCUMENT_TYPE_LABELS, type LegalDocumentRecord } from "@/lib/legal-documents";
+import { LEGAL_DOCUMENT_TYPE_LABELS, PRIVACY_POLICY_URL, type LegalDocumentRecord } from "@/lib/legal-documents";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -92,7 +92,8 @@ export default function OnboardingClient({
     { id: 5, title: t("onboarding.stepPrivacy"), icon: "🔒" },
     { id: 6, title: t("onboarding.stepConfirm"), icon: "✅" },
   ];
-  const [step, setStep] = useState(1);
+  const firstStep = isRepeatOnboarding ? 5 : 1;
+  const [step, setStep] = useState(firstStep);
   const [isSaving, setIsSaving] = useState(false);
   const isOrganisationMember = Boolean(rh?.is_member);
   const [shareStatistics, setShareStatistics] = useState<boolean | null>(
@@ -971,9 +972,17 @@ export default function OnboardingClient({
                       style={{ marginTop: "3px", width: "18px", height: "18px", accentColor: "var(--primary)" }}
                     />
                     <span style={{ fontSize: "13px", lineHeight: 1.55, color: "var(--on-surface)" }}>
-                      Jeg har læst og accepterer de aktuelle vilkår, privatlivsoplysninger og AI-transparens for portalen.
+                      Jeg har læst og accepterer de aktuelle vilkår, privatlivsoplysninger, AI-transparens og kontraktanalysevilkår for portalen.
                     </span>
                   </label>
+                  <a
+                    href={PRIVACY_POLICY_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ marginTop: "12px", display: "inline-flex", fontSize: "13px", fontWeight: 600, color: "var(--primary)" }}
+                  >
+                    Læs fuld privatlivspolitik
+                  </a>
                 </div>
 
                 {/* Lønstatistik */}
@@ -1142,9 +1151,9 @@ export default function OnboardingClient({
             backgroundColor: "var(--surface-container-low)",
           }}>
             <button
-              onClick={() => setStep((s) => Math.max(1, s - 1))}
-              disabled={step === 1}
-              style={{ padding: "10px 20px", fontSize: "14px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "transparent", color: "var(--foreground)", cursor: step === 1 ? "default" : "pointer", opacity: step === 1 ? 0.3 : 1, display: "flex", alignItems: "center", gap: "6px" }}
+              onClick={() => setStep((s) => Math.max(firstStep, s - 1))}
+              disabled={step === firstStep}
+              style={{ padding: "10px 20px", fontSize: "14px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "transparent", color: "var(--foreground)", cursor: step === firstStep ? "default" : "pointer", opacity: step === firstStep ? 0.3 : 1, display: "flex", alignItems: "center", gap: "6px" }}
             >
               <ArrowLeft size={16} /> Tilbage
             </button>

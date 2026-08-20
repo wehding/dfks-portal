@@ -7,6 +7,7 @@ import { resolveDefaultRole } from "@/lib/branding";
 import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onboarding-state";
 import { resolvePostLoginDestination } from "@/lib/auth/post-login";
 import { listCurrentLegalDocuments } from "@/lib/server/legal-document-records";
+import { resolveOrgId } from "@/lib/org";
 
 export default async function OnboardingPage() {
   const supabase = await createClient();
@@ -30,13 +31,15 @@ export default async function OnboardingPage() {
   });
   if (rh && !mustCompleteOnboarding(onboardingStatus)) redirect(await resolvePostLoginDestination(supabase, user.id, user.last_sign_in_at));
 
-  const affiliation = Array.isArray(rh?.org_affiliations) ? rh?.org_affiliations[0] : rh?.org_affiliations;
+  const service = createServiceClient();
+  const resolvedOrgId = await resolveOrgId(service, user.id);
+  const affiliations = Array.isArray(rh?.org_affiliations) ? rh?.org_affiliations : [rh?.org_affiliations];
+  const affiliation = affiliations.find(row => row?.org_id === resolvedOrgId) ?? affiliations.find(Boolean);
   const profile = rh ? {
     ...rh,
     is_member: Boolean(affiliation?.is_member),
     statistics_participation: affiliation?.statistics_participation ?? null,
   } : null;
-  const service = createServiceClient();
   const orgId = affiliation?.org_id as string | undefined;
   const audience = affiliation?.is_member ? "member" : "non_member";
   const [{ data: organisation }, { data: professionRows }, { data: regionRows }, { data: secondaryRows }, legalDocuments] = await Promise.all([

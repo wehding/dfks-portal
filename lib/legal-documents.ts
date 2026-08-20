@@ -6,6 +6,7 @@ export const LEGAL_DOCUMENT_TYPES = [
 ] as const;
 
 export const LEGAL_DOCUMENT_AUDIENCES = ["member", "non_member"] as const;
+export const PRIVACY_POLICY_URL = "https://danskfilmklipperselskab.dk/privatlivspolitik/";
 
 export type LegalDocumentType = (typeof LEGAL_DOCUMENT_TYPES)[number];
 export type LegalDocumentAudience = (typeof LEGAL_DOCUMENT_AUDIENCES)[number];
@@ -49,7 +50,9 @@ export const DEFAULT_LEGAL_DOCUMENT_COPY: Record<LegalDocumentAudience, Record<L
 
 Inden systemet laeser dokumentet, maskerer vi automatisk CPR-nummer og bankoplysninger. Kontrakten behandles i et lukket system, som ikke bruges til at traene offentlige AI-modeller.
 
-Som medlem er du oplyst om, at foreningen bruger overordnede kontrakt- og loenoplysninger til anonymiseret statistikarbejde. Statistikken bruges kun samlet og under faste diskretionsgraenser.`,
+Som medlem er du oplyst om, at foreningen bruger overordnede kontrakt- og loenoplysninger til anonymiseret statistikarbejde. Statistikken bruges kun samlet og under faste diskretionsgraenser.
+
+Laes den fulde privatlivspolitik: ${PRIVACY_POLICY_URL}`,
     },
     terms_of_service: {
       title: "Brugervilkaar for Portalen",
@@ -79,7 +82,9 @@ Analysen bruges til at finde relevante kontraktpunkter og mulige risici. En fagl
 
 Da du ikke er medlem, opbevarer vi din kontrakt sikkert som juridisk dokumentation, saa vi kan varetage dine ophavsrettigheder og sikre udbetaling af dine Copydan- og streamingmidler.
 
-Dit CPR-nummer og dine bankoplysninger maskeres automatisk, inden systemet analyserer dokumentet. Din kontrakt behandles i et lukket system og benyttes aldrig til at traene offentlige AI-modeller.`,
+Dit CPR-nummer og dine bankoplysninger maskeres automatisk, inden systemet analyserer dokumentet. Din kontrakt behandles i et lukket system og benyttes aldrig til at traene offentlige AI-modeller.
+
+Laes den fulde privatlivspolitik for rettighedshavere: ${PRIVACY_POLICY_URL}`,
     },
     terms_of_service: {
       title: "Brugervilkaar for Portalen",

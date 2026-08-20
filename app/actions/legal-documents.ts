@@ -222,6 +222,19 @@ export async function publishLegalDocumentVersion(input: {
     .eq("id", draft.id);
   if (publishError) throw new Error(publishError.message);
 
+  const { error: supersedeError } = await db
+    .from("legal_document_acceptances")
+    .update({
+      superseded_at: now,
+      superseded_by_document_version_id: draft.id,
+    })
+    .eq("org_id", orgId)
+    .eq("document_type", document.documentType)
+    .eq("audience", document.audience)
+    .is("superseded_at", null)
+    .neq("document_version_id", draft.id);
+  if (supersedeError) throw new Error(supersedeError.message);
+
   const { error: requirementError } = await db.rpc("require_legal_onboarding_for_audience", {
     target_org_id: orgId,
     target_audience: document.audience,

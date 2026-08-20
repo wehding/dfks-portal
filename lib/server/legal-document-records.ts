@@ -110,6 +110,8 @@ export async function recordLegalDocumentAcceptances(
     audience: document.audience,
     content_hash: document.content_hash ?? hashLegalDocumentBody(document.body),
     accepted_at: now,
+    superseded_at: null,
+    superseded_by_document_version_id: null,
   }));
 
   const { error } = await db

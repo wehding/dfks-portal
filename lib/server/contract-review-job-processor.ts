@@ -24,7 +24,7 @@ export function safeContractReviewJobError(error: unknown) {
   if (/storage|originalfil|fil.*mangler|kunne ikke hentes/i.test(message)) {
     return "Kontraktfilen kunne ikke hentes sikkert.";
   }
-  if (/ingen tekst|ikke-understøttet|pdf-analyse|format/i.test(message)) {
+  if (/ingen tekst|læsbar tekst|ikke-understøttet|pdf-analyse|format/i.test(message)) {
     return "Kontraktfilen kunne ikke aflæses i det nuværende format.";
   }
   if (/api|rate|429|credit|billing|model|anthropic|google/i.test(message)) {
