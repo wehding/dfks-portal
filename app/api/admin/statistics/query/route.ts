@@ -24,9 +24,6 @@ import { companyMatchScore, normalizeCompanyBaseName, type ProductionCompanyOpti
 import { sampleSizeBand } from "@/lib/statistics/privacy-guard";
 import { buildStatisticsVisualization } from "@/lib/statistics/visualization";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
-import { auditRequestContext } from "@/lib/audit-access-server";
-import { recordAuditEvent } from "@/lib/audit-log-server";
-import type { AuditContext } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +37,6 @@ async function recordStatisticsAudit(input: {
   suppressionCount: number;
   pointCount: number;
   seriesCount: number;
-  context: AuditContext;
 }) {
   const fingerprint = createHash("sha256").update(JSON.stringify(input.plan)).digest("hex");
   const { error } = await createServiceClient().rpc("record_statistics_query_audit", {
@@ -52,22 +48,6 @@ async function recordStatisticsAudit(input: {
     target_result_shape: { pointCount: input.pointCount, seriesCount: input.seriesCount },
   });
   if (error) throw new Error("Statistikforespørgslen kunne ikke revisionslogges sikkert.");
-  await recordAuditEvent({
-    context: input.context,
-    action: "ai_analysis",
-    entityType: "statistics_query",
-    entityLabel: "Anonymiseret statistikforespørgsel",
-    purposeCode: "collective_statistics",
-    legalBasis: "GDPR Art. 9(2)(d)",
-    dataCategories: ["contract_data", "salary_data", "union_membership_data", "aggregated_statistics"],
-    orgIds: [input.orgId],
-    metadata: {
-      queryFingerprint: fingerprint,
-      suppressionCount: input.suppressionCount,
-      pointCount: input.pointCount,
-      seriesCount: input.seriesCount,
-    },
-  });
 }
 
 async function resolveProducerNames(names: string[]) {
@@ -267,7 +247,6 @@ export async function POST(request: NextRequest) {
       await recordStatisticsAudit({
         orgId: caller.orgId, actorUserId: caller.userId, plan,
         suppressionCount: suppressedSegments + suppressedCells, pointCount: 0, seriesCount: 0,
-        context: auditRequestContext(request, caller, "admin", "admin.statistics.query"),
       });
       await finishAiUsageRun(runId, "succeeded");
       return NextResponse.json({
@@ -295,7 +274,6 @@ export async function POST(request: NextRequest) {
       orgId: caller.orgId, actorUserId: caller.userId, plan,
       suppressionCount: suppressedSegments + suppressedCells, pointCount: comparison.length,
       seriesCount: new Set(comparison.map(row => row.seriesKey)).size,
-      context: auditRequestContext(request, caller, "admin", "admin.statistics.query"),
     });
     await finishAiUsageRun(runId, "succeeded");
     const caveats = [
