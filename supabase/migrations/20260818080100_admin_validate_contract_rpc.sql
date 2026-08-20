@@ -47,4 +47,5 @@ begin
 end;
 $$;
 
+revoke all on function public.admin_validate_contract from public, anon, authenticated;
 grant execute on function public.admin_validate_contract to service_role;
