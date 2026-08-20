@@ -3,6 +3,8 @@ import { requireStaffModuleApi } from "@/lib/api-auth";
 import { assertContractReviewInOrg } from "@/lib/authz";
 import { triggerContractReviewWorker } from "@/lib/contract-review-intake";
 import { createServiceClient } from "@/lib/supabase/service";
+import { auditRequestContext } from "@/lib/audit-access-server";
+import { recordAuditEvent } from "@/lib/audit-log-server";
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx"];
@@ -110,5 +112,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   after(triggerContractReviewWorker(request.nextUrl.origin));
+  await recordAuditEvent({
+    context: auditRequestContext(request, { userId: auth.userId, orgId: auth.orgId, role: auth.role }, "admin", "admin.contract-reviews.reanalyse"),
+    action: "ai_analysis",
+    entityType: "contract_reviews",
+    entityId: id,
+    entityLabel: "Genanalyse af kontrakt",
+    purposeCode: "contract_review_assistance",
+    legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+    dataCategories: ["contract_data", "salary_data", "ai_analysis"],
+    orgIds: [auth.orgId],
+    metadata: { queued: true, replacementFile: Boolean(uploadedStoragePath) },
+  });
   return NextResponse.json({ accepted: true, analysisStatus: activeJob?.status ?? "queued" }, { status: 202 });
 }

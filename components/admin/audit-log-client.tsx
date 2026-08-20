@@ -16,6 +16,9 @@ type ResponseData = {
   nextCursor: string | null;
   organisations: Option[];
   actors: Option[];
+  members: Option[];
+  purposes: string[];
+  components: string[];
   callerRole: string;
   callerOrgId: string;
 };
@@ -27,6 +30,8 @@ const ACTION_LABELS: Record<string, string> = {
   invite: "Invitation", reset_link: "Nulstillingslink", export: "Eksport", download: "Download",
   import: "Import", sync: "Synkronisering", job: "Systemjob", security_failure: "Afvist handling",
   retention: "Opbevaring",
+  read: "Opslag", search: "Søgning", ai_analysis: "AI-analyse", sar_export: "Indsigtsudtræk",
+  siem_delivery: "SIEM-levering", security_review: "Sikkerhedsgennemgang",
 };
 
 const ACTION_LABELS_EN: Record<string, string> = {
@@ -36,6 +41,8 @@ const ACTION_LABELS_EN: Record<string, string> = {
   invite: "Invitation", reset_link: "Reset link", export: "Export", download: "Download",
   import: "Import", sync: "Sync", job: "System job", security_failure: "Rejected action",
   retention: "Retention",
+  read: "Read", search: "Search", ai_analysis: "AI analysis", sar_export: "Access export",
+  siem_delivery: "SIEM delivery", security_review: "Security review",
 };
 
 function eventSummary(event: AuditEvent, labels: Record<string, string>, locale: "da" | "en") {
@@ -51,14 +58,14 @@ function eventSummary(event: AuditEvent, labels: Record<string, string>, locale:
     : `${event.changes.length} field${event.changes.length === 1 ? "" : "s"}: ${fields}`;
 }
 
-export function AuditLogClient() {
+export function AuditLogClient({ embedded = false }: { embedded?: boolean }) {
   const { locale, t } = useI18n();
   const [data, setData] = useState<ResponseData | null>(null);
   const [items, setItems] = useState<AuditEvent[]>([]);
   const [selected, setSelected] = useState<AuditEvent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [filters, setFilters] = useState({ query: "", from: "", to: "", orgId: "", actorUserId: "", role: "", action: "", entityType: "", source: "" });
+  const [filters, setFilters] = useState({ query: "", from: "", to: "", orgId: "", actorUserId: "", role: "", action: "", entityType: "", source: "", targetMemberUuid: "", purposeCode: "", systemComponent: "", outcome: "" });
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -94,9 +101,10 @@ export function AuditLogClient() {
   const actionLabels = locale === "da" ? ACTION_LABELS : ACTION_LABELS_EN;
 
   return (
-    <main className="space-y-6 p-4 sm:p-6">
+    <div className={embedded ? "space-y-6" : "space-y-6 p-4 sm:p-6"}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div><h1 className="text-2xl font-semibold">{t("audit.title")}</h1><p className="text-sm text-muted-foreground">{t("audit.subtitle")}</p></div>
+        {!embedded && <div><h1 className="text-2xl font-semibold">{t("audit.title")}</h1><p className="text-sm text-muted-foreground">{t("audit.subtitle")}</p></div>}
+        {embedded && <p className="text-sm text-muted-foreground">{locale === "da" ? "Filtrér det interne, uforanderlige revisionsspor." : "Filter the internal, immutable audit trail."}</p>}
         <Button asChild variant="outline"><a href={`/api/admin/audit-log/export${queryString ? `?${queryString}` : ""}`}><Download className="size-4" />{t("audit.export")}</a></Button>
       </div>
 
@@ -109,7 +117,12 @@ export function AuditLogClient() {
         <select className={selectClass} aria-label={t("audit.role")} value={filters.role} onChange={event => setFilter("role", event.target.value)}><option value="">{t("audit.allRoles")}</option>{["superadmin", "admin", "org-admin", "jurist", "viewer", "member"].map(role => <option key={role} value={role}>{role}</option>)}</select>
         <select className={selectClass} aria-label={t("audit.action")} value={filters.action} onChange={event => setFilter("action", event.target.value)}><option value="">{t("audit.allActions")}</option>{AUDIT_ACTIONS.map(action => <option key={action} value={action}>{actionLabels[action] ?? action}</option>)}</select>
         <select className={selectClass} aria-label={t("audit.source")} value={filters.source} onChange={event => setFilter("source", event.target.value)}><option value="">{t("audit.allSources")}</option>{AUDIT_SOURCES.map(source => <option key={source} value={source}>{source}</option>)}</select>
+        <select className={selectClass} aria-label="Medlem" value={filters.targetMemberUuid} onChange={event => setFilter("targetMemberUuid", event.target.value)}><option value="">{locale === "da" ? "Alle medlemmer" : "All members"}</option>{data?.members.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select>
+        <select className={selectClass} aria-label="Formål" value={filters.purposeCode} onChange={event => setFilter("purposeCode", event.target.value)}><option value="">{locale === "da" ? "Alle formål" : "All purposes"}</option>{data?.purposes.map(value => <option key={value}>{value}</option>)}</select>
+        <select className={selectClass} aria-label="Systemkomponent" value={filters.systemComponent} onChange={event => setFilter("systemComponent", event.target.value)}><option value="">{locale === "da" ? "Alle komponenter" : "All components"}</option>{data?.components.map(value => <option key={value}>{value}</option>)}</select>
+        <select className={selectClass} aria-label="Resultat" value={filters.outcome} onChange={event => setFilter("outcome", event.target.value)}><option value="">{locale === "da" ? "Alle resultater" : "All outcomes"}</option><option value="success">success</option><option value="denied">denied</option><option value="failed">failed</option><option value="partial">partial</option></select>
         <Input aria-label={t("audit.entityType")} value={filters.entityType} onChange={event => setFilter("entityType", event.target.value)} placeholder={t("audit.entityType")} />
+        <Button type="button" variant="ghost" onClick={() => setFilters({ query: "", from: "", to: "", orgId: "", actorUserId: "", role: "", action: "", entityType: "", source: "", targetMemberUuid: "", purposeCode: "", systemComponent: "", outcome: "" })}>{locale === "da" ? "Nulstil filtre" : "Reset filters"}</Button>
       </section>
 
       {error && <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
@@ -133,12 +146,12 @@ export function AuditLogClient() {
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader><DialogTitle>{selected?.entityLabel || selected?.entityType}</DialogTitle><DialogDescription>{selected ? `${actionLabels[selected.action] ?? selected.action} · ${dateFormat.format(new Date(selected.occurredAt))}` : ""}</DialogDescription></DialogHeader>
           {selected && <div className="space-y-4 text-sm">
-            <dl className="grid grid-cols-[8rem_1fr] gap-2"><dt className="text-muted-foreground">{t("audit.actor")}</dt><dd>{selected.actorDisplayName || selected.actorEmail || t("audit.system")}</dd><dt className="text-muted-foreground">{t("audit.role")}</dt><dd>{selected.actorRole || "—"}</dd><dt className="text-muted-foreground">{t("audit.source")}</dt><dd>{selected.source}</dd><dt className="text-muted-foreground">{t("audit.organisation")}</dt><dd>{selected.organisations.map(org => org.name).join(", ") || "—"}</dd><dt className="text-muted-foreground">{t("audit.correlation")}</dt><dd className="break-all font-mono text-xs">{selected.correlationId || "—"}</dd></dl>
+            <dl className="grid grid-cols-[8rem_1fr] gap-2"><dt className="text-muted-foreground">{t("audit.actor")}</dt><dd>{selected.actorDisplayName || selected.actorEmail || t("audit.system")}</dd><dt className="text-muted-foreground">{t("audit.role")}</dt><dd>{selected.actorRole || "—"}</dd><dt className="text-muted-foreground">{t("audit.source")}</dt><dd>{selected.source}</dd><dt className="text-muted-foreground">Medlem</dt><dd className="break-all font-mono text-xs">{selected.targetMemberUuid || "—"}</dd><dt className="text-muted-foreground">Formål</dt><dd>{selected.purposeCode || "—"}</dd><dt className="text-muted-foreground">Komponent</dt><dd>{selected.systemComponent || "—"}</dd><dt className="text-muted-foreground">Datakategorier</dt><dd>{selected.dataCategories.join(", ") || "—"}</dd><dt className="text-muted-foreground">Integritet</dt><dd><Badge variant={selected.integrityValid ? "outline" : "destructive"}>#{selected.sequenceNo} · {selected.integrityValid ? "Kædet" : "Fejl"}</Badge></dd><dt className="text-muted-foreground">{t("audit.organisation")}</dt><dd>{selected.organisations.map(org => org.name).join(", ") || "—"}</dd><dt className="text-muted-foreground">{t("audit.correlation")}</dt><dd className="break-all font-mono text-xs">{selected.correlationId || "—"}</dd></dl>
             <div><h3 className="mb-2 font-medium">{t("audit.changedFields")}</h3>{selected.changes.length === 0 ? <p className="text-muted-foreground">{t("audit.noFieldValues")}</p> : <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr className="border-b"><th className="p-2">{t("audit.field")}</th><th className="p-2">{t("audit.before")}</th><th className="p-2">{t("audit.after")}</th></tr></thead><tbody>{selected.changes.map(change => <tr key={change.field} className="border-b last:border-0"><td className="p-2 font-medium">{({ work: locale === "da" ? "Værk" : "Work", season: locale === "da" ? "Sæson" : "Season", episodes: locale === "da" ? "Afsnit" : "Episodes" } as Record<string, string>)[change.field] ?? change.field}</td><td className="max-w-48 break-words p-2 text-muted-foreground">{change.redacted ? t("audit.redacted") : String(change.old ?? "—")}</td><td className="max-w-48 break-words p-2">{change.redacted ? t("audit.redacted") : String(change.new ?? "—")}</td></tr>)}</tbody></table></div>}</div>
             {auditEntityHref(selected) && <Button asChild variant="outline"><Link href={auditEntityHref(selected)!}>{t("audit.openEntity")}</Link></Button>}
           </div>}
         </DialogContent>
       </Dialog>
-    </main>
+    </div>
   );
 }

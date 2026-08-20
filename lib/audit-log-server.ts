@@ -33,12 +33,24 @@ type RawAuditEvent = {
   source: AuditSource;
   correlation_id: string | null;
   request_id: string | null;
+  target_member_uuid: string | null;
+  purpose_code: string | null;
+  legal_basis: string | null;
+  data_categories: string[] | null;
+  ip_address: string | null;
+  system_component: string | null;
+  outcome: "success" | "denied" | "failed" | "partial";
+  error_code: string | null;
+  schema_version: number;
+  sequence_no: number;
+  payload_hash: string;
+  chain_hash: string;
   changes: AuditChange[] | null;
   missing_actor_context: boolean;
   audit_event_organisations?: Array<{ org_id: string; org_name: string | null }>;
 };
 
-const AUDIT_SELECT = "id,occurred_at,action,entity_type,entity_id,entity_label,actor_user_id,actor_display_name,actor_email,actor_role,actor_type,actor_org_id,source,correlation_id,request_id,changes,missing_actor_context,audit_event_organisations(org_id,org_name)";
+const AUDIT_SELECT = "id,occurred_at,action,entity_type,entity_id,entity_label,actor_user_id,actor_display_name,actor_email,actor_role,actor_type,actor_org_id,source,correlation_id,request_id,target_member_uuid,purpose_code,legal_basis,data_categories,ip_address,system_component,outcome,error_code,schema_version,sequence_no,payload_hash,chain_hash,changes,missing_actor_context,audit_event_organisations(org_id,org_name)";
 
 function normalizeEvent(row: RawAuditEvent): AuditEvent {
   return {
@@ -57,6 +69,19 @@ function normalizeEvent(row: RawAuditEvent): AuditEvent {
     source: row.source,
     correlationId: row.correlation_id,
     requestId: row.request_id,
+    targetMemberUuid: row.target_member_uuid,
+    purposeCode: row.purpose_code,
+    legalBasis: row.legal_basis,
+    dataCategories: row.data_categories ?? [],
+    ipAddress: row.ip_address,
+    systemComponent: row.system_component,
+    outcome: row.outcome,
+    errorCode: row.error_code,
+    schemaVersion: row.schema_version,
+    sequenceNo: row.sequence_no,
+    payloadHash: row.payload_hash,
+    chainHash: row.chain_hash,
+    integrityValid: Boolean(row.payload_hash && row.chain_hash && row.sequence_no > 0),
     changes: Array.isArray(row.changes) ? row.changes : [],
     missingActorContext: row.missing_actor_context,
     organisations: (row.audit_event_organisations ?? []).map(scope => ({
@@ -94,6 +119,10 @@ export async function fetchAuditEvents(
   if (filters.entityType) query = query.eq("entity_type", filters.entityType);
   else query = query.not("entity_type", "in", `(${AUDIT_DETAIL_ENTITY_TYPES.join(",")})`);
   if (filters.source) query = query.eq("source", filters.source);
+  if (filters.targetMemberUuid) query = query.eq("target_member_uuid", filters.targetMemberUuid);
+  if (filters.purposeCode) query = query.eq("purpose_code", filters.purposeCode);
+  if (filters.systemComponent) query = query.eq("system_component", filters.systemComponent);
+  if (filters.outcome) query = query.eq("outcome", filters.outcome);
   if (requestedOrg) query = query.eq("audit_event_organisations.org_id", requestedOrg);
   const search = filters.query ? sanitizeAuditSearch(filters.query) : "";
   if (search) query = query.or(`entity_label.ilike.%${search}%,entity_id.ilike.%${search}%,actor_display_name.ilike.%${search}%,actor_email.ilike.%${search}%`);
@@ -133,6 +162,13 @@ export async function recordAuditEvent(input: {
   changes?: AuditChange[];
   metadata?: Record<string, unknown>;
   actorType?: "user" | "system" | "integration";
+  targetMemberUuid?: string | null;
+  purposeCode?: string | null;
+  legalBasis?: string | null;
+  dataCategories?: string[];
+  systemComponent?: string | null;
+  outcome?: "success" | "denied" | "failed" | "partial";
+  errorCode?: string | null;
 }) {
   const db = createServiceClient({ audit: input.context });
   let actorName: string | null = null;
@@ -145,28 +181,34 @@ export async function recordAuditEvent(input: {
     actorEmail = authResult.user?.email ?? null;
     actorName = holder?.full_name ?? actorEmail;
   }
-  const { data: event, error } = await db.from("audit_events").insert({
-    action: input.action,
-    entity_type: input.entityType,
-    entity_id: input.entityId ?? null,
-    entity_label: input.entityLabel ?? input.entityId ?? null,
-    actor_user_id: input.context.actorUserId ?? null,
-    actor_display_name: actorName,
-    actor_email: actorEmail,
-    actor_role: input.context.actorRole ?? null,
-    actor_type: input.actorType ?? (input.context.actorUserId ? "user" : input.context.source === "cron" || input.context.source === "import" ? "integration" : "system"),
-    actor_org_id: input.context.actorOrgId ?? null,
-    source: input.context.source,
-    correlation_id: input.context.correlationId ?? null,
-    changes: input.changes ?? [],
-    metadata: sanitizeMetadata(input.metadata ?? {}),
-    missing_actor_context: !input.context.actorUserId && input.context.source === "api",
-  }).select("id").single();
-  if (error || !event) throw new Error(error?.message ?? "Audit event could not be recorded");
   const orgIds = [...new Set([...(input.orgIds ?? []), input.context.actorOrgId].filter((id): id is string => Boolean(id)))];
-  if (orgIds.length) {
-    const scopeResult = await db.from("audit_event_organisations").insert(orgIds.map(orgId => ({ event_id: event.id, org_id: orgId })));
-    if (scopeResult.error) throw new Error(scopeResult.error.message);
-  }
-  return event.id;
+  const { data: eventId, error } = await db.rpc("append_audit_event", {
+    p_action: input.action,
+    p_entity_type: input.entityType,
+    p_entity_id: input.entityId ?? null,
+    p_entity_label: input.entityLabel ?? input.entityId ?? null,
+    p_actor_user_id: input.context.actorUserId ?? null,
+    p_actor_display_name: actorName,
+    p_actor_email: actorEmail,
+    p_actor_role: input.context.actorRole ?? null,
+    p_actor_type: input.actorType ?? (input.context.actorUserId ? "user" : input.context.source === "cron" || input.context.source === "import" ? "integration" : "system"),
+    p_actor_org_id: input.context.actorOrgId ?? null,
+    p_source: input.context.source,
+    p_correlation_id: input.context.correlationId ?? null,
+    p_request_id: input.context.requestId ?? null,
+    p_changes: input.changes ?? [],
+    p_metadata: sanitizeMetadata(input.metadata ?? {}),
+    p_missing_actor_context: !input.context.actorUserId && input.context.source === "api",
+    p_target_member_uuid: input.targetMemberUuid ?? null,
+    p_purpose_code: input.purposeCode ?? null,
+    p_legal_basis: input.legalBasis ?? null,
+    p_data_categories: input.dataCategories ?? [],
+    p_ip_address: input.context.ipAddress ?? null,
+    p_system_component: input.systemComponent ?? input.context.systemComponent ?? null,
+    p_outcome: input.outcome ?? "success",
+    p_error_code: input.errorCode ?? null,
+    p_org_ids: orgIds,
+  });
+  if (error || !eventId) throw new Error(error?.message ?? "Audit event could not be recorded");
+  return String(eventId);
 }

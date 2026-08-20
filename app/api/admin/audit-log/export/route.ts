@@ -3,6 +3,7 @@ import { csvAuditCell, isAuditAction, isAuditSource, type AuditEvent, type Audit
 import { fetchAuditEvents, recordAuditEvent } from "@/lib/audit-log-server";
 import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,10 @@ function filtersFromRequest(req: NextRequest): AuditFilters {
     action: isAuditAction(action) ? action : undefined,
     entityType: params.get("entityType")?.slice(0, 100) || undefined,
     source: isAuditSource(source) ? source : undefined,
+    targetMemberUuid: z.string().uuid().safeParse(params.get("targetMemberUuid")).data,
+    purposeCode: params.get("purposeCode")?.slice(0, 80) || undefined,
+    systemComponent: params.get("systemComponent")?.slice(0, 120) || undefined,
+    outcome: z.enum(["success", "denied", "failed", "partial"]).safeParse(params.get("outcome")).data,
     query: params.get("query")?.slice(0, 100) || undefined,
   };
 }

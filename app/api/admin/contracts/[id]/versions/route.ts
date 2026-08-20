@@ -1,18 +1,20 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { auditRequestContext } from "@/lib/audit-access-server";
+import { recordAuditEvent } from "@/lib/audit-log-server";
 
 const uuid = /^[0-9a-f-]{36}$/i;
 
-export async function GET(_: Request, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const caller = await assertAdminRole(await createClient(), ["superadmin", "admin", "org-admin"]);
   if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
   const { id: contractId } = await context.params;
   if (!uuid.test(contractId)) return NextResponse.json({ error: "Ugyldig kontrakt" }, { status: 400 });
   const db = createServiceClient();
-  const start = await db.from("contracts").select("id,superseded_by_contract_id").eq("id", contractId).eq("org_id", caller.orgId).maybeSingle();
+  const start = await db.from("contracts").select("id,superseded_by_contract_id,rights_holder_id").eq("id", contractId).eq("org_id", caller.orgId).maybeSingle();
   if (!start.data) return NextResponse.json({ error: "Kontrakten blev ikke fundet" }, { status: 404 });
 
   let currentId = contractId;
@@ -33,6 +35,19 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
     if (!previous.data) break;
     currentId = previous.data.id;
   }
+  await recordAuditEvent({
+    context: auditRequestContext(request, caller, "admin", "admin.contracts.versions"),
+    action: "read",
+    entityType: "contracts",
+    entityId: contractId,
+    entityLabel: "Kontraktversioner",
+    targetMemberUuid: start.data.rights_holder_id,
+    purposeCode: "contract_case_management",
+    legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+    dataCategories: ["contract_data", "salary_data"],
+    orgIds: [caller.orgId],
+    metadata: { versionCount: chain.length },
+  });
   return NextResponse.json({ currentContractId: chain[0]?.id ?? contractId, versions: chain }, { headers: { "Cache-Control": "no-store" } });
 }
 

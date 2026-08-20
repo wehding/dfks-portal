@@ -3,6 +3,7 @@ import { requireStaffModuleApi } from "@/lib/api-auth"
 import { assertContractReviewInOrg } from "@/lib/authz"
 import { createServiceClient } from "@/lib/supabase/service"
 import { recordAuditEvent } from "@/lib/audit-log-server"
+import { auditRequestContext } from "@/lib/audit-access-server"
 
 /**
  * GET /api/admin/contracts/[id]/pdf
@@ -19,13 +20,7 @@ export async function GET(
     const auth = await requireStaffModuleApi("contract_reviews", "read")
     if (!auth.ok) return auth.response
 
-    const auditContext = {
-        actorUserId: auth.userId,
-        actorOrgId: auth.orgId,
-        actorRole: auth.role,
-        source: "admin" as const,
-        correlationId: crypto.randomUUID(),
-    }
+    const auditContext = auditRequestContext(req, { userId: auth.userId, orgId: auth.orgId, role: auth.role }, "admin", "admin.contract-reviews.document")
     const admin = createServiceClient({ audit: auditContext })
 
     let review: { storage_path: string | null }
@@ -51,7 +46,11 @@ export async function GET(
         entityId: id,
         entityLabel: "Kontraktdokument",
         orgIds: [auth.orgId],
+        purposeCode: "contract_document_review",
+        legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+        dataCategories: ["contract_data", "salary_data", "contact_data"],
+        systemComponent: "admin.contract-reviews.document",
     })
 
-    return NextResponse.json({ url: data.signedUrl })
+    return NextResponse.json({ url: data.signedUrl }, { headers: { "cache-control": "no-store" } })
 }

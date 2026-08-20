@@ -11,16 +11,26 @@ export async function GET(req: NextRequest) {
   }
   try {
     const db = createServiceClient({ audit: { source: "cron" } });
-    const { data, error } = await db.rpc("purge_expired_audit_events", { retention: "7 years", batch_size: 10000 });
+    const { data: settings, error: settingsError } = await db
+      .from("audit_control_settings")
+      .select("retention_years")
+      .eq("id", 1)
+      .single();
+    if (settingsError) throw new Error(settingsError.message);
+    const retentionYears = Math.min(Math.max(Number(settings?.retention_years ?? 7), 1), 25);
+    const { data, error } = await db.rpc("purge_expired_audit_events", {
+      retention: `${retentionYears} years`,
+      batch_size: 10000,
+    });
     if (error) throw new Error(error.message);
     const deletedCount = Number(data ?? 0);
     await recordAuditEvent({
       context: { source: "cron" },
       action: "retention",
       entityType: "audit_events",
-      entityLabel: "Syvårs-oprydning",
+      entityLabel: `${retentionYears}-års-oprydning`,
       actorType: "integration",
-      metadata: { deletedCount },
+      metadata: { deletedCount, retentionYears },
     });
     return NextResponse.json({ ok: true, deletedCount });
   } catch (error) {
