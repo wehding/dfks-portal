@@ -2,6 +2,7 @@ export const AUDIT_ACTIONS = [
   "create", "update", "delete", "archive", "restore", "validate", "approve", "merge",
   "link", "unlink", "invite", "reset_link", "export", "download", "import", "sync", "job", "security_failure", "retention",
   "require_onboarding", "cancel_onboarding", "complete_onboarding",
+  "read", "search", "ai_analysis", "sar_export", "siem_delivery", "security_review",
 ] as const;
 
 export const AUDIT_SOURCES = ["portal", "admin", "api", "cron", "import", "database"] as const;
@@ -26,6 +27,9 @@ export type AuditContext = {
   actorRole?: string | null;
   source: AuditSource;
   correlationId?: string | null;
+  requestId?: string | null;
+  ipAddress?: string | null;
+  systemComponent?: string | null;
   /** Service-role only: suppress row triggers while one semantic summary event is recorded. */
   mode?: "row" | "summary";
 };

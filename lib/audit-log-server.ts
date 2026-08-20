@@ -113,6 +113,7 @@ export async function fetchAuditEvents(
 }
 
 const SENSITIVE_KEY = /(password|token|secret|key|cpr|bank|account|konto|credential|body|message|content|html|email|phone|address|note)/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function sanitizeMetadata(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeMetadata);
@@ -121,6 +122,10 @@ function sanitizeMetadata(value: unknown): unknown {
     key,
     SENSITIVE_KEY.test(key) ? "[redacted]" : sanitizeMetadata(item),
   ]));
+}
+
+function safeUuid(value: string | null | undefined) {
+  return value && UUID_PATTERN.test(value) ? value : null;
 }
 
 export async function recordAuditEvent(input: {
@@ -133,6 +138,12 @@ export async function recordAuditEvent(input: {
   changes?: AuditChange[];
   metadata?: Record<string, unknown>;
   actorType?: "user" | "system" | "integration";
+  targetMemberId?: string | null;
+  purposeCode?: string | null;
+  legalBasis?: string | null;
+  dataCategories?: string[];
+  outcome?: "success" | "denied" | "failed" | "partial";
+  errorCode?: string | null;
 }) {
   const db = createServiceClient({ audit: input.context });
   let actorName: string | null = null;
@@ -145,28 +156,34 @@ export async function recordAuditEvent(input: {
     actorEmail = authResult.user?.email ?? null;
     actorName = holder?.full_name ?? actorEmail;
   }
-  const { data: event, error } = await db.from("audit_events").insert({
-    action: input.action,
-    entity_type: input.entityType,
-    entity_id: input.entityId ?? null,
-    entity_label: input.entityLabel ?? input.entityId ?? null,
-    actor_user_id: input.context.actorUserId ?? null,
-    actor_display_name: actorName,
-    actor_email: actorEmail,
-    actor_role: input.context.actorRole ?? null,
-    actor_type: input.actorType ?? (input.context.actorUserId ? "user" : input.context.source === "cron" || input.context.source === "import" ? "integration" : "system"),
-    actor_org_id: input.context.actorOrgId ?? null,
-    source: input.context.source,
-    correlation_id: input.context.correlationId ?? null,
-    changes: input.changes ?? [],
-    metadata: sanitizeMetadata(input.metadata ?? {}),
-    missing_actor_context: !input.context.actorUserId && input.context.source === "api",
-  }).select("id").single();
-  if (error || !event) throw new Error(error?.message ?? "Audit event could not be recorded");
   const orgIds = [...new Set([...(input.orgIds ?? []), input.context.actorOrgId].filter((id): id is string => Boolean(id)))];
-  if (orgIds.length) {
-    const scopeResult = await db.from("audit_event_organisations").insert(orgIds.map(orgId => ({ event_id: event.id, org_id: orgId })));
-    if (scopeResult.error) throw new Error(scopeResult.error.message);
-  }
-  return event.id;
+  const { data: eventId, error } = await db.rpc("append_audit_event", {
+    p_action: input.action,
+    p_entity_type: input.entityType,
+    p_entity_id: input.entityId ?? null,
+    p_entity_label: input.entityLabel ?? input.entityId ?? null,
+    p_actor_user_id: input.context.actorUserId ?? null,
+    p_actor_display_name: actorName,
+    p_actor_email: actorEmail,
+    p_actor_role: input.context.actorRole ?? null,
+    p_actor_type: input.actorType ?? (input.context.actorUserId ? "user" : input.context.source === "cron" || input.context.source === "import" ? "integration" : "system"),
+    p_actor_org_id: input.context.actorOrgId ?? null,
+    p_source: input.context.source,
+    p_correlation_id: safeUuid(input.context.correlationId),
+    p_request_id: input.context.requestId ?? null,
+    p_changes: input.changes ?? [],
+    p_metadata: sanitizeMetadata(input.metadata ?? {}),
+    p_missing_actor_context: !input.context.actorUserId && input.context.source === "api",
+    p_target_member_uuid: safeUuid(input.targetMemberId),
+    p_purpose_code: input.purposeCode ?? null,
+    p_legal_basis: input.legalBasis ?? null,
+    p_data_categories: input.dataCategories ?? [],
+    p_ip_address: input.context.ipAddress ?? null,
+    p_system_component: input.context.systemComponent ?? null,
+    p_outcome: input.outcome ?? "success",
+    p_error_code: input.errorCode ?? null,
+    p_org_ids: orgIds,
+  });
+  if (error || !eventId) throw new Error(error?.message ?? "Audit event could not be recorded");
+  return eventId;
 }
