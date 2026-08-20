@@ -6,6 +6,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { resolveDefaultRole } from "@/lib/branding";
 import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onboarding-state";
 import { resolvePostLoginDestination } from "@/lib/auth/post-login";
+import { listCurrentLegalDocuments } from "@/lib/server/legal-document-records";
 
 export default async function OnboardingPage() {
   const supabase = await createClient();
@@ -37,11 +38,13 @@ export default async function OnboardingPage() {
   } : null;
   const service = createServiceClient();
   const orgId = affiliation?.org_id as string | undefined;
-  const [{ data: organisation }, { data: professionRows }, { data: regionRows }, { data: secondaryRows }] = await Promise.all([
+  const audience = affiliation?.is_member ? "member" : "non_member";
+  const [{ data: organisation }, { data: professionRows }, { data: regionRows }, { data: secondaryRows }, legalDocuments] = await Promise.all([
     orgId ? service.from("organisations").select("terminology,statistics_profile_config").eq("id", orgId).maybeSingle() : Promise.resolve({ data: null }),
     orgId ? service.from("organisation_profession_types").select("profession_type_id,display_order,profession_types(name)").eq("org_id", orgId).order("display_order") : Promise.resolve({ data: [] }),
     orgId ? service.from("organisation_work_regions").select("code,name_da,name_en").eq("org_id", orgId).eq("active", true).order("display_order") : Promise.resolve({ data: [] }),
     rh?.id ? service.from("rights_holder_profession_types").select("profession_type_id").eq("rights_holder_id", rh.id) : Promise.resolve({ data: [] }),
+    orgId ? listCurrentLegalDocuments(service, orgId, audience) : Promise.resolve([]),
   ]);
   const statisticsProfile = {
     config: (organisation?.statistics_profile_config ?? {}) as Record<string, boolean>,
@@ -51,5 +54,5 @@ export default async function OnboardingPage() {
     secondaryProfessionTypeIds: (secondaryRows ?? []).map(row => row.profession_type_id as string),
   };
 
-  return <OnboardingClient rh={decryptRettighedshaver(profile)} user={user} statisticsProfile={statisticsProfile} isRepeatOnboarding={onboardingStatus === "reset_required"} />;
+  return <OnboardingClient rh={decryptRettighedshaver(profile)} user={user} statisticsProfile={statisticsProfile} legalDocuments={legalDocuments} isRepeatOnboarding={onboardingStatus === "reset_required"} />;
 }
