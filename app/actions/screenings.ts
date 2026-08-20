@@ -184,6 +184,9 @@ export async function importScreeningSourceRows(params: {
     productionYear?: number; duration?: number; viewCount?: number;
     productionCountries?: string[]; directors?: string[]; genre?: string; category?: string;
     description?: string; productionCompanies?: string[]; imdbId?: string;
+    broadcastTime?: string; listingId?: string; seriesId?: string; episodeId?: string;
+    originalTitle?: string; episodeTitle?: string; actors?: string; editorialLink?: string;
+    broadcastTitle?: string;
   }>;
 }) {
   const user = await currentUser();
@@ -211,6 +214,15 @@ export async function importScreeningSourceRows(params: {
     description: row.description?.trim() || null,
     production_companies: row.productionCompanies?.length ? row.productionCompanies : null,
     imdb_id: row.imdbId?.trim() || null,
+    broadcast_time: row.broadcastTime?.trim() || null,
+    listing_id: row.listingId?.trim() || null,
+    series_id: row.seriesId?.trim() || null,
+    episode_id: row.episodeId?.trim() || null,
+    original_title: row.originalTitle?.trim() || null,
+    episode_title: row.episodeTitle?.trim() || null,
+    actors: row.actors?.trim() || null,
+    editorial_link: row.editorialLink?.trim() || null,
+    broadcast_title: row.broadcastTitle?.trim() || null,
   }));
   const chunkSize = 1000;
   for (let index = 0; index < rows.length; index += chunkSize) {

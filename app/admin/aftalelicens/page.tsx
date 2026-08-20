@@ -139,6 +139,16 @@ interface ColMap {
     descriptionCol: number | null
     productionCompanyCols: number[]
     imdbIdCol: number | null
+    // Yderligere felter fra Simply.TV-specifikationen (TASK-epg-sendedata-arkitektur.md).
+    broadcastTimeCol: number | null
+    listingIdCol: number | null
+    seriesIdCol: number | null
+    episodeIdCol: number | null    // Primær matchingnøgle — stabilt indholds-ID, genbruges ved genudsendelser
+    originalTitleCol: number | null
+    episodeTitleCol: number | null
+    actorsCol: number | null
+    editorialLinkCol: number | null
+    broadcastTitleCol: number | null
 }
 
 function detectColumns(headers: string[]): ColMap {
@@ -169,6 +179,8 @@ function detectColumns(headers: string[]): ColMap {
         return indices
     }
     return {
+        // "Original Title" og "Episode Title" er egne, adskilte felter (se nedenfor) —
+        // titleCol skal derfor kun finde selve "Title" (som sendt), ikke de to andre.
         titleCol:    find("titel", "title", "programtitel", "programnavn", "program", "produktionstitel", "navn"),
         // "Channel name" (læsbart navn, fx "TV2") tjekkes FØR den generiske "channel" —
         // Simply.TV har begge et numerisk "Channel"-ID og et læsbart "Channel Name" som
@@ -190,6 +202,17 @@ function detectColumns(headers: string[]): ColMap {
         descriptionCol:         find("beskrivelse", "description"),
         productionCompanyCols:  findAll("produktionsselskab", "company of production", "production company"),
         imdbIdCol:              find("imdb"),
+        broadcastTimeCol:       find("sendetidspunkt", "broadcast time"),
+        listingIdCol:           find("listing id", "listing-id"),
+        seriesIdCol:            find("serie-id", "series id"),
+        // Episode Id er den PRIMÆRE matchingnøgle (stabil på tværs af genudsendelser) — søges
+        // specifikt, ikke via findExcludingId (som bevidst udelukker "id"-kolonner andetsteds).
+        episodeIdCol:           find("episode id", "afsnit-id"),
+        originalTitleCol:       find("originaltitel", "original title"),
+        episodeTitleCol:        find("afsnitstitel", "episode title"),
+        actorsCol:              find("skuespillere", "actors"),
+        editorialLinkCol:       find("editorial link", "redaktionelt link"),
+        broadcastTitleCol:      find("broadcast title", "sendetitel"),
     }
 }
 
@@ -225,6 +248,16 @@ interface ParsedRow {
     description?: string
     productionCompanies?: string[]
     imdbId?: string
+    // Yderligere felter fra Simply.TV-specifikationen.
+    broadcastTime?: string
+    listingId?: string
+    seriesId?: string
+    episodeId?: string    // Primær matchingnøgle — stabilt indholds-ID, genbruges ved genudsendelser
+    originalTitle?: string
+    episodeTitle?: string
+    actors?: string
+    editorialLink?: string
+    broadcastTitle?: string
 }
 
 interface FilterResult {
@@ -321,9 +354,20 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                     ? cm.productionCompanyCols.map(i => String(row[i] ?? "").trim()).filter(Boolean)
                     : undefined
                 const imdbId = cm.imdbIdCol !== null ? String(row[cm.imdbIdCol] ?? "").trim() || undefined : undefined
+                const broadcastTime = cm.broadcastTimeCol !== null ? String(row[cm.broadcastTimeCol] ?? "").trim() || undefined : undefined
+                const listingId = cm.listingIdCol !== null ? String(row[cm.listingIdCol] ?? "").trim() || undefined : undefined
+                const seriesId = cm.seriesIdCol !== null ? String(row[cm.seriesIdCol] ?? "").trim() || undefined : undefined
+                const episodeId = cm.episodeIdCol !== null ? String(row[cm.episodeIdCol] ?? "").trim() || undefined : undefined
+                const originalTitle = cm.originalTitleCol !== null ? String(row[cm.originalTitleCol] ?? "").trim() || undefined : undefined
+                const episodeTitle = cm.episodeTitleCol !== null ? String(row[cm.episodeTitleCol] ?? "").trim() || undefined : undefined
+                const actors = cm.actorsCol !== null ? String(row[cm.actorsCol] ?? "").trim() || undefined : undefined
+                const editorialLink = cm.editorialLinkCol !== null ? String(row[cm.editorialLinkCol] ?? "").trim() || undefined : undefined
+                const broadcastTitle = cm.broadcastTitleCol !== null ? String(row[cm.broadcastTitleCol] ?? "").trim() || undefined : undefined
                 return {
                     rawTitle, channel, broadcastDate, duration, viewCount, season, episode, productionYear,
                     productionCountries, directors, genre, category, description, productionCompanies, imdbId,
+                    broadcastTime, listingId, seriesId, episodeId, originalTitle, episodeTitle, actors,
+                    editorialLink, broadcastTitle,
                 } satisfies ParsedRow
             }).filter(Boolean) as ParsedRow[]
 
@@ -555,6 +599,54 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                                 {colMap.productionYearCol !== null && (
                                     <span>Produktionsår → &quot;{headers[colMap.productionYearCol]}&quot;</span>
                                 )}
+                                {colMap.genreCol !== null && (
+                                    <span>Genre → &quot;{headers[colMap.genreCol]}&quot;</span>
+                                )}
+                                {colMap.categoryCol !== null && (
+                                    <span>Kategori → &quot;{headers[colMap.categoryCol]}&quot;</span>
+                                )}
+                                {colMap.descriptionCol !== null && (
+                                    <span>Beskrivelse → &quot;{headers[colMap.descriptionCol]}&quot;</span>
+                                )}
+                                {colMap.imdbIdCol !== null && (
+                                    <span>IMDb-ID → &quot;{headers[colMap.imdbIdCol]}&quot;</span>
+                                )}
+                                {colMap.countryCols.length > 0 && (
+                                    <span>Land → {colMap.countryCols.map(i => `"${headers[i]}"`).join(", ")}</span>
+                                )}
+                                {colMap.directorCols.length > 0 && (
+                                    <span>Instruktør → {colMap.directorCols.map(i => `"${headers[i]}"`).join(", ")}</span>
+                                )}
+                                {colMap.productionCompanyCols.length > 0 && (
+                                    <span>Produktionsselskab → {colMap.productionCompanyCols.map(i => `"${headers[i]}"`).join(", ")}</span>
+                                )}
+                                {colMap.episodeIdCol !== null && (
+                                    <span>Episode-ID → &quot;{headers[colMap.episodeIdCol]}&quot;</span>
+                                )}
+                                {colMap.seriesIdCol !== null && (
+                                    <span>Serie-ID → &quot;{headers[colMap.seriesIdCol]}&quot;</span>
+                                )}
+                                {colMap.listingIdCol !== null && (
+                                    <span>Listing-ID → &quot;{headers[colMap.listingIdCol]}&quot;</span>
+                                )}
+                                {colMap.broadcastTimeCol !== null && (
+                                    <span>Sendetidspunkt → &quot;{headers[colMap.broadcastTimeCol]}&quot;</span>
+                                )}
+                                {colMap.originalTitleCol !== null && (
+                                    <span>Originaltitel → &quot;{headers[colMap.originalTitleCol]}&quot;</span>
+                                )}
+                                {colMap.episodeTitleCol !== null && (
+                                    <span>Afsnitstitel → &quot;{headers[colMap.episodeTitleCol]}&quot;</span>
+                                )}
+                                {colMap.broadcastTitleCol !== null && (
+                                    <span>Sendetitel → &quot;{headers[colMap.broadcastTitleCol]}&quot;</span>
+                                )}
+                                {colMap.actorsCol !== null && (
+                                    <span>Skuespillere → &quot;{headers[colMap.actorsCol]}&quot;</span>
+                                )}
+                                {colMap.editorialLinkCol !== null && (
+                                    <span>Redaktionelt link → &quot;{headers[colMap.editorialLinkCol]}&quot;</span>
+                                )}
                             </div>
                         </div>
 
@@ -647,6 +739,9 @@ export default function AftalelicensPage() {
                 productionCountries: row.productionCountries, directors: row.directors,
                 genre: row.genre, category: row.category, description: row.description,
                 productionCompanies: row.productionCompanies, imdbId: row.imdbId,
+                broadcastTime: row.broadcastTime, listingId: row.listingId, seriesId: row.seriesId,
+                episodeId: row.episodeId, originalTitle: row.originalTitle, episodeTitle: row.episodeTitle,
+                actors: row.actors, editorialLink: row.editorialLink, broadcastTitle: row.broadcastTitle,
             })),
         })
         if (!result.success) {
