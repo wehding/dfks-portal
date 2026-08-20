@@ -1286,6 +1286,9 @@ setActiveField(fieldId)
                                                 <SelectItem value="ingen">Ingen overenskomst</SelectItem>
                                             </SelectContent>
                                         </Select>
+                                        {formData.collectiveAgreementName && (
+                                            <p className="text-[10px] text-muted-foreground mt-1">Kontrakten nævner: &quot;{formData.collectiveAgreementName}&quot;</p>
+                                        )}
                                     </F>
                                 </div>
 
@@ -1451,10 +1454,6 @@ setActiveField(fieldId)
                                     <Label className="text-xs mb-3 block font-semibold uppercase tracking-wide text-muted-foreground">Kontraktbeskyttelse</Label>
                                     <RightRow label={t("admin.validation.aiClause")} desc={t("admin.validation.aiClauseDesc")} checked={formData.aiDataMiningClause ?? false} onChange={(v) => setField("aiDataMiningClause", v)} />
                                 </div>
-                                <Separator />
-                                <F src={fieldSrc("collectiveAgreementName", true)} label="Overenskomst-navn">
-                                    <Input value={String(formData.collectiveAgreementName ?? "")} onChange={(e) => setField("collectiveAgreementName", e.target.value)} placeholder="fx De4 2022-2024" />
-                                </F>
                             </TabsContent>
 
                             {/* ── TAB 4: GODKEND ── */}
