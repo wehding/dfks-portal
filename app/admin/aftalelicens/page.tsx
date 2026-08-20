@@ -131,10 +131,22 @@ interface ColMap {
     seasonCol: number | null
     episodeCol: number | null
     productionYearCol: number | null
+    // Berigende metadata — vigtig for senere værk-matching, men ikke krævet for selve importen.
+    countryCols: number[]
+    directorCols: number[]
+    genreCol: number | null
+    categoryCol: number | null
+    descriptionCol: number | null
+    productionCompanyCols: number[]
+    imdbIdCol: number | null
 }
 
 function detectColumns(headers: string[]): ColMap {
     const h = headers.map(s => String(s ?? "").toLowerCase().trim())
+    // Kolonner der ender på "id" (fx "Season Id", "Episode Id") er platform-identifikatorer,
+    // ikke det tal, vi leder efter — udelukkes eksplicit fra sæson/afsnit-genkendelsen, så de
+    // aldrig ved en fejl bliver valgt frem for den faktiske "Season Number"/"Episode Number".
+    const isIdColumn = (hh: string) => /\bid\b/.test(hh) || hh.endsWith("id")
     const find = (...candidates: string[]) => {
         for (const c of candidates) {
             const i = h.findIndex(hh => hh === c || hh.includes(c))
@@ -142,15 +154,39 @@ function detectColumns(headers: string[]): ColMap {
         }
         return null
     }
+    const findExcludingId = (...candidates: string[]) => {
+        for (const c of candidates) {
+            const i = h.findIndex(hh => !isIdColumn(hh) && (hh === c || hh.includes(c)))
+            if (i >= 0) return i
+        }
+        return null
+    }
+    const findAll = (...candidates: string[]) => {
+        const indices: number[] = []
+        h.forEach((hh, i) => {
+            if (candidates.some(c => hh === c || hh.includes(c))) indices.push(i)
+        })
+        return indices
+    }
     return {
         titleCol:    find("titel", "title", "programtitel", "programnavn", "program", "produktionstitel", "navn"),
         channelCol:  find("kanal", "channel", "sendekanal", "station", "tv-kanal"),
         dateCol:     find("dato", "date", "sendestart", "sendedato", "broadcastdate", "dato/tid", "startdato"),
         durationCol: find("varighed", "duration", "minutter", "spilletid", "tid", "længde", "length"),
         viewsCol:    find("visninger", "views", "visningstal", "antal visninger", "antal_visninger"),
-        seasonCol:          find("sæson", "season", "sæsonnummer", "sæson nr", "serie sæson"),
-        episodeCol:         find("afsnit", "episode", "afsnitsnummer", "afsnit nr", "episode nr", "episodenummer"),
-        productionYearCol:  find("produktionsår", "produktions år", "production year", "produktionsår", "år", "year", "årstal"),
+        // "Nummer"-varianter tjekkes FØRST — undgår at fx "Season Id"/"Episode Id" (platform-
+        // ID'er, ikke tal) ved en fejl bliver valgt før den faktiske "Season Number"/"Episode
+        // Number". findExcludingId er desuden en ekstra sikkerhed uafhængigt af rækkefølgen.
+        seasonCol:   findExcludingId("sæsonnummer", "sæson nr", "season number", "serie sæson", "sæson", "season"),
+        episodeCol:  findExcludingId("episodenummer", "afsnitsnummer", "afsnit nr", "episode nr", "episode number", "afsnit", "episode"),
+        productionYearCol:  find("produktionsår", "produktions år", "production year", "år", "year", "årstal"),
+        countryCols:            findAll("land", "country"),
+        directorCols:           findAll("instruktør", "director"),
+        genreCol:               find("genre"),
+        categoryCol:            find("kategori", "category"),
+        descriptionCol:         find("beskrivelse", "description"),
+        productionCompanyCols:  findAll("produktionsselskab", "company of production", "production company"),
+        imdbIdCol:              find("imdb"),
     }
 }
 
@@ -178,6 +214,14 @@ interface ParsedRow {
     season?: number
     episode?: number
     productionYear?: number
+    // Berigende metadata — samme navngivning som works-tabellen, af hensyn til senere matching.
+    productionCountries?: string[]
+    directors?: string[]
+    genre?: string
+    category?: string
+    description?: string
+    productionCompanies?: string[]
+    imdbId?: string
 }
 
 interface FilterResult {
@@ -253,7 +297,23 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                 const episode = episodeRaw !== undefined && episodeRaw !== "" ? Math.round(Number(episodeRaw)) || undefined : undefined
                 const pyRaw = cm.productionYearCol !== null ? row[cm.productionYearCol] : undefined
                 const productionYear = pyRaw !== undefined && pyRaw !== "" ? Math.round(Number(pyRaw)) || undefined : undefined
-                return { rawTitle, channel, broadcastDate, duration, viewCount, season, episode, productionYear } satisfies ParsedRow
+                const productionCountries = cm.countryCols.length
+                    ? cm.countryCols.map(i => String(row[i] ?? "").trim()).filter(Boolean)
+                    : undefined
+                const directors = cm.directorCols.length
+                    ? cm.directorCols.map(i => String(row[i] ?? "").trim()).filter(Boolean)
+                    : undefined
+                const genre = cm.genreCol !== null ? String(row[cm.genreCol] ?? "").trim() || undefined : undefined
+                const category = cm.categoryCol !== null ? String(row[cm.categoryCol] ?? "").trim() || undefined : undefined
+                const description = cm.descriptionCol !== null ? String(row[cm.descriptionCol] ?? "").trim() || undefined : undefined
+                const productionCompanies = cm.productionCompanyCols.length
+                    ? cm.productionCompanyCols.map(i => String(row[i] ?? "").trim()).filter(Boolean)
+                    : undefined
+                const imdbId = cm.imdbIdCol !== null ? String(row[cm.imdbIdCol] ?? "").trim() || undefined : undefined
+                return {
+                    rawTitle, channel, broadcastDate, duration, viewCount, season, episode, productionYear,
+                    productionCountries, directors, genre, category, description, productionCompanies, imdbId,
+                } satisfies ParsedRow
             }).filter(Boolean) as ParsedRow[]
 
             setAllRows(parsed)
@@ -569,7 +629,14 @@ export default function AftalelicensPage() {
         const result = await importScreeningSourceRows({
             source: batch.kilde,
             batchKey: batch.id,
-            rows: rows.map(row => ({ title: row.rawTitle, channel: row.channel, screeningDate: row.broadcastDate, season: row.season, episode: row.episode, productionYear: row.productionYear, duration: row.duration, viewCount: row.viewCount })),
+            rows: rows.map(row => ({
+                title: row.rawTitle, channel: row.channel, screeningDate: row.broadcastDate,
+                season: row.season, episode: row.episode, productionYear: row.productionYear,
+                duration: row.duration, viewCount: row.viewCount,
+                productionCountries: row.productionCountries, directors: row.directors,
+                genre: row.genre, category: row.category, description: row.description,
+                productionCompanies: row.productionCompanies, imdbId: row.imdbId,
+            })),
         })
         if (!result.success) {
             toast.error(result.error ?? "Kunne ikke gemme visningskilden")
