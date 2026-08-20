@@ -392,7 +392,7 @@ export const mockContracts: Contract[] = [
             pensionPercent: 10,
             pensionSupplement: 5500,
             personalSupplement: 3000,
-            otherSupplements: "Transporttillæg: 2.000 kr/md",
+            otherSupplements: [{ category: "rejsetillaeg" as const, amount: 2000, unit: "pr. måned", note: "Transporttillæg", sourceText: null }],
             workingWeeks: 22,
             svod: true,
             copydan: true,

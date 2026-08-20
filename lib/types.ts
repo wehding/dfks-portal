@@ -138,6 +138,27 @@ export interface Contract {
     extractedData?: ExtractedContractData
 }
 
+export type OtherSupplementCategory =
+    | "overtidstillaeg"
+    | "genetillaeg"
+    | "weekend_helligdag"
+    | "rejsetillaeg"
+    | "udetillaeg"
+    | "diaeter"
+    | "udstyr_telefon"
+    | "preproduktion"
+    | "efterarbejde"
+    | "fast_uspecificeret"
+    | "andet"
+
+export interface OtherSupplement {
+    category: OtherSupplementCategory
+    amount: number | null
+    unit: string | null
+    note: string
+    sourceText: string | null
+}
+
 export interface ExtractedContractData {
     productionType?: string
     salary?: number
@@ -162,8 +183,7 @@ export interface ExtractedContractData {
     pensionConfidence?: string
     pensionTag?: string
     personalSupplement?: number
-    postProductionSupplement?: number
-    otherSupplements?: string
+    otherSupplements?: OtherSupplement[] | null
     signatureStatus?: "yes" | "no" | "unknown"
     signatureMethod?: "handwritten" | "digital" | "none" | "unknown"
     signatureDate?: string

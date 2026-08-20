@@ -51,9 +51,21 @@ const properties: Record<string, JsonSchema> = {
   pensionBasisAmount: number,
   pensionSupplement: number,
   personalSupplement: number,
-  postProductionSupplement: number,
   loentillaeg: number,
-  otherSupplements: text,
+  otherSupplements: nullable({
+    type: "array",
+    items: {
+      type: "object",
+      required: ["category", "note"],
+      properties: {
+        category: { type: "string", enum: ["overtidstillaeg","genetillaeg","weekend_helligdag","rejsetillaeg","udetillaeg","diaeter","udstyr_telefon","preproduktion","efterarbejde","fast_uspecificeret","andet"] },
+        amount: { anyOf: [{ type: "number" }, { type: "null" }] },
+        unit: { anyOf: [{ type: "string" }, { type: "null" }] },
+        note: { type: "string" },
+        sourceText: { anyOf: [{ type: "string" }, { type: "null" }] },
+      },
+    },
+  }),
   holidayPayRate: number,
   betaRate: number,
   svod: boolean,

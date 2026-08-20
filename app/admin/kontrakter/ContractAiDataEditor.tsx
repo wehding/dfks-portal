@@ -42,9 +42,9 @@ const SALARY_SOURCE_LABELS: Record<string, string> = {
 };
 const SALARY_SOURCE_VALUES = Object.fromEntries(Object.entries(SALARY_SOURCE_LABELS).map(([value, label]) => [label, value]));
 const ARRAY_KEYS = new Set(["distribution", "productionCountries", "creditedRoles"]);
-const NUMBER_KEYS = new Set(["salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "pensionEmployerPercent", "pensionEmployeePercent", "pensionTotalPercent", "pensionBasisAmount", "personalSupplement", "postProductionSupplement", "royaltyPercent", "holidayPayRate", "betaRate", "signaturePage", "duration", "premiereYear"]);
+const NUMBER_KEYS = new Set(["salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "pensionEmployerPercent", "pensionEmployeePercent", "pensionTotalPercent", "pensionBasisAmount", "personalSupplement", "royaltyPercent", "holidayPayRate", "betaRate", "signaturePage", "duration", "premiereYear"]);
 const SOURCE_KEYS: Record<string, string> = {
-  salary: "salary", pensionPercent: "pension", personalSupplement: "supplements", postProductionSupplement: "supplements",
+  salary: "salary", pensionPercent: "pension", personalSupplement: "supplements",
   otherSupplements: "otherSupplements", signatureStatus: "signature", signatureMethod: "signature", signatureDate: "signature",
   signatureEvidence: "signature", signaturePage: "signature", workingWeeks: "workingWeeks",
   agreementReferenceStatus: "collectiveAgreement", copydan: "copydan", svod: "svod",
@@ -67,7 +67,6 @@ const FIELDS: Partial<Record<ContractValidationSectionKey, Field[]>> = {
   salary: [
     { key: "salary", label: "Ugeløn", type: "number" },
     { key: "personalSupplement", label: "Personligt tillæg", type: "number" },
-    { key: "postProductionSupplement", label: "Tillæg for efterarbejde", type: "number" },
     { key: "salaryUnit", label: "Lønenhed", type: "text" },
     { key: "salarySourceType", label: "Lønkilde", type: "text" },
     { key: "salaryConfidence", label: "Løn-confidence", type: "text" },
@@ -86,7 +85,7 @@ const FIELDS: Partial<Record<ContractValidationSectionKey, Field[]>> = {
     { key: "pensionAgreementTitle", label: "Overenskomstkilde", type: "text", readOnly: true },
     { key: "pensionAgreementSection", label: "Afsnit i overenskomsten", type: "text", readOnly: true },
     { key: "pensionEvidence", label: "Begrundelse", type: "textarea", readOnly: true },
-    { key: "otherSupplements", label: "Øvrige tillæg", type: "textarea" },
+    { key: "otherSupplements", label: "Øvrige tillæg", type: "textarea", readOnly: true },
     { key: "holidayPayRate", label: "Feriepenge %", type: "number" },
     { key: "betaRate", label: "BETA-sats", type: "number" },
   ],
