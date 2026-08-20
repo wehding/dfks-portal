@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 
 const analyseSource = readFileSync("lib/analyse.ts", "utf8");
 const legalMigration = readFileSync("supabase/migrations/20260820204753_strengthen_legal_onboarding_compliance.sql", "utf8");
+const legalVersionMigration = readFileSync("supabase/migrations/20260820210132_add_legal_acceptance_document_version.sql", "utf8");
+const legalRecordSource = readFileSync("lib/server/legal-document-records.ts", "utf8");
 
 test("kontraktraadgivning sender ikke raad PDF/base64 til AI", () => {
   assert.equal(analyseSource.includes('fileBuffer.toString("base64")'), false);
@@ -15,6 +17,12 @@ test("accept-historik kan markeres foraeldet uden at blive slettet", () => {
   assert.match(legalMigration, /superseded_at timestamptz/);
   assert.match(legalMigration, /superseded_by_document_version_id uuid/);
   assert.match(legalMigration, /legal_document_acceptances_active_idx/);
+});
+
+test("accept-historik gemmer dokumentversion eksplicit", () => {
+  assert.match(legalVersionMigration, /document_version integer/);
+  assert.match(legalVersionMigration, /document_version set not null/);
+  assert.match(legalRecordSource, /document_version: document\.version/);
 });
 
 test("terminale AI-jobfejl rydder midlertidig maskeret tekst", () => {

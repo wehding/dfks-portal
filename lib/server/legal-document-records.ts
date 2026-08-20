@@ -107,6 +107,7 @@ export async function recordLegalDocumentAcceptances(
     user_id: params.userId,
     document_version_id: document.id!,
     document_type: document.document_type,
+    document_version: document.version,
     audience: document.audience,
     content_hash: document.content_hash ?? hashLegalDocumentBody(document.body),
     accepted_at: now,
