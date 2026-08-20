@@ -6,7 +6,7 @@ import { getDFIPersonCredits, searchDFIPerson } from "@/app/actions/dfi";
 import { getTMDBPersonCombinedCredits, getTMDBPersonExternalIds, searchTMDBPerson } from "@/app/actions/tmdb";
 import { searchWikidataPeople } from "@/app/actions/wikidata";
 import { personSearchVariants, scorePersonName } from "@/lib/person-name-match";
-import { isAllowedPortraitSource, selectPortraitUrl } from "@/lib/person-portrait";
+import { isAllowedPortraitSource } from "@/lib/person-portrait";
 import { sourceSearchFailed, type SourceAttemptStatus } from "@/lib/source-search-status";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 
@@ -238,7 +238,11 @@ export async function confirmExternalPersonIdentity(
     if (conflict) return { success: false, error: "En valgt navneprofil er allerede knyttet til en anden bruger. Kontakt admin." };
   }
   const portraitCandidates = trustedSelected.flatMap(candidate => candidate.portraitUrls?.length ? candidate.portraitUrls : candidate.imageUrl ? [candidate.imageUrl] : []);
-  const portraitUrl = selectPortraitUrl(selectedPortraitUrl, portraitCandidates);
+  const portraitUrl = selectedPortraitUrl && portraitCandidates.includes(selectedPortraitUrl)
+    ? selectedPortraitUrl
+    : portraitCandidates.length === 1
+      ? portraitCandidates[0]
+      : null;
   let storedPortraitUrl: string | null = null;
   if (portraitUrl) {
     try {

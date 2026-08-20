@@ -15,9 +15,3 @@ export function isAllowedPortraitSource(sourceUrl: string) {
     return false;
   }
 }
-
-export function selectPortraitUrl(selectedPortraitUrl: string | null | undefined, portraitCandidates: string[]) {
-  return selectedPortraitUrl && portraitCandidates.includes(selectedPortraitUrl)
-    ? selectedPortraitUrl
-    : null;
-}

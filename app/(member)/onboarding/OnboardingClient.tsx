@@ -725,14 +725,6 @@ export default function OnboardingClient({
                     <p style={{ fontSize: "12px", color: "var(--on-surface-variant)", lineHeight: 1.5, margin: "4px 0 0" }}>{t("profile.portraitText")}</p>
                   </div>
                   <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      aria-pressed={selectedPortraitUrl === null}
-                      onClick={() => setSelectedPortraitUrl(null)}
-                      style={{ display: "flex", alignItems: "center", minHeight: "58px", border: selectedPortraitUrl === null ? "2px solid var(--foreground)" : "1px solid var(--input)", borderRadius: "8px", padding: "6px 12px", background: "var(--card)", cursor: "pointer", color: "var(--foreground)", fontSize: "12px", fontWeight: 600 }}
-                    >
-                      {t("onboarding.noPortrait")}
-                    </button>
                     {portraitOptions.map(([url, candidate]) => (
                       <button
                         key={url}
