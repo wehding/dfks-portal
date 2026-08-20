@@ -78,14 +78,17 @@ export async function getContractImportStates(contractIds: string[]) {
       .in("contract_id", ids)
       .order("created_at", { ascending: false }),
     db.from("contract_validations")
-      .select("contract_id")
+      .select("contract_id,extracted_data")
       .in("contract_id", ids)
       .not("extracted_data", "is", null)
       .neq("extracted_data", "{}"),
   ]);
-  if (importRes.error) return { success: false, error: "Importstatus kunne ikke hentes", states: {} as Record<string, string>, withAiData: [] as string[] };
+  if (importRes.error) return { success: false, error: "Importstatus kunne ikke hentes", states: {} as Record<string, string>, withAiData: [] as string[], needsManualSalaryReview: [] as string[] };
   const states: Record<string, string> = {};
   for (const item of importRes.data ?? []) if (item.contract_id && !states[item.contract_id]) states[item.contract_id] = item.status;
   const withAiData = (validationRes.data ?? []).map(v => v.contract_id as string);
-  return { success: true, states, withAiData };
+  const needsManualSalaryReview = (validationRes.data ?? [])
+    .filter(v => (v.extracted_data as Record<string, unknown>)?.needsManualSalaryReview === true)
+    .map(v => v.contract_id as string);
+  return { success: true, states, withAiData, needsManualSalaryReview };
 }

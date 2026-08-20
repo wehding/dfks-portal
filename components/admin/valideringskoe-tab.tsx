@@ -21,6 +21,7 @@ type KøRow = {
     status: string
     validation_id: string | null
     import_status: string | null
+    needsManualSalaryReview: boolean
 }
 
 // Kontrakt-status (kladde/valideret/arkiveret)
@@ -78,6 +79,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
     const [loading, setLoading] = useState(true)
     const [activeTab, setActiveTab] = useState<"afventer" | "gennemgaede">("afventer")
     const [importFilter, setImportFilter] = useState<string>("all")
+    const [salaryReviewFilter, setSalaryReviewFilter] = useState(false)
     const [søgning, setSøgning] = useState("")
 
     const load = useCallback(async () => {
@@ -100,6 +102,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
         console.log("[ValideringskøTab] importResult:", { success: importResult.success, statesCount: Object.keys(importResult.states ?? {}).length, withAiDataCount: importResult.withAiData?.length ?? "undefined" })
         const importStates = importResult.success ? importResult.states : {}
         const aiDataSet = new Set(importResult.success ? importResult.withAiData : [])
+        const salaryReviewSet = new Set(importResult.success ? (importResult.needsManualSalaryReview ?? []) : [])
 
         const mapped: KøRow[] = data.map((c: any) => ({
             id: c.id,
@@ -111,6 +114,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
             status: c.status,
             validation_id: aiDataSet.has(c.id) ? c.id : null,
             import_status: importStates[c.id] ?? null,
+            needsManualSalaryReview: salaryReviewSet.has(c.id),
         }))
         setRows(mapped)
         setLoading(false)
@@ -140,6 +144,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
     // Filtrer og sortér afventer-listen
     const filteredAfventer = afventer
         .filter(r => importFilter === "all" || effectiveImportStatus(r) === importFilter)
+        .filter(r => !salaryReviewFilter || r.needsManualSalaryReview)
         .filter(matcherSøgning)
         .sort((a, b) => (importSortOrder[effectiveImportStatus(a)] ?? 9) - (importSortOrder[effectiveImportStatus(b)] ?? 9))
 
@@ -200,6 +205,15 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
                         />
                     </div>
                     {activeTab === "afventer" && (
+                        <>
+                        <button
+                            type="button"
+                            onClick={() => setSalaryReviewFilter(v => !v)}
+                            title="Vis kun kontrakter der kræver manuel løngennemgang"
+                            className={`h-8 px-2.5 rounded-md border text-xs font-medium transition-colors ${salaryReviewFilter ? "border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200" : "border-input text-muted-foreground hover:text-foreground"}`}
+                        >
+                            ⚠ Løn
+                        </button>
                         <Select value={importFilter} onValueChange={setImportFilter}>
                             <SelectTrigger className="h-8 w-[180px] text-xs">
                                 <SelectValue />
@@ -214,6 +228,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
                                 <SelectItem value="no_ai_data">Mangler AI-data</SelectItem>
                             </SelectContent>
                         </Select>
+                        </>
                     )}
                 </div>
             </div>
@@ -259,9 +274,16 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
                                         </td>
                                         {activeTab === "afventer" && (
                                             <td className="px-4 py-3">
-                                                <Badge variant="outline" className={importClass[imp] ?? ""}>
-                                                    {importLabel[imp] ?? imp}
-                                                </Badge>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <Badge variant="outline" className={importClass[imp] ?? ""}>
+                                                        {importLabel[imp] ?? imp}
+                                                    </Badge>
+                                                    {r.needsManualSalaryReview && (
+                                                        <Badge variant="outline" className="border-amber-400 text-amber-700 bg-amber-50 dark:bg-amber-950 dark:text-amber-200" title="Kræver manuel løngennemgang">
+                                                            ⚠ Løn
+                                                        </Badge>
+                                                    )}
+                                                </div>
                                             </td>
                                         )}
                                         <td className="px-4 py-3">

@@ -140,6 +140,8 @@ function AdminValideringPageInner() {
     ])
     // Fortolkningsnote pr. label_key for den aktive kontrakts matchede overenskomst
     const [pctRuleNotes, setPctRuleNotes] = useState<Record<string, string>>({})
+    // Primær distribution for det tilknyttede værk (work_distributions)
+    const [workDistributions, setWorkDistributions] = useState<{ broadcaster: string | null; distributionType: string | null }[]>([])
 
     // Henter fortolkningsnoter for den matchede overenskomsts procentregler.
     // Skal kaldes BÅDE når en kontrakt åbnes (fra gemt data) OG efter hvert
@@ -152,6 +154,19 @@ function AdminValideringPageInner() {
             .then(r => r.ok ? r.json() : null)
             .then(json => { if (json?.notes) setPctRuleNotes(json.notes) })
     }, [])
+
+    // Hent work_distributions for tilknyttet værk — vises ved SVOD/royalty som kontekst
+    useEffect(() => {
+        setWorkDistributions([])
+        const workId = contracts.find(c => c.id === reviewingId)?.work_id
+        if (!workId) return
+        createClient().from("work_distributions" as any)
+            .select("broadcaster, distribution_type")
+            .eq("work_id", workId)
+            .then(({ data }: { data: Array<{ broadcaster: string | null; distribution_type: string | null }> | null }) => {
+                if (data?.length) setWorkDistributions((data as any[]).map(d => ({ broadcaster: d.broadcaster, distributionType: d.distribution_type })))
+            })
+    }, [reviewingId, contracts]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Opret ny producent dialog
     const [showNewEmployer, setShowNewEmployer] = useState(false)
@@ -393,6 +408,12 @@ function AdminValideringPageInner() {
                 overenskomst: ed.overenskomst ?? "ingen",
                 salary: ed.salary ?? "",
                 salaryUnit: ed.salaryUnit ?? "monthly",
+                salaryConfidence: ed.salaryConfidence ?? null,
+                salaryNote: ed.salaryNote ?? null,
+                salarySourceType: ed.salarySourceType ?? null,
+                needsManualSalaryReview: !!ed.needsManualSalaryReview,
+                postProductionSupplement: ed.postProductionSupplement ?? "",
+                agreementReferenceStatus: ed.agreementReferenceStatus ?? null,
                 startDate: ed.startDate ?? "",
                 endDate: ed.endDate ?? "",
                 pensionPercent: ed.pensionPercent ?? "",
@@ -643,6 +664,12 @@ function AdminValideringPageInner() {
             overenskomst,
             salary:                        ed.salary ?? "",
             salaryUnit:                    ed.salaryUnit ?? "monthly",
+            salaryConfidence:              ed.salaryConfidence ?? null,
+            salaryNote:                    ed.salaryNote ?? null,
+            salarySourceType:              ed.salarySourceType ?? null,
+            needsManualSalaryReview:       !!ed.needsManualSalaryReview,
+            postProductionSupplement:      ed.postProductionSupplement ?? "",
+            agreementReferenceStatus:      ed.agreementReferenceStatus ?? null,
             startDate:                     ed.startDate ?? "",
             endDate:                       ed.endDate ?? "",
             pensionPercent:                ed.pensionPercent ?? (impliedDe4 ? 9.5 : ""),
@@ -1291,6 +1318,16 @@ setActiveField(fieldId)
                                     </F>
                                 </div>
 
+                                <F src={fieldSrc("agreementReferenceStatus")} label="Overenskomsthenvisning">
+                                    <Select value={formData.agreementReferenceStatus ?? "unknown"} onValueChange={(v) => setField("agreementReferenceStatus", v)}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="yes">Ja — direkte navngiven overenskomst</SelectItem>
+                                            <SelectItem value="no">Nej — eksplicit afvist</SelectItem>
+                                            <SelectItem value="unknown">Ukendt / ikke afklaret</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </F>
                                 <F src={fieldSrc("gender")} label={t("admin.validation.gender")}>
                                     <Select value={formData.gender ?? ""} onValueChange={(v) => setField("gender", v)}>
                                         <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
@@ -1308,6 +1345,24 @@ setActiveField(fieldId)
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <F src={fieldSrc("salary")} label={<>{t("admin.validation.salary")}{salaryMeta.erBeløb && <span title="Forankret i beløb" className="ml-1 text-amber-500">💰</span>}{salaryMeta.forGenerisk && <span title="Fandt flere steder" className="ml-1 text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={salaryHl} active={activeField === "salary"} onClick={() => activateSource("salary", salaryHl)} /></>} locked={isLocked("salary")}>
                                         <Input type="number" value={String(formData.salary ?? "")} onChange={(e) => setField("salary", e.target.value)} placeholder="0" />
+                                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                            {formData.salaryConfidence && (
+                                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${formData.salaryConfidence === "high" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : formData.salaryConfidence === "medium" ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"}`}>
+                                                    {formData.salaryConfidence === "high" ? "Høj sikkerhed" : formData.salaryConfidence === "medium" ? "Middel sikkerhed" : "Lav sikkerhed"}
+                                                </span>
+                                            )}
+                                            {formData.salarySourceType && formData.salarySourceType !== "unknown" && (
+                                                <span className="text-[10px] text-muted-foreground">
+                                                    {formData.salarySourceType === "weekly" ? "Ugeløn" : formData.salarySourceType === "daily_converted" ? "Omregnet fra dagssats" : formData.salarySourceType === "hourly_converted" ? "Omregnet fra timesats" : formData.salarySourceType === "lump_calculated" ? "Beregnet fra klumpsum" : formData.salarySourceType === "invoice_line" ? "Fakturalinje" : formData.salarySourceType}
+                                                </span>
+                                            )}
+                                            {formData.needsManualSalaryReview && (
+                                                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">⚠ Kræver manuel kontrol</span>
+                                            )}
+                                        </div>
+                                        {formData.salaryNote && (
+                                            <p className="text-[10px] text-muted-foreground mt-0.5">{formData.salaryNote}</p>
+                                        )}
                                     </F>
                                     <F src={fieldSrc("salaryUnit")} label={t("admin.validation.salaryUnit")} locked={isLocked("salaryUnit")}>
                                         <Select value={formData.salaryUnit ?? "monthly"} onValueChange={(v) => setField("salaryUnit", v)}>
@@ -1356,10 +1411,13 @@ setActiveField(fieldId)
                                     <F src={fieldSrc("personalSupplement")} label={<>{t("admin.validation.personalSupplement")}<SourceBtn quote={supplementsHl} active={activeField === "supplements"} onClick={() => activateSource("supplements", supplementsHl)} /></>}>
                                         <Input type="number" value={String(formData.personalSupplement ?? "")} onChange={(e) => setField("personalSupplement", e.target.value)} placeholder="0" />
                                     </F>
-                                    <F src={fieldSrc("otherSupplements")} label={<>{t("admin.validation.other")}{sources.otherSupplements && <SourceBtn quote={sources.otherSupplements} active={activeField === "otherSupplements"} onClick={() => activateSource("otherSupplements", sources.otherSupplements)} />}</>}>
-                                        <Input value={String(formData.otherSupplements ?? "")} onChange={(e) => setField("otherSupplements", e.target.value)} placeholder="—" />
+                                    <F src={fieldSrc("postProductionSupplement")} label="Efterarbejdstillæg (kr.)">
+                                        <Input type="number" value={String(formData.postProductionSupplement ?? "")} onChange={(e) => setField("postProductionSupplement", e.target.value)} placeholder="0" />
                                     </F>
                                 </div>
+                                <F src={fieldSrc("otherSupplements")} label={<>{t("admin.validation.other")}{sources.otherSupplements && <SourceBtn quote={sources.otherSupplements} active={activeField === "otherSupplements"} onClick={() => activateSource("otherSupplements", sources.otherSupplements)} />}</>}>
+                                    <Input value={String(formData.otherSupplements ?? "")} onChange={(e) => setField("otherSupplements", e.target.value)} placeholder="—" />
+                                </F>
                                 <Separator />
                                 <Label className="text-xs block">Producentbidrag</Label>
                                 <div className="grid gap-3 sm:grid-cols-2">
@@ -1403,6 +1461,16 @@ setActiveField(fieldId)
                                             <p className="text-[10px] text-muted-foreground">SVOD kan være svær at afgøre sikkert fra kontrakten alene — tjek altid manuelt, uanset indstillingen ovenfor.</p>
                                             <SourceBtn quote={svodSrc ?? undefined} active={activeField === "svod"} onClick={() => activateSource("svod", svodSrc)} />
                                         </div>
+                                        {workDistributions.length > 0 && (
+                                            <div className="flex flex-wrap gap-1 -mt-0.5 px-0.5">
+                                                {workDistributions.map((d, i) => (
+                                                    <span key={i} className="text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">
+                                                        {d.broadcaster ?? "—"}{d.distributionType ? ` (${d.distributionType === "streaming" ? "streaming" : d.distributionType === "tv" ? "broadcast/TV" : d.distributionType === "both" ? "streaming + TV" : d.distributionType})` : ""}
+                                                    </span>
+                                                ))}
+                                                <span className="text-[10px] text-muted-foreground self-center">— primær distribution for dette værk</span>
+                                            </div>
+                                        )}
                                         <div className={`flex items-center justify-between rounded-md px-2.5 py-2 -mx-2.5 ${isLocked("copydan") ? "bg-muted/40" : formData.overenskomst === "de4-fiktion" ? "bg-amber-50 dark:bg-amber-950/25" : formData.copydan ? "bg-blue-50 dark:bg-blue-950/25" : ""}`}>
                                             <div>
                                                 <span className="text-sm flex items-center gap-1">Copydan{copydanMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={copydanSrc ?? undefined} active={activeField === "copydan"} onClick={() => activateSource("copydan", copydanSrc)} /></span>
