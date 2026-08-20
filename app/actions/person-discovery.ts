@@ -6,6 +6,7 @@ import { getDFIPersonCredits, searchDFIPerson } from "@/app/actions/dfi";
 import { getTMDBPersonCombinedCredits, getTMDBPersonExternalIds, searchTMDBPerson } from "@/app/actions/tmdb";
 import { searchWikidataPeople } from "@/app/actions/wikidata";
 import { personSearchVariants, scorePersonName } from "@/lib/person-name-match";
+import { isAllowedPortraitSource } from "@/lib/person-portrait";
 import { sourceSearchFailed, type SourceAttemptStatus } from "@/lib/source-search-status";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 
@@ -45,11 +46,10 @@ function extensionFromContentType(contentType: string | null) {
 }
 
 async function downloadPortraitToStorage(userId: string, sourceUrl: string) {
-  const url = new URL(sourceUrl);
-  const allowedHosts = new Set(["image.tmdb.org", "www.dfi.dk", "dfi.dk", "api.dfi.dk", "data.dfi.dk"]);
-  if (url.protocol !== "https:" || !allowedHosts.has(url.hostname.toLowerCase())) {
+  if (!isAllowedPortraitSource(sourceUrl)) {
     throw new Error("Portrætkilden er ikke tilladt.");
   }
+  const url = new URL(sourceUrl);
   const response = await fetch(url, {
     headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,image/*" },
     redirect: "error",

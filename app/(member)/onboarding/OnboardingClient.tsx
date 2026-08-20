@@ -729,6 +729,7 @@ export default function OnboardingClient({
                       <button
                         key={url}
                         type="button"
+                        aria-pressed={selectedPortraitUrl === url}
                         onClick={() => setSelectedPortraitUrl(url)}
                         style={{ display: "flex", alignItems: "center", gap: "8px", border: selectedPortraitUrl === url ? "2px solid var(--foreground)" : "1px solid var(--input)", borderRadius: "8px", padding: "6px 8px", background: "var(--card)", cursor: "pointer", color: "var(--foreground)" }}
                       >
