@@ -198,25 +198,20 @@ function AdminValideringPageInner() {
         supabase.from("rettighedshavere").select("id, full_name, gender").order("full_name")
             .then(({ data }) => { if (data) setRettighedshavere(data) })
 
-        // Hent overenskomster fra reference_docs katalog
-        supabase.from("reference_docs")
-            .select("title, doc_subtype")
-            .eq("archived", false)
-            .not("doc_subtype", "is", null)
+        // Hent overenskomster fra agreements — short_code som value, title som label.
+        // Deduplikér på short_code: flere versioner af samme overenskomst vises som ét valg.
+        supabase.from("agreements")
+            .select("short_code, title")
+            .in("status", ["approved", "archived"])
+            .order("title")
             .then(({ data }) => {
                 if (data?.length) {
                     const seen = new Set<string>()
                     const fromDb = data
-                        .filter(d => d.doc_subtype)
-                        .map(d => ({ value: d.doc_subtype!, label: d.title }))
+                        .filter(d => d.short_code)
+                        .map(d => ({ value: d.short_code!, label: d.title }))
                         .filter(o => seen.has(o.value) ? false : (seen.add(o.value), true))
-                    // Merge med defaults — DB-versioner overskriver
-                    setOverenskomster(prev => {
-                        const dbValues = new Set(fromDb.map(o => o.value))
-                        const merged = [...fromDb, ...prev.filter(p => !dbValues.has(p.value))]
-                        const deduped = merged.filter((o, i, arr) => arr.findIndex(x => x.value === o.value) === i)
-                        return deduped
-                    })
+                    if (fromDb.length) setOverenskomster(fromDb)
                 }
             })
     }, [])
