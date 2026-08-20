@@ -281,6 +281,16 @@ export function mergeContractExtractionChunks(chunks: Record<string, unknown>[])
           .map(item => Math.round(item)))).sort((left, right) => left - right);
         continue;
       }
+      if (key === "otherSupplements" && Array.isArray(value)) {
+        // Array-felt — samme faldgrube som episodeNumbers ville have haft uden
+        // særlig behandling: den generelle "første ikke-tomme værdi vinder"-regel
+        // nedenfor ville ellers lade et tidligt chunks TOMME array låse feltet,
+        // så et SENERE chunk, der rent faktisk finder et tillæg (fx i lønafsnittet),
+        // aldrig ville blive flettet ind. Sammenlægger derfor alle chunks' poster.
+        const previous = Array.isArray(merged.otherSupplements) ? merged.otherSupplements as unknown[] : [];
+        merged.otherSupplements = [...previous, ...value];
+        continue;
+      }
       if (key === "_sources" || key === "rightsOverview") {
         const previous = merged[key] && typeof merged[key] === "object" ? merged[key] as Record<string, unknown> : {};
         const next = value && typeof value === "object" ? value as Record<string, unknown> : {};
