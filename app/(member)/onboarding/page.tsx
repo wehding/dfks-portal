@@ -56,6 +56,7 @@ export default async function OnboardingPage() {
     workRegions: (regionRows ?? []).map(row => ({ code: row.code as string, nameDa: row.name_da as string, nameEn: row.name_en as string })),
     secondaryProfessionTypeIds: (secondaryRows ?? []).map(row => row.profession_type_id as string),
   };
+  const legalDocumentsReady = legalDocuments.length > 0 && legalDocuments.every(document => Boolean(document.id));
 
-  return <OnboardingClient rh={decryptRettighedshaver(profile)} user={user} statisticsProfile={statisticsProfile} legalDocuments={legalDocuments} isRepeatOnboarding={onboardingStatus === "reset_required"} />;
+  return <OnboardingClient rh={decryptRettighedshaver(profile)} user={user} statisticsProfile={statisticsProfile} legalDocuments={legalDocuments} legalDocumentsReady={legalDocumentsReady} isRepeatOnboarding={onboardingStatus === "reset_required"} />;
 }

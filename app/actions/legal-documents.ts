@@ -86,7 +86,11 @@ function cleanDocumentInput(input: { documentType: unknown; audience: unknown; t
   return { documentType: input.documentType, audience: input.audience, title, body };
 }
 
-export async function getOrganisationLegalDocuments(): Promise<{ documents: LegalDocumentSettingsRow[] }> {
+export async function getOrganisationLegalDocuments(): Promise<{
+  documents: LegalDocumentSettingsRow[];
+  schemaReady: boolean;
+  schemaMessage: string | null;
+}> {
   const { orgId } = await currentAdminOrg();
   const db = createServiceClient();
   const { data, error } = await db
@@ -97,9 +101,12 @@ export async function getOrganisationLegalDocuments(): Promise<{ documents: Lega
     .order("version", { ascending: false });
 
   if (error && error.code !== "42P01" && error.code !== "PGRST205") throw new Error(error.message);
+  const schemaReady = !(error && (error.code === "42P01" || error.code === "PGRST205"));
   const rows = (data ?? []) as VersionRow[];
 
   return {
+    schemaReady,
+    schemaMessage: schemaReady ? null : "Database-migrationerne til juridisk onboarding er ikke kørt endnu.",
     documents: LEGAL_DOCUMENT_AUDIENCES.flatMap(audience =>
       LEGAL_DOCUMENT_TYPES.map(documentType => {
         const matching = rows.filter(row => row.document_type === documentType && row.audience === audience);

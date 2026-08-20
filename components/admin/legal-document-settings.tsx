@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 type LegalDocumentSettingsRow = {
   documentType: LegalDocumentType;
@@ -42,6 +43,8 @@ function editorSource(
 export function LegalDocumentSettings() {
   const [rows, setRows] = useState<LegalDocumentSettingsRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [schemaReady, setSchemaReady] = useState(true);
+  const [schemaMessage, setSchemaMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [documentType, setDocumentType] = useState<LegalDocumentType>("privacy_notice");
   const [audience, setAudience] = useState<LegalDocumentAudience>("member");
@@ -66,6 +69,8 @@ export function LegalDocumentSettings() {
       .then(result => {
         if (!active) return;
         setRows(result.documents);
+        setSchemaReady(result.schemaReady);
+        setSchemaMessage(result.schemaMessage);
         const source = editorSource(result.documents, "privacy_notice", "member");
         if (source) {
           setTitle(source.title);
@@ -81,6 +86,8 @@ export function LegalDocumentSettings() {
     void getOrganisationLegalDocuments()
       .then(result => {
         setRows(result.documents);
+        setSchemaReady(result.schemaReady);
+        setSchemaMessage(result.schemaMessage);
         const source = editorSource(result.documents, documentType, audience);
         if (source) {
           setTitle(source.title);
@@ -148,16 +155,25 @@ export function LegalDocumentSettings() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={saveDraft} disabled={isPending || !body.trim() || !hasChanges}>
+          <Button type="button" variant="outline" onClick={saveDraft} disabled={!schemaReady || isPending || !body.trim() || !hasChanges}>
             {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Gem kladde
           </Button>
-          <Button type="button" onClick={publishVersion} disabled={isPending || publishDisabled}>
+          <Button type="button" onClick={publishVersion} disabled={!schemaReady || isPending || publishDisabled}>
             {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
             Publicér ny version
           </Button>
         </div>
       </div>
+
+      {!schemaReady && (
+        <Alert className="mt-5" variant="destructive">
+          <AlertTitle>Juridisk onboarding mangler databaseopsætning</AlertTitle>
+          <AlertDescription>
+            {schemaMessage ?? "Kør de nyeste Supabase-migrationer, før juridiske tekster kan gemmes eller publiceres."}
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">

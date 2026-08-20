@@ -74,12 +74,14 @@ export default function OnboardingClient({
   user,
   statisticsProfile,
   legalDocuments,
+  legalDocumentsReady,
   isRepeatOnboarding,
 }: {
   rh: OnboardingProfile | null;
   user: OnboardingUser | null;
   statisticsProfile: StatisticsProfileOptions;
   legalDocuments: LegalDocumentRecord[];
+  legalDocumentsReady: boolean;
   isRepeatOnboarding: boolean;
 }) {
   const { locale, t } = useI18n();
@@ -435,6 +437,10 @@ export default function OnboardingClient({
         setStep(5);
       }
     } else if (step === 5) {
+      if (!legalDocumentsReady) {
+        toast.error("Juridisk onboarding mangler databaseopsætning. Kontakt administrator.");
+        return;
+      }
       if (!legalAccepted) {
         toast.error("Du skal acceptere de aktuelle rettighedstekster for at fortsætte.");
         return;
@@ -467,7 +473,7 @@ export default function OnboardingClient({
       ? t("onboarding.importNeedsRetry")
       : t("onboarding.importRunning");
   const privacyDocument = legalDocuments.find(document => document.document_type === "privacy_notice");
-  const privacyStepBlocked = step === 5 && (!legalAccepted || (!isOrganisationMember && shareStatistics === null));
+  const privacyStepBlocked = step === 5 && (!legalDocumentsReady || !legalAccepted || (!isOrganisationMember && shareStatistics === null));
 
   if (isImportingDfi) {
     const approvedCount = dfiCredits.filter((c) => selectedDfiCredits[c.id]).length;
@@ -952,6 +958,11 @@ export default function OnboardingClient({
                   <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "10px" }}>
                     Dine data, dine rettigheder
                   </div>
+                  {!legalDocumentsReady && (
+                    <div style={{ marginBottom: "14px", border: "1px solid var(--destructive)", borderRadius: "8px", padding: "12px 14px", color: "var(--destructive)", fontSize: "13px", lineHeight: 1.5 }}>
+                      Juridisk onboarding mangler databaseopsætning. Kontakt administrator, så de nyeste migrationer kan blive kørt.
+                    </div>
+                  )}
                   <div style={{ display: "grid", gap: "12px" }}>
                     {legalDocuments.map(document => (
                       <details key={document.document_type} open={document.document_type === "privacy_notice"} style={{ border: "1px solid var(--border)", borderRadius: "8px", background: "var(--surface-container-lowest)" }}>

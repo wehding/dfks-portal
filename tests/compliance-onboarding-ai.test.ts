@@ -6,6 +6,8 @@ const analyseSource = readFileSync("lib/analyse.ts", "utf8");
 const legalMigration = readFileSync("supabase/migrations/20260820204753_strengthen_legal_onboarding_compliance.sql", "utf8");
 const legalVersionMigration = readFileSync("supabase/migrations/20260820210132_add_legal_acceptance_document_version.sql", "utf8");
 const legalRecordSource = readFileSync("lib/server/legal-document-records.ts", "utf8");
+const legalActionSource = readFileSync("app/actions/legal-documents.ts", "utf8");
+const onboardingClientSource = readFileSync("app/(member)/onboarding/OnboardingClient.tsx", "utf8");
 
 test("kontraktraadgivning sender ikke raad PDF/base64 til AI", () => {
   assert.equal(analyseSource.includes('fileBuffer.toString("base64")'), false);
@@ -28,4 +30,11 @@ test("accept-historik gemmer dokumentversion eksplicit", () => {
 test("terminale AI-jobfejl rydder midlertidig maskeret tekst", () => {
   assert.match(legalMigration, /p_status in \('blocked','dead'\) then null/);
   assert.match(legalMigration, /masked_text = case/);
+});
+
+test("manglende juridisk databaseopsætning blokerer onboarding tydeligt", () => {
+  assert.match(legalActionSource, /schemaReady/);
+  assert.match(legalActionSource, /PGRST205/);
+  assert.match(onboardingClientSource, /legalDocumentsReady/);
+  assert.match(onboardingClientSource, /mangler databaseopsætning/);
 });
