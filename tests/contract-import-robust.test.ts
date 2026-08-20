@@ -98,6 +98,18 @@ test("chunkresultater flettes deterministisk og positive rettighedsfund vinder",
   assert.equal(merged.signaturePage, 9);
 });
 
+test("otherSupplements sammenlægges på tværs af chunks — et tidligt tomt array låser ikke feltet", () => {
+  const merged = mergeContractExtractionChunks([
+    { workTitle: "Værket", otherSupplements: [] },
+    { otherSupplements: [{ category: "genetillaeg", amount: 3000, unit: "pr. uge", note: "Over- og forskudttid", sourceText: "[s1_c4] Fast tillæg for over- og forskudttid: kr. 3.000" }] },
+  ]);
+  assert.equal(Array.isArray(merged.otherSupplements), true);
+  const supplements = merged.otherSupplements as Array<Record<string, unknown>>;
+  assert.equal(supplements.length, 1);
+  assert.equal(supplements[0].category, "genetillaeg");
+  assert.equal(supplements[0].amount, 3000);
+});
+
 test("normalisering fjerner ukendte felter og accepterer danske tal", () => {
   const normalized = normalizeContractExtraction({
     workTitle: "  Min film  ", salary: "14.637,50", copydan: "ja",

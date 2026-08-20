@@ -131,10 +131,32 @@ interface ColMap {
     seasonCol: number | null
     episodeCol: number | null
     productionYearCol: number | null
+    // Berigende metadata — vigtig for senere værk-matching, men ikke krævet for selve importen.
+    countryCols: number[]
+    directorCols: number[]
+    genreCol: number | null
+    categoryCol: number | null
+    descriptionCol: number | null
+    productionCompanyCols: number[]
+    imdbIdCol: number | null
+    // Yderligere felter fra Simply.TV-specifikationen (TASK-epg-sendedata-arkitektur.md).
+    broadcastTimeCol: number | null
+    listingIdCol: number | null
+    seriesIdCol: number | null
+    episodeIdCol: number | null    // Primær matchingnøgle — stabilt indholds-ID, genbruges ved genudsendelser
+    originalTitleCol: number | null
+    episodeTitleCol: number | null
+    actorsCol: number | null
+    editorialLinkCol: number | null
+    broadcastTitleCol: number | null
 }
 
 function detectColumns(headers: string[]): ColMap {
     const h = headers.map(s => String(s ?? "").toLowerCase().trim())
+    // Kolonner der ender på "id" (fx "Season Id", "Episode Id") er platform-identifikatorer,
+    // ikke det tal, vi leder efter — udelukkes eksplicit fra sæson/afsnit-genkendelsen, så de
+    // aldrig ved en fejl bliver valgt frem for den faktiske "Season Number"/"Episode Number".
+    const isIdColumn = (hh: string) => /\bid\b/.test(hh) || hh.endsWith("id")
     const find = (...candidates: string[]) => {
         for (const c of candidates) {
             const i = h.findIndex(hh => hh === c || hh.includes(c))
@@ -142,15 +164,55 @@ function detectColumns(headers: string[]): ColMap {
         }
         return null
     }
+    const findExcludingId = (...candidates: string[]) => {
+        for (const c of candidates) {
+            const i = h.findIndex(hh => !isIdColumn(hh) && (hh === c || hh.includes(c)))
+            if (i >= 0) return i
+        }
+        return null
+    }
+    const findAll = (...candidates: string[]) => {
+        const indices: number[] = []
+        h.forEach((hh, i) => {
+            if (candidates.some(c => hh === c || hh.includes(c))) indices.push(i)
+        })
+        return indices
+    }
     return {
+        // "Original Title" og "Episode Title" er egne, adskilte felter (se nedenfor) —
+        // titleCol skal derfor kun finde selve "Title" (som sendt), ikke de to andre.
         titleCol:    find("titel", "title", "programtitel", "programnavn", "program", "produktionstitel", "navn"),
-        channelCol:  find("kanal", "channel", "sendekanal", "station", "tv-kanal"),
+        // "Channel name" (læsbart navn, fx "TV2") tjekkes FØR den generiske "channel" —
+        // Simply.TV har begge et numerisk "Channel"-ID og et læsbart "Channel Name" som
+        // separate kolonner; uden denne rækkefølge vælges ID'et fejlagtigt.
+        channelCol:  find("kanal", "channel name", "sendekanal", "station", "tv-kanal", "channel"),
         dateCol:     find("dato", "date", "sendestart", "sendedato", "broadcastdate", "dato/tid", "startdato"),
         durationCol: find("varighed", "duration", "minutter", "spilletid", "tid", "længde", "length"),
         viewsCol:    find("visninger", "views", "visningstal", "antal visninger", "antal_visninger"),
-        seasonCol:          find("sæson", "season", "sæsonnummer", "sæson nr", "serie sæson"),
-        episodeCol:         find("afsnit", "episode", "afsnitsnummer", "afsnit nr", "episode nr", "episodenummer"),
-        productionYearCol:  find("produktionsår", "produktions år", "production year", "produktionsår", "år", "year", "årstal"),
+        // "Nummer"-varianter tjekkes FØRST — undgår at fx "Season Id"/"Episode Id" (platform-
+        // ID'er, ikke tal) ved en fejl bliver valgt før den faktiske "Season Number"/"Episode
+        // Number". findExcludingId er desuden en ekstra sikkerhed uafhængigt af rækkefølgen.
+        seasonCol:   findExcludingId("sæsonnummer", "sæson nr", "season number", "serie sæson", "sæson", "season"),
+        episodeCol:  findExcludingId("episodenummer", "afsnitsnummer", "afsnit nr", "episode nr", "episode number", "afsnit", "episode"),
+        productionYearCol:  find("produktionsår", "produktions år", "production year", "år", "year", "årstal"),
+        countryCols:            findAll("land", "country"),
+        directorCols:           findAll("instruktør", "director"),
+        genreCol:               find("genre"),
+        categoryCol:            find("kategori", "category"),
+        descriptionCol:         find("beskrivelse", "description"),
+        productionCompanyCols:  findAll("produktionsselskab", "company of production", "production company"),
+        imdbIdCol:              find("imdb"),
+        broadcastTimeCol:       find("sendetidspunkt", "broadcast time"),
+        listingIdCol:           find("listing id", "listing-id"),
+        seriesIdCol:            find("serie-id", "series id"),
+        // Episode Id er den PRIMÆRE matchingnøgle (stabil på tværs af genudsendelser) — søges
+        // specifikt, ikke via findExcludingId (som bevidst udelukker "id"-kolonner andetsteds).
+        episodeIdCol:           find("episode id", "afsnit-id"),
+        originalTitleCol:       find("originaltitel", "original title"),
+        episodeTitleCol:        find("afsnitstitel", "episode title"),
+        actorsCol:              find("skuespillere", "actors"),
+        editorialLinkCol:       find("editorial link", "redaktionelt link"),
+        broadcastTitleCol:      find("broadcast title", "sendetitel"),
     }
 }
 
@@ -178,6 +240,25 @@ interface ParsedRow {
     season?: number
     episode?: number
     productionYear?: number
+    // Berigende metadata — samme navngivning som works-tabellen, af hensyn til senere matching.
+    productionCountries?: string[]
+    directors?: string[]
+    primaryDirector?: string    // Bro til works.director (ental) — se ARKITEKTUR-works-director-array.md
+    genre?: string
+    category?: string
+    description?: string
+    productionCompanies?: string[]
+    imdbId?: string
+    // Yderligere felter fra Simply.TV-specifikationen.
+    broadcastTime?: string
+    listingId?: string
+    seriesId?: string
+    episodeId?: string    // Primær matchingnøgle — stabilt indholds-ID, genbruges ved genudsendelser
+    originalTitle?: string
+    episodeTitle?: string
+    actors?: string
+    editorialLink?: string
+    broadcastTitle?: string
 }
 
 interface FilterResult {
@@ -213,7 +294,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
         setParseError(null)
         try {
             const buffer = await file.arrayBuffer()
-            const raw = await readFirstWorksheetRows(buffer)
+            const raw = await readFirstWorksheetRows(buffer, file.name)
 
             if (raw.length < 2) {
                 setParseError("Filen ser tom ud eller mangler data")
@@ -238,9 +319,17 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                     if (d instanceof Date) broadcastDate = d.toISOString().slice(0, 10)
                     else if (typeof d === "string" && d) broadcastDate = d.slice(0, 10)
                     else if (typeof d === "number") {
-                        // Excel serial date
-                        const jsDate = new Date(Math.round((d - 25569) * 86400 * 1000))
-                        broadcastDate = jsDate.toISOString().slice(0, 10)
+                        // Excel serial date — dage siden 1899-12-30 (Excels epoke, inkl. dens
+                        // kendte "1900 var skudår"-fejl). Gyldige sendedatoer i praksis ligger
+                        // et godt stykke over 25569 (svarer til 1970-01-01) — en langt lavere
+                        // værdi er sandsynligvis IKKE en fuld dato (fx et klokkeslæt gemt som
+                        // decimalbrøk, eller en kolonne-fejlplacering), og bør IKKE stille
+                        // omregnes til en meningsløs 1900-dato. Sæt null i stedet, så det er
+                        // synligt som manglende, ikke forkert.
+                        if (d >= 25569) {
+                            const jsDate = new Date(Math.round((d - 25569) * 86400 * 1000))
+                            broadcastDate = jsDate.toISOString().slice(0, 10)
+                        }
                     }
                 }
                 const durRaw = cm.durationCol !== null ? row[cm.durationCol] : undefined
@@ -253,7 +342,39 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                 const episode = episodeRaw !== undefined && episodeRaw !== "" ? Math.round(Number(episodeRaw)) || undefined : undefined
                 const pyRaw = cm.productionYearCol !== null ? row[cm.productionYearCol] : undefined
                 const productionYear = pyRaw !== undefined && pyRaw !== "" ? Math.round(Number(pyRaw)) || undefined : undefined
-                return { rawTitle, channel, broadcastDate, duration, viewCount, season, episode, productionYear } satisfies ParsedRow
+                const productionCountries = cm.countryCols.length
+                    ? cm.countryCols.map(i => String(row[i] ?? "").trim()).filter(Boolean)
+                    : undefined
+                const directors = cm.directorCols.length
+                    ? cm.directorCols.map(i => String(row[i] ?? "").trim()).filter(Boolean)
+                    : undefined
+                // Bro til works.director (ental tekstfelt, ikke array) — indtil en
+                // eventuel fremtidig opgradering af works.director til array besluttes
+                // (se ARKITEKTUR-works-director-array.md). Bevarer den fulde liste i
+                // "directors" samtidig, så ingen information går tabt ved import.
+                const primaryDirector = directors?.[0]
+                const genre = cm.genreCol !== null ? String(row[cm.genreCol] ?? "").trim() || undefined : undefined
+                const category = cm.categoryCol !== null ? String(row[cm.categoryCol] ?? "").trim() || undefined : undefined
+                const description = cm.descriptionCol !== null ? String(row[cm.descriptionCol] ?? "").trim() || undefined : undefined
+                const productionCompanies = cm.productionCompanyCols.length
+                    ? cm.productionCompanyCols.map(i => String(row[i] ?? "").trim()).filter(Boolean)
+                    : undefined
+                const imdbId = cm.imdbIdCol !== null ? String(row[cm.imdbIdCol] ?? "").trim() || undefined : undefined
+                const broadcastTime = cm.broadcastTimeCol !== null ? String(row[cm.broadcastTimeCol] ?? "").trim() || undefined : undefined
+                const listingId = cm.listingIdCol !== null ? String(row[cm.listingIdCol] ?? "").trim() || undefined : undefined
+                const seriesId = cm.seriesIdCol !== null ? String(row[cm.seriesIdCol] ?? "").trim() || undefined : undefined
+                const episodeId = cm.episodeIdCol !== null ? String(row[cm.episodeIdCol] ?? "").trim() || undefined : undefined
+                const originalTitle = cm.originalTitleCol !== null ? String(row[cm.originalTitleCol] ?? "").trim() || undefined : undefined
+                const episodeTitle = cm.episodeTitleCol !== null ? String(row[cm.episodeTitleCol] ?? "").trim() || undefined : undefined
+                const actors = cm.actorsCol !== null ? String(row[cm.actorsCol] ?? "").trim() || undefined : undefined
+                const editorialLink = cm.editorialLinkCol !== null ? String(row[cm.editorialLinkCol] ?? "").trim() || undefined : undefined
+                const broadcastTitle = cm.broadcastTitleCol !== null ? String(row[cm.broadcastTitleCol] ?? "").trim() || undefined : undefined
+                return {
+                    rawTitle, channel, broadcastDate, duration, viewCount, season, episode, productionYear,
+                    productionCountries, directors, primaryDirector, genre, category, description, productionCompanies, imdbId,
+                    broadcastTime, listingId, seriesId, episodeId, originalTitle, episodeTitle, actors,
+                    editorialLink, broadcastTitle,
+                } satisfies ParsedRow
             }).filter(Boolean) as ParsedRow[]
 
             setAllRows(parsed)
@@ -484,6 +605,54 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                                 {colMap.productionYearCol !== null && (
                                     <span>Produktionsår → &quot;{headers[colMap.productionYearCol]}&quot;</span>
                                 )}
+                                {colMap.genreCol !== null && (
+                                    <span>Genre → &quot;{headers[colMap.genreCol]}&quot;</span>
+                                )}
+                                {colMap.categoryCol !== null && (
+                                    <span>Kategori → &quot;{headers[colMap.categoryCol]}&quot;</span>
+                                )}
+                                {colMap.descriptionCol !== null && (
+                                    <span>Beskrivelse → &quot;{headers[colMap.descriptionCol]}&quot;</span>
+                                )}
+                                {colMap.imdbIdCol !== null && (
+                                    <span>IMDb-ID → &quot;{headers[colMap.imdbIdCol]}&quot;</span>
+                                )}
+                                {colMap.countryCols.length > 0 && (
+                                    <span>Land → {colMap.countryCols.map(i => `"${headers[i]}"`).join(", ")}</span>
+                                )}
+                                {colMap.directorCols.length > 0 && (
+                                    <span>Instruktør → {colMap.directorCols.map(i => `"${headers[i]}"`).join(", ")}</span>
+                                )}
+                                {colMap.productionCompanyCols.length > 0 && (
+                                    <span>Produktionsselskab → {colMap.productionCompanyCols.map(i => `"${headers[i]}"`).join(", ")}</span>
+                                )}
+                                {colMap.episodeIdCol !== null && (
+                                    <span>Episode-ID → &quot;{headers[colMap.episodeIdCol]}&quot;</span>
+                                )}
+                                {colMap.seriesIdCol !== null && (
+                                    <span>Serie-ID → &quot;{headers[colMap.seriesIdCol]}&quot;</span>
+                                )}
+                                {colMap.listingIdCol !== null && (
+                                    <span>Listing-ID → &quot;{headers[colMap.listingIdCol]}&quot;</span>
+                                )}
+                                {colMap.broadcastTimeCol !== null && (
+                                    <span>Sendetidspunkt → &quot;{headers[colMap.broadcastTimeCol]}&quot;</span>
+                                )}
+                                {colMap.originalTitleCol !== null && (
+                                    <span>Originaltitel → &quot;{headers[colMap.originalTitleCol]}&quot;</span>
+                                )}
+                                {colMap.episodeTitleCol !== null && (
+                                    <span>Afsnitstitel → &quot;{headers[colMap.episodeTitleCol]}&quot;</span>
+                                )}
+                                {colMap.broadcastTitleCol !== null && (
+                                    <span>Sendetitel → &quot;{headers[colMap.broadcastTitleCol]}&quot;</span>
+                                )}
+                                {colMap.actorsCol !== null && (
+                                    <span>Skuespillere → &quot;{headers[colMap.actorsCol]}&quot;</span>
+                                )}
+                                {colMap.editorialLinkCol !== null && (
+                                    <span>Redaktionelt link → &quot;{headers[colMap.editorialLinkCol]}&quot;</span>
+                                )}
                             </div>
                         </div>
 
@@ -569,7 +738,18 @@ export default function AftalelicensPage() {
         const result = await importScreeningSourceRows({
             source: batch.kilde,
             batchKey: batch.id,
-            rows: rows.map(row => ({ title: row.rawTitle, channel: row.channel, screeningDate: row.broadcastDate, season: row.season, episode: row.episode, productionYear: row.productionYear, duration: row.duration, viewCount: row.viewCount })),
+            rows: rows.map(row => ({
+                title: row.rawTitle, channel: row.channel, screeningDate: row.broadcastDate,
+                season: row.season, episode: row.episode, productionYear: row.productionYear,
+                duration: row.duration, viewCount: row.viewCount,
+                productionCountries: row.productionCountries, directors: row.directors,
+                primaryDirector: row.primaryDirector,
+                genre: row.genre, category: row.category, description: row.description,
+                productionCompanies: row.productionCompanies, imdbId: row.imdbId,
+                broadcastTime: row.broadcastTime, listingId: row.listingId, seriesId: row.seriesId,
+                episodeId: row.episodeId, originalTitle: row.originalTitle, episodeTitle: row.episodeTitle,
+                actors: row.actors, editorialLink: row.editorialLink, broadcastTitle: row.broadcastTitle,
+            })),
         })
         if (!result.success) {
             toast.error(result.error ?? "Kunne ikke gemme visningskilden")

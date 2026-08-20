@@ -743,7 +743,7 @@ const CONTRACT_VALIDATION_SECTION_FIELDS: Record<ContractValidationSectionKey, r
     "pensionEmployeePercent", "pensionTotalPercent", "pensionBasis", "pensionBasisAmount",
     "pensionAgreementCode", "pensionAgreementTitle", "pensionAgreementSection",
     "pensionAgreementSourceUrl", "pensionSourceType", "pensionEvidence", "pensionConfidence", "pensionTag",
-    "personalSupplement", "postProductionSupplement", "otherSupplements",
+    "personalSupplement", "otherSupplements",
     "holidayPayRate", "betaRate", "_sources", "_lockedFields",
   ],
   series: ["seasonNumber", "episodeNumber", "episodeCount", "seasonCount", "_sources", "_lockedFields"],

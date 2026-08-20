@@ -179,7 +179,15 @@ export async function createScreeningClaim(params: {
 export async function importScreeningSourceRows(params: {
   source: string;
   batchKey: string;
-  rows: Array<{ title: string; channel?: string; screeningDate?: string; season?: number; episode?: number; productionYear?: number; duration?: number; viewCount?: number }>;
+  rows: Array<{
+    title: string; channel?: string; screeningDate?: string; season?: number; episode?: number;
+    productionYear?: number; duration?: number; viewCount?: number;
+    productionCountries?: string[]; directors?: string[]; primaryDirector?: string; genre?: string; category?: string;
+    description?: string; productionCompanies?: string[]; imdbId?: string;
+    broadcastTime?: string; listingId?: string; seriesId?: string; episodeId?: string;
+    originalTitle?: string; episodeTitle?: string; actors?: string; editorialLink?: string;
+    broadcastTitle?: string;
+  }>;
 }) {
   const user = await currentUser();
   if (!user || !(await isUserAdmin(user.id))) return { success: false, error: "Ikke autoriseret" };
@@ -199,6 +207,23 @@ export async function importScreeningSourceRows(params: {
     production_year: row.productionYear ?? null,
     duration_minutes: row.duration ?? null,
     view_count: row.viewCount ?? null,
+    production_countries: row.productionCountries?.length ? row.productionCountries : null,
+    directors: row.directors?.length ? row.directors : null,
+    primary_director: row.primaryDirector?.trim() || null,
+    genre: row.genre?.trim() || null,
+    category: row.category?.trim() || null,
+    description: row.description?.trim() || null,
+    production_companies: row.productionCompanies?.length ? row.productionCompanies : null,
+    imdb_id: row.imdbId?.trim() || null,
+    broadcast_time: row.broadcastTime?.trim() || null,
+    listing_id: row.listingId?.trim() || null,
+    series_id: row.seriesId?.trim() || null,
+    episode_id: row.episodeId?.trim() || null,
+    original_title: row.originalTitle?.trim() || null,
+    episode_title: row.episodeTitle?.trim() || null,
+    actors: row.actors?.trim() || null,
+    editorial_link: row.editorialLink?.trim() || null,
+    broadcast_title: row.broadcastTitle?.trim() || null,
   }));
   const chunkSize = 1000;
   for (let index = 0; index < rows.length; index += chunkSize) {

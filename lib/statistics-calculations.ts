@@ -16,8 +16,9 @@ export function salaryToMonthly(salary: number, unit: string) {
 
 export function salarySupplements(data: Record<string, unknown> | null | undefined) {
   const personalSupplement = statisticsNumber(data?.personalSupplement ?? data?.loentillaeg) ?? 0;
-  const postProductionSupplement = statisticsNumber(data?.postProductionSupplement) ?? 0;
-  return personalSupplement + postProductionSupplement;
+  const others = Array.isArray(data?.otherSupplements) ? (data.otherSupplements as Array<{ category?: string; amount?: unknown }>) : [];
+  const efterarbejde = others.filter(s => s.category === "efterarbejde").reduce((sum, s) => sum + (statisticsNumber(s.amount) ?? 0), 0);
+  return personalSupplement + efterarbejde;
 }
 
 export function salaryDataToWeekly(data: Record<string, unknown> | null | undefined) {

@@ -51,9 +51,21 @@ const properties: Record<string, JsonSchema> = {
   pensionBasisAmount: number,
   pensionSupplement: number,
   personalSupplement: number,
-  postProductionSupplement: number,
   loentillaeg: number,
-  otherSupplements: text,
+  otherSupplements: nullable({
+    type: "array",
+    items: {
+      type: "object",
+      required: ["category", "note"],
+      properties: {
+        category: { type: "string", enum: ["overtidstillaeg","genetillaeg","weekend_helligdag","rejsetillaeg","udetillaeg","diaeter","udstyr_telefon","preproduktion","efterarbejde","fast_uspecificeret","andet"] },
+        amount: { anyOf: [{ type: "number" }, { type: "null" }] },
+        unit: { anyOf: [{ type: "string" }, { type: "null" }] },
+        note: { type: "string" },
+        sourceText: { anyOf: [{ type: "string" }, { type: "null" }] },
+      },
+    },
+  }),
   holidayPayRate: number,
   betaRate: number,
   svod: boolean,
@@ -267,6 +279,16 @@ export function mergeContractExtractionChunks(chunks: Record<string, unknown>[])
         merged.episodeNumbers = Array.from(new Set([...previous, ...value]
           .filter(item => typeof item === "number" && Number.isFinite(item) && item >= 1)
           .map(item => Math.round(item)))).sort((left, right) => left - right);
+        continue;
+      }
+      if (key === "otherSupplements" && Array.isArray(value)) {
+        // Array-felt — samme faldgrube som episodeNumbers ville have haft uden
+        // særlig behandling: den generelle "første ikke-tomme værdi vinder"-regel
+        // nedenfor ville ellers lade et tidligt chunks TOMME array låse feltet,
+        // så et SENERE chunk, der rent faktisk finder et tillæg (fx i lønafsnittet),
+        // aldrig ville blive flettet ind. Sammenlægger derfor alle chunks' poster.
+        const previous = Array.isArray(merged.otherSupplements) ? merged.otherSupplements as unknown[] : [];
+        merged.otherSupplements = [...previous, ...value];
         continue;
       }
       if (key === "_sources" || key === "rightsOverview") {

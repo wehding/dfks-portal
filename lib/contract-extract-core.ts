@@ -7,7 +7,7 @@
 import { createClient } from "@supabase/supabase-js"
 import { getSupabaseServiceKey } from "@/lib/env"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
-import { normaliseSources } from "@/lib/ai-sources"
+import { normaliseSources, extractClauseIdFromCitation, stripClauseIdPrefix } from "@/lib/ai-sources"
 import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
@@ -333,6 +333,17 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             ? new Set(context.layout.clauses.map(c => c.id))
             : undefined
         extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>, knownIds)
+    }
+    // Strip [sX_cY]-tag fra otherSupplements[].sourceText og gem clauseId pr. post
+    if (Array.isArray(extracted.otherSupplements)) {
+        extracted = {
+            ...extracted,
+            otherSupplements: (extracted.otherSupplements as Array<Record<string, unknown>>).map(s => ({
+                ...s,
+                clauseId: extractClauseIdFromCitation(s.sourceText as string | null),
+                sourceText: stripClauseIdPrefix(s.sourceText as string | null),
+            })),
+        }
     }
 
     try {

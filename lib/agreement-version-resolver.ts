@@ -16,16 +16,28 @@ const SHORT_CODE_MAP: Record<string, string> = {
     "faf":          "faf-fiktion",
     "faf-fiktion":  "faf-fiktion",
     "faf-dokumentar": "faf-dokumentar",
+    "faf-tv-ansat":     "faf-tv-ansat",
+    "faf-tv-freelance": "faf-tv-freelance",
     "dj":           "dj-tv",
     "dj-tv":        "dj-tv",
     "metal":        "metal",
+}
+
+/** Normalisér whitespace/underscore til bindestreg, så mindre formateringsvariationer
+ *  i AI'ens output (fx "faf dokumentar", "faf_dokumentar") stadig matcher kortet. */
+function normaliseSeparators(value: string): string {
+    return value.trim().replace(/[\s_]+/g, "-")
 }
 
 /** Normalisér klassifikator-id til agreements.short_code — null hvis ukendt. */
 export function toShortCode(classifierCode: string | null | undefined): string | null {
     if (!classifierCode) return null
     const lc = classifierCode.toLowerCase()
-    return SHORT_CODE_MAP[lc] ?? null
+    if (SHORT_CODE_MAP[lc]) return SHORT_CODE_MAP[lc]
+    // Fald tilbage til en separator-normaliseret opslagsnøgle, hvis det eksakte
+    // match fejlede — dækker mindre formateringsvariationer uden at kræve, at
+    // hver enkelt variation er hardkodet i kortet på forhånd.
+    return SHORT_CODE_MAP[normaliseSeparators(lc)] ?? null
 }
 
 export type AgreementVersionResult =

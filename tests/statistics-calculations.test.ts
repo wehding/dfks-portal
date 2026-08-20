@@ -13,7 +13,10 @@ test("manglende lønenhed bliver ikke antaget som ugeløn", () => {
 });
 
 test("adds personal and post-production supplements consistently", () => {
-  const data = { salary: 10_000, salaryUnit: "weekly", personalSupplement: 1_000, postProductionSupplement: 500 };
+  const data = {
+    salary: 10_000, salaryUnit: "weekly", personalSupplement: 1_000,
+    otherSupplements: [{ category: "efterarbejde", amount: 500, unit: "pr. uge", note: "", sourceText: null }],
+  };
   assert.equal(salaryDataToWeekly(data), 11_500);
   assert.equal(salaryDataToMonthly(data), 49_833);
   assert.equal(contributionForContract({ id: "a", type: "a-løn", premiereYear: 2025, extractedData: { ...data, workingWeeks: 2 } })?.totalSalary, 23_000);

@@ -129,7 +129,7 @@ const CLAUSE_TAG_RE = /^\[([sp]\d+(?:_c\d+)?)\]\s*/
  * Udtræk klausul-ID fra starten af et citat, hvis AI'en inkluderede tagget i citatteksten.
  * "[s1_c14] A. Ugeløn..." → "s1_c14"
  */
-function extractClauseIdFromCitation(s: string | null | undefined): string | null {
+export function extractClauseIdFromCitation(s: string | null | undefined): string | null {
     if (!s) return null
     const m = s.match(CLAUSE_TAG_RE)
     return m ? m[1] : null
@@ -139,7 +139,7 @@ function extractClauseIdFromCitation(s: string | null | undefined): string | nul
  * Strip klausul-ID-tag fra starten af et citat.
  * "[s1_c14] A. Ugeløn..." → "A. Ugeløn..."
  */
-function stripClauseIdPrefix(s: string | null | undefined): string | null {
+export function stripClauseIdPrefix(s: string | null | undefined): string | null {
     if (!s) return null
     return s.replace(CLAUSE_TAG_RE, "")
 }
