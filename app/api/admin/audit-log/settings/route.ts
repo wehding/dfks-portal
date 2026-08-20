@@ -10,9 +10,8 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 const SettingsSchema = z.object({
-  retentionYears: z.number().int().min(1).max(30),
   siemEnabled: z.boolean(),
-  siemAdapter: z.enum(["generic", "splunk", "sentinel", "elastic"]),
+  siemAdapter: z.enum(["google_native", "generic", "splunk", "sentinel", "elastic"]),
   siemDestinationLabel: z.string().trim().max(120).nullable(),
   kmsKeyId: z.string().trim().max(300).nullable(),
 }).strict().refine(value => !value.siemEnabled || Boolean(value.siemDestinationLabel && value.kmsKeyId), {
@@ -37,15 +36,13 @@ export async function PATCH(request: NextRequest) {
   const parsed = SettingsSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Ugyldige indstillinger" }, { status: 400 });
   const service = createServiceClient();
-  const { data, error } = await service.from("audit_control_settings").update({
-    retention_years: parsed.data.retentionYears,
-    siem_enabled: parsed.data.siemEnabled,
-    siem_adapter: parsed.data.siemAdapter,
-    siem_destination_label: parsed.data.siemDestinationLabel,
-    kms_key_id: parsed.data.kmsKeyId,
-    updated_by: caller.userId,
-    updated_at: new Date().toISOString(),
-  }).eq("singleton", true).select("*").single();
+  const { data, error } = await service.rpc("update_audit_delivery_settings", {
+    p_siem_enabled: parsed.data.siemEnabled,
+    p_siem_adapter: parsed.data.siemAdapter,
+    p_destination_label: parsed.data.siemDestinationLabel ?? "",
+    p_kms_key_id: parsed.data.kmsKeyId ?? "",
+    p_updated_by: caller.userId,
+  });
   if (error || !data) return NextResponse.json({ error: "Indstillingerne kunne ikke gemmes" }, { status: 500 });
   await recordAuditEvent({
     context: auditRequestContext(request, caller, "admin", "admin.audit.settings"),
@@ -55,7 +52,7 @@ export async function PATCH(request: NextRequest) {
     purposeCode: "security_configuration",
     legalBasis: "GDPR Art. 5(2), 24 og 32",
     dataCategories: ["audit_configuration"],
-    metadata: { retentionYears: data.retention_years, siemEnabled: data.siem_enabled, adapter: data.siem_adapter },
+    metadata: { siemEnabled: data.siem_enabled, adapter: data.siem_adapter, retentionManagedByGovernance: true },
   });
   return NextResponse.json({ item: data }, { headers: { "cache-control": "no-store" } });
 }

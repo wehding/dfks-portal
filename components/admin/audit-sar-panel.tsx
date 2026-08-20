@@ -9,8 +9,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 
 type MemberOption = { id: string; name: string; orgId: string; orgName: string };
 type SarStatus = "draft" | "review" | "approved" | "rejected" | "generated" | "delivered" | "expired";
@@ -79,8 +77,6 @@ export function AuditSarPanel({ callerRole }: { callerRole: string }) {
   const [categories, setCategories] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [review, setReview] = useState<SarItem | null>(null);
-  const [unmask, setUnmask] = useState(false);
-  const [reason, setReason] = useState("");
   const [busyKey, setBusyKey] = useState("");
 
   const applyData = useCallback((result: SarResponse) => {
@@ -161,14 +157,10 @@ export function AuditSarPanel({ callerRole }: { callerRole: string }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           action,
-          maskStaffNames: action === "approve" ? !unmask : undefined,
-          balancingReason: action === "approve" && unmask ? reason : undefined,
         }),
       });
       if (!response.ok) throw new Error(await readError(response, "Anmodningen kunne ikke opdateres."));
       setReview(null);
-      setUnmask(false);
-      setReason("");
       toast.success(action === "approve" ? "Anmodningen er godkendt." : action === "reject" ? "Anmodningen er afvist." : "Rapporten er markeret som udleveret.");
       await load();
     } catch (requestError) {
@@ -184,17 +176,14 @@ export function AuditSarPanel({ callerRole }: { callerRole: string }) {
     setBusyKey(`${item.id}:${format}`);
     setError("");
     try {
-      const response = await fetch(`/api/admin/audit-log/sar/${item.id}/export?format=${format}`, { cache: "no-store" });
+      const response = await fetch(`/api/admin/audit-log/sar/${item.id}/export?format=${format}`, { method: "POST", cache: "no-store" });
       if (!response.ok) throw new Error(await readError(response, "Rapporten kunne ikke genereres."));
-      const blobUrl = URL.createObjectURL(await response.blob());
-      const link = document.createElement("a");
-      link.href = blobUrl;
-      link.download = `dfks-indsigt-${item.id}.${format}`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
-      toast.success(`${format.toUpperCase()}-rapporten er genereret.`);
+      const result = await response.json() as { url?: string };
+      if (!result.url) throw new Error("Downloadlinket blev ikke oprettet.");
+      const target = new URL(result.url, window.location.origin);
+      if (target.protocol !== "https:" && target.hostname !== "localhost") throw new Error("Downloadlinket bruger en ugyldig protokol.");
+      window.location.assign(target.href);
+      toast.success(`${format.toUpperCase()}-rapporten er klar via et 10-minutters link.`);
       await load();
     } catch (downloadError) {
       const message = downloadError instanceof Error ? downloadError.message : "Rapporten kunne ikke genereres.";
@@ -264,7 +253,7 @@ export function AuditSarPanel({ callerRole }: { callerRole: string }) {
                 <p className="text-xs text-muted-foreground">Oprettet {new Date(item.created_at).toLocaleString("da-DK")} · {item.data_categories.length ? item.data_categories.map(value => CATEGORY_OPTIONS.find(option => option[0] === value)?.[1] ?? value).join(", ") : "Alle datakategorier"}</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {item.status === "review" && <Button size="sm" onClick={() => { setReview(item); setUnmask(false); setReason(""); }}>Gennemgå</Button>}
+                {item.status === "review" && <Button size="sm" onClick={() => setReview(item)}>Gennemgå</Button>}
                 {(["approved", "generated", "delivered"] as SarStatus[]).includes(item.status) && (["pdf", "json", "csv"] as const).map(format => (
                   <Button key={format} size="sm" variant="outline" disabled={Boolean(busyKey)} onClick={() => void downloadReport(item, format)}>{busyKey === `${item.id}:${format}` ? <Loader2 className="animate-spin" /> : <Download />}{format.toUpperCase()}</Button>
                 ))}
@@ -283,14 +272,10 @@ export function AuditSarPanel({ callerRole }: { callerRole: string }) {
           </DialogHeader>
           {review && <div className="space-y-4">
             <div className="rounded-md border p-3 text-sm"><p className="font-medium">{review.target_member_label}</p><p className="text-muted-foreground">{review.org_label} · {periodLabel(review)}</p></div>
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div><p className="font-medium">Maskér medarbejdernavne</p><p className="text-xs text-muted-foreground">Standardvalget beskytter personalets identitet.</p></div>
-              <Switch aria-label="Maskér medarbejdernavne" checked={!unmask} disabled={callerRole !== "superadmin"} onCheckedChange={checked => setUnmask(!checked)} />
-            </div>
-            {unmask && <Label className="space-y-2">Dokumenteret nødvendighed og afvejning<Textarea value={reason} onChange={event => setReason(event.target.value)} placeholder="Beskriv hvorfor direkte medarbejderidentitet er nødvendig…" /><span className="text-xs text-muted-foreground">Mindst 20 tegn. Beslutningen logges.</span></Label>}
+            <div className="flex items-center gap-3 rounded-md border p-3"><ShieldCheck className="size-5" /><div><p className="font-medium">Medarbejdernavne maskeres</p><p className="text-xs text-muted-foreground">Afmaskering kan kun indstilles af en jurist og godkendes af en anden superadmin under Governance.</p></div></div>
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button variant="destructive" disabled={Boolean(busyKey)} onClick={() => void updateRequest(review, "reject")}>Afvis</Button>
-              <Button disabled={(unmask && reason.trim().length < 20) || Boolean(busyKey)} onClick={() => void updateRequest(review, "approve")}>{busyKey === `${review.id}:approve` && <Loader2 className="animate-spin" />}Godkend</Button>
+              <Button disabled={Boolean(busyKey)} onClick={() => void updateRequest(review, "approve")}>{busyKey === `${review.id}:approve` && <Loader2 className="animate-spin" />}Godkend maskeret</Button>
             </div>
           </div>}
         </DialogContent>

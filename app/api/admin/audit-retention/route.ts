@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     const { data: settings, error: settingsError } = await db
       .from("audit_control_settings")
       .select("retention_years")
-      .eq("id", 1)
+      .eq("singleton", true)
       .single();
     if (settingsError) throw new Error(settingsError.message);
     const retentionYears = Math.min(Math.max(Number(settings?.retention_years ?? 7), 1), 30);

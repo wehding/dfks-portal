@@ -9,7 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 type SiemData = {
   settings: { siem_enabled: boolean; siem_adapter: string; siem_destination_label: string | null; kms_key_id: string | null } | null;
-  lastReceipt: { delivered_at: string; event_count: number; adapter: string; key_id: string } | null;
+  lastReceipt: { delivered_at: string; event_count: number; adapter: string; key_id: string; worm_generation: string | null; cloud_run_revision: string | null } | null;
+  lastWorkerRun: { completed_at: string; run_type: string; status: string; cloud_run_revision: string | null; image_digest: string | null } | null;
   counts: { pending: number; processing: number; delivered: number; failed: number; deadLetter: number };
   integrity: { checked: number; invalid: number; ok: boolean };
 };
@@ -108,6 +109,8 @@ export function AuditSiemPanel() {
             <div className="grid gap-3 text-sm md:grid-cols-2">
               <div className="rounded-md border p-3"><p className="font-medium">Destination</p><p className="text-muted-foreground">{data.settings?.siem_destination_label || "Ikke konfigureret"}</p></div>
               <div className="rounded-md border p-3"><p className="font-medium">Seneste kvittering</p><p className="text-muted-foreground">{data.lastReceipt ? `${new Date(data.lastReceipt.delivered_at).toLocaleString("da-DK")} · ${data.lastReceipt.event_count} hændelser` : "Ingen levering er kvitteret endnu"}</p></div>
+              <div className="rounded-md border p-3"><p className="font-medium">WORM og KMS</p><p className="break-all text-muted-foreground">{data.lastReceipt?.worm_generation ? `GCS-generation ${data.lastReceipt.worm_generation} · ${data.lastReceipt.key_id}` : "Ingen Google-native WORM-kvittering endnu"}</p></div>
+              <div className="rounded-md border p-3"><p className="font-medium">Aktiv workerrevision</p><p className="break-all text-muted-foreground">{data.lastWorkerRun?.cloud_run_revision || data.lastReceipt?.cloud_run_revision || "Ikke dokumenteret endnu"}</p>{data.lastWorkerRun?.completed_at && <p className="text-xs text-muted-foreground">Senest verificeret/kørt {new Date(data.lastWorkerRun.completed_at).toLocaleString("da-DK")}</p>}</div>
             </div>
             {(data.counts.failed > 0 || data.counts.deadLetter > 0) && <div className="flex flex-col gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium">Nogle leverancer kræver opmærksomhed</p><p className="text-sm text-muted-foreground">Genlevering flytter fejlede hændelser tilbage til køen. Handlingen logges.</p></div><Button disabled={replaying} onClick={() => void replay()}>{replaying ? <Loader2 className="animate-spin" /> : <RotateCcw />}Genlevér fejl</Button></div>}
           </CardContent>

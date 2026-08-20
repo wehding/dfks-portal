@@ -1,5 +1,5 @@
 begin;
-select plan(10);
+select plan(15);
 
 select ok(
   exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'audit_events' and column_name = 'target_member_uuid')
@@ -51,8 +51,8 @@ select ok(
 );
 
 select ok(
-  not has_function_privilege('anon', 'public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz)', 'EXECUTE')
-  and not has_function_privilege('authenticated', 'public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz)', 'EXECUTE'),
+  not has_function_privilege('anon', 'public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz,text,text,text,bigint,text)', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz,text,text,text,bigint,text)', 'EXECUTE'),
   'browser roles cannot register subject access exports'
 );
 
@@ -74,7 +74,8 @@ begin
     request_id, gen_random_uuid(), gen_random_uuid(), 'approved', true, generator_id
   );
   export_id := public.register_subject_access_export(
-    request_id, 'json', repeat('a', 64), 1, true, generator_id, now() + interval '24 hours'
+    request_id, 'json', repeat('a', 64), 1, true, generator_id, now() + interval '24 hours',
+    'subject-access-exports', concat(gen_random_uuid(), '/test.json'), 'application/json', 123, 'object-version-test'
   );
   if export_id is null
     or not exists (select 1 from public.subject_access_exports where id = export_id and mask_staff_names)
@@ -95,6 +96,63 @@ begin
   if not blocked then raise exception 'Audit event could be modified'; end if;
 end $$;
 select pass('audit events remain append-only');
+
+select ok(
+  exists (select 1 from storage.buckets where id = 'subject-access-exports' and not public),
+  'subject access exports use a private storage bucket'
+);
+
+select ok(
+  not has_table_privilege('authenticated', 'public.audit_governance_decisions', 'SELECT,INSERT,UPDATE,DELETE')
+  and not has_table_privilege('authenticated', 'public.audit_retention_signatures', 'SELECT,INSERT,UPDATE,DELETE'),
+  'governance and KMS signature evidence are server-only'
+);
+
+do $$
+declare proposal uuid; proposer uuid := gen_random_uuid(); blocked boolean := false;
+begin
+  proposal := public.propose_audit_governance_decision(
+    null, 'retention_change', proposer, 'jurist',
+    'Syv års retention er godkendt efter dokumenteret juridisk vurdering.',
+    'GDPR Art. 5(2), 24 og 32', 7, null, null, null
+  );
+  begin
+    perform public.decide_audit_governance_decision(proposal, true, proposer, 'superadmin');
+  exception when others then blocked := true;
+  end;
+  if not blocked then raise exception 'Same person bypassed four-eyes approval'; end if;
+  perform public.decide_audit_governance_decision(proposal, true, gen_random_uuid(), 'superadmin');
+  perform public.effect_audit_governance_decision(proposal);
+  if not exists (
+    select 1 from public.audit_governance_decisions
+    where id = proposal
+      and status = 'effected'
+      and decision_hash is not null
+      and approval_hash is not null
+      and effect_hash is not null
+  ) then
+    raise exception 'Approved decision was not effected';
+  end if;
+end $$;
+select pass('retention governance enforces four eyes before effectuation');
+
+select ok(
+  not has_table_privilege('service_role', 'public.audit_control_settings', 'UPDATE')
+  and has_function_privilege('service_role', 'public.update_audit_delivery_settings(boolean,text,text,text,uuid)', 'EXECUTE'),
+  'retention cannot be changed through direct service-role updates'
+);
+
+do $$
+declare created_certificate_id uuid := gen_random_uuid();
+begin
+  insert into public.audit_retention_certificates(
+    id,first_sequence,last_sequence,event_count,first_chain_hash,last_chain_hash,certificate_hash,retention_years
+  ) values (created_certificate_id,900001,900001,1,repeat('1',64),repeat('2',64),encode(gen_random_bytes(32),'hex'),7);
+  if not exists (select 1 from public.audit_retention_signature_queue queue where queue.certificate_id = created_certificate_id and status = 'pending') then
+    raise exception 'Retention certificate was not queued for signing';
+  end if;
+end $$;
+select pass('retention deletion certificates are queued for KMS signing');
 
 select * from finish();
 rollback;

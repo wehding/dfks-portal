@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildStaffPseudonyms, subjectAccessEvents } from "../lib/audit-sar";
+import { buildStaffPseudonyms, subjectAccessEvents } from "../lib/audit-sar-core";
 import type { AuditEvent } from "../lib/audit-log";
 
 function event(actorId: string, name: string): AuditEvent {

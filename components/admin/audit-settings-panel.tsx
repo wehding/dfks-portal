@@ -13,7 +13,7 @@ type SettingsData = {
   retention_years: number;
   mask_staff_names_default: boolean;
   siem_enabled: boolean;
-  siem_adapter: "generic" | "splunk" | "sentinel" | "elastic";
+  siem_adapter: "google_native" | "generic" | "splunk" | "sentinel" | "elastic";
   siem_destination_label: string | null;
   kms_key_id: string | null;
   updated_at: string;
@@ -61,7 +61,6 @@ export function AuditSettingsPanel() {
 
   const validationError = useMemo(() => {
     if (!form) return "";
-    if (!Number.isInteger(form.retention_years) || form.retention_years < 1 || form.retention_years > 30) return "Retention skal være mellem 1 og 30 hele år.";
     if (form.siem_enabled && !form.siem_destination_label?.trim()) return "Angiv et forståeligt navn til SIEM-destinationen.";
     if (form.siem_enabled && !form.kms_key_id?.trim()) return "Angiv referencen til Google Cloud KMS-nøgleversionen.";
     return "";
@@ -76,7 +75,6 @@ export function AuditSettingsPanel() {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          retentionYears: form.retention_years,
           siemEnabled: form.siem_enabled,
           siemAdapter: form.siem_adapter,
           siemDestinationLabel: form.siem_destination_label?.trim() || null,
@@ -105,8 +103,8 @@ export function AuditSettingsPanel() {
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Settings2 className="size-5" />Audit- og SIEM-indstillinger</CardTitle><CardDescription>Ændringer logges. Private nøgler og adgangstokens lagres ikke i portalen.</CardDescription></CardHeader>
         <CardContent className="grid gap-5 md:grid-cols-2">
-          <Label className="space-y-2">Retention i hele år<Input type="number" min={1} max={30} step={1} value={form.retention_years} onChange={event => setForm({ ...form, retention_years: Number(event.target.value) })} /><span className="text-xs font-normal text-muted-foreground">Den fastlagte standard er syv år. Ændringer bør godkendes af DPO eller juridisk ansvarlig.</span></Label>
-          <Label className="space-y-2">SIEM-adapter<select className="h-10 w-full rounded-md border bg-background px-3" value={form.siem_adapter} onChange={event => setForm({ ...form, siem_adapter: event.target.value as SettingsData["siem_adapter"] })}><option value="generic">Generisk HTTPS</option><option value="splunk">Splunk HEC</option><option value="sentinel">Microsoft Sentinel</option><option value="elastic">Elastic</option></select><span className="text-xs font-normal text-muted-foreground">Destinationens endpoint og token konfigureres separat i Cloud Run.</span></Label>
+          <Label className="space-y-2">Retention i hele år<Input readOnly value={form.retention_years} /><span className="text-xs font-normal text-muted-foreground">Retention kan kun ændres via en fireøjnebeslutning under Governance.</span></Label>
+          <Label className="space-y-2">Leveringsadapter<select className="h-10 w-full rounded-md border bg-background px-3" value={form.siem_adapter} onChange={event => setForm({ ...form, siem_adapter: event.target.value as SettingsData["siem_adapter"] })}><option value="google_native">Google-native WORM + Logging</option><option value="generic">Generisk HTTPS</option><option value="splunk">Splunk HEC</option><option value="sentinel">Microsoft Sentinel</option><option value="elastic">Elastic</option></select><span className="text-xs font-normal text-muted-foreground">Google-native er standard. Kommercielle adaptere er bevaret til senere brug.</span></Label>
           <Label className="space-y-2">Navn på destination<Input value={form.siem_destination_label ?? ""} onChange={event => setForm({ ...form, siem_destination_label: event.target.value })} placeholder="Eksempel: Produktion SIEM" /></Label>
           <Label className="space-y-2">Google Cloud KMS-nøgleversion<Input value={form.kms_key_id ?? ""} onChange={event => setForm({ ...form, kms_key_id: event.target.value })} placeholder="projects/…/cryptoKeyVersions/1" /><span className="flex items-center gap-1 text-xs font-normal text-muted-foreground"><KeyRound className="size-3" />Kun en nøglereference—aldrig den private nøgle.</span></Label>
           <div className="flex items-center justify-between rounded-md border p-3 md:col-span-2"><div><p className="font-medium">Aktivér SIEM-levering</p><p className="text-xs text-muted-foreground">Auditloggen fortsætter uændret, når integrationen er deaktiveret; leverancerne bliver stående i kø.</p></div><Switch aria-label="Aktivér SIEM-levering" checked={form.siem_enabled} onCheckedChange={checked => setForm({ ...form, siem_enabled: checked })} /></div>

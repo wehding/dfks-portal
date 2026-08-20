@@ -21,6 +21,10 @@
       "schedule": "0 2 1 * *"
     },
     {
+      "path": "/api/admin/audit-sar-cleanup",
+      "schedule": "17 * * * *"
+    },
+    {
       "path": "/api/admin/gmail/contracts/watch",
       "schedule": "0 3 * * *"
     },

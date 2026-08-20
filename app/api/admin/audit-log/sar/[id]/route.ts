@@ -11,8 +11,6 @@ export const dynamic = "force-dynamic";
 
 const UpdateSchema = z.object({
   action: z.enum(["approve", "reject", "mark_delivered", "expire"]),
-  maskStaffNames: z.boolean().optional(),
-  balancingReason: z.string().trim().min(20).max(2000).optional(),
 }).strict();
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -40,10 +38,6 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     return NextResponse.json({ error: "Handlingen passer ikke til anmodningens nuværende status" }, { status: 409 });
   }
 
-  const wantsUnmasked = parsed.data.action === "approve" && parsed.data.maskStaffNames === false;
-  if (wantsUnmasked && (caller.role !== "superadmin" || !parsed.data.balancingReason)) {
-    return NextResponse.json({ error: "Afmaskering kræver superadmin og en dokumenteret afvejning" }, { status: 403 });
-  }
   const now = new Date().toISOString();
   const update: Record<string, unknown> = { updated_at: now };
   if (parsed.data.action === "approve") Object.assign(update, {
@@ -52,8 +46,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     approved_by: caller.userId,
     reviewed_at: now,
     approved_at: now,
-    mask_staff_names: wantsUnmasked ? false : true,
-    balancing_reason: wantsUnmasked ? parsed.data.balancingReason : null,
+    mask_staff_names: true,
+    balancing_reason: null,
     expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
   });
   if (parsed.data.action === "reject") Object.assign(update, { status: "rejected", reviewed_by: caller.userId, reviewed_at: now });

@@ -19,9 +19,10 @@ export async function GET() {
   const caller = await assertAdminRole(db, ["superadmin"]);
   if (!caller) return NextResponse.json({ error: "Kun superadmin kan se SIEM-drift" }, { status: 403 });
   const service = createServiceClient();
-  const [settingsResult, receiptResult, pending, processing, delivered, failed, deadLetter, latestEvents] = await Promise.all([
+  const [settingsResult, receiptResult, workerRunResult, pending, processing, delivered, failed, deadLetter, latestEvents] = await Promise.all([
     service.from("audit_control_settings").select("*").eq("singleton", true).single(),
     service.from("audit_siem_receipts").select("*").order("delivered_at", { ascending: false }).limit(1).maybeSingle(),
+    service.from("audit_worker_runs").select("*").order("completed_at", { ascending: false }).limit(1).maybeSingle(),
     service.from("audit_siem_outbox").select("event_id", { count: "exact", head: true }).eq("status", "pending"),
     service.from("audit_siem_outbox").select("event_id", { count: "exact", head: true }).eq("status", "processing"),
     service.from("audit_siem_outbox").select("event_id", { count: "exact", head: true }).eq("status", "delivered"),
@@ -30,7 +31,7 @@ export async function GET() {
     service.from("audit_events").select("sequence_no").order("sequence_no", { ascending: false }).limit(100),
   ]);
   const queryError = [
-    settingsResult.error, receiptResult.error, pending.error, processing.error,
+    settingsResult.error, receiptResult.error, workerRunResult.error, pending.error, processing.error,
     delivered.error, failed.error, deadLetter.error, latestEvents.error,
   ].find(Boolean);
   if (queryError) {
@@ -49,6 +50,7 @@ export async function GET() {
   return NextResponse.json({
     settings: settingsResult.data,
     lastReceipt: receiptResult.data,
+    lastWorkerRun: workerRunResult.data,
     counts: {
       pending: pending.count ?? 0,
       processing: processing.count ?? 0,
