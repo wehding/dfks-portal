@@ -1,4 +1,5 @@
 import { SOURCES_SCHEMA_PROMPT } from "@/lib/ai-sources"
+import type { ContractLayout } from "@/lib/contract-layout"
 import {
     CONTRACT_TYPE_RULE,
     COLLECTIVE_AGREEMENT_RULE,
@@ -16,7 +17,12 @@ Returner KUN JSON — ingen forklaringstekst.
 VIGTIGT — Maskerede tokens: Kontraktteksten er forbehandlet og personoplysninger er erstattet med tokens:
 [CPR-NUMMER], [KONTONUMMER], [IBAN], [TELEFON], [EMAIL], [ADRESSE], [POSTNR-BY], [CVR-NUMMER].
 Disse tokens er IKKE de faktiske værdier — returner null for felter der kun indeholder et token uden anden kontekst.
-Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.`
+Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.
+
+KLAUSUL-ID'ER: Kontraktteksten er annoteret med klausul-ID'er indlejret direkte inline.
+Hvert klausul starter med et tag på formen [s1_c14] (PDF) eller [p7] (DOCX) efterfulgt af klausulteksten.
+Eksempel: "[s1_c14] A. Ugeløn. Medarbejderen modtager en grundløn på 14.637 DKK pr. uge."
+Til _sources.*_clause_id felterne: kopiér tagget fra begyndelsen af den linje du citerer — det er en direkte aflæsning, ikke en gætteopgave.`
 
 export const CONTRACT_EXTRACTION_SCHEMA_PROMPT = `Udtræk følgende data fra denne kontrakt og returner som JSON.
 Returner KUN JSON — ingen forklaringstekst.
@@ -31,7 +37,7 @@ Returner KUN JSON — ingen forklaringstekst.
   "premiereYear": "premiereår eller produktionsår som firecifret årstal, hvis det fremgår (number | null)",
   "creditedFunction": "krediteret funktion: klipper, medklipper, b-klipper, supplerende klipper, klipperassistent, logger, loader, fotograf, instruktør, scenograf, Andet eller null",
   "contractType": "${CONTRACT_TYPE_RULE}",
-  "overenskomst": "én af: de4-fiktion, faf, faf-dokumentar, faf-tv-ansat, faf-tv-freelance, dj, metal, ingen (string | null)",
+  "overenskomst": "én af: de4-fiktion, faf-fiktion, faf-dokumentar, faf-tv-ansat, faf-tv-freelance, dj-tv, metal, ingen (string | null). Ældre eller formelle kontraktskabeloner bruger ofte organisationens fulde, formelle navn i stedet for en moderne forkortelse — genkend disse som samme organisation: FAF = \"Film- og TV-Arbejderforeningen\"; \"Kort- og dokumentarfilmoverenskomsten mellem Film- og TV-arbejderforeningen og Danske Film- og TV-Producenter\" = faf-dokumentar, uanset at ordet \"FAF\" ikke nævnes eksplicit. Match generelt på den navngivne organisations fulde, formelle navn, ikke kun på en genkendt forkortelse.",
   "agreementEmploymentForm": "én af: a-løn, lønmodtager-freelance, leverandør, unknown. Lønmodtager-freelance bruges kun når personen kaldes freelancer, men aflønnes som lønmodtager uden CVR/moms/faktura.",
   "contractDate": "kontraktens dato ISO 8601 (string | null)",
   "signatureStatus": "én af: yes, no, unknown. yes når kontrakten tydeligt er håndskrevet underskrevet, eller når PDF-teksten dokumenterer en gennemført digital/elektronisk underskrift (fx Penneo, DocuSign, Adobe Sign eller MitID-signering). Et tomt felt eller en tom underskriftslinje er no. En blot trykt navnelinje uden dokumenteret signering er unknown.",
@@ -39,8 +45,8 @@ Returner KUN JSON — ingen forklaringstekst.
   "signatureDate": "underskriftsdato ISO 8601 hvis den fremgår (string | null)",
   "signatureEvidence": "kort evidens for underskriftsstatus uden navne eller andre personfølsomme oplysninger (string | null)",
   "signaturePage": "sidetal for evidensen som tal, hvis det kan bestemmes (number | null)",
-  "startDate": "ansættelsens startdato ISO 8601 (string | null)",
-  "endDate": "ansættelsens slutdato ISO 8601 (string | null)",
+  "startDate": "ansættelsens startdato ISO 8601 (string | null). VIGTIGT VED MANGLENDE ÅRSTAL: nogle skabeloner angiver kun dag og måned uden årstal (fx 'fra den 15. marts til den 20. juni'). Udled i så fald året ud fra kontraktens egen dato (contractDate) — brug samme år som contractDate, MEDMINDRE dag/måned tydeligvis ligger tidligere på kalenderåret end contractDate (fx kontraktdato i november, startdato i januar) — brug da det PÅFØLGENDE år i stedet. Sæt ALDRIG blot null, blot fordi årstallet ikke står eksplicit — udled det efter denne regel. Tilføj altid en kort note i specialNotes, når året er udledt frem for eksplicit angivet, så reviewer kan dobbelttjekke (fx 'Startdato: årstal udledt fra kontraktdato, ikke eksplicit angivet i kontrakten').",
+  "endDate": "ansættelsens slutdato ISO 8601 (string | null). Samme regel som startDate ved manglende årstal — udled fra contractDate/startDate efter samme logik, og tilføj tilsvarende note i specialNotes hvis udledt.",
   "productionType": "én af: feature, tvSeries, documentary, docSeries, short, tvEntertainment, reality, other. Hvis kontrakten nævner afsnit/episode/sæson → tvSeries eller docSeries.",
   "seasonNumber": "sæsonnummer som positivt heltal, kun hvis det fremgår af kontrakten eller værktitlen; ellers null",
   "episodeNumbers": "sorteret liste af afsnitsnumre, kun når konkrete afsnit udtrykkeligt nævnes; ellers null. Listen er kun et AI-forslag og er ikke medlemsbekræftelse.",
@@ -49,7 +55,7 @@ Returner KUN JSON — ingen forklaringstekst.
   "prolongationWeeks": "antal optionsuger/prolongationsuger som tal, hvis det fremgår eksplicit (number | null). Bestemmelsen kan stå i uger ELLER dage — hvis den står i dage, divider med 5 og afrund til nærmeste tal. Værdien kan være udfyldt i en skabelon med linjer/understregninger omkring tallet (fx '___4___ dage') — se bort fra understregninger og udfyld ud fra selve tallet. Eksempler: 'op til 2 ugers prolongation' → 2. 'mulighed for prolongation i ___4___ dage' → 1 (4 dage / 5). 'prolongation i 10 arbejdsdage' → 2.",
   "prolongationNote": "kort beskrivelse af prolongationsvilkåret med eventuel ferieperiode eller andre betingelser, hvis nævnt (string | null). Angiv den oprindelige enhed (dage eller uger), som den fremgår af kontrakten, uanset hvad der er udledt i prolongationWeeks.",
 
-  "salary": "UGELØN som tal uden valuta (number | null). Regler: eksplicit ugepris vinder; dagssats * 5; timesats * 37 medmindre 40 timer/uge står tydeligt; lump sum kun hvis periode er tydelig; ignorer moms/subtotal/fakturatotal/feriepenge/sociale omkostninger; tillæg lægges ikke oven i grundløn. VIGTIGT — skabeloner har ofte flere alternative betalingsklausuler (fx både A. Ugeløn og B. Klumpsum), hvor kun én er udfyldt: en klausul med KUN en streg/understregning og INGEN tal efter beløbsfeltet (fx \"løn på _\" eller \"løn på ___\") er UBRUGT — brug ALDRIG en sådan klausul, uanset hvor tæt den ellers ligner en lønbestemmelse. Brug udelukkende den klausul, hvor der rent faktisk står et konkret tal i beløbsfeltet.",
+  "salary": "UGELØN som tal uden valuta (number | null). Regler: eksplicit ugepris vinder; dagssats * 5; timesats * 37 medmindre 40 timer/uge står tydeligt; lump sum kun hvis periode er tydelig; ignorer moms/subtotal/fakturatotal/feriepenge/sociale omkostninger; tillæg lægges ikke oven i grundløn. VIGTIGT — skabeloner har ofte flere alternative betalingsklausuler (fx både A. Ugeløn og B. Klumpsum), hvor kun én er udfyldt: en klausul med KUN en streg/understregning og INGEN tal efter beløbsfeltet (fx \"løn på _\" eller \"løn på ___\") er UBRUGT — brug ALDRIG en sådan klausul, uanset hvor tæt den ellers ligner en lønbestemmelse. Brug udelukkende den klausul, hvor der rent faktisk står et konkret tal i beløbsfeltet. AFGØRENDE: hvis du udregner en ugeløn fra en klumpsum/samlet honorar divideret med en tydelig periode (fx et fakturabaseret leverandørhonorar på et samlet beløb for en angivet periode i uger), SKAL det udregnede tal sættes i dette felt — sæt ALDRIG feltet til 0/null, blot fordi tallet er udregnet/afledt frem for eksplicit angivet som en ugesats. Usikkerhed om beregningen skal udtrykkes via salaryConfidence/needsManualSalaryReview, IKKE ved at udelade selve tallet her.",
   "salaryUnit": "weekly hvis salary er en ugeløn. Brug kun monthly, daily eller total hvis ugeløn ikke kan beregnes. (string | null)",
   "salarySourceType": "én af: weekly, daily_converted, hourly_converted, lump_calculated, invoice_line, unknown",
   "salaryConfidence": "én af: high, medium, low",
@@ -58,7 +64,7 @@ Returner KUN JSON — ingen forklaringstekst.
   "pensionPercent": "pensionsprocent som tal KUN når den står udtrykkeligt i kontrakten (number | null). Udled aldrig selv satsen fra en overenskomst.",
   "pensionEmployeePercent": "medarbejderens eget pensionsbidrag som procent, kun hvis det står udtrykkeligt (number | null)",
   "pensionBasisAmount": "det konkrete løn-/honorarbeløb som kontrakten udtrykkeligt siger pensionen beregnes af (number | null)",
-  "pensionSupplement": "pensionssupplement i kr. som tal (number | null)",
+  "pensionSupplement": "Det KONKRETE kronebeløb pensionsbidraget udgør pr. periode, som eksplicit angivet lige efter procentsatsen i pensionsklausulen — fx '1330 DKK' i 'pensionsbidrag (9,5% af grundlønnen) 1330 DKK pr. uge'. IKKE det samme som personalSupplement (et separat, ikke-pensionsrelateret tillæg). Sæt null hvis kun procentsatsen er angivet uden et konkret beløb (fx ved en ubrugt alternativ betalingsklausul med tomt beløbsfelt — samme mønster som salary-feltets klumpsum-advarsel). (number | null)",
   "personalSupplement": "personligt tillæg som tal i kr. hvis konkret aftalt (number | null)",
   "postProductionSupplement": "særskilt ugentligt tillæg for efterarbejde/postproduktion som tal i kr. Det må ikke være inkluderet i salary eller personalSupplement. (number | null)",
   "loentillaeg": "løntillæg/personligt tillæg som tal i kr. hvis det fremgår; ellers null. Må ikke lægges oven i salary. (number | null)",
@@ -69,7 +75,8 @@ Returner KUN JSON — ingen forklaringstekst.
   "svod": "har kontrakten en SPECIFIK SVOD-rettighedsklausul — fx en eksplicit henvisning til SVOD-rammeaftalen mellem Producentforeningen og kunstnerorganisationerne, Create Denmark, eller at produktionen er bestilt direkte til en streamingtjeneste? Svar IKKE true, blot fordi 'streamingtjenester' nævnes som ét blandt flere distributionsled i en generel/bred rettighedsoverdragelse (fx en opremsning af biograf, tv, streaming, on demand osv. som eksempler på udnyttelsesformer) — det er standard boilerplate-sprog, ikke en SVOD-aftale. (boolean)",
   "copydan": "true ved Copydan, aftalelicens, privatkopiering, kollektivt forvaltningsselskab, §§ 13, 13a, 17, 30a, 35, 39-46a, 50 stk. 2 eller lignende vederlagsforbehold. (boolean)",
   "royalty": "true hvis kontrakten eksplicit aftaler individuel royaltybetaling til medarbejderen, ELLER hvis kontrakten inkorporerer en overenskomst der indeholder royalty-bestemmelser — herunder formuleringer som 'afregner royalties til [overenskomst] jf. overenskomst' eller 'leverandøren vil være berettiget til en andel af disse royalties efter nærmere aftale'. Copydan og Create Denmark/SVOD tæller ikke som royalty. (boolean)",
-  "royaltyPercent": "royaltyprocent som tal (number | null). Udled satsen fra overenskomstkonteksten hvis kontrakten refererer til gældende overenskomst og ikke angiver en eksplicit sats — fx 1,0% for De4-fiktion (spillefilm), 1,5% for FAF-dokumentar.",
+  "royaltyPercent": "royaltyprocent som tal KUN hvis den fremgår eksplicit af selve kontrakten (number | null). Udled ALDRIG satsen fra en overenskomst — det håndteres deterministisk af systemet.",
+  "creditedRoles": "Krediteret titel/rolle som angivet i kontrakten, fx 'Klipper', 'Film Editor', 'Supervising Editor' — kan afvige fra creditedFunction hvis kontrakten bruger en anden betegnelse. (string | null)",
   "aiDataMiningClause": "har kontrakten AI/data mining-forbehold? (boolean)",
   "futureRightsReservation": "har kontrakten forbehold for fremtidige udnyttelsesformer/data/AI-rettigheder der ikke er erhvervet af producenten? (boolean)",
   "rightsOverview": "kort JSON-venlig oversigt med nøglerne overenskomst, kreditering, copydanforbehold, streamingforbehold. Værdier: ja, nej, implicit via overenskomst eller uklart.",
@@ -91,11 +98,37 @@ Returner KUN JSON — ingen forklaringstekst.
 ${SOURCES_SCHEMA_PROMPT}
 }`
 
+/** Byg klausuloversigt til AI-prompten — max 120 tegn preview per klausul. */
+export function buildClauseListPrompt(layout: ContractLayout): string {
+    const lines = [
+        "══════════════════════════════════════",
+        "KLAUSULLISTE — brug ID'erne i _sources.*_clause_id felterne:",
+        "══════════════════════════════════════",
+    ]
+    for (const clause of layout.clauses) {
+        const preview = clause.text.replace(/\n/g, " ").slice(0, 120)
+        lines.push(`[${clause.id}] ${preview}`)
+    }
+    lines.push("══════════════════════════════════════")
+    lines.push("Brug KUN ID'er fra listen ovenfor. Et ID der ikke findes i listen er ugyldigt — returner null i stedet.")
+    return lines.join("\n")
+}
+
 export function buildContractExtractionPrompt(
     referenceDocs?: Array<{ title: string; doc_subtype: string | null; content_text: string | null }>,
     overenskomstChunks?: Array<{ kilde_titel: string; tekst: string; overenskomst: string | null; kategori: string | null }>,
+    layout?: ContractLayout | null,
+    agreementSatser?: { agreementCode: string; satser: Array<{ beskrivelse: string; vaerdi: number; enhed: string }> } | null,
 ) {
     let prompt = `${CONTRACT_EXTRACTION_SYSTEM_PROMPT}\n\n${CONTRACT_EXTRACTION_SCHEMA_PROMPT}`
+
+    if (agreementSatser?.satser?.length) {
+        prompt += `\n\n══════════════════════════════════════\nOVEREENSKOMST-SATSER (${agreementSatser.agreementCode.toUpperCase()}):\n══════════════════════════════════════`
+        prompt += "\nDisse satser er verificerede og gælder for netop denne kontrakt. Brug dem som den autoritative kilde for løn, pension og procentsatser — aldrig hardcodede tal fra din træning:"
+        for (const s of agreementSatser.satser) {
+            prompt += `\n• ${s.beskrivelse}: ${s.vaerdi} ${s.enhed}`
+        }
+    }
 
     if (referenceDocs?.length) {
         prompt += "\n\n──────────────────────────────────────\nREFERENCEDOKUMENTER — BRUG SOM BAGGRUNDSVIDEN:\n──────────────────────────────────────"
@@ -122,6 +155,9 @@ export function buildContractExtractionPrompt(
             }
         }
     }
+
+    // buildClauseListPrompt() fjernet — ID'erne er nu indlejret direkte i kontraktteksten
+    // (buildAnnotatedContractText), så en separat opsummeringsliste er overflødig.
 
     return prompt
 }

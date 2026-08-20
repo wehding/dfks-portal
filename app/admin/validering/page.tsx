@@ -108,6 +108,7 @@ function AdminValideringPageInner() {
     const [brugerRedigerede, setBrugerRedigerede] = useState<Set<string>>(new Set())
     const [contractText, setContractText] = useState("")
     const [sources, setSources] = useState<Record<string, string | null>>({})
+    const [contractLayout, setContractLayout] = useState<import("@/lib/contract-layout").ContractLayout | null>(null)
     const [activeSource, setActiveSource] = useState<string | null>(null)   // quote til PDF-highlight
     const [activeField, setActiveField] = useState<string | null>(null)     // felt-ID til knap-highlight
     const [storedDocxText, setStoredDocxText] = useState<string | null>(null)
@@ -134,9 +135,38 @@ function AdminValideringPageInner() {
     const [parentExplicitNone, setParentExplicitNone] = useState(false)
     const [overenskomster, setOverenskomster] = useState<{ value: string; label: string }[]>([
         { value: "de4-fiktion",   label: "De4 (fiktion)"    },
-        { value: "faf",           label: "FAF (fiktion)"    },
+        { value: "faf-fiktion",    label: "FAF (fiktion)"    },
         { value: "faf-dokumentar",label: "FAF (dokumentar)" },
     ])
+    // Fortolkningsnote pr. label_key for den aktive kontrakts matchede overenskomst
+    const [pctRuleNotes, setPctRuleNotes] = useState<Record<string, string>>({})
+    // Primær distribution for det tilknyttede værk (work_distributions)
+    const [workDistributions, setWorkDistributions] = useState<{ broadcaster: string | null; distributionType: string | null }[]>([])
+
+    // Henter fortolkningsnoter for den matchede overenskomsts procentregler.
+    // Skal kaldes BÅDE når en kontrakt åbnes (fra gemt data) OG efter hvert
+    // frisk AI-udtræk (fra det nye svars _resolvedAgreementCode) — et enkelt
+    // kald ved åbning fangede ikke opdateringer fra efterfølgende udtræk.
+    const fetchPctRuleNotes = useCallback((agreementCode: string | null) => {
+        setPctRuleNotes({})
+        if (!agreementCode) return
+        fetch(`/api/admin/agreements?percentageNotes=${encodeURIComponent(agreementCode)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(json => { if (json?.notes) setPctRuleNotes(json.notes) })
+    }, [])
+
+    // Hent work_distributions for tilknyttet værk — vises ved SVOD/royalty som kontekst
+    useEffect(() => {
+        setWorkDistributions([])
+        const workId = contracts.find(c => c.id === reviewingId)?.work_id
+        if (!workId) return
+        createClient().from("work_distributions" as any)
+            .select("broadcaster, distribution_type")
+            .eq("work_id", workId)
+            .then(({ data }: { data: Array<{ broadcaster: string | null; distribution_type: string | null }> | null }) => {
+                if (data?.length) setWorkDistributions((data as any[]).map(d => ({ broadcaster: d.broadcaster, distributionType: d.distribution_type })))
+            })
+    }, [reviewingId, contracts]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Opret ny producent dialog
     const [showNewEmployer, setShowNewEmployer] = useState(false)
@@ -183,26 +213,12 @@ function AdminValideringPageInner() {
         supabase.from("rettighedshavere").select("id, full_name, gender").order("full_name")
             .then(({ data }) => { if (data) setRettighedshavere(data) })
 
-        // Hent overenskomster fra reference_docs katalog
-        supabase.from("reference_docs")
-            .select("title, doc_subtype")
-            .eq("archived", false)
-            .not("doc_subtype", "is", null)
-            .then(({ data }) => {
-                if (data?.length) {
-                    const seen = new Set<string>()
-                    const fromDb = data
-                        .filter(d => d.doc_subtype)
-                        .map(d => ({ value: d.doc_subtype!, label: d.title }))
-                        .filter(o => seen.has(o.value) ? false : (seen.add(o.value), true))
-                    // Merge med defaults — DB-versioner overskriver
-                    setOverenskomster(prev => {
-                        const dbValues = new Set(fromDb.map(o => o.value))
-                        const merged = [...fromDb, ...prev.filter(p => !dbValues.has(p.value))]
-                        const deduped = merged.filter((o, i, arr) => arr.findIndex(x => x.value === o.value) === i)
-                        return deduped
-                    })
-                }
+        // Hent overenskomster via server-rute (service-role omgår RLS på agreements-tabellen)
+        fetch("/api/admin/agreements?dropdownList=1")
+            .then(r => r.ok ? r.json() : null)
+            .then(json => {
+                if (json?.overenskomster?.length) setOverenskomster(json.overenskomster)
+                // Ingen data → behold de tre hardkodede defaults i useState
             })
     }, [])
 
@@ -392,6 +408,12 @@ function AdminValideringPageInner() {
                 overenskomst: ed.overenskomst ?? "ingen",
                 salary: ed.salary ?? "",
                 salaryUnit: ed.salaryUnit ?? "monthly",
+                salaryConfidence: ed.salaryConfidence ?? null,
+                salaryNote: ed.salaryNote ?? null,
+                salarySourceType: ed.salarySourceType ?? null,
+                needsManualSalaryReview: !!ed.needsManualSalaryReview,
+                postProductionSupplement: ed.postProductionSupplement ?? "",
+                agreementReferenceStatus: ed.agreementReferenceStatus ?? null,
                 startDate: ed.startDate ?? "",
                 endDate: ed.endDate ?? "",
                 pensionPercent: ed.pensionPercent ?? "",
@@ -405,6 +427,8 @@ function AdminValideringPageInner() {
                 copydan: impliedByCopydan,
                 royalty: impliedByRoyalty,
                 royaltyPercent: ed.royaltyPercent ?? "",
+                royaltySourceType: ed.royaltySourceType ?? null,
+                royaltyResolutionReason: ed._royaltyResolution?.reason ?? null,
                 aiDataMiningClause: ed.aiDataMiningClause ?? false,
                 distribution: Array.isArray(ed.distribution) ? ed.distribution.join(", ") : (ed.distribution ?? ""),
                 collectiveAgreementName: ed.collectiveAgreementName ?? "",
@@ -415,9 +439,12 @@ function AdminValideringPageInner() {
                 collectiveAgreement: ed.collectiveAgreement ?? false,
                 isFreelanceContract: ed.isFreelanceContract ?? false,
                 collectiveAgreementByReference: ed.collectiveAgreementByReference ?? false,
+                rightsOverview: ed.rightsOverview ?? null,
             })
             if (ed._sources) setSources(normaliseSources(ed._sources))
             if (validation?.masked_text) setContractText(validation.masked_text as string)
+
+            fetchPctRuleNotes(ed._resolvedAgreementCode ?? null)
         })
     }, [reviewingId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -569,13 +596,19 @@ function AdminValideringPageInner() {
             const contractType = formData.contractType === "leverandør-ref" ? "leverandør" : (formData.contractType ?? undefined)
             const overenskomstVal = formData.overenskomst === "ingen" ? null : (formData.overenskomst ?? undefined)
 
-            const { error: contractError } = await supabase.rpc("admin_validate_contract", {
-                p_contract_id:      id,
-                p_status:           "valideret",
-                p_employer_id:      resolvedEmployerId ?? null,
-                p_type:             contractType ?? null,
-                p_overenskomst:     overenskomstVal ?? null,
-                p_rights_holder_id: (selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id) ? selectedRhId : null,
+            const { error: contractError } = await fetch("/api/admin/contracts/validate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contractId: id,
+                    employerId: resolvedEmployerId ?? null,
+                    contractType: contractType ?? null,
+                    overenskomst: overenskomstVal ?? null,
+                    rightsHolderId: (selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id) ? selectedRhId : null,
+                }),
+            }).then(async r => {
+                const json = await r.json().catch(() => ({}))
+                return r.ok ? { error: null } : { error: new Error(json.error ?? `Fejl ${r.status}`) }
             })
 
             if (contractError) throw new Error(`Kontraktstatus kunne ikke opdateres: ${contractError.message}`)
@@ -631,6 +664,12 @@ function AdminValideringPageInner() {
             overenskomst,
             salary:                        ed.salary ?? "",
             salaryUnit:                    ed.salaryUnit ?? "monthly",
+            salaryConfidence:              ed.salaryConfidence ?? null,
+            salaryNote:                    ed.salaryNote ?? null,
+            salarySourceType:              ed.salarySourceType ?? null,
+            needsManualSalaryReview:       !!ed.needsManualSalaryReview,
+            postProductionSupplement:      ed.postProductionSupplement ?? "",
+            agreementReferenceStatus:      ed.agreementReferenceStatus ?? null,
             startDate:                     ed.startDate ?? "",
             endDate:                       ed.endDate ?? "",
             pensionPercent:                ed.pensionPercent ?? (impliedDe4 ? 9.5 : ""),
@@ -645,6 +684,8 @@ function AdminValideringPageInner() {
             copydan:                       !!ed.copydan,
             royalty:                       !!ed.royalty,
             royaltyPercent:                ed.royaltyPercent ?? "",
+            royaltySourceType:             ed.royaltySourceType ?? null,
+            royaltyResolutionReason:       ed._royaltyResolution?.reason ?? null,
             aiDataMiningClause:            !!ed.aiDataMiningClause,
             distribution:                  Array.isArray(ed.distribution) ? ed.distribution.join(", ") : (ed.distribution ?? ""),
             collectiveAgreementName:       ed.collectiveAgreementName ?? "",
@@ -707,8 +748,13 @@ function AdminValideringPageInner() {
                 const json = await resp.json()
                 if (!resp.ok) throw new Error(json.error)
                 if (json.data?._sources) setSources(normaliseSources(json.data._sources))
+                if (json.layout) setContractLayout(json.layout)
+                // [LAG5-DEBUG-A] Trin 1: er layout modtaget og indeholder det clauses?
+                console.log("[LAG5-A] layout i svar:", json.layout ? `${json.layout.clauses?.length} klausuler, type=${json.layout.type}` : "MANGLER")
+                console.log("[LAG5-A] salary_clause_id fra sources:", json.data?._sources?.salary_clause_id ?? "null/undefined")
                 if (json.maskedText) setContractText(json.maskedText)
                 overwriteWithAi(json.data)
+                fetchPctRuleNotes(json.data?._resolvedAgreementCode ?? null)
                 toast.success("Felter opdateret fra AI-udtræk")
             } catch (e: any) {
                 toast.error(`Udtræk fejlede: ${e.message}`)
@@ -770,6 +816,7 @@ function AdminValideringPageInner() {
             if (originalText) { try { setContractText(originalText) } catch { /* ok */ } }
             if (ed._sources) setSources(normaliseSources(ed._sources))
             overwriteWithAi(ed)
+            fetchPctRuleNotes(ed._resolvedAgreementCode ?? null)
 
             // Navnetjek — vis toast og tilføj til specialNotes ved afvigelse
             if (data.navneTjek && data.navneTjek.status !== "match") {
@@ -878,6 +925,7 @@ setActiveField(fieldId)
         }
 
         const prolongHl = resolve((sources as any).prolongation)
+        const creditHl = resolve(sources.creditedRoles)
         const salaryHl = salaryMeta.anker ?? safeNumberFallback(formData.salary)
         const workTitleHl = resolve(sources.workTitle)
         const datesHl = resolve(sources.dates)
@@ -905,6 +953,47 @@ setActiveField(fieldId)
             royalty: [royaltySrc ? royaltySrc.slice(0, 40) : null, royaltySrc ? royaltySrc.slice(0, 20) : null, "afregner royalties", "royalties til"].filter(Boolean).join("||"),
             agreement: [ca ? ca.slice(0, 40) : null, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst", "ikke omfattet af kollektive"].filter(Boolean).join("||"),
         }
+        // Lag 5: map aktivt felt til klausul-ID fra sources (primær) — fallback til teksthighlight
+        const FIELD_TO_CLAUSE_ID: Record<string, string | null | undefined> = {
+            workTitle: sources.workTitle_clause_id,
+            salary: sources.salary_clause_id,
+            pension: sources.pension_clause_id,
+            supplements: sources.supplements_clause_id,
+            otherSupplements: sources.otherSupplements_clause_id,
+            dates: sources.dates_clause_id,
+            workingWeeks: sources.workingWeeks_clause_id,
+            agreement: sources.collectiveAgreement_clause_id,
+            copydan: sources.copydan_clause_id,
+            svod: sources.svod_clause_id,
+            // Royalty er ofte deterministisk udledt fra overenskomsten, ikke fundet i selve
+            // kontraktteksten — falder da tilbage til overenskomst-henvisningens klausul-ID,
+            // i stedet for at falde helt tilbage til den gamle, upræcise tekst-søgning.
+            royalty: sources.royalty_clause_id ?? sources.collectiveAgreement_clause_id,
+            prolongation: sources.prolongation_clause_id,
+            creditedRoles: sources.creditedRoles_clause_id,
+        }
+        const activeClauseId = activeField ? (FIELD_TO_CLAUSE_ID[activeField] ?? null) : null
+        if (activeField) console.log(`[LAG5-B] activeField=${activeField} → activeClauseId=${activeClauseId ?? "null"}, layout=${contractLayout ? contractLayout.clauses.length + " klausuler" : "NULL"}`)
+
+        // Hjælper: har feltet en koordinat-boks tilgængelig i det aktuelle layout?
+        const hasCoord = (clauseId: string | null | undefined): boolean =>
+            !!clauseId && !!contractLayout?.clauses.find(c => c.id === clauseId)?.pdfBbox
+
+        // PDF-highlights: tekst-søgning kun for felter UDEN koordinat-dækning.
+        // Felter med et gyldigt clause_id + pdfBbox vises som koordinat-boks — ingen dobbelt-markering.
+        const pdfHighlights = [
+            hasCoord(sources.workTitle_clause_id)       ? null : workTitleHl,
+            hasCoord(sources.creditedRoles_clause_id)   ? null : creditHl,
+            hasCoord(sources.salary_clause_id)          ? null : salaryHl,
+            hasCoord(sources.pension_clause_id)         ? null : sources.pension,
+            hasCoord(sources.supplements_clause_id)     ? null : supplementsHl,
+            hasCoord(sources.otherSupplements_clause_id)? null : sources.otherSupplements,
+            hasCoord(sources.dates_clause_id)           ? null : datesHl,
+            hasCoord(sources.workingWeeks_clause_id)    ? null : weeksHl,
+            hasCoord(sources.prolongation_clause_id)    ? null : prolongHl,
+        ].filter(Boolean) as string[]
+
+
         const resolvedActiveHighlight = activeField
             ? (rightsHighlightSource[activeField] || rightsPageSource[activeField] || activeSource)
             : null
@@ -949,7 +1038,7 @@ setActiveField(fieldId)
                         {/* Lokal DOCX-fil */}
                         {localPdfFile && (localPdfFile.name.endsWith(".docx") || localPdfFile.name.endsWith(".doc")) ? (
                             <TextViewer text={contractText} loading={textLoading}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, creditHl ?? null, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight} />
 
@@ -958,7 +1047,7 @@ setActiveField(fieldId)
                             <TextViewer
                                 text={storedDocxText ?? ""}
                                 loading={storedDocxLoading}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, creditHl ?? null, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight} />
 
@@ -966,10 +1055,12 @@ setActiveField(fieldId)
                             /* PDF */
                             <PdfViewer
                                 url={pdfUrl}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
+                                highlights={pdfHighlights}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight}
                                 pageNavigationHint={resolvedPageSource ?? undefined}
+                                layout={contractLayout}
+                                activeClauseId={activeClauseId}
                             />
                         ) : (
                             <div className="flex flex-1 h-full items-center justify-center text-sm text-muted-foreground">
@@ -1039,13 +1130,6 @@ setActiveField(fieldId)
                                 ) : (
                                     <F src={fieldSrc("workTitle")} label={<>Arbejdstitel{workTitleHl && <SourceBtn quote={workTitleHl} active={activeField === "workTitle"} onClick={() => activateSource("workTitle", workTitleHl)} />}</>}>
                                         <Input value={String(formData.workTitle ?? "")} onChange={(e) => setField("workTitle", e.target.value)} placeholder="Produktionens arbejdstitel..." />
-                                    </F>
-                                )}
-
-                                {/* Portal-data fra klipper */}
-                                {formData.creditedRoles && (reviewingContract?.validation?.extracted_data as any)?.submittedByMember && (
-                                    <F src="klipper" label="★ Krediteret rolle (fra klipper)">
-                                        <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor..." />
                                     </F>
                                 )}
 
@@ -1149,34 +1233,39 @@ setActiveField(fieldId)
                                     )}
                                 </F>
 
-                                {formData.rightsHolderName !== undefined && (
-                                    <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
-                                        <Input
-                                            value={String(formData.rightsHolderName ?? "")}
-                                            onChange={(e) => { setField("rightsHolderName", e.target.value); setSelectedRhId(null) }}
-                                            placeholder="Klipperens fulde navn..."
-                                        />
-                                        {selectedRhId && (
-                                            <div className="mt-1.5 flex items-center gap-2 text-xs text-green-700 font-medium">
-                                                <span>✓ Koblet til rettighedshaver</span>
-                                                <button type="button" className="underline text-muted-foreground" onClick={() => setSelectedRhId(null)}>Fjern</button>
-                                            </div>
-                                        )}
-                                        {!selectedRhId && rhSuggestions.length > 0 && (
-                                            <div className="mt-1.5 space-y-1">
-                                                {rhSuggestions.map(s => (
-                                                    <button key={s.id} type="button" className="w-full text-left px-3 py-1.5 rounded border text-xs hover:bg-muted transition-colors"
-                                                        onClick={() => setSelectedRhId(s.id)}>
-                                                        {s.name} <span className="text-muted-foreground">({Math.round(s.score * 100)}% match)</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        )}
-                                        {!selectedRhId && formData.rightsHolderName && rhSuggestions.length === 0 && (formData.rightsHolderName as string).length > 2 && (
-                                            <p className="mt-1 text-xs text-amber-600">Ikke fundet i rettighedshavere</p>
-                                        )}
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    {formData.rightsHolderName !== undefined && (
+                                        <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
+                                            <Input
+                                                value={String(formData.rightsHolderName ?? "")}
+                                                onChange={(e) => { setField("rightsHolderName", e.target.value); setSelectedRhId(null) }}
+                                                placeholder="Klipperens fulde navn..."
+                                            />
+                                            {selectedRhId && (
+                                                <div className="mt-1.5 flex items-center gap-2 text-xs text-green-700 font-medium">
+                                                    <span>✓ Koblet til rettighedshaver</span>
+                                                    <button type="button" className="underline text-muted-foreground" onClick={() => setSelectedRhId(null)}>Fjern</button>
+                                                </div>
+                                            )}
+                                            {!selectedRhId && rhSuggestions.length > 0 && (
+                                                <div className="mt-1.5 space-y-1">
+                                                    {rhSuggestions.map(s => (
+                                                        <button key={s.id} type="button" className="w-full text-left px-3 py-1.5 rounded border text-xs hover:bg-muted transition-colors"
+                                                            onClick={() => setSelectedRhId(s.id)}>
+                                                            {s.name} <span className="text-muted-foreground">({Math.round(s.score * 100)}% match)</span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {!selectedRhId && formData.rightsHolderName && rhSuggestions.length === 0 && (formData.rightsHolderName as string).length > 2 && (
+                                                <p className="mt-1 text-xs text-amber-600">Ikke fundet i rettighedshavere</p>
+                                            )}
+                                        </F>
+                                    )}
+                                    <F src={fieldSrc("creditedRoles")} label={<>Kreditering{creditHl && <SourceBtn quote={creditHl} active={activeField === "creditedRoles"} onClick={() => activateSource("creditedRoles", creditHl)} />}</>}>
+                                        <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor..." />
                                     </F>
-                                )}
+                                </div>
 
                                 <Separator />
 
@@ -1223,9 +1312,22 @@ setActiveField(fieldId)
                                                 <SelectItem value="ingen">Ingen overenskomst</SelectItem>
                                             </SelectContent>
                                         </Select>
+                                        {formData.collectiveAgreementName && (
+                                            <p className="text-[10px] text-muted-foreground mt-1">Kontrakten nævner: &quot;{formData.collectiveAgreementName}&quot;</p>
+                                        )}
                                     </F>
                                 </div>
 
+                                <F src={fieldSrc("agreementReferenceStatus")} label="Overenskomsthenvisning">
+                                    <Select value={formData.agreementReferenceStatus ?? "unknown"} onValueChange={(v) => setField("agreementReferenceStatus", v)}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="yes">Ja — direkte navngiven overenskomst</SelectItem>
+                                            <SelectItem value="no">Nej — eksplicit afvist</SelectItem>
+                                            <SelectItem value="unknown">Ukendt / ikke afklaret</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </F>
                                 <F src={fieldSrc("gender")} label={t("admin.validation.gender")}>
                                     <Select value={formData.gender ?? ""} onValueChange={(v) => setField("gender", v)}>
                                         <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
@@ -1243,6 +1345,24 @@ setActiveField(fieldId)
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <F src={fieldSrc("salary")} label={<>{t("admin.validation.salary")}{salaryMeta.erBeløb && <span title="Forankret i beløb" className="ml-1 text-amber-500">💰</span>}{salaryMeta.forGenerisk && <span title="Fandt flere steder" className="ml-1 text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={salaryHl} active={activeField === "salary"} onClick={() => activateSource("salary", salaryHl)} /></>} locked={isLocked("salary")}>
                                         <Input type="number" value={String(formData.salary ?? "")} onChange={(e) => setField("salary", e.target.value)} placeholder="0" />
+                                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                            {formData.salaryConfidence && (
+                                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${formData.salaryConfidence === "high" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : formData.salaryConfidence === "medium" ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"}`}>
+                                                    {formData.salaryConfidence === "high" ? "Høj sikkerhed" : formData.salaryConfidence === "medium" ? "Middel sikkerhed" : "Lav sikkerhed"}
+                                                </span>
+                                            )}
+                                            {formData.salarySourceType && formData.salarySourceType !== "unknown" && (
+                                                <span className="text-[10px] text-muted-foreground">
+                                                    {formData.salarySourceType === "weekly" ? "Ugeløn" : formData.salarySourceType === "daily_converted" ? "Omregnet fra dagssats" : formData.salarySourceType === "hourly_converted" ? "Omregnet fra timesats" : formData.salarySourceType === "lump_calculated" ? "Beregnet fra klumpsum" : formData.salarySourceType === "invoice_line" ? "Fakturalinje" : formData.salarySourceType}
+                                                </span>
+                                            )}
+                                            {formData.needsManualSalaryReview && (
+                                                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">⚠ Kræver manuel kontrol</span>
+                                            )}
+                                        </div>
+                                        {formData.salaryNote && (
+                                            <p className="text-[10px] text-muted-foreground mt-0.5">{formData.salaryNote}</p>
+                                        )}
                                     </F>
                                     <F src={fieldSrc("salaryUnit")} label={t("admin.validation.salaryUnit")} locked={isLocked("salaryUnit")}>
                                         <Select value={formData.salaryUnit ?? "monthly"} onValueChange={(v) => setField("salaryUnit", v)}>
@@ -1291,10 +1411,13 @@ setActiveField(fieldId)
                                     <F src={fieldSrc("personalSupplement")} label={<>{t("admin.validation.personalSupplement")}<SourceBtn quote={supplementsHl} active={activeField === "supplements"} onClick={() => activateSource("supplements", supplementsHl)} /></>}>
                                         <Input type="number" value={String(formData.personalSupplement ?? "")} onChange={(e) => setField("personalSupplement", e.target.value)} placeholder="0" />
                                     </F>
-                                    <F src={fieldSrc("otherSupplements")} label={<>{t("admin.validation.other")}{sources.otherSupplements && <SourceBtn quote={sources.otherSupplements} active={activeField === "otherSupplements"} onClick={() => activateSource("otherSupplements", sources.otherSupplements)} />}</>}>
-                                        <Input value={String(formData.otherSupplements ?? "")} onChange={(e) => setField("otherSupplements", e.target.value)} placeholder="—" />
+                                    <F src={fieldSrc("postProductionSupplement")} label="Efterarbejdstillæg (kr.)">
+                                        <Input type="number" value={String(formData.postProductionSupplement ?? "")} onChange={(e) => setField("postProductionSupplement", e.target.value)} placeholder="0" />
                                     </F>
                                 </div>
+                                <F src={fieldSrc("otherSupplements")} label={<>{t("admin.validation.other")}{sources.otherSupplements && <SourceBtn quote={sources.otherSupplements} active={activeField === "otherSupplements"} onClick={() => activateSource("otherSupplements", sources.otherSupplements)} />}</>}>
+                                    <Input value={String(formData.otherSupplements ?? "")} onChange={(e) => setField("otherSupplements", e.target.value)} placeholder="—" />
+                                </F>
                                 <Separator />
                                 <Label className="text-xs block">Producentbidrag</Label>
                                 <div className="grid gap-3 sm:grid-cols-2">
@@ -1328,6 +1451,26 @@ setActiveField(fieldId)
                                             </div>
                                             <Switch checked={formData.svod ?? false} onCheckedChange={(v) => setField("svod", v)} />
                                         </div>
+                                        {pctRuleNotes["svod"] && (
+                                            <div className="flex gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 -mt-1">
+                                                <span className="shrink-0">⚠</span>
+                                                <span>{pctRuleNotes["svod"]}</span>
+                                            </div>
+                                        )}
+                                        <div className="flex items-start gap-1 -mt-1 px-0.5">
+                                            <p className="text-[10px] text-muted-foreground">SVOD kan være svær at afgøre sikkert fra kontrakten alene — tjek altid manuelt, uanset indstillingen ovenfor.</p>
+                                            <SourceBtn quote={svodSrc ?? undefined} active={activeField === "svod"} onClick={() => activateSource("svod", svodSrc)} />
+                                        </div>
+                                        {workDistributions.length > 0 && (
+                                            <div className="flex flex-wrap gap-1 -mt-0.5 px-0.5">
+                                                {workDistributions.map((d, i) => (
+                                                    <span key={i} className="text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">
+                                                        {d.broadcaster ?? "—"}{d.distributionType ? ` (${d.distributionType === "streaming" ? "streaming" : d.distributionType === "tv" ? "broadcast/TV" : d.distributionType === "both" ? "streaming + TV" : d.distributionType})` : ""}
+                                                    </span>
+                                                ))}
+                                                <span className="text-[10px] text-muted-foreground self-center">— primær distribution for dette værk</span>
+                                            </div>
+                                        )}
                                         <div className={`flex items-center justify-between rounded-md px-2.5 py-2 -mx-2.5 ${isLocked("copydan") ? "bg-muted/40" : formData.overenskomst === "de4-fiktion" ? "bg-amber-50 dark:bg-amber-950/25" : formData.copydan ? "bg-blue-50 dark:bg-blue-950/25" : ""}`}>
                                             <div>
                                                 <span className="text-sm flex items-center gap-1">Copydan{copydanMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={copydanSrc ?? undefined} active={activeField === "copydan"} onClick={() => activateSource("copydan", copydanSrc)} /></span>
@@ -1335,6 +1478,12 @@ setActiveField(fieldId)
                                             </div>
                                             <Switch checked={formData.copydan ?? false} onCheckedChange={(v) => setField("copydan", v)} />
                                         </div>
+                                        {pctRuleNotes["copydan"] && (
+                                            <div className="flex gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 -mt-1">
+                                                <span className="shrink-0">⚠</span>
+                                                <span>{pctRuleNotes["copydan"]}</span>
+                                            </div>
+                                        )}
                                         <div className={`flex items-center justify-between rounded-md px-2.5 py-2 -mx-2.5 ${isLocked("royalty") ? "bg-muted/40" : ["feature","documentary","short"].includes(formData.productionType ?? "") ? "bg-amber-50 dark:bg-amber-950/25" : formData.royalty ? "bg-blue-50 dark:bg-blue-950/25" : ""}`}>
                                             <div>
                                                 <span className="text-sm flex items-center gap-1">Royalty{royaltyMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={royaltySrc ?? undefined} active={activeField === "royalty"} onClick={() => activateSource("royalty", royaltySrc)} /></span>
@@ -1350,6 +1499,21 @@ setActiveField(fieldId)
                                                 <Switch checked={formData.royalty ?? false} onCheckedChange={(v) => setField("royalty", v)} />
                                             </div>
                                         </div>
+                                        {formData.royalty && formData.royaltySourceType === "collective_agreement" && (
+                                            <p className="text-[10px] text-muted-foreground -mt-1 px-0.5">Royaltyprocenten er udledt fra den registrerede overenskomstsats — tjek altid selv om særlige betingelser (fx indtjeningstærskler) gør sig gældende for denne kontrakt.</p>
+                                        )}
+                                        {formData.royalty && formData.royaltySourceType === "individually_negotiated" && (
+                                            <p className="text-[10px] text-muted-foreground -mt-1 px-0.5">Royaltyprocenten er hentet direkte fra kontrakten. Bemærk: en individuelt forhandlet sats kan lovligt være højere end overenskomstens minimumssats.</p>
+                                        )}
+                                        {formData.royaltyResolutionReason === "distribution_type_unknown" && (
+                                            <p className="text-[10px] text-amber-600 dark:text-amber-400 -mt-1 px-0.5">Overenskomsten har en royalty-regel, men den kræver et distributionskanal-match — værkets distributionstype er ikke sat, og reglen er ikke anvendt automatisk. Sæt distributionskanal på værket, eller bekræft royalty manuelt.</p>
+                                        )}
+                                        {formData.royaltyResolutionReason === "no_matching_distribution_type" && (
+                                            <p className="text-[10px] text-amber-600 dark:text-amber-400 -mt-1 px-0.5">Overenskomstens royalty-regel gælder ikke for denne distributionskanal — reglen er ikke anvendt. Bekræft manuelt om royalty er relevant for denne kontrakt.</p>
+                                        )}
+                                        {!formData.royalty && formData.royaltySourceType === "not_found" && formData.royaltyResolutionReason !== "distribution_type_unknown" && formData.royaltyResolutionReason !== "no_matching_distribution_type" && (
+                                            <p className="text-[10px] text-amber-600 dark:text-amber-400 -mt-1 px-0.5">{formData.royaltyResolutionReason === "agreement_ambiguous" ? "Overenskomsten kunne ikke fastslås automatisk, så royalty er ikke undersøgt via overenskomstsats. Tjek manuelt om der er en royaltyrettighed." : "Royalty er ikke fundet hverken i kontrakten eller den tilhørende overenskomst. Tjek manuelt om der alligevel er en rettighed, der ikke er fanget automatisk."}</p>
+                                        )}
                                     </div>
                                 </div>
                                 <Separator />
@@ -1357,10 +1521,6 @@ setActiveField(fieldId)
                                     <Label className="text-xs mb-3 block font-semibold uppercase tracking-wide text-muted-foreground">Kontraktbeskyttelse</Label>
                                     <RightRow label={t("admin.validation.aiClause")} desc={t("admin.validation.aiClauseDesc")} checked={formData.aiDataMiningClause ?? false} onChange={(v) => setField("aiDataMiningClause", v)} />
                                 </div>
-                                <Separator />
-                                <F src={fieldSrc("collectiveAgreementName", true)} label="Overenskomst-navn">
-                                    <Input value={String(formData.collectiveAgreementName ?? "")} onChange={(e) => setField("collectiveAgreementName", e.target.value)} placeholder="fx De4 2022-2024" />
-                                </F>
                             </TabsContent>
 
                             {/* ── TAB 4: GODKEND ── */}

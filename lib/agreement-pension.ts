@@ -65,7 +65,48 @@ export function agreementEmploymentForm(data: Record<string, unknown>): "a-løn"
   return "a-løn";
 }
 
-export function identifyAgreementCode(data: Record<string, unknown>) {
+/**
+ * Klassificér kontraktdata til agreements.short_code.
+ * Returnerer den kanoniske, versionsuafhængige korte kode — bruges som input til
+ * dato-bevidst DB-opslag i server-wrappers (resolveAgreementByDate).
+ */
+export function classifyToShortCode(data: Record<string, unknown>): string | null {
+  const raw = normalized([
+    data.overenskomst,
+    data.collectiveAgreementName,
+    data.agreementName,
+  ].filter(Boolean).join(" "));
+  const productionType = normalized(data.productionType);
+  const employmentForm = agreementEmploymentForm(data);
+  const employer = normalized(data.employerName ?? data.producerName);
+
+  if (/\bde ?4\b/.test(raw) || raw.includes("de4 fiktion")) return "de4-fiktion";
+  if (raw.includes("metal")) return employer === "dr" || employer.includes("danmarks radio") ? "metal" : null;
+  if (raw.includes("dj") && raw.includes("tv")) return "dj-tv";
+  if (raw === "dj" || raw.includes("journalistforbund")) return "dj-tv";
+  if (raw.includes("faf") && raw.includes("tv")) {
+    return employmentForm === "lønmodtager-freelance" ? "faf-tv-freelance" : "faf-tv-ansat";
+  }
+  if (raw.includes("faf") && (raw.includes("dokumentar") || ["documentary", "docseries", "short"].includes(productionType))) {
+    return "faf-dokumentar";
+  }
+  if (raw.includes("faf")) return "faf-fiktion";
+  return null;
+}
+
+/**
+ * Returnerer agreements.code for brug i regelfiltrering.
+ * Bruger _resolvedAgreementCode (injiceret af server-wrapper via dato-bevidst opslag) hvis
+ * tilgængeligt — falder ellers tilbage til statisk, dato-uafhængig klassificering.
+ *
+ * @deprecated Stol ikke på fallback-værdien — brug altid server-wrappers der injicerer
+ * _resolvedAgreementCode via resolveAgreementByDate(). Kun bevaret som nødfallback.
+ */
+export function identifyAgreementCode(data: Record<string, unknown>): string | null {
+  // Præ-opløst af server-wrapper — brug direkte (dato-bevidst)
+  if (typeof data._resolvedAgreementCode === "string") return data._resolvedAgreementCode;
+
+  // Statisk fallback (dato-uafhængig, bruges kun hvis server-wrapperen fejlede)
   const raw = normalized([
     data.overenskomst,
     data.collectiveAgreementName,

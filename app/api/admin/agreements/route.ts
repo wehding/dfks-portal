@@ -112,6 +112,7 @@ export async function POST(req: NextRequest) {
                     source_checked_at: r.source_checked_at ?? null,
                     source_note: r.source_note ?? null,
                     label_key: r.label_key ?? null,
+                    fortolkningsnote: r.fortolkningsnote ?? null,
                     valid_from: r.valid_from,
                     valid_to: r.valid_to ?? null,
                     status: "draft",
@@ -235,7 +236,7 @@ export async function PATCH(req: NextRequest) {
                 "label", "label_key", "percent", "basis", "trigger_condition", "category",
                 "profession_role", "employment_form", "section_reference",
                 "source_title", "source_url", "source_checked_at", "source_note",
-                "valid_from", "valid_to", "status",
+                "fortolkningsnote", "valid_from", "valid_to", "status",
             ]
             const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
             for (const key of allowed) {
@@ -254,6 +255,53 @@ export async function PATCH(req: NextRequest) {
         }
 
         return NextResponse.json({ error: "agreementId, wageRuleId, pensionRuleId eller percentageRuleId er påkrævet" }, { status: 400 })
+    } catch (e: unknown) {
+        return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
+    }
+}
+
+// GET /api/admin/agreements?percentageNotes=<agreementCode>
+// Henter label_key + fortolkningsnote for én overenskomst via service-role
+// (undgår RLS-begrænsning på agreements-tabellen for ikke-jurist/superadmin-brugere)
+export async function GET(req: NextRequest) {
+    try {
+        const auth = await requireAdminApi(ADMIN_ROLES)
+        if (!auth.ok) return auth.response
+
+        // GET ?dropdownList=1 — henter alle godkendte/arkiverede overenskomster til dropdown
+        if (req.nextUrl.searchParams.has("dropdownList")) {
+            const { data, error } = await sb()
+                .from("agreements")
+                .select("short_code,title")
+                .in("status", ["approved", "archived"])
+                .order("title")
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            const seen = new Set<string>()
+            const overenskomster = (data ?? [])
+                .filter(r => r.short_code)
+                .map(r => ({ value: r.short_code as string, label: r.title as string }))
+                .filter(o => seen.has(o.value) ? false : (seen.add(o.value), true))
+            return NextResponse.json({ overenskomster })
+        }
+
+        const agreementCode = req.nextUrl.searchParams.get("percentageNotes")
+        if (!agreementCode) return NextResponse.json({ error: "percentageNotes eller dropdownList parameter mangler" }, { status: 400 })
+
+        const { data, error } = await sb()
+            .from("agreement_percentage_rules")
+            .select("label_key,fortolkningsnote,agreements!inner(code)")
+            .eq("agreements.code", agreementCode)
+            .not("fortolkningsnote", "is", null)
+            .not("label_key", "is", null)
+            .in("status", ["approved", "archived"])
+
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+        const notes: Record<string, string> = {}
+        for (const row of (data ?? []) as Array<{ label_key: string | null; fortolkningsnote: string | null }>) {
+            if (row.label_key && row.fortolkningsnote) notes[row.label_key] = row.fortolkningsnote
+        }
+        return NextResponse.json({ notes })
     } catch (e: unknown) {
         return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
     }

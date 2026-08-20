@@ -1323,6 +1323,8 @@ type PercentageRuleItem = {
     source_url: string | null
     source_checked_at: string | null
     source_note: string | null
+    label_key: string | null
+    fortolkningsnote: string | null
     valid_from: string
     valid_to: string | null
     status: "draft" | "approved" | "archived"
@@ -1422,7 +1424,10 @@ function OverenskomsterTab() {
     const [newPensionAgreementId, setNewPensionAgreementId] = useState<string | null>(null)
     const [newPensionForm, setNewPensionForm] = useState<PensionRuleForm>(emptyPensionForm())
     const [newPctAgreementId, setNewPctAgreementId] = useState<string | null>(null)
-    const [newPctForm, setNewPctForm] = useState({ label: "", percent: "", basis: "", trigger_condition: "", category: "overarbejde", valid_from: "", section_reference: "", source_title: "", label_key: "" })
+    const [newPctForm, setNewPctForm] = useState({ label: "", percent: "", basis: "", trigger_condition: "", category: "overarbejde", valid_from: "", section_reference: "", source_title: "", label_key: "", fortolkningsnote: "" })
+    const [editingPctRule, setEditingPctRule] = useState<PercentageRuleItem | null>(null)
+    const [editPctNote, setEditPctNote] = useState("")
+    const [editPctLabelKey, setEditPctLabelKey] = useState("")
     const [ruleSaving, setRuleSaving] = useState(false)
 
     // ── AI-udtræk af satser ────────────────────────────────────
@@ -1448,6 +1453,7 @@ function OverenskomsterTab() {
         percent: string
         trigger_condition: string
         category: string
+        label_key: string
         // fælles
         valid_from: string
         section_reference: string
@@ -1457,6 +1463,17 @@ function OverenskomsterTab() {
         source_title: string
         source_url: string
         source_checked_at: string
+    }
+
+    function suggestLabelKey(label: string): string {
+        const l = label.toLowerCase()
+        if (l.includes("royalty")) return "royalty"
+        if (l.includes("beta")) return "beta_pulje"
+        if (l.includes("helligdag")) return "helligdagsbetaling"
+        if (l.includes("svod")) return "svod"
+        if (l.includes("copydan")) return "copydan"
+        if (l.includes("ferie")) return "feriepenge"
+        return ""
     }
     const [satserUdtraekAgreementId, setSatserUdtraekAgreementId] = useState<string | null>(null)
     const [satserPhase, setSatserPhase] = useState<"input" | "kandidater">("input")
@@ -1548,6 +1565,7 @@ function OverenskomsterTab() {
                 percent: k.percent != null ? String(k.percent) : "",
                 trigger_condition: String(k.trigger_condition ?? ""),
                 category: String(k.category ?? "andet"),
+                label_key: suggestLabelKey(String(k.label ?? "")),
                 valid_from: String(k.valid_from ?? ""),
                 section_reference: String(k.section_reference ?? ""),
                 citation: String(k.citation ?? ""),
@@ -1620,6 +1638,7 @@ function OverenskomsterTab() {
                             source_url: k.source_url || null,
                             source_checked_at: k.source_checked_at || null,
                             source_note: k.citation || null,
+                            label_key: k.label_key || null,
                             valid_from: k.valid_from || today,
                         },
                     }
@@ -2399,10 +2418,24 @@ function OverenskomsterTab() {
                                                                             </div>
                                                                             <p className="text-[10px] text-muted-foreground">Af: {k.basis} · Gælder: {k.trigger_condition}</p>
                                                                             <div className="grid grid-cols-2 gap-1">
-                                                                                <div><Label className="text-[9px]">Betegnelse</Label><Input className="h-5 text-[10px]" value={k.label} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Betegnelse</Label><Input className="h-5 text-[10px]" value={k.label} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label: e.target.value, label_key: c.label_key || suggestLabelKey(e.target.value) } : c))} /></div>
                                                                                 <div><Label className="text-[9px]">Procent</Label><Input type="number" step="0.01" className="h-5 text-[10px]" value={k.percent} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, percent: e.target.value } : c))} /></div>
                                                                                 <div><Label className="text-[9px]">Beregningsgrundlag</Label><Input className="h-5 text-[10px]" value={k.basis} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, basis: e.target.value } : c))} /></div>
                                                                                 <div><Label className="text-[9px]">Gyldig fra</Label><Input type="date" className="h-5 text-[10px]" value={k.valid_from} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, valid_from: e.target.value } : c))} /></div>
+                                                                                <div className="col-span-2"><Label className="text-[9px]">Nøgleord (til automatisk opslag)</Label>
+                                                                                    <Select value={k.label_key || "none"} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label_key: v === "none" ? "" : v } : c))}>
+                                                                                        <SelectTrigger className="h-5 text-[10px]"><SelectValue placeholder="Ingen (rent informativ)" /></SelectTrigger>
+                                                                                        <SelectContent>
+                                                                                            <SelectItem value="none">Ingen (rent informativ)</SelectItem>
+                                                                                            <SelectItem value="royalty">royalty</SelectItem>
+                                                                                            <SelectItem value="beta_pulje">beta_pulje</SelectItem>
+                                                                                            <SelectItem value="helligdagsbetaling">helligdagsbetaling</SelectItem>
+                                                                                            <SelectItem value="svod">svod</SelectItem>
+                                                                                            <SelectItem value="copydan">copydan</SelectItem>
+                                                                                            <SelectItem value="feriepenge">feriepenge</SelectItem>
+                                                                                        </SelectContent>
+                                                                                    </Select>
+                                                                                </div>
                                                                             </div>
                                                                             {k.section_reference && <p className="text-[9px] text-muted-foreground">§ {k.section_reference}</p>}
                                                                         </div>
@@ -2595,8 +2628,10 @@ function OverenskomsterTab() {
                                                                 <p className="font-medium">{rule.label}: {Number(rule.percent).toLocaleString("da-DK")}%</p>
                                                                 <p className="text-muted-foreground">Af {rule.basis} · {rule.trigger_condition}</p>
                                                                 <p className="text-muted-foreground">{rule.section_reference && `${rule.section_reference} · `}fra {rule.valid_from}{rule.status === "approved" ? " · godkendt" : rule.status === "archived" ? " · arkiveret" : " · afventer godkendelse"}</p>
+                                                        {rule.fortolkningsnote && <p className="mt-1 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded px-2 py-1">⚠ {rule.fortolkningsnote}</p>}
                                                             </div>
                                                             <div className="flex gap-1 shrink-0">
+                                                                <button type="button" className="text-[10px] text-blue-600 underline hover:text-blue-700" onClick={() => { setEditingPctRule(rule); setEditPctNote(rule.fortolkningsnote ?? ""); setEditPctLabelKey(rule.label_key ?? "") }}>rediger</button>
                                                                 {rule.status === "draft" && (
                                                                     <button type="button" className="text-[10px] text-green-600 underline hover:text-green-700" disabled={ruleSaving} onClick={async () => {
                                                                         setRuleSaving(true)
@@ -2628,7 +2663,7 @@ function OverenskomsterTab() {
                                         <DialogContent className="max-w-lg">
                                             <DialogHeader><DialogTitle className="text-sm">Ny procentregel — {agreement.title}</DialogTitle></DialogHeader>
                                             <div className="space-y-2 text-xs">
-                                                <div><Label className="text-[10px]">Betegnelse *</Label><Input className="h-7 text-xs" placeholder="fx Overarbejdstillæg, 1. time" value={newPctForm.label} onChange={e => setNewPctForm(f => ({ ...f, label: e.target.value }))} /></div>
+                                                <div><Label className="text-[10px]">Betegnelse *</Label><Input className="h-7 text-xs" placeholder="fx Overarbejdstillæg, 1. time" value={newPctForm.label} onChange={e => setNewPctForm(f => ({ ...f, label: e.target.value, label_key: f.label_key || suggestLabelKey(e.target.value) }))} /></div>
                                                 <div className="grid grid-cols-2 gap-1.5">
                                                     <div><Label className="text-[10px]">Procent *</Label><Input type="number" step="0.01" className="h-7 text-xs" placeholder="25" value={newPctForm.percent} onChange={e => setNewPctForm(f => ({ ...f, percent: e.target.value }))} /></div>
                                                     <div><Label className="text-[10px]">Kategori *</Label>
@@ -2655,16 +2690,20 @@ function OverenskomsterTab() {
                                                 </div>
                                                 <div><Label className="text-[10px]">Kilde-titel</Label><Input className="h-7 text-xs" value={newPctForm.source_title} onChange={e => setNewPctForm(f => ({ ...f, source_title: e.target.value }))} /></div>
                                                 <div><Label className="text-[10px]">Kendt begreb (valgfrit — sikrer korrekt nøgleordsmatching)</Label>
-                                                    <Select value={newPctForm.label_key} onValueChange={v => setNewPctForm(f => ({ ...f, label_key: v }))}>
+                                                    <Select value={newPctForm.label_key || "none"} onValueChange={v => setNewPctForm(f => ({ ...f, label_key: v === "none" ? "" : v }))}>
                                                         <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Ingen (de fleste regler)" /></SelectTrigger>
                                                         <SelectContent>
-                                                            <SelectItem value="">Ingen</SelectItem>
+                                                            <SelectItem value="none">Ingen</SelectItem>
                                                             <SelectItem value="beta_pulje">BETA-puljen</SelectItem>
                                                             <SelectItem value="helligdagsbetaling">Helligdagsbetaling</SelectItem>
                                                             <SelectItem value="feriepenge">Feriepenge/ferietillæg</SelectItem>
+                                                            <SelectItem value="royalty">Royalty</SelectItem>
+                                                            <SelectItem value="svod">SVOD-tillæg</SelectItem>
+                                                            <SelectItem value="copydan">Copydan</SelectItem>
                                                         </SelectContent>
                                                     </Select>
                                                 </div>
+                                                <div><Label className="text-[10px]">Fortolkningsnote (vises som advarsel på valideringssiden)</Label><textarea className="w-full rounded-md border bg-background px-2 py-1.5 text-xs min-h-[60px] resize-y" placeholder="Fx: Tilstedeværelse af denne klausul betyder at rettigheder IKKE er bevaret — det er en buy-out." value={newPctForm.fortolkningsnote} onChange={e => setNewPctForm(f => ({ ...f, fortolkningsnote: e.target.value }))} /></div>
                                             </div>
                                             <DialogFooter className="pt-2 gap-2">
                                                 <Button variant="outline" size="sm" onClick={() => setNewPctAgreementId(null)}>Annuller</Button>
@@ -2677,12 +2716,59 @@ function OverenskomsterTab() {
                                                     const res = await fetch("/api/admin/agreements", {
                                                         method: "POST",
                                                         headers: { "Content-Type": "application/json" },
-                                                        body: JSON.stringify({ percentageRule: { agreementId: agreement.id, rate_key: `${slugify(newPctForm.label)}-${newPctForm.valid_from}`, ...newPctForm, percent: Number(newPctForm.percent), label_key: newPctForm.label_key || null } }),
+                                                        body: JSON.stringify({ percentageRule: { agreementId: agreement.id, rate_key: `${slugify(newPctForm.label)}-${newPctForm.valid_from}`, ...newPctForm, percent: Number(newPctForm.percent), label_key: newPctForm.label_key || null, fortolkningsnote: newPctForm.fortolkningsnote || null } }),
                                                     })
                                                     setRuleSaving(false)
                                                     if (res.ok) { toast.success("Procentregel oprettet som kladde"); setNewPctAgreementId(null); refreshAktive() }
                                                     else { toast.error((await res.json()).error ?? "Fejl") }
                                                 }}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Opret kladde</Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+
+                                    {/* ── Dialog: rediger procentregel ── */}
+                                    <Dialog open={editingPctRule?.id != null && agreement.agreement_percentage_rules.some(r => r.id === editingPctRule?.id)} onOpenChange={open => { if (!open) setEditingPctRule(null) }}>
+                                        <DialogContent className="max-w-lg">
+                                            <DialogHeader><DialogTitle className="text-sm">Rediger procentregel — {editingPctRule?.label}</DialogTitle></DialogHeader>
+                                            <div className="space-y-2 text-xs">
+                                                {editingPctRule && (editingPctRule.status === "approved" || editingPctRule.status === "archived") ? (
+                                                    <>
+                                                        <p className="text-muted-foreground">Godkendte regler: kun nøgleord og fortolkningsnote kan ændres. Øvrige felter kræver arkivering og ny oprettelse.</p>
+                                                        <div><Label className="text-[10px]">Nøgleord (til automatisk opslag)</Label>
+                                                            <Select value={editPctLabelKey || "none"} onValueChange={v => setEditPctLabelKey(v === "none" ? "" : v)}>
+                                                                <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Ingen (rent informativ)" /></SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem value="none">Ingen (rent informativ)</SelectItem>
+                                                                    <SelectItem value="royalty">royalty</SelectItem>
+                                                                    <SelectItem value="beta_pulje">beta_pulje</SelectItem>
+                                                                    <SelectItem value="helligdagsbetaling">helligdagsbetaling</SelectItem>
+                                                                    <SelectItem value="svod">svod</SelectItem>
+                                                                    <SelectItem value="copydan">copydan</SelectItem>
+                                                                    <SelectItem value="feriepenge">feriepenge</SelectItem>
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
+                                                        <div><Label className="text-[10px]">Fortolkningsnote (vises som advarsel på valideringssiden)</Label><textarea className="w-full rounded-md border bg-background px-2 py-1.5 text-xs min-h-[80px] resize-y" value={editPctNote} onChange={e => setEditPctNote(e.target.value)} /></div>
+                                                    </>
+                                                ) : editingPctRule ? (
+                                                    <p className="text-muted-foreground text-center py-4">Kladde-regler redigeres ved at slette og oprette en ny.</p>
+                                                ) : null}
+                                            </div>
+                                            <DialogFooter className="pt-2 gap-2">
+                                                <Button variant="outline" size="sm" onClick={() => setEditingPctRule(null)}>Annuller</Button>
+                                                {editingPctRule && (editingPctRule.status === "approved" || editingPctRule.status === "archived") && (
+                                                    <Button size="sm" disabled={ruleSaving} onClick={async () => {
+                                                        setRuleSaving(true)
+                                                        const res = await fetch("/api/admin/agreements", {
+                                                            method: "PATCH",
+                                                            headers: { "Content-Type": "application/json" },
+                                                            body: JSON.stringify({ percentageRuleId: editingPctRule.id, label_key: editPctLabelKey || null, fortolkningsnote: editPctNote || null }),
+                                                        })
+                                                        setRuleSaving(false)
+                                                        if (res.ok) { toast.success("Note gemt"); setEditingPctRule(null); refreshAktive() }
+                                                        else { toast.error((await res.json()).error ?? "Fejl") }
+                                                    }}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Gem note</Button>
+                                                )}
                                             </DialogFooter>
                                         </DialogContent>
                                     </Dialog>

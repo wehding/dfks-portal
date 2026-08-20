@@ -22,13 +22,14 @@ export async function POST(req: NextRequest) {
 
         const supabase = sb()
 
-        const patch: Record<string, unknown> = { status: "valideret" }
-        if (employerId)    patch.employer_id      = employerId
-        if (contractType)  patch.type             = contractType
-        if (overenskomst !== undefined) patch.overenskomst = overenskomst ?? null
-        if (rightsHolderId) patch.rights_holder_id = rightsHolderId
-
-        const { error } = await supabase.from("contracts").update(patch).eq("id", contractId)
+        const { error } = await supabase.rpc("admin_validate_contract", {
+            p_contract_id: contractId,
+            p_status: "valideret",
+            p_employer_id: employerId ?? null,
+            p_type: contractType ?? null,
+            p_overenskomst: overenskomst !== undefined ? (overenskomst ?? null) : null,
+            p_rights_holder_id: rightsHolderId ?? null,
+        })
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
         return NextResponse.json({ ok: true })

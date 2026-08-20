@@ -213,6 +213,8 @@ type WorkRow = {
   work_assignments?: WorkAssignment[];
   work_production_numbers?: WorkProductionNumber[];
   work_distributions?: WorkDistribution[];
+  distribution_type?: "biograf" | "streaming" | "broadcast" | null;
+  distribution_type_source?: "manual" | null;
   is_season_group?: boolean;
   group_key?: string;
   child_work_ids?: string[];
@@ -791,6 +793,7 @@ function VaerksadministrationContent() {
   const [addAssignments, setAddAssignments] = useState<AssignmentDraft[]>([]);
   const [addDistributions, setAddDistributions] = useState<DistributionDraft[]>([]);
   const [editDistributions, setEditDistributions] = useState<DistributionDraft[]>([]);
+  const [editDistributionType, setEditDistributionType] = useState<"biograf" | "streaming" | "broadcast" | "">("");
   const [addForceExternalSearch, setAddForceExternalSearch] = useState(false);
   const [unifiedAddResults, setUnifiedAddResults] = useState<UnifiedSearchWorkResult[]>([]);
   const [pickedUnifiedAddResult, setPickedUnifiedAddResult] = useState<UnifiedSearchWorkResult | null>(null);
@@ -1247,6 +1250,7 @@ function VaerksadministrationContent() {
     setEditForm(toForm(work));
     void resolveProducerSelections(work.production_companies).then(setEditProducerSelections);
     setEditDistributions(toDistributionDrafts(work));
+    setEditDistributionType(work.distribution_type ?? "");
     setAssignmentDrafts(Object.fromEntries((work.work_assignments ?? []).map(assignment => [
       assignment.id,
       {
@@ -1273,6 +1277,7 @@ function VaerksadministrationContent() {
     setEditForm(toForm(detailedWork));
     void resolveProducerSelections(detailedWork.production_companies).then(setEditProducerSelections);
     setEditDistributions(toDistributionDrafts(detailedWork));
+    setEditDistributionType(detailedWork.distribution_type ?? "");
     setAssignmentDrafts(Object.fromEntries((detailedWork.work_assignments ?? []).map(assignment => [
       assignment.id,
       {
@@ -1407,6 +1412,8 @@ function VaerksadministrationContent() {
           dfi_type: editForm.dfi_type || null,
           status: editForm.status === "arkiveret" ? "godkendt" : editForm.status,
           dfi_metadata: editForm.dfi_metadata || null,
+          distribution_type: editDistributionType || null,
+          distribution_type_source: editDistributionType ? "manual" : null,
         },
         productionCompanies: editProducerSelections,
         distributions: distributionPayload(editDistributions),
@@ -2649,6 +2656,19 @@ function VaerksadministrationContent() {
                       <Input value={editForm.imdb_id} onChange={e => setEditForm({ ...editForm, imdb_id: e.target.value, field_sources: { ...editForm.field_sources, imdb_id: "manual" } })} />
                     </Field>
                     <div className="md:col-span-2"><DistributionEditor value={editDistributions} onChange={setEditDistributions} options={broadcasterOptions} /></div>
+                    <div className="md:col-span-2 space-y-1">
+                      <Label className="text-xs">Distributionskanal (royalty-logik)</Label>
+                      <Select value={editDistributionType || "none"} onValueChange={v => setEditDistributionType(v === "none" ? "" : v as "biograf" | "streaming" | "broadcast")}>
+                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Ikke sat" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Ikke sat</SelectItem>
+                          <SelectItem value="biograf">Biografdistribution</SelectItem>
+                          <SelectItem value="streaming">Streaming</SelectItem>
+                          <SelectItem value="broadcast">Broadcast (TV)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {editing?.distribution_type_source === "manual" && <p className="text-[10px] text-muted-foreground">Kilde: manuelt sat af admin</p>}
+                    </div>
 
                   </div>
 
@@ -3364,8 +3384,8 @@ function DistributionEditor({ value, onChange, options }: { value: DistributionD
   const update = (index: number, patch: Partial<DistributionDraft>) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
   return (
     <div className="space-y-3 rounded-md border p-3">
-      <div className="flex items-center justify-between gap-2"><Label>Broadcastere og streamere</Label><Button type="button" size="sm" variant="outline" onClick={() => onChange([...value, { broadcasterName: "", distributionType: "both", validFromYear: "", validToYear: "", inherited: false }])}><Plus className="mr-1 h-4 w-4" />Tilføj</Button></div>
-      {value.length === 0 ? <p className="text-xs text-muted-foreground">Ingen broadcastere eller streamere tilknyttet.</p> : value.map((item, index) => (
+      <div className="flex items-center justify-between gap-2"><Label>Primær distribution</Label><Button type="button" size="sm" variant="outline" onClick={() => onChange([...value, { broadcasterName: "", distributionType: "both", validFromYear: "", validToYear: "", inherited: false }])}><Plus className="mr-1 h-4 w-4" />Tilføj</Button></div>
+      {value.length === 0 ? <p className="text-xs text-muted-foreground">Ingen primær distribution tilknyttet.</p> : value.map((item, index) => (
         <div key={index} className="grid gap-2 rounded border p-2 sm:grid-cols-[minmax(180px,1fr)_100px_100px_auto]">
           <div><Select disabled={item.inherited} value={item.broadcasterName} onValueChange={broadcasterName => update(index, { broadcasterName })}><SelectTrigger><SelectValue placeholder="Vælg broadcaster" /></SelectTrigger><SelectContent>{options.map(option => <SelectItem key={option.name} value={option.name}>{option.name}</SelectItem>)}</SelectContent></Select>{item.inherited && <p className="mt-1 text-xs text-muted-foreground">Fra producent</p>}</div>
           <Input disabled={item.inherited} inputMode="numeric" placeholder="Fra år" value={item.validFromYear} onChange={event => update(index, { validFromYear: event.target.value })} />

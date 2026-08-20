@@ -41,10 +41,10 @@ export const IS_FREELANCE_CONTRACT_RULE =
 
 export const HOLIDAY_PAY_RATE_RULE =
     "Helligdagsbetaling i % som tal (number | null). " +
-    "Sæt KUN hvis satsen er eksplicit nævnt i selve kontraktteksten. " +
-    "Helligdagsbetaling og BETA-fond er reguleret i overenskomsten og fremgår sjældent af kontrakten — sæt null medmindre procentsatsen er skrevet direkte ind i kontrakten."
+    "Sæt KUN hvis satsen er eksplicit nævnt i selve kontraktteksten — fx '8,33% i helligdagsbetaling'. " +
+    "Sæt null ellers; satsen udledes automatisk deterministisk fra overenskomstregisteret."
 
 export const BETA_RATE_RULE =
     "BETA-fondsbidrag i % som tal (number | null). " +
-    "Sæt KUN hvis satsen er eksplicit nævnt i selve kontraktteksten. " +
-    "BETA-fond er reguleret i overenskomsten og fremgår sjældent af kontrakten — sæt null medmindre procentsatsen er skrevet direkte ind i kontrakten."
+    "Sæt KUN hvis satsen er eksplicit nævnt i selve kontraktteksten — fx '1% til BETA-fonden'. " +
+    "Sæt null ellers; satsen udledes automatisk deterministisk fra overenskomstregisteret."

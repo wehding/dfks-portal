@@ -15,11 +15,14 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { createClient as createSessionClient } from "@/lib/supabase/server"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
-import { extractPdfText } from "@/lib/pdf-parse"
-import { extractWordText } from "@/lib/word-text"
+import { extractPdfText, extractPdfTextWithLayout } from "@/lib/pdf-parse"
+import { extractWordText, extractWordTextWithLayout } from "@/lib/word-text"
 import { maskPersonalData } from "@/lib/mask-text"
 import { runContractExtraction } from "@/lib/contract-extract-core"
 import { isInternalWorkerSecret } from "@/lib/api-auth"
+import { buildPdfLayout, buildDocxLayout, buildAnnotatedContractText } from "@/lib/contract-layout"
+import type { ContractLayout } from "@/lib/contract-layout"
+import { enrichSourcesWithClauseIds } from "@/lib/contract-layout-store"
 
 async function authorization(req: NextRequest): Promise<{ internal: true; orgId: null } | { internal: false; orgId: string } | null> {
     const authHeader = req.headers.get("authorization") ?? ""
@@ -67,21 +70,48 @@ export async function POST(req: NextRequest) {
         const buffer = Buffer.from(await fileData.arrayBuffer())
         const ext = storagePath.split(".").pop()?.toLowerCase()
 
-        let text: string
+        // Byg layout (lag 1+2) — er den primære tekstkilde til AI-input.
+        // Annoteret tekst med inline [sX_cY]-tags erstatter extractPdfText() som AI-input
+        // så AI'en altid læser fra samme kilde som koordinaterne er bygget af.
+        let layout: ContractLayout | null = null
+        let aiText: string
+
         if (ext === "pdf") {
-            text = await extractPdfText(buffer)
+            try {
+                const fragments = await extractPdfTextWithLayout(buffer)
+                layout = buildPdfLayout(fragments)
+            } catch { /* layout best-effort — fallback til plain text */ }
+            aiText = layout
+                ? maskPersonalData(buildAnnotatedContractText(layout))
+                : maskPersonalData(await extractPdfText(buffer))
         } else if (ext === "docx" || ext === "doc") {
-            text = await extractWordText(buffer, storagePath)
+            try {
+                const docxLayout = await extractWordTextWithLayout(buffer, storagePath)
+                layout = buildDocxLayout(docxLayout)
+            } catch { /* layout best-effort — fallback til plain text */ }
+            aiText = layout
+                ? maskPersonalData(buildAnnotatedContractText(layout))
+                : maskPersonalData(await extractWordText(buffer, storagePath))
         } else {
-            text = buffer.toString("utf-8")
+            aiText = maskPersonalData(buffer.toString("utf-8"))
         }
 
-        const masked = maskPersonalData(text)
+        // Gem layout til contracts-tabellen (best-effort, blokerer ikke udtræk)
+        if (layout && contractId) {
+            admin.from("contracts").update({ layout_data: layout }).eq("id", contractId)
+                .then(({ error }) => { if (error) console.error("[validate/extract] layout_data gem fejl:", error.message) })
+        }
 
-        const result = await runContractExtraction(masked, { orgId, entityId: contractId, source: "admin", pdfBuffer: ext === "pdf" ? buffer : null })
+        const result = await runContractExtraction(aiText, { orgId, entityId: contractId, source: "admin", pdfBuffer: ext === "pdf" ? buffer : null, layout })
         if (!result.ok) return NextResponse.json({ error: result.error ?? "Udtræk fejlede" }, { status: 500 })
 
-        return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: masked })
+        // Fallback: server-side klausul-ID korrelation for felter AI'en ikke returnerede et ID for.
+        // Primærvejen er nu at AI'en aflæser [sX_cY]-tagget direkte fra den annoterede tekst.
+        if (result.data?._sources && layout) {
+            result.data._sources = enrichSourcesWithClauseIds(result.data._sources as Record<string, string | null>, layout) as typeof result.data._sources
+        }
+
+        return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: aiText, layout })
     } catch (err: unknown) {
         console.error("[validate/extract]", err)
         return NextResponse.json({ error: "Kontrakten kunne ikke analyseres" }, { status: 500 })

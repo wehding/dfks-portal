@@ -6,6 +6,7 @@ import { Document, Page, pdfjs } from "react-pdf"
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { norm, buildNeedles as resolveNeedles } from "@/lib/resolveAnker"
+import type { ContractLayout } from "@/lib/contract-layout"
 import "react-pdf/dist/Page/AnnotationLayer.css"
 import "react-pdf/dist/Page/TextLayer.css"
 
@@ -23,6 +24,25 @@ interface PdfViewerProps {
     sectionHighlights?: string[]
     activeHighlight?: string | null
     pageNavigationHint?: string
+    // Lag 5: koordinatbaseret highlight
+    layout?: ContractLayout | null
+    activeClauseId?: string | null
+}
+
+type PageViewport = { pdfWidth: number; pdfHeight: number; renderedWidth: number; renderedHeight: number }
+
+/** Konverter PDF-bounding-box (y=0 ved bund) til CSS-position i en rendered side. */
+function bboxToScreenStyle(
+    bbox: { x: number; y: number; width: number; height: number },
+    vp: PageViewport,
+): React.CSSProperties {
+    const scaleX = vp.renderedWidth / vp.pdfWidth
+    const scaleY = vp.renderedHeight / vp.pdfHeight
+    const left = bbox.x * scaleX
+    const top = vp.renderedHeight - (bbox.y + bbox.height) * scaleY
+    const width = bbox.width * scaleX
+    const height = bbox.height * scaleY
+    return { position: "absolute", left, top, width, height, pointerEvents: "none" }
 }
 
 // norm() og buildNeedles importeret fra lib/resolveAnker.ts
@@ -178,13 +198,14 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     })
 }
 
-export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint }: PdfViewerProps) {
+export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint, layout, activeClauseId }: PdfViewerProps) {
     const [numPages, setNumPages] = useState(0)
     const [pageNumber, setPageNumber] = useState(1)
     const [scale, setScale] = useState(1.0)
     const [error, setError] = useState(false)
     const [pageRendered, setPageRendered] = useState(false)
     const [pdfDoc, setPdfDoc] = useState<any>(null)
+    const [pageViewport, setPageViewport] = useState<PageViewport | null>(null)
     const containerRef = useRef<HTMLDivElement>(null)
 
     const activeHighlightRef = useRef(activeHighlight)
@@ -194,7 +215,27 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     highlightsRef.current = highlights
     sectionHighlightsRef.current = sectionHighlights
 
+    // Lag 5 og tekst-søgning er gensidigt udelukkende: hvis koordinat-boksen
+    // dækker det aktive felt, skal HVERKEN den grønne ord-markering ELLER
+    // sectionHighlights' gule paragraf-markering vises. Løftet til komponent-
+    // niveau, så begge effekter (tekst-søgnings-navigation og highlighting)
+    // bruger samme, konsistente beregning.
+    const hasCoordinateBox = !!(
+        activeClauseId && layout &&
+        layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)?.pdfBbox
+    )
+    const effectiveActiveHighlight = hasCoordinateBox ? null : activeHighlight
+    const effectiveSectionHighlights = hasCoordinateBox ? [] : sectionHighlights
+    const effectiveActiveHighlightRef = useRef(effectiveActiveHighlight)
+    const effectiveSectionHighlightsRef = useRef(effectiveSectionHighlights)
+    effectiveActiveHighlightRef.current = effectiveActiveHighlight
+    effectiveSectionHighlightsRef.current = effectiveSectionHighlights
+
     useEffect(() => {
+        // Koordinat-boksen håndterer sin egen sidenavigation (Lag 5 nedenfor) —
+        // den ældre tekst-søgnings-navigation skal ikke også køre og potentielt
+        // navigere et andet sted hen eller efterlade en gul/grøn tekst-markering.
+        if (hasCoordinateBox) return
         if (!activeHighlight || !pdfDoc || !numPages) return
         const navSource = pageNavigationHint ?? activeHighlight
         const candidates = navSource.split("||").map(s => s.trim()).filter(Boolean)
@@ -210,11 +251,44 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                 setPageNumber(targetPage)
             } else {
                 if (containerRef.current) {
-                    applyHighlights(containerRef.current, highlightsRef.current, activeHighlightRef.current, sectionHighlightsRef.current)
+                    applyHighlights(containerRef.current, highlightsRef.current, effectiveActiveHighlightRef.current, effectiveSectionHighlightsRef.current)
                 }
             }
         })
-    }, [activeHighlight, pageNavigationHint, pdfDoc, numPages]) // eslint-disable-line
+    }, [activeHighlight, pageNavigationHint, pdfDoc, numPages, hasCoordinateBox]) // eslint-disable-line
+
+    // Lag 5: naviger til klausulens side ved activeClauseId-skift
+    useEffect(() => {
+        if (!activeClauseId || !layout) return
+        const clause = layout.clauses.find(c => c.id === activeClauseId)
+        // [LAG5-C] Trin 3: findes klausulen og har den pdfBbox?
+        console.log(`[LAG5-C] activeClauseId=${activeClauseId}, fundet=${!!clause}, pdfBbox=${clause?.pdfBbox ? JSON.stringify(clause.pdfBbox) : "MANGLER"}, pageViewport=${pageViewport ? `${pageViewport.renderedWidth}x${pageViewport.renderedHeight}` : "NULL"}`)
+        if (!clause) return
+        const targetPage = clause.page ?? 1
+        if (targetPage !== pageNumber) {
+            setPageRendered(false)
+            setPageNumber(targetPage)
+        }
+    }, [activeClauseId, layout]) // eslint-disable-line
+
+    // Lag 5: hent sidedimensioner fra pdfDoc via PDF-viewport * scale (ingen DOM-måling)
+    // Kører når pdfDoc skifter ELLER side/scale ændres — kræver IKKE pageRendered
+    // (DOM-måling via offsetWidth var upålidelig og skabte race condition med pageRendered)
+    useEffect(() => {
+        setPageViewport(null) // ryd stale viewport straks — undgår hængende bokse ved sideskift
+        if (!pdfDoc) return
+        pdfDoc.getPage(pageNumber).then((page: any) => {
+            const vp = page.getViewport({ scale: 1 })
+            const newVp = {
+                pdfWidth: vp.width,
+                pdfHeight: vp.height,
+                renderedWidth: vp.width * scale,
+                renderedHeight: vp.height * scale,
+            }
+            console.log(`[LAG5-D] pageViewport sat: ${newVp.renderedWidth.toFixed(0)}x${newVp.renderedHeight.toFixed(0)}px (PDF: ${newVp.pdfWidth}x${newVp.pdfHeight}pt, scale=${scale})`)
+            setPageViewport(newVp)
+        }).catch((e: unknown) => console.warn("[LAG5-D] getPage fejl:", e))
+    }, [pdfDoc, pageNumber, scale])
 
     const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
         setNumPages(numPages); setError(false)
@@ -227,22 +301,23 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
 
     useEffect(() => {
         if (!containerRef.current || !pageRendered) return
+        // hasCoordinateBox/effectiveActiveHighlight/effectiveSectionHighlights er
+        // løftet til komponent-niveau ovenfor — samme beregning genbruges her.
         let attempts = 0
         let timer: ReturnType<typeof setTimeout>
         const tryApply = () => {
             if (!containerRef.current) return
             const textLayer = containerRef.current.querySelector(".react-pdf__Page__textContent")
             const spans = textLayer ? Array.from(textLayer.querySelectorAll("span")) as HTMLElement[] : []
-            // If any regular highlight is on this page, OR no highlights exist, proceed
             const hasPageContent = spans.length > 10
             if (!hasPageContent) {
                 if (attempts++ < 15) { timer = setTimeout(tryApply, 200); return }
             }
-            applyHighlights(containerRef.current, highlights, activeHighlight, sectionHighlights)
+            applyHighlights(containerRef.current, highlights, effectiveActiveHighlight, effectiveSectionHighlights)
         }
         timer = setTimeout(tryApply, 300)
         return () => clearTimeout(timer)
-    }, [highlights, sectionHighlights, activeHighlight, pageNumber, pageRendered])
+    }, [highlights, sectionHighlights, activeHighlight, pageNumber, pageRendered, activeClauseId, layout])
 
 
     if (error) {
@@ -274,7 +349,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                 <span className="text-xs tabular-nums text-muted-foreground min-w-[40px] text-center">{Math.round(scale * 100)}%</span>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(s => Math.min(2.5, s + 0.2))}><ZoomIn className="h-3.5 w-3.5" /></Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(1.0)}><Maximize2 className="h-3.5 w-3.5" /></Button>
-                {activeHighlight && (
+                {activeHighlight && !activeClauseId && (
                     <span className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-yellow-50 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800">
                         Aktiv kilde markeres med gul
                     </span>
@@ -283,9 +358,24 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             <div ref={containerRef} className="flex-1 overflow-auto bg-muted/30">
                 <div className="flex justify-center p-4">
                     <Document file={url} onLoadSuccess={onDocumentLoadSuccess} onLoadError={onDocumentLoadError} loading={Spinner}>
-                        <Page pageNumber={pageNumber} scale={scale} className="shadow-sm"
-                            renderTextLayer={true} renderAnnotationLayer={false}
-                            onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
+                        <div style={{ position: "relative", display: "inline-block" }}>
+                            <Page pageNumber={pageNumber} scale={scale} className="shadow-sm"
+                                renderTextLayer={true} renderAnnotationLayer={false}
+                                onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
+                            {/* Lag 5: koordinatbaseret overlay — kun aktiv klausul (grøn) */}
+                            {pageViewport && layout && activeClauseId && (() => {
+                                const clause = layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)
+                                if (!clause?.pdfBbox) return null
+                                const style = bboxToScreenStyle(clause.pdfBbox, pageViewport)
+                                return (
+                                    <div key={activeClauseId}
+                                        ref={(el) => { if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }) }}
+                                        style={{ ...style, background: "rgba(74,222,128,0.25)", border: "1px solid rgba(21,128,61,0.35)", borderRadius: 2, zIndex: 10 }}
+                                        title={`Klausul ${activeClauseId}`}
+                                    />
+                                )
+                            })()}
+                        </div>
                     </Document>
                 </div>
             </div>

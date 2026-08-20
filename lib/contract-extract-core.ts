@@ -14,7 +14,10 @@ import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
 import { createAiUsageRun, finishAiUsageRun, type AiTokenUsage } from "@/lib/ai-usage"
 import { detectPdfSignature } from "@/lib/pdf-signature-detection"
 import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
-import { resolveAgreementByDate } from "@/lib/agreement-version-resolver"
+import { applyApprovedAgreementRoyalty } from "@/lib/agreement-royalty-server"
+import { applyApprovedHolidayPay, applyApprovedBetaContribution, applyApprovedCopydan } from "@/lib/agreement-percentage-rule-server"
+import { getAgreementSatserForContext } from "@/lib/agreement-wage-server"
+import { resolveAgreementByDate, toShortCode } from "@/lib/agreement-version-resolver"
 import {
     CONTRACT_EXTRACTION_MIN_TEXT_CHARS,
     CONTRACT_EXTRACTION_SCHEMA_VERSION,
@@ -53,6 +56,7 @@ export type ContractExtractionContext = {
     actorUserId?: string | null
     source?: "portal" | "admin" | "api" | "cron" | "import"
     pdfBuffer?: Buffer | null
+    layout?: import("@/lib/contract-layout").ContractLayout | null
     runtimeConfig?: AiRuntimeConfig | null
     promptVersion?: string
     schemaVersion?: string
@@ -162,6 +166,7 @@ export async function runContractExtraction(maskedText: string, context: Contrac
 
 overenskomst: ${overenskomstListe}
 VIGTIGT: Flere overenskomster hedder begge "Fiktionsoverenskomsten" (fx både De4's og FAF's), men er indgået mellem forskellige parter. Afgør IKKE kun ud fra ordet "fiktion" — læs hvilken organisation overenskomsten konkret er indgået mellem Producentforeningen og (typisk angivet i overskriften, fx "Overenskomst mellem Producentforeningen og FAF" eller "...og De4"), og match derefter det korrekte id. "de4-fiktion" kræver at De4 (Dansk Filmfotograf Forbund/Dansk Filmklipperselskab/Danske Scenografer/Dansk Journalistforbund) er den navngivne modpart — ikke blot at ordet "fiktion" indgår.
+VIGTIGT: Ældre eller mere formelle kontraktskabeloner bruger ofte organisationens FULDE, formelle navn i stedet for den moderne forkortelse — genkend disse som samme organisation, ikke som en ukendt tredjepart: FAF = "Film- og TV-Arbejderforeningen"; "Kort- og dokumentarfilmoverenskomsten mellem Film- og TV-arbejderforeningen og Danske Film- og TV-Producenter" er FAF's dokumentar-overenskomst (samme som "faf-dokumentar"), uanset at ordet "FAF" ikke nævnes eksplicit. Anvend samme princip generelt — match på den navngivne organisations fulde, formelle navn, ikke kun på en genkendt forkortelse.
 Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis uklart eller ingen match.
 contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             userMessage: `---KONTRAKT START---\n${maskedText.slice(0, 2000)}\n\n---KONTRAKT SLUT---\n${maskedText.slice(-1500)}`,
@@ -176,6 +181,23 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
         console.log("[contract-extract] klassifikation:", { detectedOverenskomst, detectedContractDate, raw: classifyResponse.text.slice(0, 200) })
     } catch (e) {
         console.warn("[contract-extract] Klassifikation fejlede, fortsætter uden overenskomst-kontekst:", e)
+    }
+
+    // Trin 1.5: Hent overenskomstsatser til injektion i Trin 2's prompt
+    let agreementSatserForPrompt: { agreementCode: string; satser: Array<{ beskrivelse: string; vaerdi: number; enhed: string }> } | null = null
+    if (detectedOverenskomst && detectedOverenskomst !== "ingen" && detectedOverenskomst !== "ukendt") {
+        try {
+            const versionResult = await resolveAgreementByDate(detectedOverenskomst, detectedContractDate)
+            if (versionResult.found && versionResult.code) {
+                const satser = await getAgreementSatserForContext(versionResult.code)
+                if (satser.length > 0) {
+                    agreementSatserForPrompt = { agreementCode: versionResult.code, satser }
+                    console.log("[contract-extract] satser hentet til prompt:", { code: versionResult.code, antal: satser.length })
+                }
+            }
+        } catch (e) {
+            console.warn("[contract-extract] Kunne ikke hente satser til prompt:", e)
+        }
     }
 
     // Trin 2: Hent reference docs + relevante overenskomst-chunks baseret på klassifikation
@@ -229,7 +251,7 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             overenskomstQuery,
         ])
         console.log("[contract-extract] chunks hentet:", { count: overenskomstChunks?.length ?? 0, error: chunksError?.message ?? null, kategorier: overenskomstChunks?.map(c => c.kategori) })
-        systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined, overenskomstChunks ?? undefined)
+        systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined, overenskomstChunks ?? undefined, context.layout ?? undefined, agreementSatserForPrompt ?? undefined)
     } catch (e) {
         console.warn("[contract-extract] Kunne ikke hente reference docs:", e)
     }
@@ -265,6 +287,14 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
     }
 
     let extracted = mergeContractExtractionChunks(extractedChunks)
+
+    // Normalisér overenskomst til kanonisk short_code — AI kan returnere gamle
+    // kortformer som "faf" eller "de4"; UI-dropdownen forventer "faf-fiktion"/"de4-fiktion".
+    if (extracted.overenskomst && extracted.overenskomst !== "ingen" && extracted.overenskomst !== "ukendt") {
+        const canonical = toShortCode(extracted.overenskomst as string)
+        if (canonical) extracted = { ...extracted, overenskomst: canonical }
+    }
+
     if (!hasUsableContractExtraction(extracted)) {
         const cause = new ContractImportPipelineError({
             message: "AI fandt ingen genkendelige kontraktoplysninger",
@@ -299,7 +329,10 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
         }
     }
     if (extracted._sources && typeof extracted._sources === "object") {
-        extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>)
+        const knownIds = context.layout
+            ? new Set(context.layout.clauses.map(c => c.id))
+            : undefined
+        extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>, knownIds)
     }
 
     try {
@@ -307,6 +340,42 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
         extracted = pension.data
     } catch (error) {
         console.warn("[contract-extract] Pensionsregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
+    }
+
+    try {
+        const royalty = await applyApprovedAgreementRoyalty(extracted)
+        extracted = royalty.data
+        // Persistér reason, så UI kan vise årsag til "fra" — herunder "not_found" når alle trin er gennemgået
+        if (!royalty.data.royalty && !royalty.data.royaltySourceType) {
+            extracted = {
+                ...extracted,
+                royaltySourceType: "not_found",
+                royaltyResolutionReason: royalty.reason,
+            }
+        }
+    } catch (error) {
+        console.warn("[contract-extract] Royaltyregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
+    }
+
+    try {
+        const holidayPay = await applyApprovedHolidayPay(extracted)
+        extracted = holidayPay.data
+    } catch (error) {
+        console.warn("[contract-extract] Helligdagsbetalingsregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
+    }
+
+    try {
+        const beta = await applyApprovedBetaContribution(extracted)
+        extracted = beta.data
+    } catch (error) {
+        console.warn("[contract-extract] BETA-fondsregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
+    }
+
+    try {
+        const copydan = await applyApprovedCopydan(extracted)
+        extracted = copydan.data
+    } catch (error) {
+        console.warn("[contract-extract] Copydan-regel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
     }
 
     const meta: ContractExtractionMetadata = {
