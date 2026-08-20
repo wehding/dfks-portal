@@ -30,7 +30,8 @@ test("privacygrænsen kan skærpes, men aldrig sættes under tre", () => {
 });
 
 test("dominans og sekundær diskretion skjuler økonomiske celler", () => {
-  assert.ok(dominanceRatio([80, 10, 10]) > 0.85);
+  assert.ok(dominanceRatio([80, 10, 10]) > 0.8);
+  assert.ok(dominanceRatio([60, 20, 20]) <= 0.8);
   const protectedCells = new PrivacyGuard({ minimumGroupSize: 3 }).protectCells([
     { key: "a", contributorIds: ["1", "2"], contributions: [10, 10] },
     { key: "b", contributorIds: ["3", "4", "5"], contributions: [10, 10, 10] },
