@@ -21,7 +21,7 @@ export type PrivacyCell = {
 
 export const DEFAULT_PRIVACY_POLICY: PrivacyPolicy = {
   minimumGroupSize: 5,
-  dominanceLimit: 0.85,
+  dominanceLimit: 0.8,
   lowSampleThreshold: 10,
 };
 
