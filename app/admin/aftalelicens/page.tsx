@@ -34,7 +34,7 @@ import {
 import Link from "next/link"
 import { toast } from "sonner"
 import type { AftalelicensBatch, AftalelicensKilde, AftalelicensVaerk, FilterRule, SortStatus } from "@/lib/streaming-types"
-import { addScreeningClaimComment, fetchAdminScreeningClaims, importScreeningSourceRows, markScreeningClaimCommentsRead, updateScreeningClaimStatus } from "@/app/actions/screenings"
+import { addScreeningClaimComment, createAftalelicensBatch, fetchAdminScreeningClaims, fetchAftalelicensBatches, importScreeningSourceRows, markScreeningClaimCommentsRead, updateScreeningClaimStatus } from "@/app/actions/screenings"
 import { MessageThread } from "@/components/messages/message-thread"
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
 import { WORK_TYPES } from "@/lib/work-types"
@@ -108,17 +108,9 @@ function loadFilterRules(): FilterRule[] {
     } catch { return [] }
 }
 
-function saveBatches(batches: AftalelicensBatch[]) {
-    try { localStorage.setItem("dfks_batches", JSON.stringify(batches)) } catch { /* quota */ }
-}
-
-function loadBatches(): AftalelicensBatch[] | null {
-    if (typeof window === "undefined") return null
-    try {
-        const s = localStorage.getItem("dfks_batches")
-        return s ? JSON.parse(s) : null
-    } catch { return null }
-}
+// saveBatches/loadBatches (localStorage) er fjernet — batch-historik hentes/gemmes
+// nu via createAftalelicensBatch()/fetchAftalelicensBatches() (rigtig databasetabel,
+// se migration 20260820180000_aftalelicens_batches.sql).
 
 // ── Column detection ──────────────────────────────────────────
 
@@ -719,12 +711,22 @@ export default function AftalelicensPage() {
         if (result.success) setClaims(result.claims ?? [])
     }
 
-    // Load from localStorage on mount
+    const loadBatchesFromServer = async () => {
+        const result = await fetchAftalelicensBatches()
+        if (result.success && result.batches.length > 0) {
+            setBatches(result.batches.map(b => ({
+                id: b.id, kilde: b.kilde as AftalelicensKilde, year: b.year,
+                uploadedAt: b.uploaded_at, uploadedBy: b.uploaded_by ?? "Admin",
+                totalRows: b.total_rows, filteredRows: b.filtered_rows,
+                status: b.status as AftalelicensBatch["status"], notes: b.notes ?? undefined,
+            })))
+        }
+    }
+
     useEffect(() => {
-        const stored = loadBatches()
-        // State is intentionally synchronized when the external dialog, storage, or server source changes.
+        // State is intentionally synchronized when the server source changes after mount.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        if (stored && stored.length > 0) setBatches(stored)
+        void loadBatchesFromServer()
         void loadClaims()
     }, [])
 
@@ -755,11 +757,17 @@ export default function AftalelicensPage() {
             toast.error(result.error ?? "Kunne ikke gemme visningskilden")
             return false
         }
-        setBatches(prev => {
-            const next = [batch, ...prev]
-            saveBatches(next)
-            return next
+        const batchResult = await createAftalelicensBatch({
+            id: batch.id, kilde: batch.kilde, year: batch.year,
+            totalRows: batch.totalRows, filteredRows: batch.filteredRows,
+            status: batch.status, notes: batch.notes,
         })
+        if (!batchResult.success) {
+            // Selve dataen (screening_source_rows) er allerede gemt på dette tidspunkt —
+            // kun historik-kortet fejlede. Advarsel, ikke en blokerende fejl.
+            toast.warning(`Data er importeret, men historik-kortet kunne ikke gemmes: ${batchResult.error ?? "ukendt fejl"}`)
+        }
+        setBatches(prev => [batch, ...prev])
         toast.success(`Import fuldført — ${batch.filteredRows.toLocaleString("da-DK")} rækker klar til sortering`)
         return true
     }

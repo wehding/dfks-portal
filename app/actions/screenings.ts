@@ -381,3 +381,63 @@ export async function updateScreeningClaimStatus(claimId: string, status: "appro
   revalidatePath("/admin/aftalelicens");
   return { success: true };
 }
+
+// ── Aftalelicens batch-historik ─────────────────────────────────────────
+// Erstatter den tidligere localStorage-baserede batch-liste (dfks_batches) —
+// se migration 20260820180000_aftalelicens_batches.sql for baggrund.
+
+export async function createAftalelicensBatch(batch: {
+  id: string; kilde: string; year: number; totalRows: number; filteredRows: number;
+  status: "imported" | "sorting" | "weighted" | "completed"; notes?: string;
+}) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const isAdmin = await isUserAdmin(user.id);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin" };
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation" };
+
+  const db = createServiceClient();
+  const { error } = await db.from("aftalelicens_batches").insert({
+    id: batch.id,
+    org_id: orgId,
+    kilde: batch.kilde,
+    year: batch.year,
+    uploaded_by: user.id,
+    total_rows: batch.totalRows,
+    filtered_rows: batch.filteredRows,
+    status: batch.status,
+    notes: batch.notes ?? null,
+  });
+
+  if (error) {
+    console.error("Fejl ved oprettelse af aftalelicens-batch:", error);
+    return { success: false, error: error.message };
+  }
+
+  revalidatePath("/admin/aftalelicens");
+  return { success: true };
+}
+
+export async function fetchAftalelicensBatches() {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind", batches: [] as const };
+  const isAdmin = await isUserAdmin(user.id);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", batches: [] as const };
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation", batches: [] as const };
+
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("aftalelicens_batches")
+    .select("id, kilde, year, uploaded_at, uploaded_by, total_rows, filtered_rows, status, notes")
+    .eq("org_id", orgId)
+    .order("uploaded_at", { ascending: false });
+
+  if (error) {
+    console.error("Fejl ved hentning af aftalelicens-batches:", error);
+    return { success: false, error: error.message, batches: [] as const };
+  }
+
+  return { success: true, batches: data ?? [] };
+}
