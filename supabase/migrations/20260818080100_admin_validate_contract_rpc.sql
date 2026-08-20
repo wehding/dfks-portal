@@ -15,14 +15,23 @@ security definer
 set search_path = public, private, pg_temp
 as $$
 begin
-  -- Kun admins må kalde denne funktion
-  if not (
-    public.current_user_has_org_role(
-      (select org_id from public.contracts where id = p_contract_id),
-      array['superadmin','admin','org-admin','jurist']
-    )
-  ) then
-    raise exception 'Kun administratorer kan godkende kontrakter';
+  -- Sikkerhedsgrænsen ligger nu ved kaldestedet: funktionen kan kun
+  -- eksekveres af service_role (jf. GRANT nedenfor), og
+  -- app/api/admin/contracts/validate/route.ts udfører sit eget robuste
+  -- admin-tjek (requireAdminApi) FØR den kalder denne RPC. Det interne
+  -- current_user_has_org_role()-tjek ville altid fejle ved service-role-
+  -- kald (auth.uid() er null uden en bruger-session), så det springes
+  -- bevidst over her — ikke fordi tjekket er unødvendigt, men fordi det
+  -- allerede er udført på et højere niveau.
+  if (select auth.role()) is distinct from 'service_role' then
+    if not (
+      public.current_user_has_org_role(
+        (select org_id from public.contracts where id = p_contract_id),
+        array['superadmin','admin','org-admin','jurist']
+      )
+    ) then
+      raise exception 'Kun administratorer kan godkende kontrakter';
+    end if;
   end if;
 
   -- Sæt explicit-flag lokalt i denne transaktion (trigger tjekker dette)
@@ -38,4 +47,4 @@ begin
 end;
 $$;
 
-grant execute on function public.admin_validate_contract to authenticated;
+grant execute on function public.admin_validate_contract to service_role;
