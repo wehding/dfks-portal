@@ -113,7 +113,7 @@ function groupLinesToClauses(lines: PdfLine[]): LayoutClause[] {
     const medianHeight = sampleHeights[Math.floor(sampleHeights.length / 2)] ?? 12
 
     let clauseLines: PdfLine[] = [lines[0]]
-    let clauseCountPerPage: Record<number, number> = {}
+    const clauseCountPerPage: Record<number, number> = {}
 
     const flushClause = () => {
         if (!clauseLines.length) return
