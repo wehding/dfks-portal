@@ -92,7 +92,7 @@ const USER_NAV_ITEMS = [
 ]
 
 const ALL_KEYS = [...ADMIN_NAV_ITEMS, ...SETUP_NAV_ITEMS, ...RETTIGHEDS_NAV_ITEMS].map(i => i.key)
-const PRODUCTION_PROTOTYPE_KEYS = new Set(["indbetalinger", "udbetalinger", "streaming", "stamdata", "gennemsigtighed"])
+const PRODUCTION_PROTOTYPE_KEYS = new Set<string>([])
 const isProductionPortal = process.env.NODE_ENV === "production"
 
 // Dæmpede, matchende menu-badges: blå = ulæste beskeder (samme blå som list-markeringen),
