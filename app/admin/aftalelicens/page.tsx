@@ -257,7 +257,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
         setParseError(null)
         try {
             const buffer = await file.arrayBuffer()
-            const raw = await readFirstWorksheetRows(buffer)
+            const raw = await readFirstWorksheetRows(buffer, file.name)
 
             if (raw.length < 2) {
                 setParseError("Filen ser tom ud eller mangler data")
