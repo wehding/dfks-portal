@@ -5,6 +5,7 @@ import { getTMDBEpisodeExternalIds, getTMDBSeasonEpisodes } from "@/app/actions/
 import { getDFIFilmDetails } from "@/app/actions/dfi";
 import { parseDfiEpisodeTitleInfo, extractDfiDirectors, extractDfiPremiereYear, extractDfiPosterUrl } from "@/lib/dfi-metadata";
 import type { DbWork } from "@/lib/db/types";
+import { resolveSeriesWorkOwnerOrgId } from "@/lib/series-work-ownership";
 import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
 import type { IdentityCandidate } from "@/lib/work-identity";
@@ -45,6 +46,27 @@ type DfiEpisodeRow = {
   episodeNumber: number;
 };
 
+export type SeriesParentWork = Pick<DbWork,
+  | "id"
+  | "org_id"
+  | "title"
+  | "type"
+  | "year"
+  | "duration_minutes"
+  | "episode_count"
+  | "season_count"
+  | "genre"
+  | "director"
+  | "description"
+  | "poster_url"
+  | "status"
+  | "dfi_id"
+  | "tmdb_id"
+  | "imdb_id"
+  | "wikidata_id"
+  | "dfi_metadata"
+>;
+
 function asDfiChild(value: unknown): DfiChildMetadata | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as DfiChildMetadata
@@ -70,11 +92,14 @@ function stripOptionalWorkMetadata(episode: EpisodeInsert): EpisodeInsert {
 }
 
 export async function generateEpisodesForSeries(params: {
-  parentWork: DbWork;
+  parentWork: SeriesParentWork;
   seasonNumber: number;
   totalEpisodes?: number | null;
 }) {
   const { parentWork, seasonNumber } = params;
+  const owner = resolveSeriesWorkOwnerOrgId(parentWork.org_id);
+  if (!owner.success) return owner;
+  const ownerOrgId = owner.orgId;
   const db = createServiceClient();
 
   // 1. Tjek om der allerede findes afsnit for denne sæson
@@ -155,7 +180,7 @@ export async function generateEpisodesForSeries(params: {
           const candidate = resolution.status === "matched" ? resolution.candidates[0] : null;
           if (candidate) episodeIdentities.set(ep.episode_number, candidate);
           episodesToInsert.push({
-            org_id: parentWork.org_id,
+            org_id: ownerOrgId,
             parent_work_id: parentWork.id,
             season_number: seasonNumber,
             episode_number: ep.episode_number,
@@ -246,7 +271,7 @@ export async function generateEpisodesForSeries(params: {
         const candidate = resolution.status === "matched" ? resolution.candidates[0] : null;
         if (candidate) episodeIdentities.set(episodeNumber, candidate);
         episodesToInsert.push({
-          org_id: parentWork.org_id,
+          org_id: ownerOrgId,
           parent_work_id: parentWork.id,
           season_number: seasonNumber,
           episode_number: episodeNumber,
@@ -274,7 +299,7 @@ export async function generateEpisodesForSeries(params: {
     for (let i = 1; i <= count; i++) {
       const eStr = String(i).padStart(2, "0");
       episodesToInsert.push({
-        org_id: parentWork.org_id,
+        org_id: ownerOrgId,
         parent_work_id: parentWork.id,
         season_number: seasonNumber,
         episode_number: i,
@@ -303,7 +328,7 @@ export async function generateEpisodesForSeries(params: {
       if (representedNumbers.has(episodeNumber)) continue;
       const eStr = String(episodeNumber).padStart(2, "0");
       episodesToInsert.push({
-        org_id: parentWork.org_id,
+        org_id: ownerOrgId,
         parent_work_id: parentWork.id,
         season_number: seasonNumber,
         episode_number: episodeNumber,
@@ -347,7 +372,7 @@ export async function generateEpisodesForSeries(params: {
       .in("episode_number", [...episodeIdentities.keys()]);
     for (const row of insertedRows ?? []) {
       const candidate = episodeIdentities.get(Number(row.episode_number));
-      if (candidate) await storeWorkExternalIdentity(db, { orgId: parentWork.org_id, workId: row.id, level: "episode", candidate });
+      if (candidate) await storeWorkExternalIdentity(db, { orgId: ownerOrgId, workId: row.id, level: "episode", candidate });
     }
   }
 

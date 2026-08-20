@@ -21,6 +21,7 @@ import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
 import { identityLevel } from "@/lib/work-identity";
 import { normalizeEpisodeNumbers, resolveSeriesScopeTarget, syncScopeToDraftContracts, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
+import { MEMBER_SERIES_PARENT_SELECT } from "@/lib/series-work-ownership";
 import { registerShareSuggestions } from "@/lib/server/work-share-cases";
 import { normalizeSharePercent } from "@/lib/work-share-distribution";
 
@@ -818,7 +819,7 @@ export async function linkExistingWorkForMember(params: {
 
   const { data: work, error: workError } = await db
     .from("works")
-    .select("id, title, type, year, parent_work_id, season_number, episode_number, status, duration_minutes, episode_count, season_count, genre, director, description, poster_url, dfi_id, tmdb_id, dfi_metadata")
+    .select(MEMBER_SERIES_PARENT_SELECT)
     .eq("id", params.workId)
     .single();
   if (workError || !work) return { success: false, error: "Værket findes ikke." };
@@ -866,7 +867,7 @@ export async function linkExistingWorkForMember(params: {
         tmdb_id: externalEpisodes?.tmdbId ?? work.tmdb_id,
         dfi_metadata: externalEpisodes?.dfiMetadata ?? work.dfi_metadata,
         episode_count: totalEpisodes || work.episode_count,
-      } as unknown as DbWork,
+      },
       seasonNumber: params.seasonNumber,
       totalEpisodes: totalEpisodes || undefined,
     });
