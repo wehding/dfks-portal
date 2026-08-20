@@ -57,7 +57,6 @@ const ADMIN_NAV_ITEMS = [
     { key: "overblik",            href: "/admin",                     icon: Home,        labelKey: "nav.dashboard"        },
     { key: "kontrakter",          href: "/admin/kontrakter",          icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"        },
     { key: "vaerker",             href: "/admin/vaerker",             icon: SHARED_NAV_ICONS.works,       labelKey: "nav.works"            },
-    { key: "aftalelicens",        href: "/admin/aftalelicens",        icon: SHARED_NAV_ICONS.screenings,  labelKey: "nav.visningsadmin"    },
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"    },
     { key: "producenter",         href: "/admin/producenter",         icon: Building2,   labelKey: "nav.producers"        },
     { key: "kontraktgennemgang",  href: "/admin/kontraktgennemgang",  icon: Scale,       labelKey: "nav.contractReview"   },
@@ -76,6 +75,7 @@ const SETUP_NAV_ITEMS = [
 ]
 
 const RETTIGHEDS_NAV_ITEMS = [
+    { key: "aftalelicens",        href: "/admin/aftalelicens",        icon: SHARED_NAV_ICONS.screenings,  labelKey: "nav.visningsadmin"    },
     { key: "udbetalinger",        href: "/admin/udbetalinger",        icon: Wallet,      labelKey: "nav.payouts"          },
     { key: "streaming",           href: "/admin/streaming",           icon: Play,        labelKey: "nav.streaming"        },
     { key: "stamdata",            href: "/admin/stamdata",            icon: Database,    labelKey: "nav.masterData"       },
@@ -92,7 +92,7 @@ const USER_NAV_ITEMS = [
 ]
 
 const ALL_KEYS = [...ADMIN_NAV_ITEMS, ...SETUP_NAV_ITEMS, ...RETTIGHEDS_NAV_ITEMS].map(i => i.key)
-const PRODUCTION_PROTOTYPE_KEYS = new Set(["aftalelicens", "indbetalinger", "udbetalinger", "streaming", "stamdata", "gennemsigtighed"])
+const PRODUCTION_PROTOTYPE_KEYS = new Set(["indbetalinger", "udbetalinger", "streaming", "stamdata", "gennemsigtighed"])
 const isProductionPortal = process.env.NODE_ENV === "production"
 
 // Dæmpede, matchende menu-badges: blå = ulæste beskeder (samme blå som list-markeringen),
