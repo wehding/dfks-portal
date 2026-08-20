@@ -157,6 +157,7 @@ export interface OtherSupplement {
     unit: string | null
     note: string
     sourceText: string | null
+    clauseId: string | null
 }
 
 export interface ExtractedContractData {

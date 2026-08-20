@@ -985,7 +985,12 @@ setActiveField(fieldId)
             prolongation: sources.prolongation_clause_id,
             creditedRoles: sources.creditedRoles_clause_id,
         }
-        const activeClauseId = activeField ? (FIELD_TO_CLAUSE_ID[activeField] ?? null) : null
+        const otherSuppMatch = activeField?.match(/^otherSupplements_(\d+)$/)
+        const activeClauseId = activeField
+            ? otherSuppMatch
+                ? ((Array.isArray(formData.otherSupplements) ? formData.otherSupplements[Number(otherSuppMatch[1])] : null) as Record<string, unknown> | null)?.clauseId as string | null ?? null
+                : (FIELD_TO_CLAUSE_ID[activeField] ?? null)
+            : null
         if (activeField) console.log(`[LAG5-B] activeField=${activeField} → activeClauseId=${activeClauseId ?? "null"}, layout=${contractLayout ? contractLayout.clauses.length + " klausuler" : "NULL"}`)
 
         // Hjælper: har feltet en koordinat-boks tilgængelig i det aktuelle layout?
