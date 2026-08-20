@@ -47,6 +47,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     rows.push(...page.items);
     cursor = page.nextCursor ?? undefined;
   } while (cursor && rows.length < 50000);
+  if (cursor) return NextResponse.json({ error: "Rapporten er for stor til direkte download" }, { status: 413 });
 
   const filteredRows = sar.data_categories?.length
     ? rows.filter(event => event.dataCategories.some(category => sar.data_categories.includes(category)))

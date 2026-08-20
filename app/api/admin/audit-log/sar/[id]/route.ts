@@ -30,7 +30,17 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     return NextResponse.json({ error: "Indsigtsanmodningen blev ikke fundet" }, { status: 404 });
   }
 
-  const wantsUnmasked = parsed.data.maskStaffNames === false;
+  const allowedStatuses: Record<typeof parsed.data.action, string[]> = {
+    approve: ["review"],
+    reject: ["review"],
+    mark_delivered: ["generated"],
+    expire: ["approved", "generated", "delivered"],
+  };
+  if (!allowedStatuses[parsed.data.action].includes(existing.status)) {
+    return NextResponse.json({ error: "Handlingen passer ikke til anmodningens nuværende status" }, { status: 409 });
+  }
+
+  const wantsUnmasked = parsed.data.action === "approve" && parsed.data.maskStaffNames === false;
   if (wantsUnmasked && (caller.role !== "superadmin" || !parsed.data.balancingReason)) {
     return NextResponse.json({ error: "Afmaskering kræver superadmin og en dokumenteret afvejning" }, { status: 403 });
   }

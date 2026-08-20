@@ -32,21 +32,44 @@ export async function GET() {
   const { data: requests, error } = await query;
   if (error) return NextResponse.json({ error: "Indsigtsanmodninger kunne ikke hentes" }, { status: 500 });
   const memberIds = [...new Set((requests ?? []).map(item => item.target_member_uuid))];
-  const { data: members } = memberIds.length
+  const { data: members, error: membersError } = memberIds.length
     ? await service.from("rettighedshavere").select("id,full_name").in("id", memberIds)
-    : { data: [] };
+    : { data: [], error: null };
+  if (membersError) return NextResponse.json({ error: "Medlemsnavne kunne ikke hentes" }, { status: 500 });
   const names = new Map((members ?? []).map(member => [member.id, member.full_name]));
-  const availableMemberQuery = caller.role === "superadmin"
-    ? service.from("rettighedshavere").select("id,full_name").order("full_name").limit(500)
-    : service.from("rettighedshavere").select("id,full_name,org_affiliations!inner(org_id)").eq("org_affiliations.org_id", caller.orgId).order("full_name").limit(500);
-  const { data: availableMembers } = await availableMemberQuery;
+  const organisationIds = [...new Set((requests ?? []).map(item => item.org_id))];
+  const { data: organisations, error: organisationsError } = organisationIds.length
+    ? await service.from("organisations").select("id,name").in("id", organisationIds)
+    : { data: [], error: null };
+  if (organisationsError) return NextResponse.json({ error: "Organisationer kunne ikke hentes" }, { status: 500 });
+  const organisationNames = new Map((organisations ?? []).map(organisation => [organisation.id, organisation.name]));
+  const availableMemberQuery = service.from("rettighedshavere")
+    .select("id,full_name,org_affiliations!inner(org_id,organisations!inner(name))")
+    .order("full_name")
+    .limit(500);
+  if (caller.role !== "superadmin") availableMemberQuery.eq("org_affiliations.org_id", caller.orgId);
+  const { data: availableMembers, error: availableMembersError } = await availableMemberQuery;
+  if (availableMembersError) return NextResponse.json({ error: "Medlemslisten kunne ikke hentes" }, { status: 500 });
+  const memberOptions = (availableMembers ?? []).flatMap(member => {
+    const affiliations = Array.isArray(member.org_affiliations) ? member.org_affiliations : [];
+    return affiliations.map(affiliation => {
+      const organisationRelation = Array.isArray(affiliation.organisations) ? affiliation.organisations[0] : affiliation.organisations;
+      return {
+        id: member.id,
+        name: member.full_name,
+        orgId: affiliation.org_id,
+        orgName: organisationRelation?.name ?? organisationNames.get(affiliation.org_id) ?? "Ukendt organisation",
+      };
+    });
+  });
   return NextResponse.json({
     items: (requests ?? []).map(item => ({
       ...item,
       target_member_label: item.target_member_label || names.get(item.target_member_uuid) || "Ukendt medlem",
+      org_label: organisationNames.get(item.org_id) || "Ukendt organisation",
     })),
     callerRole: caller.role,
-    members: (availableMembers ?? []).map(member => ({ id: member.id, name: member.full_name })),
+    members: memberOptions,
   }, { headers: { "cache-control": "no-store" } });
 }
 
@@ -56,13 +79,17 @@ export async function POST(request: NextRequest) {
   if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
   const parsed = CreateRequestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Ugyldige oplysninger" }, { status: 400 });
-  const orgId = caller.role === "superadmin" ? parsed.data.orgId ?? caller.orgId : caller.orgId;
+  if (caller.role === "superadmin" && !parsed.data.orgId) {
+    return NextResponse.json({ error: "Vælg den organisation, anmodningen vedrører" }, { status: 400 });
+  }
+  const orgId = caller.role === "superadmin" ? parsed.data.orgId! : caller.orgId;
   const service = createServiceClient();
-  const { data: member } = await service.from("rettighedshavere")
+  const { data: member, error: memberError } = await service.from("rettighedshavere")
     .select("id,full_name,org_affiliations!inner(org_id)")
     .eq("id", parsed.data.targetMemberUuid)
     .eq("org_affiliations.org_id", orgId)
     .maybeSingle();
+  if (memberError) return NextResponse.json({ error: "Medlemmet kunne ikke kontrolleres" }, { status: 500 });
   if (!member) return NextResponse.json({ error: "Medlemmet findes ikke i organisationen" }, { status: 404 });
 
   const { data: created, error } = await service.from("subject_access_requests").insert({

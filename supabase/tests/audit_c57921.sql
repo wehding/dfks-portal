@@ -1,5 +1,5 @@
 begin;
-select plan(7);
+select plan(10);
 
 select ok(
   exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'audit_events' and column_name = 'target_member_uuid')
@@ -34,6 +34,16 @@ select is(
   'database verifies the event hash chain'
 );
 
+alter table public.audit_events disable trigger audit_events_immutable;
+update public.audit_events set entity_label = 'tampered for verification test' where id = (select event_id from c57921_fixture);
+select is(
+  (select count(*) from public.verify_audit_chain((select sequence_no from c57921_fixture), (select sequence_no from c57921_fixture)) where not valid),
+  1::bigint,
+  'database detects a modified event inside a bounded verification range'
+);
+update public.audit_events set entity_label = 'C-579/21 test' where id = (select event_id from c57921_fixture);
+alter table public.audit_events enable trigger audit_events_immutable;
+
 select ok(
   not has_function_privilege('anon', 'public.append_audit_event(text,text,text,text,uuid,text,text,text,text,uuid,text,uuid,text,jsonb,jsonb,boolean,uuid,text,text,text[],inet,text,text,text,uuid[])', 'EXECUTE')
   and not has_function_privilege('authenticated', 'public.append_audit_event(text,text,text,text,uuid,text,text,text,text,uuid,text,uuid,text,jsonb,jsonb,boolean,uuid,text,text,text[],inet,text,text,text,uuid[])', 'EXECUTE'),
@@ -41,10 +51,39 @@ select ok(
 );
 
 select ok(
+  not has_function_privilege('anon', 'public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz)', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz)', 'EXECUTE'),
+  'browser roles cannot register subject access exports'
+);
+
+select ok(
   not has_table_privilege('authenticated', 'public.subject_access_requests', 'SELECT,INSERT,UPDATE,DELETE')
   and not has_table_privilege('authenticated', 'public.audit_siem_outbox', 'SELECT,INSERT,UPDATE,DELETE'),
   'SAR workflow and SIEM delivery state are server-only'
 );
+
+do $$
+declare
+  request_id uuid := gen_random_uuid();
+  generator_id uuid := gen_random_uuid();
+  export_id uuid;
+begin
+  insert into public.subject_access_requests(
+    id, org_id, target_member_uuid, status, mask_staff_names, created_by
+  ) values (
+    request_id, gen_random_uuid(), gen_random_uuid(), 'approved', true, generator_id
+  );
+  export_id := public.register_subject_access_export(
+    request_id, 'json', repeat('a', 64), 1, true, generator_id, now() + interval '24 hours'
+  );
+  if export_id is null
+    or not exists (select 1 from public.subject_access_exports where id = export_id and mask_staff_names)
+    or not exists (select 1 from public.subject_access_requests where id = request_id and status = 'generated')
+  then
+    raise exception 'Atomic subject access export registration failed';
+  end if;
+end $$;
+select pass('subject access export metadata and request status are registered atomically');
 
 do $$
 declare blocked boolean := false;

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { auditRequestContext } from "@/lib/audit-access-server";
+import { recordAuditEvent } from "@/lib/audit-log-server";
 import { isSameOriginMutation } from "@/lib/request-security";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -14,8 +16,8 @@ const ReplaySchema = z.object({
 
 export async function GET() {
   const db = await createClient();
-  const caller = await assertAdminRole(db, ["superadmin", "admin", "org-admin"]);
-  if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const caller = await assertAdminRole(db, ["superadmin"]);
+  if (!caller) return NextResponse.json({ error: "Kun superadmin kan se SIEM-drift" }, { status: 403 });
   const service = createServiceClient();
   const [settingsResult, receiptResult, pending, processing, delivered, failed, deadLetter, latestEvents] = await Promise.all([
     service.from("audit_control_settings").select("*").eq("singleton", true).single(),
@@ -27,10 +29,22 @@ export async function GET() {
     service.from("audit_siem_outbox").select("event_id", { count: "exact", head: true }).eq("status", "dead_letter"),
     service.from("audit_events").select("sequence_no").order("sequence_no", { ascending: false }).limit(100),
   ]);
+  const queryError = [
+    settingsResult.error, receiptResult.error, pending.error, processing.error,
+    delivered.error, failed.error, deadLetter.error, latestEvents.error,
+  ].find(Boolean);
+  if (queryError) {
+    console.error("[audit-siem] Status could not be loaded", queryError.message);
+    return NextResponse.json({ error: "SIEM-status kunne ikke hentes sikkert" }, { status: 500 });
+  }
   const sequences = (latestEvents.data ?? []).map(item => item.sequence_no);
   const minSequence = sequences.length ? Math.min(...sequences) : null;
   const maxSequence = sequences.length ? Math.max(...sequences) : null;
   const integrity = minSequence == null ? { data: [] } : await service.rpc("verify_audit_chain", { p_from_sequence: minSequence, p_to_sequence: maxSequence });
+  if ("error" in integrity && integrity.error) {
+    console.error("[audit-siem] Integrity verification failed", integrity.error.message);
+    return NextResponse.json({ error: "Auditkædens integritet kunne ikke verificeres" }, { status: 500 });
+  }
   const invalidCount = (integrity.data ?? []).filter((item: { valid: boolean }) => !item.valid).length;
   return NextResponse.json({
     settings: settingsResult.data,
@@ -61,5 +75,15 @@ export async function POST(request: NextRequest) {
   if (parsed.data.eventIds?.length) update = update.in("event_id", parsed.data.eventIds);
   const { data, error } = await update.select("event_id");
   if (error) return NextResponse.json({ error: "Genleveringen kunne ikke startes" }, { status: 500 });
+  await recordAuditEvent({
+    context: auditRequestContext(request, caller, "admin", "admin.audit.siem-replay"),
+    action: "security_review",
+    entityType: "audit_siem_outbox",
+    entityLabel: "SIEM-genlevering startet",
+    purposeCode: "siem_delivery_recovery",
+    legalBasis: "GDPR Art. 5(2), 24 og 32",
+    dataCategories: ["audit_metadata"],
+    metadata: { replayedCount: data?.length ?? 0, allFailed: parsed.data.allFailed === true },
+  });
   return NextResponse.json({ ok: true, replayed: data?.length ?? 0 }, { headers: { "cache-control": "no-store" } });
 }

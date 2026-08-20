@@ -27,8 +27,13 @@ function required(name) {
   return value;
 }
 
-function deliveryRequest(adapter, endpoint, token, signedEnvelope) {
-  const headers = { "content-type": "application/json", "user-agent": "dfks-audit-siem-worker/1.0" };
+export function deliveryRequest(adapter, endpoint, token, signedEnvelope) {
+  const headers = {
+    "content-type": "application/json",
+    "user-agent": "dfks-audit-siem-worker/1.0",
+    "idempotency-key": signedEnvelope.payload.deliveryId,
+    "x-dfks-batch-id": signedEnvelope.payload.batchId,
+  };
   let body = signedEnvelope;
   if (adapter === "splunk") {
     if (token) headers.authorization = `Splunk ${token}`;
@@ -75,9 +80,18 @@ export async function deliverAuditBatch() {
   if (claimError) throw new Error(`claim_failed:${claimError.code || "database"}`);
   if (!claimed?.length) return { delivered: 0, empty: true };
   const batchId = claimed[0].batch_id;
+  const destinationUrl = new URL(endpoint);
+  const destinationFingerprint = sha256(destinationUrl.origin + destinationUrl.pathname);
+  const deliveryId = sha256(stableStringify({
+    schemaVersion: 1,
+    adapter,
+    destinationFingerprint,
+    eventIds: claimed.map(item => item.event_id),
+  }));
   const payload = {
     schemaVersion: 1,
     batchId,
+    deliveryId,
     firstSequence: claimed[0].sequence_no,
     lastSequence: claimed.at(-1).sequence_no,
     events: claimed.map(item => item.event_payload),
@@ -100,7 +114,6 @@ export async function deliverAuditBatch() {
     });
     if (!response.ok) throw new Error(`siem_http_${response.status}`);
     const remoteReceipt = response.headers.get("x-request-id")?.slice(0, 200) ?? null;
-    const destinationFingerprint = sha256(new URL(endpoint).origin + new URL(endpoint).pathname);
     const { error: completeError } = await supabase.rpc("complete_audit_siem_batch", {
       p_batch_id: batchId,
       p_success: true,

@@ -400,15 +400,31 @@ returns table(sequence_no bigint, event_id uuid, valid boolean)
 language sql security definer
 set search_path = public, private, extensions, pg_catalog
 as $$
+  with chained as (
+    select event.*,
+           to_jsonb(event) as row_data,
+           lag(event.sequence_no) over (order by event.sequence_no) as prior_sequence_no,
+           lag(event.chain_hash) over (order by event.sequence_no) as prior_chain_hash
+    from public.audit_events event
+  )
   select event.sequence_no,
          event.id,
-         event.payload_hash = private.audit_payload_digest(to_jsonb(event))
+         event.payload_hash = private.audit_payload_digest(event.row_data)
            and event.chain_hash = extensions.digest(coalesce(event.previous_hash, ''::bytea) || event.payload_hash, 'sha256')
-           and (
-             event.previous_hash is not distinct from lag(event.chain_hash) over (order by event.sequence_no)
-             or event.sequence_no = coalesce(p_from_sequence, (select min(sequence_no) from public.audit_events))
-           ) as valid
-  from public.audit_events event
+           and case
+             when event.prior_sequence_no is not null then
+               event.sequence_no = event.prior_sequence_no + 1
+               and event.previous_hash = event.prior_chain_hash
+             else
+               event.previous_hash is null
+               or exists (
+                 select 1
+                 from public.audit_retention_certificates certificate
+                 where certificate.last_sequence = event.sequence_no - 1
+                   and certificate.last_chain_hash = encode(event.previous_hash, 'hex')
+               )
+           end as valid
+  from chained event
   where (p_from_sequence is null or event.sequence_no >= p_from_sequence)
     and (p_to_sequence is null or event.sequence_no <= p_to_sequence)
   order by event.sequence_no;
@@ -425,6 +441,16 @@ declare
   claimed_batch uuid := gen_random_uuid();
 begin
   if p_limit < 1 or p_limit > 500 then raise exception 'Invalid SIEM batch size'; end if;
+  update public.audit_siem_outbox
+  set status = case when attempts >= 10 then 'dead_letter' else 'failed' end,
+      available_at = now(),
+      batch_id = null,
+      last_error_code = 'stale_processing_claim',
+      last_error_at = now(),
+      updated_at = now()
+  where status = 'processing'
+    and claimed_at < now() - interval '15 minutes';
+
   return query
   with candidates as (
     select outbox.event_id
@@ -514,6 +540,65 @@ end;
 $$;
 revoke all on function public.complete_audit_siem_batch(uuid,boolean,text,text,text,text,text,text,text) from public, anon, authenticated;
 grant execute on function public.complete_audit_siem_batch(uuid,boolean,text,text,text,text,text,text,text) to service_role;
+
+create or replace function public.register_subject_access_export(
+  p_request_id uuid,
+  p_format text,
+  p_content_hash text,
+  p_row_count integer,
+  p_mask_staff_names boolean,
+  p_generated_by uuid,
+  p_expires_at timestamptz
+)
+returns uuid
+language plpgsql security definer
+set search_path = public, pg_catalog
+as $$
+declare
+  export_id uuid;
+  request_mask_staff_names boolean;
+  request_status text;
+begin
+  if p_format not in ('json','csv','pdf') then raise exception 'Unsupported subject access export format'; end if;
+  if p_row_count < 0 then raise exception 'Invalid subject access export row count'; end if;
+  if p_generated_by is null then raise exception 'Export generator is required'; end if;
+  if p_expires_at <= now() or p_expires_at > now() + interval '48 hours' then
+    raise exception 'Subject access export expiry must be within 48 hours';
+  end if;
+
+  select mask_staff_names, status
+  into request_mask_staff_names, request_status
+  from public.subject_access_requests
+  where id = p_request_id
+  for update;
+
+  if not found or request_status not in ('approved','generated','delivered') then
+    raise exception 'Subject access request is not exportable';
+  end if;
+  if p_mask_staff_names is distinct from request_mask_staff_names then
+    raise exception 'Export masking must match the approved subject access request';
+  end if;
+
+  insert into public.subject_access_exports(
+    request_id, format, content_hash, row_count, mask_staff_names,
+    generated_by, expires_at
+  ) values (
+    p_request_id, p_format, p_content_hash, p_row_count, p_mask_staff_names,
+    p_generated_by, p_expires_at
+  )
+  on conflict (request_id, format, content_hash) do update
+  set expires_at = greatest(subject_access_exports.expires_at, excluded.expires_at)
+  returning id into export_id;
+
+  update public.subject_access_requests
+  set status = case when status = 'delivered' then 'delivered' else 'generated' end,
+      updated_at = now()
+  where id = p_request_id;
+  return export_id;
+end;
+$$;
+revoke all on function public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz) from public, anon, authenticated;
+grant execute on function public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz) to service_role;
 
 create or replace function public.purge_expired_audit_events(
   retention interval default interval '7 years',

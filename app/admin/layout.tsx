@@ -105,7 +105,7 @@ const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ALL_KEYS,
     admin:       ALL_KEYS.filter(k => k !== "organisationer" && k !== "imdb-kontrol"),
     "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer" && k !== "imdb-kontrol"),
-    jurist:      ["overblik", "kontrakter", "rettighedshavere", "kontraktgennemgang"],
+    jurist:      ["overblik", "kontrakter", "rettighedshavere", "kontraktgennemgang", "logning"],
     viewer:      ["overblik", "kontrakter"],
 }
 

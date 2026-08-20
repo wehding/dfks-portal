@@ -35,6 +35,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     rows.push(...page.items);
     cursor = page.nextCursor ?? undefined;
   } while (cursor && rows.length < 50000);
+  if (cursor) return NextResponse.json({ error: "Udtrækket er for stort til direkte download. Afgræns perioden." }, { status: 413 });
 
   const filteredRows = sar.data_categories?.length
     ? rows.filter(event => event.dataCategories.some(category => sar.data_categories.includes(category)))
@@ -47,16 +48,16 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
       : await subjectAccessPdf(safeEvents, sar.target_member_label || sar.target_member_uuid);
   const hash = contentSha256(content);
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  await service.from("subject_access_exports").insert({
-    request_id: sar.id,
-    format: format.data,
-    content_hash: hash,
-    row_count: safeEvents.length,
-    mask_staff_names: sar.mask_staff_names,
-    generated_by: caller.userId,
-    expires_at: expiresAt,
+  const { error: registrationError } = await service.rpc("register_subject_access_export", {
+    p_request_id: sar.id,
+    p_format: format.data,
+    p_content_hash: hash,
+    p_row_count: safeEvents.length,
+    p_mask_staff_names: sar.mask_staff_names,
+    p_generated_by: caller.userId,
+    p_expires_at: expiresAt,
   });
-  await service.from("subject_access_requests").update({ status: sar.status === "delivered" ? "delivered" : "generated", updated_at: new Date().toISOString() }).eq("id", sar.id);
+  if (registrationError) return NextResponse.json({ error: "Udtrækket kunne ikke registreres sikkert" }, { status: 500 });
   await recordAuditEvent({
     context: auditRequestContext(request, caller, "admin", "admin.audit.sar-export"),
     action: "sar_export",
