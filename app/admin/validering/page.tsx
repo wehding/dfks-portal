@@ -141,6 +141,18 @@ function AdminValideringPageInner() {
     // Fortolkningsnote pr. label_key for den aktive kontrakts matchede overenskomst
     const [pctRuleNotes, setPctRuleNotes] = useState<Record<string, string>>({})
 
+    // Henter fortolkningsnoter for den matchede overenskomsts procentregler.
+    // Skal kaldes BÅDE når en kontrakt åbnes (fra gemt data) OG efter hvert
+    // frisk AI-udtræk (fra det nye svars _resolvedAgreementCode) — et enkelt
+    // kald ved åbning fangede ikke opdateringer fra efterfølgende udtræk.
+    const fetchPctRuleNotes = useCallback((agreementCode: string | null) => {
+        setPctRuleNotes({})
+        if (!agreementCode) return
+        fetch(`/api/admin/agreements?percentageNotes=${encodeURIComponent(agreementCode)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(json => { if (json?.notes) setPctRuleNotes(json.notes) })
+    }, [])
+
     // Opret ny producent dialog
     const [showNewEmployer, setShowNewEmployer] = useState(false)
     const [newEmpName, setNewEmpName] = useState("")
@@ -425,14 +437,7 @@ function AdminValideringPageInner() {
             if (ed._sources) setSources(normaliseSources(ed._sources))
             if (validation?.masked_text) setContractText(validation.masked_text as string)
 
-            // Hent fortolkningsnote via server-rute (undgår RLS-begrænsning på agreements)
-            const agreementCode = ed._resolvedAgreementCode ?? null
-            setPctRuleNotes({})
-            if (agreementCode) {
-                fetch(`/api/admin/agreements?percentageNotes=${encodeURIComponent(agreementCode)}`)
-                    .then(r => r.ok ? r.json() : null)
-                    .then(json => { if (json?.notes) setPctRuleNotes(json.notes) })
-            }
+            fetchPctRuleNotes(ed._resolvedAgreementCode ?? null)
         })
     }, [reviewingId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -736,6 +741,7 @@ function AdminValideringPageInner() {
                 console.log("[LAG5-A] salary_clause_id fra sources:", json.data?._sources?.salary_clause_id ?? "null/undefined")
                 if (json.maskedText) setContractText(json.maskedText)
                 overwriteWithAi(json.data)
+                fetchPctRuleNotes(json.data?._resolvedAgreementCode ?? null)
                 toast.success("Felter opdateret fra AI-udtræk")
             } catch (e: any) {
                 toast.error(`Udtræk fejlede: ${e.message}`)
@@ -797,6 +803,7 @@ function AdminValideringPageInner() {
             if (originalText) { try { setContractText(originalText) } catch { /* ok */ } }
             if (ed._sources) setSources(normaliseSources(ed._sources))
             overwriteWithAi(ed)
+            fetchPctRuleNotes(ed._resolvedAgreementCode ?? null)
 
             // Navnetjek — vis toast og tilføj til specialNotes ved afvigelse
             if (data.navneTjek && data.navneTjek.status !== "match") {
