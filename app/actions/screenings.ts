@@ -227,7 +227,11 @@ export async function importScreeningSourceRows(params: {
   }));
   const chunkSize = 1000;
   for (let index = 0; index < rows.length; index += chunkSize) {
-    const { error } = await db.from("screening_source_rows").insert(rows.slice(index, index + chunkSize));
+    // upsert (ikke insert) — rækker med samme org_id/source/listing_id opdateres
+    // i stedet for at duplikere, ved genimport af samme kildefil. Rækker uden
+    // listing_id (null) rammer aldrig konflikten og indsættes som normalt.
+    const { error } = await db.from("screening_source_rows")
+      .upsert(rows.slice(index, index + chunkSize), { onConflict: "org_id,source,listing_id" });
     if (error) return { success: false, error: error.message };
   }
   revalidatePath("/admin/aftalelicens");
