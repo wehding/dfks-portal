@@ -182,7 +182,7 @@ export async function importScreeningSourceRows(params: {
   rows: Array<{
     title: string; channel?: string; screeningDate?: string; season?: number; episode?: number;
     productionYear?: number; duration?: number; viewCount?: number;
-    productionCountries?: string[]; directors?: string[]; genre?: string; category?: string;
+    productionCountries?: string[]; directors?: string[]; primaryDirector?: string; genre?: string; category?: string;
     description?: string; productionCompanies?: string[]; imdbId?: string;
     broadcastTime?: string; listingId?: string; seriesId?: string; episodeId?: string;
     originalTitle?: string; episodeTitle?: string; actors?: string; editorialLink?: string;
@@ -209,6 +209,7 @@ export async function importScreeningSourceRows(params: {
     view_count: row.viewCount ?? null,
     production_countries: row.productionCountries?.length ? row.productionCountries : null,
     directors: row.directors?.length ? row.directors : null,
+    primary_director: row.primaryDirector?.trim() || null,
     genre: row.genre?.trim() || null,
     category: row.category?.trim() || null,
     description: row.description?.trim() || null,

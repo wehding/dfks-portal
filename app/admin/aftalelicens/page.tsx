@@ -243,6 +243,7 @@ interface ParsedRow {
     // Berigende metadata — samme navngivning som works-tabellen, af hensyn til senere matching.
     productionCountries?: string[]
     directors?: string[]
+    primaryDirector?: string    // Bro til works.director (ental) — se ARKITEKTUR-works-director-array.md
     genre?: string
     category?: string
     description?: string
@@ -347,6 +348,11 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                 const directors = cm.directorCols.length
                     ? cm.directorCols.map(i => String(row[i] ?? "").trim()).filter(Boolean)
                     : undefined
+                // Bro til works.director (ental tekstfelt, ikke array) — indtil en
+                // eventuel fremtidig opgradering af works.director til array besluttes
+                // (se ARKITEKTUR-works-director-array.md). Bevarer den fulde liste i
+                // "directors" samtidig, så ingen information går tabt ved import.
+                const primaryDirector = directors?.[0]
                 const genre = cm.genreCol !== null ? String(row[cm.genreCol] ?? "").trim() || undefined : undefined
                 const category = cm.categoryCol !== null ? String(row[cm.categoryCol] ?? "").trim() || undefined : undefined
                 const description = cm.descriptionCol !== null ? String(row[cm.descriptionCol] ?? "").trim() || undefined : undefined
@@ -365,7 +371,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                 const broadcastTitle = cm.broadcastTitleCol !== null ? String(row[cm.broadcastTitleCol] ?? "").trim() || undefined : undefined
                 return {
                     rawTitle, channel, broadcastDate, duration, viewCount, season, episode, productionYear,
-                    productionCountries, directors, genre, category, description, productionCompanies, imdbId,
+                    productionCountries, directors, primaryDirector, genre, category, description, productionCompanies, imdbId,
                     broadcastTime, listingId, seriesId, episodeId, originalTitle, episodeTitle, actors,
                     editorialLink, broadcastTitle,
                 } satisfies ParsedRow
@@ -737,6 +743,7 @@ export default function AftalelicensPage() {
                 season: row.season, episode: row.episode, productionYear: row.productionYear,
                 duration: row.duration, viewCount: row.viewCount,
                 productionCountries: row.productionCountries, directors: row.directors,
+                primaryDirector: row.primaryDirector,
                 genre: row.genre, category: row.category, description: row.description,
                 productionCompanies: row.productionCompanies, imdbId: row.imdbId,
                 broadcastTime: row.broadcastTime, listingId: row.listingId, seriesId: row.seriesId,
