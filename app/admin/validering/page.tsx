@@ -135,7 +135,7 @@ function AdminValideringPageInner() {
     const [parentExplicitNone, setParentExplicitNone] = useState(false)
     const [overenskomster, setOverenskomster] = useState<{ value: string; label: string }[]>([
         { value: "de4-fiktion",   label: "De4 (fiktion)"    },
-        { value: "faf",           label: "FAF (fiktion)"    },
+        { value: "faf-fiktion",    label: "FAF (fiktion)"    },
         { value: "faf-dokumentar",label: "FAF (dokumentar)" },
     ])
     // Fortolkningsnote pr. label_key for den aktive kontrakts matchede overenskomst

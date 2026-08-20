@@ -37,7 +37,7 @@ Returner KUN JSON — ingen forklaringstekst.
   "premiereYear": "premiereår eller produktionsår som firecifret årstal, hvis det fremgår (number | null)",
   "creditedFunction": "krediteret funktion: klipper, medklipper, b-klipper, supplerende klipper, klipperassistent, logger, loader, fotograf, instruktør, scenograf, Andet eller null",
   "contractType": "${CONTRACT_TYPE_RULE}",
-  "overenskomst": "én af: de4-fiktion, faf, faf-dokumentar, faf-tv-ansat, faf-tv-freelance, dj, metal, ingen (string | null)",
+  "overenskomst": "én af: de4-fiktion, faf-fiktion, faf-dokumentar, faf-tv-ansat, faf-tv-freelance, dj-tv, metal, ingen (string | null)",
   "agreementEmploymentForm": "én af: a-løn, lønmodtager-freelance, leverandør, unknown. Lønmodtager-freelance bruges kun når personen kaldes freelancer, men aflønnes som lønmodtager uden CVR/moms/faktura.",
   "contractDate": "kontraktens dato ISO 8601 (string | null)",
   "signatureStatus": "én af: yes, no, unknown. yes når kontrakten tydeligt er håndskrevet underskrevet, eller når PDF-teksten dokumenterer en gennemført digital/elektronisk underskrift (fx Penneo, DocuSign, Adobe Sign eller MitID-signering). Et tomt felt eller en tom underskriftslinje er no. En blot trykt navnelinje uden dokumenteret signering er unknown.",

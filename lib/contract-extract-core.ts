@@ -17,7 +17,7 @@ import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
 import { applyApprovedAgreementRoyalty } from "@/lib/agreement-royalty-server"
 import { applyApprovedHolidayPay, applyApprovedBetaContribution, applyApprovedCopydan } from "@/lib/agreement-percentage-rule-server"
 import { getAgreementSatserForContext } from "@/lib/agreement-wage-server"
-import { resolveAgreementByDate } from "@/lib/agreement-version-resolver"
+import { resolveAgreementByDate, toShortCode } from "@/lib/agreement-version-resolver"
 import {
     CONTRACT_EXTRACTION_MIN_TEXT_CHARS,
     CONTRACT_EXTRACTION_SCHEMA_VERSION,
@@ -286,6 +286,14 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
     }
 
     let extracted = mergeContractExtractionChunks(extractedChunks)
+
+    // Normalisér overenskomst til kanonisk short_code — AI kan returnere gamle
+    // kortformer som "faf" eller "de4"; UI-dropdownen forventer "faf-fiktion"/"de4-fiktion".
+    if (extracted.overenskomst && extracted.overenskomst !== "ingen" && extracted.overenskomst !== "ukendt") {
+        const canonical = toShortCode(extracted.overenskomst as string)
+        if (canonical) extracted = { ...extracted, overenskomst: canonical }
+    }
+
     if (!hasUsableContractExtraction(extracted)) {
         const cause = new ContractImportPipelineError({
             message: "AI fandt ingen genkendelige kontraktoplysninger",
