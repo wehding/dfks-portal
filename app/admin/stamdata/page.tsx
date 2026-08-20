@@ -527,7 +527,8 @@ function VaegteTab() {
 
     // Hent konfiguration fra DB
     useEffect(() => {
-        getAftalelicensWeightConfig().then(cfg => {
+        getAftalelicensWeightConfig().then(res => {
+            const cfg = res.config
             if (!cfg) return
             const weightsMap = cfg.weights ?? {}
             // eslint-disable-next-line react-hooks/set-state-in-effect

@@ -2808,7 +2808,8 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
 
     // Load stamdata defaults from DB
     useEffect(() => {
-        getAftalelicensWeightConfig().then(cfg => {
+        getAftalelicensWeightConfig().then(res => {
+            const cfg = res.config
             if (!cfg) return
             // eslint-disable-next-line react-hooks/set-state-in-effect
             setVaegte({ ...DEFAULT_VAEGTE, ...cfg.weights })
@@ -3485,7 +3486,8 @@ export default function AftalelicensDetailPage() {
     // Hent vaerker fra DB
     useEffect(() => {
         if (!id) return
-        fetchScreeningSourceRowsForBatch(id).then(rows => {
+        fetchScreeningSourceRowsForBatch(id).then(res => {
+            const rows = res.rows
             if (!rows || rows.length === 0) return
             const mapped: AftalelicensVaerk[] = rows.map(r => ({
                 id: r.id,
