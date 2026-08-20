@@ -268,8 +268,24 @@ export async function GET(req: NextRequest) {
         const auth = await requireAdminApi(ADMIN_ROLES)
         if (!auth.ok) return auth.response
 
+        // GET ?dropdownList=1 — henter alle godkendte/arkiverede overenskomster til dropdown
+        if (req.nextUrl.searchParams.has("dropdownList")) {
+            const { data, error } = await sb()
+                .from("agreements")
+                .select("short_code,title")
+                .in("status", ["approved", "archived"])
+                .order("title")
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            const seen = new Set<string>()
+            const overenskomster = (data ?? [])
+                .filter(r => r.short_code)
+                .map(r => ({ value: r.short_code as string, label: r.title as string }))
+                .filter(o => seen.has(o.value) ? false : (seen.add(o.value), true))
+            return NextResponse.json({ overenskomster })
+        }
+
         const agreementCode = req.nextUrl.searchParams.get("percentageNotes")
-        if (!agreementCode) return NextResponse.json({ error: "percentageNotes parameter mangler" }, { status: 400 })
+        if (!agreementCode) return NextResponse.json({ error: "percentageNotes eller dropdownList parameter mangler" }, { status: 400 })
 
         const { data, error } = await sb()
             .from("agreement_percentage_rules")

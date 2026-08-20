@@ -198,21 +198,12 @@ function AdminValideringPageInner() {
         supabase.from("rettighedshavere").select("id, full_name, gender").order("full_name")
             .then(({ data }) => { if (data) setRettighedshavere(data) })
 
-        // Hent overenskomster fra agreements — short_code som value, title som label.
-        // Deduplikér på short_code: flere versioner af samme overenskomst vises som ét valg.
-        supabase.from("agreements")
-            .select("short_code, title")
-            .in("status", ["approved", "archived"])
-            .order("title")
-            .then(({ data }) => {
-                if (data?.length) {
-                    const seen = new Set<string>()
-                    const fromDb = data
-                        .filter(d => d.short_code)
-                        .map(d => ({ value: d.short_code!, label: d.title }))
-                        .filter(o => seen.has(o.value) ? false : (seen.add(o.value), true))
-                    if (fromDb.length) setOverenskomster(fromDb)
-                }
+        // Hent overenskomster via server-rute (service-role omgår RLS på agreements-tabellen)
+        fetch("/api/admin/agreements?dropdownList=1")
+            .then(r => r.ok ? r.json() : null)
+            .then(json => {
+                if (json?.overenskomster?.length) setOverenskomster(json.overenskomster)
+                // Ingen data → behold de tre hardkodede defaults i useState
             })
     }, [])
 
