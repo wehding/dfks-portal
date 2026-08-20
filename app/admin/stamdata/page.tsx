@@ -37,6 +37,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import NextLink from "next/link"
+import { getAftalelicensWeightConfig, updateAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 
 function MasterDataTable({
     type,
@@ -517,51 +518,27 @@ const DEFAULT_VAEGT_EXTRA: AftalelicensVaegtExtra = {
     genudsendelseMaaneder: 1,
 }
 
-function loadVaegte(): VaerkVaegt[] {
-    if (typeof window === "undefined") return DEFAULT_VAEGTE
-    try {
-        const stored = localStorage.getItem("dfks_vaerkvaegte")
-        return stored ? JSON.parse(stored) : DEFAULT_VAEGTE
-    } catch { return DEFAULT_VAEGTE }
-}
-
-function loadVaegtExtra(): AftalelicensVaegtExtra {
-    if (typeof window === "undefined") return DEFAULT_VAEGT_EXTRA
-    try {
-        const stored = localStorage.getItem("dfks_vaegt_extra")
-        return stored ? { ...DEFAULT_VAEGT_EXTRA, ...JSON.parse(stored) } : DEFAULT_VAEGT_EXTRA
-    } catch { return DEFAULT_VAEGT_EXTRA }
-}
-
-function loadHensaettelserPct(): number {
-    if (typeof window === "undefined") return 10
-    try {
-        const v = localStorage.getItem("dfks_hensaettelser_pct")
-        return v !== null ? Number(v) : 10
-    } catch { return 10 }
-}
-
-function loadSocialPct(): number {
-    if (typeof window === "undefined") return 0
-    try {
-        const v = localStorage.getItem("dfks_sociale_pct")
-        return v !== null ? Number(v) : 0
-    } catch { return 0 }
-}
-
 function VaegteTab() {
-    const [vaegte, setVaegte] = useState<VaerkVaegt[]>(loadVaegte)
-    const [extra, setExtra] = useState<AftalelicensVaegtExtra>(loadVaegtExtra)
+    const [vaegte, setVaegte] = useState<VaerkVaegt[]>(DEFAULT_VAEGTE)
+    const [extra, setExtra] = useState<AftalelicensVaegtExtra>(DEFAULT_VAEGT_EXTRA)
     const [fees, setFees] = useState<AdminFees>(loadFees)
     const [hensaettelserPct, setHensaettelserPct] = useState(10)
     const [socialPct, setSocialPct] = useState(0)
 
-    // Hydrate from localStorage (avoids SSR mismatch)
+    // Hent konfiguration fra DB
     useEffect(() => {
-        // State is intentionally synchronized when the external dialog, storage, or server source changes.
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setHensaettelserPct(loadHensaettelserPct())
-        setSocialPct(loadSocialPct())
+        getAftalelicensWeightConfig().then(cfg => {
+            if (!cfg) return
+            const weightsMap = cfg.weights ?? {}
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setVaegte(DEFAULT_VAEGTE.map(v => ({ ...v, weight: weightsMap[v.type] ?? v.weight })))
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setExtra({ ...DEFAULT_VAEGT_EXTRA, ...cfg.extra })
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            if (cfg.reservePercent != null) setHensaettelserPct(cfg.reservePercent)
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            if (cfg.socialPercent != null) setSocialPct(cfg.socialPercent)
+        }).catch(() => { /* keep defaults */ })
     }, [])
 
     const setWeight = (type: VaerkType, value: number) => {
@@ -586,12 +563,15 @@ function VaegteTab() {
         )
     }
 
-    const handleSave = () => {
-        localStorage.setItem("dfks_vaerkvaegte", JSON.stringify(vaegte))
-        localStorage.setItem("dfks_vaegt_extra", JSON.stringify(extra))
+    const handleSave = async () => {
+        const weightsMap = Object.fromEntries(vaegte.map(v => [v.type, v.weight]))
+        await updateAftalelicensWeightConfig({
+            weights: weightsMap,
+            extra,
+            reservePercent: hensaettelserPct,
+            socialPercent: socialPct,
+        })
         localStorage.setItem("streaming_admin_fees", JSON.stringify(fees))
-        localStorage.setItem("dfks_hensaettelser_pct", String(hensaettelserPct))
-        localStorage.setItem("dfks_sociale_pct", String(socialPct))
         toast.success("Vægte og hensættelser gemt")
     }
 

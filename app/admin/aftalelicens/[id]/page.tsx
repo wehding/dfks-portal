@@ -9,6 +9,8 @@ import {
     Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff, Pencil,
 } from "lucide-react"
 import { saveFeedback, getTrainingExamples } from "@/lib/ai-feedback"
+import { fetchScreeningSourceRowsForBatch } from "@/app/actions/screenings"
+import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
@@ -2759,25 +2761,8 @@ const DEFAULT_VAEGT_EXTRA: AftalelicensVaegtExtra = {
     genudsendelseMaaneder: 1,
 }
 
-function loadVaegte(): Record<VaerkType, number> {
-    if (typeof window === "undefined") return DEFAULT_VAEGTE
-    try {
-        const stored = localStorage.getItem("dfks_vaerkvaegte")
-        if (!stored) return DEFAULT_VAEGTE
-        const arr: { type: VaerkType; weight: number }[] = JSON.parse(stored)
-        const map = { ...DEFAULT_VAEGTE }
-        arr.forEach(v => { map[v.type] = v.weight })
-        return map
-    } catch { return DEFAULT_VAEGTE }
-}
-
-function loadVaegtExtra(): AftalelicensVaegtExtra {
-    if (typeof window === "undefined") return DEFAULT_VAEGT_EXTRA
-    try {
-        const stored = localStorage.getItem("dfks_vaegt_extra")
-        return stored ? { ...DEFAULT_VAEGT_EXTRA, ...JSON.parse(stored) } : DEFAULT_VAEGT_EXTRA
-    } catch { return DEFAULT_VAEGT_EXTRA }
-}
+// loadVaegte/loadVaegtExtra (localStorage) er fjernet — erstattet af
+// getAftalelicensWeightConfig() (rigtig, org-specifik databasekonfiguration).
 
 // Beregn point for et enkelt værk: base_point × minutter
 // For dokumentarfilm afgør varighed base-point-niveauet (tier), minutter multipliceres herefter
@@ -2808,8 +2793,8 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     batchLabel: string
 }) {
     const approved = vaerker.filter(v => v.sortStatus === "approved" && v.vaerkType)
-    const vaegte = loadVaegte()
-    const extra = loadVaegtExtra()
+    const [vaegte, setVaegte] = useState<Record<VaerkType, number>>(DEFAULT_VAEGTE)
+    const [extra, setExtra] = useState<AftalelicensVaegtExtra>(DEFAULT_VAEGT_EXTRA)
 
     const [weighted, setWeighted] = useState<WeightedItem[] | null>(null)
     const [expandedWeightGroups, setExpandedWeightGroups] = useState<Set<string>>(new Set())
@@ -2821,16 +2806,19 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     const [locked, setLocked] = useState(false)
     const [dbTransfer, setDbTransfer] = useState<{ workId?: string; workTitle: string; vaerkType: VaerkType; totalPoints?: number; totalAmount: number; adminFeeAmount?: number; klippere?: { name: string; userId?: string; sharePercent: number; amount: number }[]; episodes?: { episodeLabel: string; broadcastDate?: string; isGenudsendelse: boolean; points: number; amount: number; klippere?: { name: string; userId?: string; sharePercent: number; amount: number }[] }[] }[] | null>(null)
 
-    // Load stamdata defaults from localStorage
+    // Load stamdata defaults from DB
     useEffect(() => {
-        try {
-            const h = localStorage.getItem("dfks_hensaettelser_pct")
-            // State is intentionally synchronized when the external dialog, storage, or server source changes.
+        getAftalelicensWeightConfig().then(cfg => {
+            if (!cfg) return
             // eslint-disable-next-line react-hooks/set-state-in-effect
-            if (h !== null) setHensaettelserPct(h)
-            const s = localStorage.getItem("dfks_sociale_pct")
-            if (s !== null) setSocialPct(s)
-        } catch { /* ignore */ }
+            setVaegte({ ...DEFAULT_VAEGTE, ...cfg.weights })
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setExtra({ ...DEFAULT_VAEGT_EXTRA, ...cfg.extra })
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            if (cfg.reservePercent != null) setHensaettelserPct(String(cfg.reservePercent))
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            if (cfg.socialPercent != null) setSocialPct(String(cfg.socialPercent))
+        }).catch(() => { /* keep defaults */ })
     }, [])
     const [hensaettelsesKonto, setHensaettelsesKonto] = useState<{ id: string; batchLabel: string; amount: number; lockedAt: string; brugt: number }[]>(() => {
         if (typeof window === "undefined") return []
@@ -3494,20 +3482,27 @@ export default function AftalelicensDetailPage() {
 
     const [vaerker, setVaerker] = useState<AftalelicensVaerk[]>(genMockVaerker)
 
-    // Hydrate from localStorage after mount (avoids SSR/client mismatch)
+    // Hent vaerker fra DB
     useEffect(() => {
-        try {
-            const stored = localStorage.getItem(`dfks_batch_vaerker_${id}`)
-            if (stored) {
-                const parsed = JSON.parse(stored) as AftalelicensVaerk[]
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    // State is intentionally synchronized when the external dialog, storage, or server source changes.
-                    // eslint-disable-next-line react-hooks/set-state-in-effect
-                    setVaerker(parsed)
-                    return
-                }
-            }
-        } catch { /* ignore */ }
+        if (!id) return
+        fetchScreeningSourceRowsForBatch(id).then(rows => {
+            if (!rows || rows.length === 0) return
+            const mapped: AftalelicensVaerk[] = rows.map(r => ({
+                id: r.id,
+                rawTitle: r.title ?? "",
+                channel: r.channel ?? "",
+                broadcastDate: r.broadcast_date ?? undefined,
+                duration: r.duration_minutes ?? undefined,
+                productionYear: r.production_year ?? undefined,
+                sortStatus: (r.sort_status as AftalelicensVaerk["sortStatus"]) ?? "pending",
+                sortedBy: "manual" as const,
+                vaerkType: (r.vaerk_type as VaerkType | undefined) ?? undefined,
+                viewCount: r.view_count ?? undefined,
+                aiRelevancyRaw: undefined,
+            }))
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setVaerker(mapped)
+        }).catch(() => { /* keep mock data */ })
     }, [id])
     const [confirmedMatches, setConfirmedMatches] = useState<VaerkMatch[]>([])
     const batch = MOCK_BATCH // In real app: lookup by id

@@ -445,3 +445,27 @@ export async function fetchAftalelicensBatches() {
 
   return { success: true, batches: data ?? [] };
 }
+
+export async function fetchScreeningSourceRowsForBatch(batchKey: string) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind", rows: [] as const };
+  const isAdmin = await isUserAdmin(user.id);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", rows: [] as const };
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation", rows: [] as const };
+
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("screening_source_rows")
+    .select("id, title, normalized_title, channel, screening_date, duration_minutes, view_count, season, episode, production_year")
+    .eq("org_id", orgId)
+    .eq("batch_key", batchKey)
+    .order("screening_date")
+
+  if (error) {
+    console.error("Fejl ved hentning af screening_source_rows for batch:", error);
+    return { success: false, error: error.message, rows: [] as const };
+  }
+
+  return { success: true, rows: data ?? [] };
+}
