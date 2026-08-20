@@ -170,7 +170,10 @@ function detectColumns(headers: string[]): ColMap {
     }
     return {
         titleCol:    find("titel", "title", "programtitel", "programnavn", "program", "produktionstitel", "navn"),
-        channelCol:  find("kanal", "channel", "sendekanal", "station", "tv-kanal"),
+        // "Channel name" (læsbart navn, fx "TV2") tjekkes FØR den generiske "channel" —
+        // Simply.TV har begge et numerisk "Channel"-ID og et læsbart "Channel Name" som
+        // separate kolonner; uden denne rækkefølge vælges ID'et fejlagtigt.
+        channelCol:  find("kanal", "channel name", "sendekanal", "station", "tv-kanal", "channel"),
         dateCol:     find("dato", "date", "sendestart", "sendedato", "broadcastdate", "dato/tid", "startdato"),
         durationCol: find("varighed", "duration", "minutter", "spilletid", "tid", "længde", "length"),
         viewsCol:    find("visninger", "views", "visningstal", "antal visninger", "antal_visninger"),
@@ -282,9 +285,17 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                     if (d instanceof Date) broadcastDate = d.toISOString().slice(0, 10)
                     else if (typeof d === "string" && d) broadcastDate = d.slice(0, 10)
                     else if (typeof d === "number") {
-                        // Excel serial date
-                        const jsDate = new Date(Math.round((d - 25569) * 86400 * 1000))
-                        broadcastDate = jsDate.toISOString().slice(0, 10)
+                        // Excel serial date — dage siden 1899-12-30 (Excels epoke, inkl. dens
+                        // kendte "1900 var skudår"-fejl). Gyldige sendedatoer i praksis ligger
+                        // et godt stykke over 25569 (svarer til 1970-01-01) — en langt lavere
+                        // værdi er sandsynligvis IKKE en fuld dato (fx et klokkeslæt gemt som
+                        // decimalbrøk, eller en kolonne-fejlplacering), og bør IKKE stille
+                        // omregnes til en meningsløs 1900-dato. Sæt null i stedet, så det er
+                        // synligt som manglende, ikke forkert.
+                        if (d >= 25569) {
+                            const jsDate = new Date(Math.round((d - 25569) * 86400 * 1000))
+                            broadcastDate = jsDate.toISOString().slice(0, 10)
+                        }
                     }
                 }
                 const durRaw = cm.durationCol !== null ? row[cm.durationCol] : undefined
