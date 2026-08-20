@@ -3490,17 +3490,18 @@ export default function AftalelicensDetailPage() {
             const rows = res.rows
             if (!rows || rows.length === 0) return
             const mapped: AftalelicensVaerk[] = rows.map(r => ({
-                id: r.id,
+                id: String(r.id),
+                batchId: id,
                 rawTitle: r.title ?? "",
+                normalizedTitle: r.normalized_title ?? undefined,
                 channel: r.channel ?? "",
-                broadcastDate: r.broadcast_date ?? undefined,
+                broadcastDate: r.screening_date ?? undefined,
                 duration: r.duration_minutes ?? undefined,
                 productionYear: r.production_year ?? undefined,
-                sortStatus: (r.sort_status as AftalelicensVaerk["sortStatus"]) ?? "pending",
-                sortedBy: "manual" as const,
-                vaerkType: (r.vaerk_type as VaerkType | undefined) ?? undefined,
+                sortStatus: "pending" as AftalelicensVaerk["sortStatus"],
                 viewCount: r.view_count ?? undefined,
-                aiRelevancyRaw: undefined,
+                season: r.season ?? undefined,
+                episode: r.episode ?? undefined,
             }))
             // eslint-disable-next-line react-hooks/set-state-in-effect
             setVaerker(mapped)
