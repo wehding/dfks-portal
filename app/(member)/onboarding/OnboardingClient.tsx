@@ -20,6 +20,7 @@ import { SeriesEpisodeSelector } from "@/components/works/series-episode-selecto
 import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 import { seasonLookupMessage } from "@/lib/season-selection";
+import { LEGAL_DOCUMENT_TYPE_LABELS, PRIVACY_POLICY_URL, type LegalDocumentRecord } from "@/lib/legal-documents";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -72,11 +73,15 @@ export default function OnboardingClient({
   rh,
   user,
   statisticsProfile,
+  legalDocuments,
+  legalDocumentsReady,
   isRepeatOnboarding,
 }: {
   rh: OnboardingProfile | null;
   user: OnboardingUser | null;
   statisticsProfile: StatisticsProfileOptions;
+  legalDocuments: LegalDocumentRecord[];
+  legalDocumentsReady: boolean;
   isRepeatOnboarding: boolean;
 }) {
   const { locale, t } = useI18n();
@@ -89,9 +94,18 @@ export default function OnboardingClient({
     { id: 5, title: t("onboarding.stepPrivacy"), icon: "🔒" },
     { id: 6, title: t("onboarding.stepConfirm"), icon: "✅" },
   ];
-  const [step, setStep] = useState(1);
+  const firstStep = isRepeatOnboarding ? 5 : 1;
+  const [step, setStep] = useState(firstStep);
   const [isSaving, setIsSaving] = useState(false);
-  const [shareStatistics, setShareStatistics] = useState(rh?.statistics_participation !== false);
+  const isOrganisationMember = Boolean(rh?.is_member);
+  const [shareStatistics, setShareStatistics] = useState<boolean | null>(
+    isOrganisationMember
+      ? true
+      : typeof rh?.statistics_participation === "boolean"
+        ? rh.statistics_participation
+        : null,
+  );
+  const [legalAccepted, setLegalAccepted] = useState(false);
   const [secondaryProfessionTypeIds, setSecondaryProfessionTypeIds] = useState<string[]>(statisticsProfile.secondaryProfessionTypeIds);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<OnboardingField, string>>>({});
 
@@ -120,7 +134,6 @@ export default function OnboardingClient({
   const [episodeLoading, setEpisodeLoading] = useState<Record<string, boolean>>({});
   const [episodeErrors, setEpisodeErrors] = useState<Record<string, string | null>>({});
   const episodeRequestIds = React.useRef<Record<string, number>>({});
-  const isOrganisationMember = Boolean(rh?.is_member);
 
   // Import-fremdrift
   const [importProgress, setImportProgress] = useState<{ current: number; total: number; title: string } | null>(null);
@@ -275,7 +288,9 @@ export default function OnboardingClient({
     Object.entries(formData).forEach(([k, v]) => payload.set(k, v));
     // Serveren afgør medlemsstatus. Værdien bruges kun som onboardingvalg for
     // ikke-medlemmer; aktive medlemmer får ikke spørgsmålet i onboarding.
-    payload.set("opt_out_statistics", String(!shareStatistics));
+    payload.set("opt_out_statistics", String(shareStatistics !== true));
+    payload.set("statistics_participation_choice", shareStatistics === null ? "" : String(shareStatistics));
+    payload.set("accepted_legal_document_ids", JSON.stringify(legalDocuments.map(document => document.id).filter(Boolean)));
     payload.set("secondary_profession_type_ids", JSON.stringify(secondaryProfessionTypeIds));
 
     const result = await completeOnboarding(payload);
@@ -421,6 +436,20 @@ export default function OnboardingClient({
       } else {
         setStep(5);
       }
+    } else if (step === 5) {
+      if (!legalDocumentsReady) {
+        toast.error("Juridisk onboarding mangler databaseopsætning. Kontakt administrator.");
+        return;
+      }
+      if (!legalAccepted) {
+        toast.error("Du skal acceptere de aktuelle rettighedstekster for at fortsætte.");
+        return;
+      }
+      if (!isOrganisationMember && shareStatistics === null) {
+        toast.error("Vælg om dine overordnede vilkår må bruges til anonym markedsstatistik.");
+        return;
+      }
+      setStep(6);
     } else {
       setStep((s) => s + 1);
     }
@@ -443,6 +472,8 @@ export default function OnboardingClient({
     : importJob?.status === "partial" || importJob?.status === "error"
       ? t("onboarding.importNeedsRetry")
       : t("onboarding.importRunning");
+  const privacyDocument = legalDocuments.find(document => document.document_type === "privacy_notice");
+  const privacyStepBlocked = step === 5 && (!legalDocumentsReady || !legalAccepted || (!isOrganisationMember && shareStatistics === null));
 
   if (isImportingDfi) {
     const approvedCount = dfiCredits.filter((c) => selectedDfiCredits[c.id]).length;
@@ -898,7 +929,7 @@ export default function OnboardingClient({
             <div style={{ padding: "40px" }}>
               <h2 style={{ fontSize: "22px", fontWeight: 700, margin: "0 0 8px", color: "var(--on-surface)" }}>Privatliv & Data</h2>
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px" }}>
-                Bestem, hvordan vi må bruge dine oplysninger.
+                {privacyDocument?.title ?? "Gennemgå hvordan vi behandler dine oplysninger."}
               </p>
 
               {importJob && (
@@ -923,6 +954,48 @@ export default function OnboardingClient({
               )}
               
               <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
+                  <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "10px" }}>
+                    Dine data, dine rettigheder
+                  </div>
+                  {!legalDocumentsReady && (
+                    <div style={{ marginBottom: "14px", border: "1px solid var(--destructive)", borderRadius: "8px", padding: "12px 14px", color: "var(--destructive)", fontSize: "13px", lineHeight: 1.5 }}>
+                      Juridisk onboarding mangler databaseopsætning. Kontakt administrator, så de nyeste migrationer kan blive kørt.
+                    </div>
+                  )}
+                  <div style={{ display: "grid", gap: "12px" }}>
+                    {legalDocuments.map(document => (
+                      <details key={document.document_type} open={document.document_type === "privacy_notice"} style={{ border: "1px solid var(--border)", borderRadius: "8px", background: "var(--surface-container-lowest)" }}>
+                        <summary style={{ cursor: "pointer", padding: "12px 14px", fontSize: "14px", fontWeight: 700, color: "var(--on-surface)" }}>
+                          {LEGAL_DOCUMENT_TYPE_LABELS[document.document_type]} · version {document.version || 1}
+                        </summary>
+                        <div style={{ borderTop: "1px solid var(--border)", padding: "12px 14px", whiteSpace: "pre-wrap", fontSize: "13px", lineHeight: 1.65, color: "var(--on-surface-variant)" }}>
+                          {document.body}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                  <label style={{ marginTop: "16px", display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={legalAccepted}
+                      onChange={event => setLegalAccepted(event.target.checked)}
+                      style={{ marginTop: "3px", width: "18px", height: "18px", accentColor: "var(--primary)" }}
+                    />
+                    <span style={{ fontSize: "13px", lineHeight: 1.55, color: "var(--on-surface)" }}>
+                      Jeg har læst og accepterer de aktuelle vilkår, privatlivsoplysninger, AI-transparens og kontraktanalysevilkår for portalen.
+                    </span>
+                  </label>
+                  <a
+                    href={PRIVACY_POLICY_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ marginTop: "12px", display: "inline-flex", fontSize: "13px", fontWeight: 600, color: "var(--primary)" }}
+                  >
+                    Læs fuld privatlivspolitik
+                  </a>
+                </div>
+
                 {/* Lønstatistik */}
                 <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", overflow: "hidden" }}>
                   <div style={{ padding: "20px 24px", display: "flex", gap: "14px" }}>
@@ -949,29 +1022,42 @@ export default function OnboardingClient({
                       Du deltager som medlem af organisationen
                     </div>
                     <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "4px", lineHeight: 1.5 }}>
-                      Alle aktive medlemmer er som udgangspunkt tilmeldt den anonymiserede statistik. Du kan altid ændre valget under Min profil.
+                      Som medlem er du oplyst om, at foreningen bruger overordnede kontrakt- og lønoplysninger til anonymiseret statistikarbejde under faste diskretionsgrænser.
                     </div>
-                  </div> : <label style={{
-                    display: "flex", alignItems: "center", gap: "12px",
-                    padding: "16px 24px", cursor: "pointer",
+                  </div> : <div style={{
+                    display: "grid", gap: "10px",
+                    padding: "16px 24px",
                     backgroundColor: "var(--surface-container-low)",
                     borderTop: "1px solid var(--outline-variant)",
                   }}>
-                    <input
-                      type="checkbox"
-                      checked={shareStatistics}
-                      onChange={(e) => setShareStatistics(e.target.checked)}
-                      style={{ width: "18px", height: "18px", accentColor: "var(--primary)" }}
-                    />
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
-                        Jeg bidrager til fælles lønstatistik
-                      </div>
-                      <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "2px" }}>
-                        Mine løndata indgår anonymiseret og aggregeret i branchestatistikken.
-                      </div>
+                    <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
+                      Hjælp branchen med at skabe gennemsigtighed
                     </div>
-                  </label>}
+                    <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer" }}>
+                      <input
+                        type="radio"
+                        name="share-statistics"
+                        checked={shareStatistics === true}
+                        onChange={() => setShareStatistics(true)}
+                        style={{ marginTop: "3px", width: "18px", height: "18px", accentColor: "var(--primary)" }}
+                      />
+                      <span style={{ fontSize: "13px", lineHeight: 1.5, color: "var(--on-surface)" }}>
+                        Ja, I må gerne bruge mine overordnede vilkår til anonym markedsstatistik.
+                      </span>
+                    </label>
+                    <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer" }}>
+                      <input
+                        type="radio"
+                        name="share-statistics"
+                        checked={shareStatistics === false}
+                        onChange={() => setShareStatistics(false)}
+                        style={{ marginTop: "3px", width: "18px", height: "18px", accentColor: "var(--primary)" }}
+                      />
+                      <span style={{ fontSize: "13px", lineHeight: 1.5, color: "var(--on-surface)" }}>
+                        Nej tak, brug kun min kontrakt som dokumentation for mine rettigheder og udbetalinger.
+                      </span>
+                    </label>
+                  </div>}
                 </div>
 
                 {/* Kønsoplysninger Dropdown */}
@@ -1051,6 +1137,7 @@ export default function OnboardingClient({
                   { label: "CPR registreret", value: formData.cpr ? "✅ Ja" : "❌ Mangler" },
                   { label: "NemKonto", value: formData.bank_account ? "✅ Registreret" : "❌ Mangler" },
                   { label: "Lønstatistik", value: isOrganisationMember ? "✅ Deltager som medlem" : shareStatistics ? "✅ Deltager" : "❌ Deltager ikke" },
+                  { label: "Rettighedstekster", value: legalAccepted ? "✅ Accepteret" : "❌ Mangler" },
                 ].map((row) => (
                   <div key={row.label} style={{
                     display: "flex", justifyContent: "space-between",
@@ -1075,9 +1162,9 @@ export default function OnboardingClient({
             backgroundColor: "var(--surface-container-low)",
           }}>
             <button
-              onClick={() => setStep((s) => Math.max(1, s - 1))}
-              disabled={step === 1}
-              style={{ padding: "10px 20px", fontSize: "14px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "transparent", color: "var(--foreground)", cursor: step === 1 ? "default" : "pointer", opacity: step === 1 ? 0.3 : 1, display: "flex", alignItems: "center", gap: "6px" }}
+              onClick={() => setStep((s) => Math.max(firstStep, s - 1))}
+              disabled={step === firstStep}
+              style={{ padding: "10px 20px", fontSize: "14px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "transparent", color: "var(--foreground)", cursor: step === firstStep ? "default" : "pointer", opacity: step === firstStep ? 0.3 : 1, display: "flex", alignItems: "center", gap: "6px" }}
             >
               <ArrowLeft size={16} /> Tilbage
             </button>
@@ -1085,8 +1172,8 @@ export default function OnboardingClient({
             {step < steps.length ? (
               <button
                 onClick={handleNextStep}
-                disabled={isSearchingDfi || isImportingDfi}
-                style={{ padding: "10px 24px", fontSize: "14px", borderRadius: "6px", border: "none", backgroundColor: "var(--foreground)", color: "var(--card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSearchingDfi || isImportingDfi ? 0.6 : 1 }}
+                disabled={isSearchingDfi || isImportingDfi || privacyStepBlocked}
+                style={{ padding: "10px 24px", fontSize: "14px", borderRadius: "6px", border: "none", backgroundColor: "var(--foreground)", color: "var(--card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSearchingDfi || isImportingDfi || privacyStepBlocked ? 0.6 : 1 }}
               >
                 Fortsæt <ArrowRight size={16} />
               </button>

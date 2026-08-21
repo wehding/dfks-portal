@@ -91,7 +91,7 @@ export interface DbOrgAffiliation {
     valid_from: string | null
     valid_to: string | null
     statistics_participation: boolean | null
-    statistics_participation_source: "member_default" | "member_reenrollment" | "onboarding_choice" | "profile_choice" | "admin_choice" | "legacy_migration" | null
+    statistics_participation_source: "member_default" | "member_reenrollment" | "onboarding_choice" | "non_member_onboarding_choice" | "profile_choice" | "non_member_profile_choice" | "admin_choice" | "legacy_migration" | null
     statistics_participation_updated_at: string | null
     statistics_participation_updated_by: string | null
     created_at: string

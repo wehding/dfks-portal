@@ -22,7 +22,6 @@ import { findParentMember } from "@/lib/db/employers"
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
 import { resolveAgreementByDate } from "@/lib/agreement-version-resolver"
 import { getAgreementSatserForContext } from "@/lib/agreement-wage-server"
-import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
 
 // ── Sensitiv data-maskning ────────────────────────────────────
 
@@ -526,14 +525,13 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         contractText = fileBuffer.toString("utf-8")
         returnText = contractText.slice(0, 60000)
     } else if (filename.endsWith(".pdf")) {
-        try { contractText = await extractPdfText(fileBuffer) } catch { /* bruger base64 til AI */ }
+        try { contractText = await extractPdfText(fileBuffer) } catch { contractText = "" }
+        if (!contractText.trim()) {
+            throw new Error("PDF'en indeholder ikke læsbar tekst, der kan maskeres før AI-analyse.")
+        }
         returnText = contractText.slice(0, 60000)
     } else {
         throw new Error("Ikke-understøttet filformat. Brug PDF, DOC, DOCX eller TXT.")
-    }
-
-    if (filename.endsWith(".pdf") && !contractText.trim() && provider === "google" && fileBuffer.length > 20 * 1024 * 1024) {
-        throw new Error("Den scannede PDF er for stor til Gemini. Komprimér filen til under 20 MB eller vælg Claude.")
     }
 
     const runId = await createAiUsageRun({ orgId, operationType: "contract_advice", entityType: "contract_review", entityId, actorUserId, source: source ?? "api" })
@@ -805,44 +803,18 @@ anbefalinger og juridiske referencer — leveres på engelsk.
         (memberName ? `Kontrakten er indsendt af DFKS-medlemmet: ${memberName}\n\n` : "") +
         (contextBlock ? `${contextBlock}\n\n` : "")
 
-    let messageContent: any[]
-    if (filename.endsWith(".pdf")) {
-        if (contractText.trim()) {
-            const maskedText = maskSensitiveData(contractText)
-            messageContent = [{
-                type: "text",
-                text: `${memberContext}Gennemgå denne foreløbige kontrakt og returner JSON:\n\n${maskedText.slice(0, 45000)}`,
-            }]
-        } else {
-            const base64 = fileBuffer.toString("base64")
-            messageContent = [
-                {
-                    type: "document",
-                    source: { type: "base64", media_type: "application/pdf", data: base64 },
-                },
-                {
-                    type: "text",
-                    text: `${memberContext}Gennemgå denne foreløbige kontrakt og returner JSON som beskrevet i system prompt.`,
-                },
-            ]
-        }
-    } else {
-        const maskedText = maskSensitiveData(contractText)
-        messageContent = [{
-            type: "text",
-            text: `${memberContext}Gennemgå denne foreløbige kontrakt og returner JSON:\n\n${maskedText.slice(0, 45000)}`,
-        }]
-    }
+    const maskedText = maskSensitiveData(contractText)
+    const messageContent: any[] = [{
+        type: "text",
+        text: `${memberContext}Gennemgå denne foreløbige kontrakt og returner JSON:\n\n${maskedText.slice(0, 45000)}`,
+    }]
 
     // ── Trin 2: Kald AI ───────────────────────────────────────
     const textBlock = messageContent.find((block: { type: string; text?: string }) => block.type === "text")
     const userMessage = textBlock?.text ?? "Gennemgå den vedhæftede kontrakt og returner JSON."
-    const googleParts: Array<{ text: string } | { inline_data: { mime_type: string; data: string } }> = []
-    for (const block of messageContent as Array<{ type: string; text?: string; source?: { data?: string } }>) {
+    const googleParts: Array<{ text: string }> = []
+    for (const block of messageContent as Array<{ type: string; text?: string }>) {
         if (block.type === "text") googleParts.push({ text: block.text ?? "" })
-        if (block.type === "document" && block.source?.data) {
-            googleParts.push({ inline_data: { mime_type: "application/pdf", data: block.source.data } })
-        }
     }
     let raw: string
     try {

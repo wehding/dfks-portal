@@ -9,7 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImportConnectionsSettings } from "@/components/admin/import-connections-settings";
+import { LegalDocumentSettings } from "@/components/admin/legal-document-settings";
 
 type FormState = {
   org_id: string;
@@ -85,6 +87,7 @@ export default function OrganisationSettingsPage() {
   const [connectionPending, setConnectionPending] = useState(false);
   const [loginUrl, setLoginUrl] = useState("");
   const [savedStatisticsMinimum, setSavedStatisticsMinimum] = useState(5);
+  const [activeTab, setActiveTab] = useState("organisation");
 
   useEffect(() => {
     let active = true;
@@ -289,13 +292,22 @@ export default function OrganisationSettingsPage() {
             Tilpas navn, logo, afsender-mail og de fagord organisationens brugere ser i portalen.
           </p>
         </div>
-        <Button className="w-full sm:w-auto" onClick={handleSave} disabled={isPending || !canSave}>
-          {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-          Gem ændringer
-        </Button>
+        {activeTab === "organisation" && (
+          <Button className="w-full sm:w-auto" onClick={handleSave} disabled={isPending || !canSave}>
+            {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            Gem ændringer
+          </Button>
+        )}
       </div>
 
-      <ImportConnectionsSettings />
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start">
+          <TabsTrigger value="organisation">Organisation</TabsTrigger>
+          <TabsTrigger value="legal">Brugerrettigheder og juridiske tekster</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="organisation" className="space-y-6">
+          <ImportConnectionsSettings />
 
       <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
         <h2 className="text-base font-semibold">Branding</h2>
@@ -644,6 +656,13 @@ export default function OrganisationSettingsPage() {
           </div>
         </div>
       </section>
+
+        </TabsContent>
+
+        <TabsContent value="legal" className="space-y-6">
+          <LegalDocumentSettings />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

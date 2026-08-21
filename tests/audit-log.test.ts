@@ -13,6 +13,9 @@ import {
 test("semantic link actions are accepted by audit filters", () => {
   assert.equal(isAuditAction("link"), true);
   assert.equal(isAuditAction("unlink"), true);
+  assert.equal(isAuditAction("ai_analysis"), true);
+  assert.equal(isAuditAction("sar_export"), true);
+  assert.equal(isAuditAction("siem_delivery"), true);
 });
 
 test("technical relation events are classified as audit details", () => {
