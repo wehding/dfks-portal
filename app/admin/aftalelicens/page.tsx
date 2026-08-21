@@ -698,7 +698,8 @@ function ImportDialog({ open, onOpenChange, onImport }: {
 // ── Main page ─────────────────────────────────────────────────
 
 export default function AftalelicensPage() {
-    const [batches, setBatches] = useState<AftalelicensBatch[]>(MOCK_BATCHES)
+    const [batches, setBatches] = useState<AftalelicensBatch[]>([])
+    const [batchesLoading, setBatchesLoading] = useState(true)
     const [importOpen, setImportOpen] = useState(false)
     const [claims, setClaims] = useState<Record<string, any>[]>([])
     const [activeClaim, setActiveClaim] = useState<Record<string, any> | null>(null)
@@ -713,22 +714,29 @@ export default function AftalelicensPage() {
 
     const loadBatchesFromServer = async () => {
         const result = await fetchAftalelicensBatches()
-        if (result.success && result.batches.length > 0) {
+        if (result.success) {
             setBatches(result.batches.map(b => ({
                 id: b.id, kilde: b.kilde as AftalelicensKilde, year: b.year,
                 uploadedAt: b.uploaded_at, uploadedBy: b.uploaded_by ?? "Admin",
                 totalRows: b.total_rows, filteredRows: b.filtered_rows,
                 status: b.status as AftalelicensBatch["status"], notes: b.notes ?? undefined,
             })))
+        } else if (batches.length === 0) {
+            // Kun brug mock-data som absolut sidste udvej, hvis selve hentningen
+            // fejlede OG der ikke allerede er noget at vise — aldrig som stille
+            // erstatning for et tomt, men gyldigt resultat.
+            setBatches(MOCK_BATCHES)
         }
+        setBatchesLoading(false)
     }
 
+    // Kører bevidst kun ved mount — loadBatchesFromServer behøver ikke være
+    // en reaktiv afhængighed her, og den asynkrone setState heri er tilsigtet.
     useEffect(() => {
-        // State is intentionally synchronized when the server source changes after mount.
         // eslint-disable-next-line react-hooks/set-state-in-effect
         void loadBatchesFromServer()
         void loadClaims()
-    }, [])
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     const pending = batches.filter(b => b.status === "sorting" || b.status === "imported").length
     const ready = batches.filter(b => b.status === "weighted").length
@@ -831,7 +839,21 @@ export default function AftalelicensPage() {
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {batches.map(batch => {
+                        {batchesLoading && (
+                            <TableRow>
+                                <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-8">
+                                    Indlæser datasæt …
+                                </TableCell>
+                            </TableRow>
+                        )}
+                        {!batchesLoading && batches.length === 0 && (
+                            <TableRow>
+                                <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-8">
+                                    Ingen datasæt importeret endnu.
+                                </TableCell>
+                            </TableRow>
+                        )}
+                        {!batchesLoading && batches.map(batch => {
                             const cfg = STATUS_CONFIG[batch.status]
                             const claimCount = PENDING_CLAIMS[batch.id] ?? 0
                             const isLate = claimCount > 0 && batch.status === "completed"

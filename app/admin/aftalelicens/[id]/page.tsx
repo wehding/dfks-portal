@@ -9,7 +9,7 @@ import {
     Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff, Pencil,
 } from "lucide-react"
 import { saveFeedback, getTrainingExamples } from "@/lib/ai-feedback"
-import { fetchScreeningSourceRowsForBatch } from "@/app/actions/screenings"
+import { fetchAftalelicensBatch, fetchScreeningSourceRowsForBatch } from "@/app/actions/screenings"
 import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -47,7 +47,7 @@ import {
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type {
-    AftalelicensBatch, AftalelicensVaerk,
+    AftalelicensBatch, AftalelicensKilde, AftalelicensVaerk,
     AftalelicensVaegtet, SortStatus, VaerkType, AftalelicensVaegtExtra, FilterRule,
 } from "@/lib/streaming-types"
 import { mockWorks, mockContracts } from "@/lib/mock-data"
@@ -745,6 +745,13 @@ function SortTable({ vaerker, onUpdate }: {
                             channel: v.channel,
                             duration: v.duration,
                             productionYear: v.productionYear,
+                            category: v.category,
+                            genre: v.genre,
+                            // Beskrivelse/skuespillere kan være lange fritekstfelter — afkortet
+                            // for at holde token-forbruget fornuftigt ved op til 500 poster
+                            // pr. kald, uden at miste den vigtigste kontekst.
+                            description: v.description?.slice(0, 200),
+                            actors: v.actors?.slice(0, 150),
                         })),
                         examples: getTrainingExamples(20),
                     }),
@@ -2811,13 +2818,9 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
         getAftalelicensWeightConfig().then(res => {
             const cfg = res.config
             if (!cfg) return
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             setVaegte({ ...DEFAULT_VAEGTE, ...cfg.weights })
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             setExtra({ ...DEFAULT_VAEGT_EXTRA, ...cfg.extra })
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             if (cfg.reservePercent != null) setHensaettelserPct(String(cfg.reservePercent))
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             if (cfg.socialPercent != null) setSocialPct(String(cfg.socialPercent))
         }).catch(() => { /* keep defaults */ })
     }, [])
@@ -3502,13 +3505,35 @@ export default function AftalelicensDetailPage() {
                 viewCount: r.view_count ?? undefined,
                 season: r.season ?? undefined,
                 episode: r.episode ?? undefined,
+                category: r.category ?? undefined,
+                genre: r.genre ?? undefined,
+                description: r.description ?? undefined,
+                productionCountries: r.production_countries ?? undefined,
+                directors: r.directors ?? undefined,
+                actors: r.actors ?? undefined,
             }))
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             setVaerker(mapped)
         }).catch(() => { /* keep mock data */ })
     }, [id])
     const [confirmedMatches, setConfirmedMatches] = useState<VaerkMatch[]>([])
-    const batch = MOCK_BATCH // In real app: lookup by id
+    const [batch, setBatch] = useState<AftalelicensBatch>(MOCK_BATCH)
+
+    // Hent den faktiske batch fra databasen ud fra ID'et i URL'en — MOCK_BATCH
+    // var tidligere hardkodet uanset hvilken batch der blev åbnet.
+    useEffect(() => {
+        if (!id) return
+        fetchAftalelicensBatch(id).then(res => {
+            if (!res.batch) return
+            const b = res.batch
+            const mapped: AftalelicensBatch = {
+                id: b.id, kilde: b.kilde as AftalelicensKilde, year: b.year,
+                uploadedAt: b.uploaded_at, uploadedBy: b.uploaded_by ?? "Admin",
+                totalRows: b.total_rows, filteredRows: b.filtered_rows,
+                status: b.status as AftalelicensBatch["status"], notes: b.notes ?? undefined,
+            }
+            setBatch(mapped)
+        }).catch(() => { /* keep mock data */ })
+    }, [id])
 
     const updateVaerk = (vaerkId: string, patch: Partial<AftalelicensVaerk>) => {
         setVaerker(prev => {

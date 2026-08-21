@@ -9,7 +9,7 @@ import { resolveOrgId } from "@/lib/org";
 
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
 
-function normalizeScreeningTitle(value: string) {
+export function normalizeScreeningTitle(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
@@ -446,6 +446,30 @@ export async function fetchAftalelicensBatches() {
   return { success: true, batches: data ?? [] };
 }
 
+export async function fetchAftalelicensBatch(id: string) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind", batch: null };
+  const isAdmin = await isUserAdmin(user.id);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", batch: null };
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation", batch: null };
+
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("aftalelicens_batches")
+    .select("id, kilde, year, uploaded_at, uploaded_by, total_rows, filtered_rows, status, notes")
+    .eq("org_id", orgId)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Fejl ved hentning af aftalelicens-batch:", error);
+    return { success: false, error: error.message, batch: null };
+  }
+
+  return { success: true, batch: data ?? null };
+}
+
 export async function fetchScreeningSourceRowsForBatch(batchKey: string) {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind", rows: [] as const };
@@ -457,7 +481,7 @@ export async function fetchScreeningSourceRowsForBatch(batchKey: string) {
   const db = createServiceClient();
   const { data, error } = await db
     .from("screening_source_rows")
-    .select("id, title, normalized_title, channel, screening_date, duration_minutes, view_count, season, episode, production_year")
+    .select("id, title, normalized_title, channel, screening_date, duration_minutes, view_count, season, episode, production_year, category, genre, description, production_countries, directors, actors")
     .eq("org_id", orgId)
     .eq("batch_key", batchKey)
     .order("screening_date")
