@@ -24,7 +24,7 @@ type SarItem = {
 };
 
 const STATUS_LABELS: Record<SarItem["status"], string> = {
-  draft: "Kladde", review: "Til gennemgang", approved: "Godkendt", rejected: "Afvist",
+  draft: "Kladde", review: "Afventer admin-godkendelse", approved: "Godkendt - afventer generering", rejected: "Afvist",
   generated: "Klar til download", delivered: "Udleveret", expired: "Udløbet",
 };
 
@@ -97,13 +97,24 @@ export default function MineDataPage() {
   return <div className="space-y-6">
     <PortalPageHeader
       title="Mine data og opslag"
-      subtitle="Se og hent dine godkendte GDPR-indsigtsrapporter"
-      actions={<Button disabled={hasActive} onClick={() => setOpen(true)}><Plus />Ny anmodning</Button>}
+      subtitle="Anmod om indsigt i de personlige logs og oplysninger, der vedrører dig"
+      actions={<Button disabled={hasActive} onClick={() => setOpen(true)}><Plus />Anmod om logudtræk</Button>}
     />
     <Card className="border-blue-500/30 bg-blue-500/5">
       <CardContent className="flex gap-3 p-4 text-sm">
         <ShieldCheck className="mt-0.5 size-5 shrink-0 text-blue-600" />
-        <div><p className="font-medium">Medarbejderes identitet er beskyttet</p><p className="text-muted-foreground">Rapporter til medlemmer viser tidspunkt, formål, rolle og behandling. Medarbejdernavne, interne id&apos;er og IP-adresser er maskeret.</p></div>
+        <div className="space-y-2">
+          <p className="font-medium">Sådan fungerer logning og udlevering</p>
+          <p className="text-muted-foreground">
+            Portalen logger relevante opslag og behandlinger, så DFKS kan dokumentere hvem der har tilgået eller behandlet dine oplysninger, hvornår det skete, hvilken rolle brugeren havde, hvilken organisation det vedrørte, og hvilket sagligt formål behandlingen havde. Loggen gemmer ikke adgangskoder, hemmelige nøgler eller unødigt dokumentindhold.
+          </p>
+          <p className="text-muted-foreground">
+            Du kan anmode om at få de personlige logs og oplysninger, der vedrører dig, udleveret efter GDPR artikel 15 om indsigtsret. DFKS behandler anmodningen efter GDPR artikel 12 om gennemsigtig håndtering og svarfrister. Medarbejdernavne, interne id&apos;er og IP-adresser maskeres som udgangspunkt af hensyn til fortrolighed og sikkerhed efter GDPR artikel 5, stk. 1, litra f, og artikel 32.
+          </p>
+          <p className="text-muted-foreground">
+            En anmodning sendes først til admin-gennemgang. Rapporten bliver først tilgængelig for download, når en admin har kontrolleret og godkendt udleveringen.
+          </p>
+        </div>
       </CardContent>
     </Card>
     {loading ? <div className="flex justify-center p-10"><Loader2 className="animate-spin" /></div> : items.length === 0 ?
@@ -126,6 +137,6 @@ export default function MineDataPage() {
           </Card>;
         })}
       </div>}
-    <Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>Ny indsigtsanmodning</DialogTitle><DialogDescription>Tom periode medtager alle registrerede tidspunkter. Når rapporten er godkendt og genereret, er filerne tilgængelige i 24 timer.</DialogDescription></DialogHeader><div className="grid gap-4 sm:grid-cols-2"><Label className="space-y-1">Fra dato<Input type="date" value={dateFrom} onChange={event => setDateFrom(event.target.value)} /></Label><Label className="space-y-1">Til dato<Input type="date" value={dateTo} onChange={event => setDateTo(event.target.value)} /></Label><Button className="sm:col-span-2" disabled={busy === "create" || Boolean(dateFrom && dateTo && dateTo < dateFrom)} onClick={() => void createRequest()}>{busy === "create" && <Loader2 className="animate-spin" />}Send anmodning</Button></div></DialogContent></Dialog>
+    <Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>Ny indsigtsanmodning</DialogTitle><DialogDescription>Tom periode medtager alle registrerede tidspunkter. Anmodningen sendes til admin-godkendelse, før rapporten genereres. Når rapporten er godkendt og genereret, er filerne tilgængelige i 24 timer.</DialogDescription></DialogHeader><div className="grid gap-4 sm:grid-cols-2"><Label className="space-y-1">Fra dato<Input type="date" value={dateFrom} onChange={event => setDateFrom(event.target.value)} /></Label><Label className="space-y-1">Til dato<Input type="date" value={dateTo} onChange={event => setDateTo(event.target.value)} /></Label><Button className="sm:col-span-2" disabled={busy === "create" || Boolean(dateFrom && dateTo && dateTo < dateFrom)} onClick={() => void createRequest()}>{busy === "create" && <Loader2 className="animate-spin" />}Send til admin-godkendelse</Button></div></DialogContent></Dialog>
   </div>;
 }

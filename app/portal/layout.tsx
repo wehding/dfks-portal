@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Fragment, useEffect, useState } from "react"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -37,6 +37,9 @@ import {
     SidebarMenu,
     SidebarMenuButton,
     SidebarMenuItem,
+    SidebarMenuSub,
+    SidebarMenuSubButton,
+    SidebarMenuSubItem,
     SidebarProvider,
     SidebarTrigger,
 } from "@/components/ui/sidebar"
@@ -244,7 +247,8 @@ export default function PortalLayout({
     ]
 
     const visiblePortalNavItems = portalNavItems.filter(item => item.href !== "/portal/kontraktgennemgang" || isAssociationMember)
-    const adminUserNavItems = isAssociationMember ? visiblePortalNavItems.filter(item => item.href !== "/portal/min-profil") : []
+    const adminUserNavItems = isAssociationMember ? visiblePortalNavItems : []
+    const myDataAccessNavItem = portalNavItems.find(item => item.href === "/portal/mine-data")
     const allowedKeys = ROLE_MODULES[activeRole ?? ""] ?? []
     const adminNavItems = ALL_ADMIN_NAV_ITEMS
         .filter(item => allowedKeys.includes(item.key))
@@ -259,6 +263,50 @@ export default function PortalLayout({
             label: t(item.labelKey as Parameters<typeof t>[0]),
         }))
     const currentPageTitle = resolveNavigationTitle(pathname, visiblePortalNavItems, t("nav.portal"))
+
+    const renderPortalNavItem = (item: (typeof portalNavItems)[number]) => {
+        if (item.href === "/portal/mine-data") return null
+
+        const isActive = pathname === item.href ||
+            (item.href !== "/portal" && (pathname?.startsWith(`${item.href}/`) ?? false)) ||
+            (item.href === "/portal/min-profil" && pathname === "/portal/mine-data")
+
+        return (
+            <Fragment key={item.href}>
+                <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={isActive}>
+                        <SidebarNavigationLink href={item.href}>
+                            <item.icon className="h-4 w-4" />
+                            <span>{item.label}</span>
+                            {item.href === "/portal/mine-vaerker" && (workMessageCount + memberEpisodeTodoCount) > 0 && (
+                                <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                                    {workMessageCount + memberEpisodeTodoCount}
+                                </span>
+                            )}
+                            {item.href === "/portal/mine-kontrakter" && contractMessageCount > 0 && (
+                                <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                                    {contractMessageCount}
+                                </span>
+                            )}
+                            {item.href === "/portal" && inboxMessageCount > 0 && <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">{inboxMessageCount}</span>}
+                        </SidebarNavigationLink>
+                    </SidebarMenuButton>
+                    {item.href === "/portal/min-profil" && myDataAccessNavItem && (
+                        <SidebarMenuSub>
+                            <SidebarMenuSubItem>
+                                <SidebarMenuSubButton asChild isActive={pathname === myDataAccessNavItem.href}>
+                                    <SidebarNavigationLink href={myDataAccessNavItem.href}>
+                                        <myDataAccessNavItem.icon className="h-4 w-4" />
+                                        <span>{myDataAccessNavItem.label}</span>
+                                    </SidebarNavigationLink>
+                                </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                        </SidebarMenuSub>
+                    )}
+                </SidebarMenuItem>
+            </Fragment>
+        )
+    }
 
     const handleLogout = async () => {
         const supabase = createClient()
@@ -312,33 +360,7 @@ export default function PortalLayout({
                                         {t("nav.userSection" as Parameters<typeof t>[0])}
                                     </div>
                                     <SidebarMenu>
-                                        {adminUserNavItems.map((item) => (
-                                            <SidebarMenuItem key={item.href}>
-                                                <SidebarMenuButton
-                                                    asChild
-                                                    isActive={
-                                                        pathname === item.href ||
-                                                        (item.href !== "/portal" && (pathname?.startsWith(`${item.href}/`) ?? false))
-                                                    }
-                                                >
-                                                    <SidebarNavigationLink href={item.href}>
-                                                        <item.icon className="h-4 w-4" />
-                                                        <span>{item.label}</span>
-                                                        {item.href === "/portal/mine-vaerker" && (workMessageCount + memberEpisodeTodoCount) > 0 && (
-                                                            <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
-                                                                {workMessageCount + memberEpisodeTodoCount}
-                                                            </span>
-                                                        )}
-                                                        {item.href === "/portal/mine-kontrakter" && contractMessageCount > 0 && (
-                                                            <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
-                                                                {contractMessageCount}
-                                                            </span>
-                                                        )}
-                                                        {item.href === "/portal" && inboxMessageCount > 0 && <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">{inboxMessageCount}</span>}
-                                                    </SidebarNavigationLink>
-                                                </SidebarMenuButton>
-                                            </SidebarMenuItem>
-                                        ))}
+                                        {adminUserNavItems.map(renderPortalNavItem)}
                                     </SidebarMenu>
                                 </SidebarGroupContent>
                             </SidebarGroup>}
@@ -413,30 +435,7 @@ export default function PortalLayout({
                         <SidebarGroup>
                             <SidebarGroupContent>
                                 <SidebarMenu>
-                                        {visiblePortalNavItems.map((item) => (
-                                        <SidebarMenuItem key={item.href}>
-                                            <SidebarMenuButton
-                                                asChild
-                                                isActive={pathname === item.href}
-                                            >
-                                                <SidebarNavigationLink href={item.href}>
-                                                    <item.icon className="h-4 w-4" />
-                                                    <span>{item.label}</span>
-                                                    {item.href === "/portal/mine-vaerker" && (workMessageCount + memberEpisodeTodoCount) > 0 && (
-                                                        <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
-                                                            {workMessageCount + memberEpisodeTodoCount}
-                                                        </span>
-                                                    )}
-                                                    {item.href === "/portal/mine-kontrakter" && contractMessageCount > 0 && (
-                                                        <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
-                                                            {contractMessageCount}
-                                                        </span>
-                                                    )}
-                                                    {item.href === "/portal" && inboxMessageCount > 0 && <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">{inboxMessageCount}</span>}
-                                                </SidebarNavigationLink>
-                                            </SidebarMenuButton>
-                                        </SidebarMenuItem>
-                                    ))}
+                                        {visiblePortalNavItems.map(renderPortalNavItem)}
                                 </SidebarMenu>
                             </SidebarGroupContent>
                         </SidebarGroup>
