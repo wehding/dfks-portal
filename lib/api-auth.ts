@@ -5,7 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { readActiveOrgId } from "@/lib/active-org-context";
-import { resolveStaffAccess, type StaffModule, type StaffOperation } from "@/lib/staff-access";
+import type { StaffModule, StaffOperation } from "@/lib/staff-access";
+import { resolveAppAccessContext } from "@/lib/app-access-context";
 
 type ApiAuthResult =
   | { ok: true; userId: string }
@@ -38,15 +39,15 @@ export async function requireStaffModuleApi(
   operation: StaffOperation,
 ): Promise<ApiAdminResult & { global?: boolean; allowedOrgIds?: string[] }> {
   const supabase = await createClient();
-  const access = await resolveStaffAccess(supabase, await readActiveOrgId());
-  if (!access || !access.modules[module][operation]) {
+  const access = await resolveAppAccessContext(supabase, await readActiveOrgId());
+  if (!access?.canUseAdmin || !access.role || !access.modules?.[module][operation]) {
     return { ok: false, response: NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 }) };
   }
   return {
     ok: true,
     userId: access.userId,
-    orgId: access.activeOrgId,
-    role: access.activeRole,
+    orgId: access.orgId,
+    role: access.role,
     global: access.global,
     allowedOrgIds: access.allowedOrgIds,
   };

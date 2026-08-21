@@ -8,7 +8,6 @@ import MineVaerkerClient, { memberOverviewItemsToAssignments } from "./MineVaerk
 import type { Assignment, BroadcasterLogo, OtherAssignment } from "./MineVaerkerClient";
 import { Button } from "@/components/ui/button";
 import { TableSkeleton } from "@/components/ui/data-skeletons";
-import { resolveBranding } from "@/lib/branding";
 import { fetchMemberContractsList } from "@/app/actions/member-contracts";
 import type { Contract } from "../mine-kontrakter/MineKontrakterClient";
 
@@ -24,6 +23,8 @@ export default function MineVaerkerPage() {
     contractedWorkIds: string[];
     contracts: Contract[];
     organisationShortName: string;
+    defaultRoleLabel: string;
+    coeditorWord: string;
   } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -36,31 +37,30 @@ export default function MineVaerkerPage() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) { router.push("/"); return; }
 
+        const contextResponse = await fetch("/api/access/context", { cache: "no-store" });
+        if (!contextResponse.ok) throw new Error("Organisationsadgangen kunne ikke indlæses.");
+        const context = await contextResponse.json() as {
+          rightsHolderId: string | null;
+          canUseAdmin: boolean;
+          canUseMember: boolean;
+          brand: { short_name: string };
+          terminology: { default_role_label: string; coeditor_word: string };
+        };
+        if (!context.canUseMember || !context.rightsHolderId) {
+          router.replace(context.canUseAdmin ? "/admin?notice=member-org-required" : "/");
+          return;
+        }
+
         const { data: rh, error: rhError } = await supabase
           .from("rettighedshavere")
           .select("id, full_name, dfi_person_id")
-          .eq("user_id", user.id)
+          .eq("id", context.rightsHolderId)
           .maybeSingle();
 
         if (rhError) throw rhError;
-        if (!rh) { setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [], contracts: [], organisationShortName: "DFKS" }); return; }
+        if (!rh) { setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [], contracts: [], organisationShortName: "DFKS", defaultRoleLabel: "Klipper", coeditorWord: "Medklipper" }); return; }
 
-        const { data: roleRow } = await supabase
-          .from("user_org_roles")
-          .select("org_id")
-          .eq("user_id", user.id)
-          .limit(1)
-          .maybeSingle();
-        const { data: organisation } = roleRow?.org_id
-          ? await supabase
-              .from("organisations")
-              .select("name, branding")
-              .eq("id", roleRow.org_id)
-              .maybeSingle()
-          : { data: null };
-        const organisationShortName = organisation
-          ? resolveBranding(organisation as never).short_name
-          : "DFKS";
+        const organisationShortName = context.brand.short_name;
 
         const overview = await fetchMemberWorkOverview({ rightsHolderId: rh.id });
         if (!overview.success) throw new Error(overview.error ?? "Mine værker kunne ikke indlæses.");
@@ -103,13 +103,15 @@ export default function MineVaerkerPage() {
           contractedWorkIds: [...contractedWorkIdSet],
           contracts: memberContracts,
           organisationShortName,
+          defaultRoleLabel: context.terminology.default_role_label,
+          coeditorWord: context.terminology.coeditor_word,
         });
 
         void linkApprovedCoEditorSuggestionsForRightsHolder({ rightsHolderId: rh.id, fullName: rh.full_name ?? "" }).catch(() => null);
       } catch (error) {
         console.error("Mine værker kunne ikke indlæses:", error);
         setLoadError(error instanceof Error ? error.message : "Mine værker kunne ikke indlæses.");
-        setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [], contracts: [], organisationShortName: "DFKS" });
+        setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [], contracts: [], organisationShortName: "DFKS", defaultRoleLabel: "Klipper", coeditorWord: "Medklipper" });
       }
     }
 
@@ -141,6 +143,8 @@ export default function MineVaerkerPage() {
       contractedWorkIds={data.contractedWorkIds}
       contracts={data.contracts}
       organisationShortName={data.organisationShortName}
+      defaultRoleLabel={data.defaultRoleLabel}
+      coeditorWord={data.coeditorWord}
     />
   );
 }

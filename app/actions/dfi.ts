@@ -17,9 +17,10 @@ import { identityLevel } from "@/lib/work-identity";
 import { isRightBearingOnboardingRole } from "@/lib/onboarding-credit-role";
 import { upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
 import { isInternalWorkerSecret } from "@/lib/api-auth";
+import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 
 // DFI org_id bruges ved import — DFKS default
-import { requireOrgId } from "@/lib/org";
+import { requireMemberContext } from "@/lib/org";
 const MAX_DFI_POSTER_BYTES = 2 * 1024 * 1024;
 
 type DfiCredit = {
@@ -108,7 +109,7 @@ function creditYear(credit: DfiCredit) {
 }
 
 function creditRole(credit: DfiCredit) {
-  return credit.Description || credit.Type || "Klipper";
+  return normalizeWorkEditorRole(credit.Description || credit.Type || "Klipper");
 }
 
 async function currentRightsHolderAndOrg() {
@@ -124,7 +125,9 @@ async function currentRightsHolderAndOrg() {
     .single();
   if (!rh) throw new Error("Kunne ikke finde din rettighedshaver-profil.");
 
-  const orgId = await requireOrgId(db, authData.user.id);
+  const memberContext = await requireMemberContext(db, authData.user.id);
+  if (memberContext.rightsHolderId !== rh.id) throw new Error("Din rettighedshaverprofil tilhører ikke den aktive organisation.");
+  const orgId = memberContext.orgId;
 
   return { db, userId: authData.user.id, rightsHolderId: rh.id as string, orgId };
 }
@@ -770,7 +773,7 @@ async function importApprovedDFIWorksForContext(
             work_id: targetWorkId,
             org_id: orgId,
             rights_holder_id: rightsHolderId,
-            role: credit.Description || credit.Type || "Klipper",
+            role: normalizeWorkEditorRole(credit.Description || credit.Type || "Klipper"),
           })),
           { onConflict: "work_id,rights_holder_id,role" }
         );
@@ -1531,6 +1534,7 @@ export async function searchNewCreditsForCurrentMember(fullName: string) {
   const { data: assignments } = await db
     .from("work_assignments")
     .select("works(id, title, year, dfi_id, tmdb_id)")
+    .eq("org_id", context.orgId)
     .eq("rights_holder_id", context.rightsHolderId);
 
   const assignedWorkIds = new Set<string>();
@@ -1640,7 +1644,7 @@ async function importApprovedOnboardingWorksForContext(
             work_id: targetWorkId,
             org_id: orgId,
             rights_holder_id: rightsHolderId,
-            role: credit.role || "Klipper",
+            role: normalizeWorkEditorRole(credit.role || "Klipper"),
           })),
           { onConflict: "work_id,rights_holder_id,role" }
         );
@@ -1821,7 +1825,7 @@ async function importApprovedOnboardingWorksForContext(
             work_id: targetWorkId,
             org_id: orgId,
             rights_holder_id: rightsHolderId,
-            role: credit.role || "Klipper",
+            role: normalizeWorkEditorRole(credit.role || "Klipper"),
           })),
           { onConflict: "work_id,rights_holder_id,role" }
         );

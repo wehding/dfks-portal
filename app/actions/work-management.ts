@@ -22,13 +22,15 @@ import type { AuditContext } from "@/lib/audit-log";
 import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
 import { identityLevel } from "@/lib/work-identity";
-import { resolveStaffAccess } from "@/lib/staff-access";
 import { assertRightsHolderInOrg } from "@/lib/authz";
 import { canLinkContractWork } from "@/lib/contract-link-access";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
+import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 
 import { requireOrgId } from "@/lib/org";
+import { resolveAppAccessContext } from "@/lib/app-access-context";
+import { readActiveOrgId } from "@/lib/active-org-context";
 
 type WorkCorrectionData = {
   title: string;
@@ -346,7 +348,7 @@ async function findExistingWorkByTitle(
 
 async function applyCoEditorChanges(db: ReturnType<typeof createServiceClient>, workId: string, orgId: string, coEditors?: ProposedCoEditor[]) {
   for (const editor of coEditors ?? []) {
-    const role = cleanText(editor.role) ?? "Klipper";
+    const role = normalizeWorkEditorRole(cleanText(editor.role));
     const share_percent = cleanSharePercent(editor.sharePercent ?? editor.share_percent);
 
          if (editor.action === "remove" && editor.assignmentId) {
@@ -413,6 +415,7 @@ async function syncSeasonAssignmentsForHolder(params: {
   role: string;
   selectedEpisodes: number[];
 }) {
+  const normalizedRole = normalizeWorkEditorRole(params.role);
   const { data: episodes, error: episodeError } = await params.db
     .from("works")
     .select("id,episode_number")
@@ -438,14 +441,14 @@ async function syncSeasonAssignmentsForHolder(params: {
       org_id: params.orgId,
       work_id: episode.id,
       rights_holder_id: params.rightsHolderId,
-      role: params.role,
+      role: normalizedRole,
     })), { onConflict: "work_id,rights_holder_id,role" });
     if (error) throw new Error(error.message);
   }
-  const updateIds = (episodes ?? []).filter(episode => selected.has(episode.episode_number) && existingByWork.get(episode.id)?.role !== params.role)
+  const updateIds = (episodes ?? []).filter(episode => selected.has(episode.episode_number) && existingByWork.get(episode.id)?.role !== normalizedRole)
     .map(episode => existingByWork.get(episode.id)?.id).filter(Boolean) as string[];
   if (updateIds.length) {
-    const { error } = await params.db.from("work_assignments").update({ role: params.role }).in("id", updateIds);
+    const { error } = await params.db.from("work_assignments").update({ role: normalizedRole }).in("id", updateIds);
     if (error) throw new Error(error.message);
   }
   const removeIds = (episodes ?? []).filter(episode => !selected.has(episode.episode_number))
@@ -646,11 +649,11 @@ export async function submitWorkDataCorrection(params: {
       episodeNumbers: seasonScope ? params.myEpisodes ?? [] : work.episode_number ? [work.episode_number] : [],
       actorUserId: user.id,
       actorRightsHolderId: rightsHolder.id,
-      actorRole: memberRole ?? assignment.role ?? "Klipper",
+      actorRole: normalizeWorkEditorRole(memberRole ?? assignment.role ?? "Klipper"),
       actorPercent: selfSharePercent,
       suggestions: addedCoEditors.map(editor => ({
         name: editor.name,
-        role: editor.role,
+        role: normalizeWorkEditorRole(editor.role),
         rightsHolderId: editor.rightsHolderId,
       })),
     });
@@ -1355,7 +1358,7 @@ export async function updateAdminWorkData(params: {
   }
 
   for (const assignment of params.assignments ?? []) {
-    const role = cleanText(assignment.role);
+    const role = normalizeWorkEditorRole(cleanText(assignment.role));
     if (!role) continue;
     const share_percent = cleanSharePercent(assignment.sharePercent);
     if (assignment.id) {
@@ -1581,7 +1584,7 @@ export async function createAdminWork(params: {
       work_id: targetWorkId,
       org_id: orgId,
       rights_holder_id: assignment.rightsHolderId,
-      role: assignment.role,
+      role: normalizeWorkEditorRole(assignment.role),
       share_percent: cleanSharePercent(assignment.sharePercent),
     })));
     const { error: assignmentError } = await retryWithoutSharePercent(
@@ -1831,7 +1834,7 @@ export async function reviewWorkDataCorrection(params: {
     if (!seasonScope && proposed.memberRole && request.requested_by_rights_holder_id) {
       const { error: roleError } = await db
         .from("work_assignments")
-        .update({ role: proposed.memberRole })
+        .update({ role: normalizeWorkEditorRole(proposed.memberRole) })
         .eq("org_id", request.org_id)
         .eq("work_id", request.work_id)
         .eq("rights_holder_id", request.requested_by_rights_holder_id);
@@ -2029,11 +2032,11 @@ export async function createAndLinkWorkForContract(params: {
     .maybeSingle();
   if (!contract?.org_id) return { success: false, error: "Kontrakten mangler organisation." };
   const orgId = contract.org_id as string;
-  const staffAccess = await resolveStaffAccess(supabase, orgId);
+  const staffAccess = await resolveAppAccessContext(supabase, await readActiveOrgId(), user.id);
   const canManageContract = Boolean(
-    staffAccess
-    && staffAccess.activeOrgId === orgId
-    && staffAccess.modules.contracts.write
+    staffAccess?.canUseAdmin
+    && staffAccess.orgId === orgId
+    && staffAccess.modules?.contracts.write
   );
   const { data: ownHolder } = await lookupDb
     .from("rettighedshavere")
@@ -2049,7 +2052,7 @@ export async function createAndLinkWorkForContract(params: {
   })) {
     return { success: false, error: "Du har ikke adgang til at forbinde denne kontrakt og rettighedshaver." };
   }
-  const staffRole = canManageContract ? staffAccess?.activeRole ?? null : null;
+  const staffRole = canManageContract ? staffAccess?.role ?? null : null;
   const auditContext: AuditContext = {
     actorUserId: user.id,
     actorOrgId: orgId,
@@ -2174,7 +2177,7 @@ export async function createAndLinkWorkForContract(params: {
             work_id: ep.id,
             org_id: orgId,
             rights_holder_id: activeRightsHolderId,
-            role: role,
+            role: normalizeWorkEditorRole(role),
           })),
           { onConflict: "work_id,rights_holder_id,role" }
         );
@@ -2191,7 +2194,7 @@ export async function createAndLinkWorkForContract(params: {
       work_id: parentId,
       org_id: orgId,
       rights_holder_id: activeRightsHolderId,
-      role: role,
+      role: normalizeWorkEditorRole(role),
     }, { onConflict: "work_id,rights_holder_id,role" });
   }
 

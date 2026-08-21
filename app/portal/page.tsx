@@ -13,7 +13,8 @@ import { salaryDataToWeekly } from "@/lib/statistics-calculations";
 import { EXPERIENCE_GROUPS, experienceGroupAt, type ExperienceGroup } from "@/lib/experience-groups";
 import { normalizeStatisticsMinimumGroupSize } from "@/lib/statistics-privacy";
 import { memberSalaryBenchmark } from "@/lib/member-statistics";
-import { resolveOrgId } from "@/lib/org";
+import { requireMemberContext } from "@/lib/org";
+import { OrgContextNotice } from "@/components/navigation/org-context-notice";
 
 type ContractRow = { id: string; working_title: string | null; work_id: string | null; contract_comments: Array<{ author_role: string; member_read_at: string | null }> | null };
 type InboxThread = { id: string; subject: string; member_messages: Array<{ author_role: string; created_at: string }> | null; member_message_participants: Array<{ user_id: string; last_read_at: string | null }> | null };
@@ -22,25 +23,26 @@ type EpisodeScopeRow = { id: string; season_number: number; works: { title: stri
 type ShareTaskRow = { id: string; case_id: string; works: { title: string | null } | null };
 type CollaborationReviewRow = { id: string; status: string };
 
-export default async function PortalDashboardPage() {
+export default async function PortalDashboardPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/");
   const db = createServiceClient();
-  const { data: holder } = await db.from("rettighedshavere").select("id,full_name,opt_out_statistics,org_affiliations(org_id,statistics_participation)").eq("user_id", user.id).maybeSingle();
+  const memberContext = await requireMemberContext(db, user.id).catch(() => null);
+  if (!memberContext?.rightsHolderId) {
+    const { data: staffRole } = await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
+    if (staffRole) redirect("/admin?notice=member-org-required");
+    redirect("/onboarding");
+  }
+  const { data: holder } = await db.from("rettighedshavere").select("id,full_name,opt_out_statistics,org_affiliations(org_id,statistics_participation)").eq("id", memberContext.rightsHolderId).maybeSingle();
   if (!holder) {
     const { data: staffRole } = await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
     if (staffRole) redirect("/admin");
     redirect("/onboarding");
   }
-  const orgId = await resolveOrgId(db, user.id);
+  const orgId = memberContext.orgId;
   const affiliations = Array.isArray(holder.org_affiliations) ? holder.org_affiliations : [holder.org_affiliations];
   const affiliation = affiliations.find(row => row?.org_id === orgId) ?? null;
-  if (!orgId) {
-    const { data: staffRole } = await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
-    if (staffRole) redirect("/admin");
-    redirect("/onboarding");
-  }
   const [{ data: contracts }, { data: workRequests }, { data: screeningClaims }, { data: inboxThreads }, { data: assignments }, { data: episodeScopes }, { data: shareTasks }, { data: collaborationReviews }] = await Promise.all([
     db.from("contracts").select("id,working_title,work_id,contract_comments(author_role,member_read_at)").eq("org_id", orgId).eq("rights_holder_id", holder.id),
     db.from("work_change_requests").select("id,status,created_at").eq("org_id", orgId).eq("requested_by_rights_holder_id", holder.id).eq("status", "pending"),
@@ -187,8 +189,11 @@ export default async function PortalDashboardPage() {
     ...(workRequests ?? []).map(request => ({ key: `request-${request.id}`, href: `/portal/mine-vaerker?request=${request.id}`, icon: Clock3, title: "Værksrettelse", text: "Din rettelse afventer DFKS." })),
     ...(screeningClaims ?? []).map(claim => ({ key: `claim-${claim.id}`, href: `/portal/mine-visninger?claim=${claim.id}`, icon: MonitorPlay, title: claim.title || "Visningsindberetning", text: "Din indberetning afventer DFKS." })),
   ];
+  const noticeValue = (await searchParams)?.notice;
+  const notice = Array.isArray(noticeValue) ? noticeValue[0] : noticeValue;
   return <div className="space-y-6">
     <PortalPageHeader title="Overblik" subtitle={`Velkommen, ${(holder.full_name ?? "").trim().split(/\s+/)[0] || holder.full_name}. Her er det, der kræver din opmærksomhed.`} />
+    <OrgContextNotice notice={notice} />
     <div className="grid gap-6 lg:grid-cols-2">
       <DashboardCard title="Kræver handling" count={actionItems.length} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
       <DashboardCard title="Afventer DFKS" count={waitingItems.length} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />

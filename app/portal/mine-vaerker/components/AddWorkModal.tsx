@@ -120,6 +120,7 @@ export function AddWorkModal({
   const { t } = useI18n();
   // Fagord/roller styret af foreningens terminologi (fallback: klipper-roller)
   const [roleOptions, setRoleOptions] = useState<string[]>(DEFAULT_ROLES);
+  const [addRole, setAddRole] = useState("Klipper");
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -127,23 +128,18 @@ export function AddWorkModal({
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data: roleRow } = await supabase
-        .from("user_org_roles")
-        .select("org_id")
-        .eq("user_id", user.id)
-        .limit(1)
-        .maybeSingle();
-      const orgId = roleRow?.org_id;
-      if (!orgId) return;
-      const { data: org } = await supabase.from("organisations").select("terminology").eq("id", orgId).single();
-      const labels = (org?.terminology as { role_labels?: string[] } | null)?.role_labels;
+      const response = await fetch("/api/access/context", { cache: "no-store" });
+      if (!response.ok) return;
+      const context = await response.json() as { canUseMember?: boolean; terminology?: { role_labels?: string[]; default_role_label?: string } };
+      if (!context.canUseMember) return;
+      const labels = context.terminology?.role_labels?.filter(label => label.trim().toLocaleLowerCase("da-DK") !== "medklipper");
       if (active && labels && labels.length) setRoleOptions(labels);
+      if (active && context.terminology?.default_role_label) setAddRole(context.terminology.default_role_label);
     })();
     return () => { active = false; };
   }, []);
   const [addQuery, setAddQuery]               = useState("");
   const [typeFilter, setTypeFilter]           = useState("all");
-  const [addRole, setAddRole]                 = useState("Klipper");
   const [manualMode, setManualMode]           = useState(false);
   const [manualWork, setManualWork]           = useState<ManualWorkFormValue>(emptyManualWorkForm());
   const [addSeason, setAddSeason]             = useState("");

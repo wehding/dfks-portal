@@ -13,7 +13,7 @@
 import { SupabaseClient } from "@supabase/supabase-js"
 import { ADMIN_ROLES, SUPERADMIN_ROLES } from "@/lib/admin-roles"
 import { readActiveOrgId } from "@/lib/active-org-context"
-import { resolveStaffAccess } from "@/lib/staff-access"
+import { resolveAppAccessContext } from "@/lib/app-access-context"
 
 /**
  * Tjekker om den indloggede bruger har en admin-rolle i user_org_roles.
@@ -23,9 +23,9 @@ export async function assertAdminRole(
     supabase: SupabaseClient,
     roles: readonly string[] = ADMIN_ROLES
 ): Promise<{ userId: string; role: string; orgId: string } | null> {
-    const access = await resolveStaffAccess(supabase, await readActiveOrgId())
-    if (!access || !roles.includes(access.activeRole)) return null
-    return { userId: access.userId, role: access.activeRole, orgId: access.activeOrgId }
+    const access = await resolveAppAccessContext(supabase, await readActiveOrgId())
+    if (!access?.canUseAdmin || !access.role || !roles.includes(access.role)) return null
+    return { userId: access.userId, role: access.role, orgId: access.orgId }
 }
 
 export { ADMIN_ROLES, SUPERADMIN_ROLES }
