@@ -7,6 +7,12 @@ variable "region" {
   default = "europe-north1"
 }
 
+variable "scheduler_region" {
+  type        = string
+  default     = "europe-west1"
+  description = "Closest supported EU region because Cloud Scheduler is unavailable in europe-north1."
+}
+
 variable "environment" {
   type    = string
   default = "staging"

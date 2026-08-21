@@ -8,6 +8,7 @@ const args = Object.fromEntries(process.argv.slice(2).map(value => {
 }));
 const project = args.project;
 const region = args.region || "europe-north1";
+const schedulerRegion = args["scheduler-region"] || "europe-west1";
 if (!project) throw new Error("Brug --project=<google-cloud-project>");
 const service = "dfks-audit-siem-worker";
 const bucket = args.bucket || `dfks-audit-worm-${project}`;
@@ -27,12 +28,13 @@ const evidence = {
   generatedAt: new Date().toISOString(),
   project,
   region,
+  schedulerRegion,
   evidence: [
     attempt("cloudRunService", ["run", "services", "describe", service, "--region", region]),
     attempt("cloudRunIam", ["run", "services", "get-iam-policy", service, "--region", region]),
     attempt("kmsKey", ["kms", "keys", "describe", "audit-signing", "--keyring", "dfks-audit", "--location", region]),
     attempt("kmsVersions", ["kms", "keys", "versions", "list", "--key", "audit-signing", "--keyring", "dfks-audit", "--location", region]),
-    attempt("scheduler", ["scheduler", "jobs", "list", "--location", region, "--filter", "name:dfks-audit"]),
+    attempt("scheduler", ["scheduler", "jobs", "list", "--location", schedulerRegion, "--filter", "name:dfks-audit"]),
     attempt("wormBucket", ["storage", "buckets", "describe", `gs://${bucket}`]),
     attempt("wormBucketIam", ["storage", "buckets", "get-iam-policy", `gs://${bucket}`]),
     attempt("alerts", ["monitoring", "policies", "list", "--filter", "displayName:DFKS audit"]),

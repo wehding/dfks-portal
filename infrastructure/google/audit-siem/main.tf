@@ -184,7 +184,7 @@ resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
 
 resource "google_cloud_scheduler_job" "delivery" {
   name             = "dfks-audit-delivery"
-  region           = var.region
+  region           = var.scheduler_region
   schedule         = "*/5 * * * *"
   time_zone        = "Etc/UTC"
   paused           = !var.enable_scheduler
@@ -208,7 +208,7 @@ resource "google_cloud_scheduler_job" "delivery" {
 
 resource "google_cloud_scheduler_job" "retention_signing" {
   name             = "dfks-audit-retention-signing"
-  region           = var.region
+  region           = var.scheduler_region
   schedule         = "*/5 * * * *"
   time_zone        = "Etc/UTC"
   paused           = !var.enable_scheduler
@@ -232,7 +232,7 @@ resource "google_cloud_scheduler_job" "retention_signing" {
 
 resource "google_cloud_scheduler_job" "verification" {
   name             = "dfks-audit-daily-verification"
-  region           = var.region
+  region           = var.scheduler_region
   schedule         = "23 2 * * *"
   time_zone        = "Etc/UTC"
   paused           = !var.enable_scheduler
@@ -283,6 +283,17 @@ resource "google_logging_metric" "operational_failure" {
   }
 }
 
+# Cloud Monitoring can reject policies immediately after a new log-based
+# metric is created. Wait for the metric descriptors on a clean project.
+resource "time_sleep" "logging_metric_propagation" {
+  create_duration = "120s"
+  depends_on = [
+    google_logging_metric.integrity_failure,
+    google_logging_metric.delivery_failure,
+    google_logging_metric.operational_failure,
+  ]
+}
+
 resource "google_monitoring_alert_policy" "integrity" {
   display_name          = "DFKS audit: sekvens-, hash-, signatur- eller WORM-fejl"
   combiner              = "OR"
@@ -301,6 +312,7 @@ resource "google_monitoring_alert_policy" "integrity" {
     }
   }
   alert_strategy { auto_close = "604800s" }
+  depends_on = [time_sleep.logging_metric_propagation]
 }
 
 resource "google_monitoring_alert_policy" "delivery" {
@@ -321,6 +333,7 @@ resource "google_monitoring_alert_policy" "delivery" {
     }
   }
   alert_strategy { auto_close = "604800s" }
+  depends_on = [time_sleep.logging_metric_propagation]
 }
 
 resource "google_monitoring_alert_policy" "operational" {
@@ -341,6 +354,7 @@ resource "google_monitoring_alert_policy" "operational" {
     }
   }
   alert_strategy { auto_close = "604800s" }
+  depends_on = [time_sleep.logging_metric_propagation]
 }
 
 resource "google_monitoring_alert_policy" "worker_absent" {
@@ -368,8 +382,8 @@ resource "google_monitoring_dashboard" "audit" {
   dashboard_json = jsonencode({
     displayName = "DFKS C-579/21 auditdrift"
     mosaicLayout = { columns = 12, tiles = [
-      { width = 6, height = 4, widget = { title = "Cloud Run-kald", xyChart = { dataSets = [{ timeSeriesQuery = { timeSeriesFilter = { filter = "metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.label.\"service_name\"=\"${local.service_name}\"", aggregation = { alignmentPeriod = "300s", perSeriesAligner = "ALIGN_RATE" } } }, plotType = "LINE" }], timeshiftDuration = "0s", yAxis = { label = "kald/s", scale = "LINEAR" } } } },
-      { width = 6, height = 4, widget = { title = "Integritetsfejl", scorecard = { timeSeriesQuery = { timeSeriesFilter = { filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.integrity_failure.name}\" AND resource.type=\"cloud_run_revision\"", aggregation = { alignmentPeriod = "300s", perSeriesAligner = "ALIGN_SUM" } } } } } },
+      { xPos = 0, yPos = 0, width = 6, height = 4, widget = { title = "Cloud Run-kald", xyChart = { dataSets = [{ timeSeriesQuery = { timeSeriesFilter = { filter = "metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.label.\"service_name\"=\"${local.service_name}\"", aggregation = { alignmentPeriod = "300s", perSeriesAligner = "ALIGN_RATE" } } }, plotType = "LINE" }], timeshiftDuration = "0s", yAxis = { label = "kald/s", scale = "LINEAR" } } } },
+      { xPos = 6, yPos = 0, width = 6, height = 4, widget = { title = "Integritetsfejl", scorecard = { timeSeriesQuery = { timeSeriesFilter = { filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.integrity_failure.name}\" AND resource.type=\"cloud_run_revision\"", aggregation = { alignmentPeriod = "300s", perSeriesAligner = "ALIGN_SUM" } } } } } },
     ] }
   })
 }

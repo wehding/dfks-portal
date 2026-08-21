@@ -12,6 +12,7 @@ Supabase-bucketen `subject-access-exports` er privat. Supabase leverer managed k
 2. Opret en Cloud Monitoring-notifikationskanal og angiv dens fulde resource-id.
 3. Byg worker-image, push det til Artifact Registry, og brug altid adressen med `@sha256:<digest>`.
 4. Anvend først Terraform med `environment=staging`, `enable_scheduler=false` og `lock_worm_retention=false`.
+5. Cloud Run, KMS og WORM placeres i `europe-north1`. Cloud Scheduler placeres i `europe-west1`, fordi Scheduler ikke understøtter `europe-north1`.
 
 ## Kontrolleret staging-rollout
 
@@ -35,7 +36,7 @@ Bucket Lock er irreversibel og indgår ikke i rollback. Gamle KMS-versioner må 
 Kør efter deployment:
 
 ```bash
-node scripts/generate-audit-cloud-evidence.mjs --project=<PROJECT> --region=europe-north1
+node scripts/generate-audit-cloud-evidence.mjs --project=<PROJECT> --region=europe-north1 --scheduler-region=europe-west1
 ```
 
 Rapporten indeholder Cloud Run-revision og image, IAM, KMS, Scheduler, bucket retention/lifecycle og alarmregler. Supplér med canarykvittering, alarmtest, 72-timers observationsjournal, governancebeslutning og CI-resultater. Rapporten indeholder ikke secret-værdier.

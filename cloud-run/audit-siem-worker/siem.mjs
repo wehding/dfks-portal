@@ -21,6 +21,15 @@ export function safeSecretEqual(actual, expected) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+export function verifyKmsSha256Signature(payload, pem, signature) {
+  return verifySignature(
+    "sha256",
+    Buffer.from(stableStringify(payload)),
+    pem,
+    Buffer.isBuffer(signature) ? signature : Buffer.from(signature, "base64"),
+  );
+}
+
 function required(name) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing ${name}`);
@@ -292,7 +301,7 @@ export async function verifyAuditArchive() {
       const calculated = sha256(stableStringify(envelope.payload));
       if (calculated !== envelope.integrity.envelopeHash || calculated !== receipt.envelope_hash) failures.push(`hash_${receipt.batch_id}`);
       const pem = await kmsPublicKey(envelope.integrity.keyId);
-      const valid = verifySignature(null, Buffer.from(calculated, "hex"), pem, Buffer.from(envelope.integrity.signature, "base64"));
+      const valid = verifyKmsSha256Signature(envelope.payload, pem, envelope.integrity.signature);
       if (!valid) failures.push(`signature_${receipt.batch_id}`);
       priorLast = Number(receipt.last_sequence); verified += 1;
     } catch { failures.push(`worm_${receipt.batch_id}`); }

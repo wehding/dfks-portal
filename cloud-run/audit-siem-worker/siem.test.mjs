@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
-import { deliveryRequest, safeSecretEqual, sha256, stableStringify, wormObjectName } from "./siem.mjs";
+import {
+  deliveryRequest,
+  safeSecretEqual,
+  sha256,
+  stableStringify,
+  verifyKmsSha256Signature,
+  wormObjectName,
+} from "./siem.mjs";
 
 test("canonical JSON is stable across property order", () => {
   assert.equal(stableStringify({ b: 2, a: { d: 4, c: 3 } }), stableStringify({ a: { c: 3, d: 4 }, b: 2 }));
@@ -34,4 +42,19 @@ test("delivery uses a stable idempotency key without exposing event ids", () => 
   assert.equal(request.headers["idempotency-key"], "delivery-a");
   assert.equal(request.headers["x-dfks-batch-id"], "batch-a");
   assert.equal(request.headers.authorization, "Bearer token");
+});
+
+test("KMS P-256 signatures are verified against canonical payload bytes", () => {
+  const payload = { schemaVersion: 2, events: [{ sequence_no: 1, action: "read" }] };
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const signature = sign("sha256", Buffer.from(stableStringify(payload)), privateKey);
+
+  assert.equal(
+    verifyKmsSha256Signature(
+      { events: [{ action: "read", sequence_no: 1 }], schemaVersion: 2 },
+      publicKey.export({ type: "spki", format: "pem" }),
+      signature,
+    ),
+    true,
+  );
 });
