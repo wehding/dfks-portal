@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const analyseSource = readFileSync("lib/analyse.ts", "utf8");
-const legalMigration = readFileSync("supabase/migrations/20260820204753_strengthen_legal_onboarding_compliance.sql", "utf8");
-const legalVersionMigration = readFileSync("supabase/migrations/20260820210132_add_legal_acceptance_document_version.sql", "utf8");
+const legalMigration = readFileSync("supabase/migrations/20260820200131_legal_documents_onboarding.sql", "utf8");
 const legalRecordSource = readFileSync("lib/server/legal-document-records.ts", "utf8");
 const legalActionSource = readFileSync("app/actions/legal-documents.ts", "utf8");
 const onboardingClientSource = readFileSync("app/(member)/onboarding/OnboardingClient.tsx", "utf8");
@@ -24,8 +23,7 @@ test("accept-historik kan markeres foraeldet uden at blive slettet", () => {
 });
 
 test("accept-historik gemmer dokumentversion eksplicit", () => {
-  assert.match(legalVersionMigration, /document_version integer/);
-  assert.match(legalVersionMigration, /document_version set not null/);
+  assert.match(legalMigration, /document_version integer not null/);
   assert.match(legalRecordSource, /document_version: document\.version/);
 });
 
