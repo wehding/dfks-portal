@@ -11,7 +11,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
-import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead, checkRightsHolderName, updateAdminContract, validateAdminContracts } from "@/app/actions/member-contracts"
+import { addAdminContractComment, deleteAdminContractsPermanently, fetchAdminContractsPage, markContractCommentsRead, checkRightsHolderName, updateAdminContract, validateAdminContracts } from "@/app/actions/member-contracts"
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management"
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works"
 import { useSearchParams } from "next/navigation"
@@ -21,7 +21,7 @@ import { ValideringskøTab } from "@/components/admin/valideringskoe-tab"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ADMIN_CONTRACT_UPLOAD_ACCEPT } from "@/lib/contract-upload-format"
 import { CONTRACT_IMPORT_CONCURRENCY, validateContractImportFile } from "@/lib/contract-import"
-import { findOwnersForContracts, getContractImportStates } from "@/app/actions/contract-imports"
+import { findOwnersForContracts } from "@/app/actions/contract-imports"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame, SummaryCard, SummaryGrid } from "@/components/responsive-data-view"
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread"
@@ -50,7 +50,7 @@ import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import { ManualWorkFormFields } from "@/components/works/manual-work-form"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
 import { extractedProductionCompanyNames } from "@/lib/production-companies"
-import { contractReadiness, contractReadinessDetails, effectiveCopydanStatus, isPendingContractValidation, normalizeTriState } from "@/lib/contract-list-status"
+import { contractReadinessDetails, effectiveCopydanStatus, normalizeTriState } from "@/lib/contract-list-status"
 import { contractDataToManualWorkSeed, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
@@ -176,11 +176,6 @@ type RightsHolder = { id: string; full_name: string }
 type WorkOption = { id: string; title: string; year: number | null; poster_url: string | null }
 type SortKey = "production" | "rightsHolder" | "employer" | "type" | "overenskomst" | "period" | "status"
 
-function chunkIds(ids: string[], size = 75) {
-    const chunks: string[][] = []
-    for (let index = 0; index < ids.length; index += size) chunks.push(ids.slice(index, index + size))
-    return chunks
-}
 type SortDir = "asc" | "desc"
 type NavneTjekResult = {
     status: "match" | "delvist-match" | "ikke-fundet"
@@ -271,10 +266,6 @@ function normalizeDuplicateKey(value: string | null | undefined) {
 
 function isMissingOwner(contract: ContractRow) {
     return !contract.rights_holder_id
-}
-
-function isValidationRecommended(contract: ContractRow) {
-    return ["recommended", "recommended_with_warnings"].includes(contractReadiness(contract))
 }
 
 function hasContractWorkLink(contract: ContractRow) {
@@ -378,6 +369,10 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
     const [filterStatus, setFilterStatus] = useState("all")
     const [filterType, setFilterType] = useState("all")
     const [pageSize, setPageSize] = useState(20)
+    const [currentPage, setCurrentPage] = useState(1)
+    const [totalCount, setTotalCount] = useState(0)
+    const [totalAllCount, setTotalAllCount] = useState(0)
+    const [serverStats, setServerStats] = useState({ total: 0, validerede: 0 })
     const [sortKey, setSortKey] = useState<SortKey>("status")
     const [sortDir, setSortDir] = useState<SortDir>("asc")
     const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -638,7 +633,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
 
     // Deep-link: ?edit=<id> åbner Rediger kontrakt automatisk (fx fra rettighedshaver-siden)
     useEffect(() => {
-        if (editParamHandledRef.current || contracts.length === 0) return
+        if (editParamHandledRef.current) return
         const editId = new URLSearchParams(window.location.search).get("edit")
         if (!editId) return
         const c = contracts.find(x => x.id === editId)
@@ -646,7 +641,16 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
             editParamHandledRef.current = true
             openEdit(c)
             window.history.replaceState(null, "", "/admin/kontrakter")
+            return
         }
+        editParamHandledRef.current = true
+        void fetchAdminContractsPage({ search: editId, pageSize: 1 }).then(result => {
+            const row = result.success ? result.contracts?.[0] as unknown as ContractRow | undefined : undefined
+            if (row) openEdit(row)
+            window.history.replaceState(null, "", "/admin/kontrakter")
+        }).catch(() => {
+            window.history.replaceState(null, "", "/admin/kontrakter")
+        })
     }, [contracts]) // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
@@ -665,43 +669,44 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
 
     // ── Load ──────────────────────────────────────────────────
 
-    useEffect(() => {
-        const load = async () => {
-            try {
+    const lookupsLoadedRef = useRef(false)
+
+    const load = useCallback(async (page = currentPage) => {
+        setLoading(true)
+        try {
+            const contextResponse = await fetch("/api/admin/context", { cache: "no-store" })
+            const context = contextResponse.ok
+                ? await contextResponse.json() as { orgId?: string; role?: string }
+                : null
+            const resolvedOrgId = context?.orgId ?? null
+            if (!resolvedOrgId) {
+                toast.error("Din bruger er ikke knyttet til en organisation.")
+                setLoading(false)
+                return
+            }
+            setOrgId(resolvedOrgId)
+            setIsSuperadmin(context?.role === "superadmin")
+
+            const contractsRes = await fetchAdminContractsPage({
+                page,
+                pageSize,
+                search,
+                status: filterStatus,
+                type: filterType,
+                rightsHolderId: activeRh?.id ?? null,
+                sortKey,
+                sortDir,
+            })
+            if (!contractsRes.success) throw new Error(contractsRes.error ?? "Kontrakter kunne ikke hentes")
+            setContracts(contractsRes.contracts as unknown as ContractRow[])
+            setTotalCount(contractsRes.totalCount ?? 0)
+            setTotalAllCount(contractsRes.totalAllCount ?? contractsRes.totalCount ?? 0)
+            setServerStats(contractsRes.stats ?? { total: contractsRes.totalAllCount ?? contractsRes.totalCount ?? 0, validerede: 0 })
+
+            if (!lookupsLoadedRef.current) {
                 const supabase = createClient()
-                const { data: { user } } = await supabase.auth.getUser()
-                if (!user) { setLoading(false); return }
-
-                const contextResponse = await fetch("/api/admin/context", { cache: "no-store" })
-                const context = contextResponse.ok
-                    ? await contextResponse.json() as { orgId?: string; role?: string }
-                    : null
-                const resolvedOrgId = context?.orgId ?? null
-                if (!resolvedOrgId) {
-                    toast.error("Din bruger er ikke knyttet til en organisation.")
-                    setLoading(false)
-                    return
-                }
-                setOrgId(resolvedOrgId)
-                setIsSuperadmin(context?.role === "superadmin")
-
-                const [contractsRes, employersRes, rhRes, worksRes] = await Promise.all([
-                    supabase
-                        .from("contracts")
-                        .select(`
-                            id, type, overenskomst, status, pdf_url, processed_pdf_url,
-                            document_processing_status, document_processing_error_code, superseded_by_contract_id,
-                            contract_date, start_date, end_date, created_at,
-                            employer_id, rights_holder_id, working_title,
-                            season_number, episode_numbers,
-                            employers (name),
-                            rettighedshavere (full_name),
-                            works (id, title, type, poster_url),
-                            contract_validations (has_credit_clause, has_overenskomst_incorporation)
-                        `)
-                        .eq("org_id", resolvedOrgId)
-                        .order("created_at", { ascending: false }),
-                    supabase.from("employers").select("id, name, parent_id, dfi_company_id").order("name"),
+                const [employersRes, rhRes, worksRes] = await Promise.all([
+                    supabase.from("employers").select("id, name, parent_id, dfi_company_id").eq("org_id", resolvedOrgId).order("name"),
                     supabase
                         .from("rettighedshavere")
                         .select("id, full_name, org_affiliations!inner(org_id)")
@@ -711,99 +716,32 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                         .from("works")
                         .select("id, title, year, poster_url")
                         .eq("org_id", resolvedOrgId)
-                        .order("title"),
+                        .order("title")
+                        .limit(500),
                 ])
-
-                if (contractsRes.error) console.error("Kontrakter query fejl:", contractsRes.error.message)
-                if (contractsRes.data) {
-                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; processed_pdf_url?: string | null; document_processing_status?: string; document_processing_error_code?: string | null; superseded_by_contract_id?: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
-                    const commentsByContract: Record<string, ContractComment[]> = {}
-                    const latestJobByContract: Record<string, { status: string; error_message: string | null; created_at: string }> = {}
-                    if (rawContracts.length > 0) {
-                        const idChunks = chunkIds(rawContracts.map(row => row.id))
-                        const [commentResults, jobResults] = await Promise.all([
-                            Promise.all(idChunks.map(ids => supabase
-                                .from("contract_comments")
-                                .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
-                                .in("contract_id", ids)
-                                .eq("author_role", "member")
-                                .is("admin_read_at", null)
-                                .order("created_at", { ascending: true }))),
-                            Promise.all(idChunks.map(ids => supabase
-                                .from("contract_ai_jobs")
-                                .select("contract_id, status, error_message, created_at")
-                                .in("contract_id", ids)
-                                .is("attachment_id", null)
-                                .order("created_at", { ascending: false }))),
-                        ])
-                        for (const commentsRes of commentResults) {
-                            if (commentsRes.error) console.error("[admin-contracts] unread comments failed", commentsRes.error.code)
-                            for (const comment of (commentsRes.data ?? []) as unknown as Array<ContractComment & { contract_id: string }>) {
-                                if (!commentsByContract[comment.contract_id]) commentsByContract[comment.contract_id] = []
-                                commentsByContract[comment.contract_id].push(comment)
-                            }
-                        }
-                        for (const jobsRes of jobResults) {
-                            if (jobsRes.error) console.error("[admin-contracts] AI job status failed", jobsRes.error.code)
-                            for (const job of (jobsRes.data ?? []) as Array<{ contract_id: string; status: string; error_message: string | null; created_at: string }>) {
-                                if (!latestJobByContract[job.contract_id]) latestJobByContract[job.contract_id] = job
-                            }
-                        }
-                    }
-                    const importStates = await getContractImportStates(rawContracts.map(contract => contract.id))
-                    const previousCounts = rawContracts.reduce<Record<string, number>>((counts, row) => {
-                        if (row.superseded_by_contract_id) counts[row.superseded_by_contract_id] = (counts[row.superseded_by_contract_id] ?? 0) + 1
-                        return counts
-                    }, {})
-                    setContracts(rawContracts.filter(r => !r.superseded_by_contract_id).map((r) => {
-                        const validation = Array.isArray(r.contract_validations) ? r.contract_validations[0] : r.contract_validations
-                        return ({
-                        id: r.id,
-                        type: r.type,
-                        overenskomst: r.overenskomst,
-                        status: r.status,
-                        pdf_url: r.pdf_url,
-                        processed_pdf_url: r.processed_pdf_url ?? null,
-                        document_processing_status: r.document_processing_status ?? "pending",
-                        document_processing_error_code: r.document_processing_error_code ?? null,
-                        superseded_by_contract_id: r.superseded_by_contract_id ?? null,
-                        previous_version_count: previousCounts[r.id] ?? 0,
-                        contract_date: r.contract_date,
-                        start_date: r.start_date,
-                        end_date: r.end_date,
-                        created_at: r.created_at,
-                        employer_id: r.employer_id ?? null,
-                        employer_name: r.employers?.name ?? null,
-                        rights_holder_id: r.rights_holder_id ?? null,
-                        rights_holder_name: r.rettighedshavere?.full_name ?? null,
-                        work_id: r.works?.id ?? null,
-                        working_title: r.working_title ?? null,
-                        work_title: r.works?.title ?? null,
-                        work_poster_url: r.works?.poster_url ?? null,
-                        season_number: r.season_number ?? null,
-                        episode_numbers: r.episode_numbers ?? null,
-                        contract_comments: commentsByContract[r.id] ?? [],
-                        contract_attachments: [],
-                        validation_data: null, // udskudt til loadContractDetail() ved åbning
-                        validation_has_credit_clause: validation?.has_credit_clause ?? null,
-                        validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
-                        ai_job_status: latestJobByContract[r.id]?.status ?? null,
-                        ai_job_error: latestJobByContract[r.id]?.error_message ?? null,
-                        import_status: importStates.states[r.id] ?? null,
-                        })
-                    }))
-                }
                 if (employersRes.data) setEmployers(employersRes.data)
                 if (rhRes.data) setRightsHolders(rhRes.data.map((r: { id: string; full_name: string }) => ({ id: r.id, full_name: r.full_name })))
                 if (worksRes.data) setWorks(worksRes.data as WorkOption[])
-            } catch (e) {
-                console.error("Load fejl:", e)
-            } finally {
-                setLoading(false)
+                lookupsLoadedRef.current = true
             }
+        } catch (e) {
+            console.error("Load fejl:", e)
+        } finally {
+            setLoading(false)
         }
-        load()
-    }, [])
+    }, [activeRh?.id, currentPage, filterStatus, filterType, pageSize, search, sortDir, sortKey])
+
+    useEffect(() => {
+        const timeout = window.setTimeout(() => {
+            void load(currentPage)
+        }, 250)
+        return () => window.clearTimeout(timeout)
+    }, [currentPage, load])
+
+    useEffect(() => {
+        setCurrentPage(1)
+        setSelectedIds([])
+    }, [activeRh?.id, filterStatus, filterType, pageSize, search, sortDir, sortKey])
 
     // ── Live AI-jobstatus ─────────────────────────────────────
     // Så længe kontrakter er i kø/behandling, poll deres jobstatus og opdatér
@@ -1679,48 +1617,9 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
     // ── Filter ────────────────────────────────────────────────
 
     const filtered = useMemo(() => {
-        let list = [...contracts]
-        if (activeRh) list = list.filter(c => c.rights_holder_id === activeRh.id)
-        if (filterStatus === "beskeder") list = list.filter(c => c.contract_comments.some(comment => comment.author_role === "member" && !comment.admin_read_at))
-        else if (filterStatus === "missingOwner") list = list.filter(isMissingOwner)
-        else if (filterStatus === "missingWork") list = list.filter(c => !hasContractWorkLink(c))
-        else if (filterStatus === "validationPending") list = list.filter(isPendingContractValidation)
-        else if (filterStatus === "validationRecommended") list = list.filter(isValidationRecommended)
-        else if (filterStatus !== "all") list = list.filter(c => c.status === filterStatus)
-        if (filterType !== "all") list = list.filter(c => c.type === filterType)
-        if (search) {
-            const q = search.toLowerCase()
-            list = list.filter(c =>
-                c.working_title?.toLowerCase().includes(q) ||
-                c.work_title?.toLowerCase().includes(q) ||
-                c.rights_holder_name?.toLowerCase().includes(q) ||
-                c.employer_name?.toLowerCase().includes(q)
-            )
-        }
-        list.sort((a, b) => {
-            const direction = sortDir === "asc" ? 1 : -1
-            if (sortKey === "status") {
-                const statusPriority = (s: string) => (s === "afventer" ? 0 : s === "mangler_vaerk" ? 1 : s === "kladde" ? 2 : 3)
-                const prioA = statusPriority(a.status)
-                const prioB = statusPriority(b.status)
-                if (prioA !== prioB) return (prioA - prioB) * direction
-            }
-            const period = (c: ContractRow) => c.start_date ?? c.contract_date ?? c.created_at ?? ""
-            const values: Record<SortKey, [string, string]> = {
-                production: [a.work_title ?? a.working_title ?? "", b.work_title ?? b.working_title ?? ""],
-                rightsHolder: [a.rights_holder_name ?? "", b.rights_holder_name ?? ""],
-                employer: [a.employer_name ?? "", b.employer_name ?? ""],
-                type: [a.type ?? "", b.type ?? ""],
-                overenskomst: [OVERENSKOMST_LABELS[a.overenskomst ?? ""] ?? a.overenskomst ?? "", OVERENSKOMST_LABELS[b.overenskomst ?? ""] ?? b.overenskomst ?? ""],
-                period: [period(a), period(b)],
-                status: [STATUS_LABELS[a.status] ?? a.status, STATUS_LABELS[b.status] ?? b.status],
-            }
-            const [left, right] = values[sortKey]
-            return left.localeCompare(right, "da-DK", { numeric: true, sensitivity: "base" }) * direction
-        })
-        return list
-    }, [contracts, activeRh, filterStatus, filterType, search, sortDir, sortKey])
-    const visibleContracts = filtered.slice(0, pageSize)
+        return contracts
+    }, [contracts])
+    const visibleContracts = filtered
     const selectedContracts = useMemo(
         () => contracts.filter(contract => selectedIds.includes(contract.id)),
         [contracts, selectedIds]
@@ -1847,8 +1746,8 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
     if (!availableYears.includes(currentYear)) availableYears.unshift(currentYear)
 
     const stats = {
-        total: contracts.length,
-        validerede: contracts.filter(c => c.status === "valideret").length,
+        total: serverStats.total,
+        validerede: serverStats.validerede,
     }
 
     return (
@@ -1951,7 +1850,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                 <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
                 <ResetFiltersButton
                     active={Boolean(search || filterStatus !== "all" || filterType !== "all" || activeRh)}
-                    onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20) }}
+                    onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20); setCurrentPage(1) }}
                 />
                 <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
                     <Search className="h-4 w-4" />
@@ -1988,7 +1887,18 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                 )}
             </div>
 
-            <ListResultSummary filteredCount={filtered.length} totalCount={contracts.length} selectedCount={selectedIds.length} />
+            <ListResultSummary filteredCount={totalCount} totalCount={totalAllCount} selectedCount={selectedIds.length} loading={loading} />
+            {totalCount > pageSize && (
+                <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-muted-foreground">
+                    <span>Side {currentPage} af {Math.max(1, Math.ceil(totalCount / pageSize))}</span>
+                    <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1 || loading} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}>
+                        Forrige
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" disabled={currentPage >= Math.ceil(totalCount / pageSize) || loading} onClick={() => setCurrentPage(page => page + 1)}>
+                        Næste
+                    </Button>
+                </div>
+            )}
 
             {selectedIds.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
