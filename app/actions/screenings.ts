@@ -6,12 +6,9 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { resolveOrgId } from "@/lib/org";
+import { normalizeScreeningTitle } from "@/lib/screening-utils";
 
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
-
-export function normalizeScreeningTitle(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
 
 async function findScreeningSourceMatch(db: ReturnType<typeof createServiceClient>, params: {
   orgId: string; title: string; channel: string; screeningDate: string; season?: number | null; episode?: number | null;

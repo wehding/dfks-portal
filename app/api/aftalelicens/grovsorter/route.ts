@@ -15,7 +15,7 @@ import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { requireAdminApi } from "@/lib/api-auth"
 import { consumeRateLimit } from "@/lib/server/rate-limit"
 import { createServiceClient } from "@/lib/supabase/service"
-import { normalizeScreeningTitle } from "@/app/actions/screenings"
+import { normalizeScreeningTitle } from "@/lib/screening-utils"
 import { resolveOrgId } from "@/lib/org"
 
 const SYSTEM = `Du er ekspert i dansk TV-produktion og aftalelicens. Du hjælper Dansk Filmklipperselskab (DFKS) med at grovsortera TV-titler fra Copydan-data.
