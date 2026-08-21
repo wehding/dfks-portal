@@ -8,6 +8,7 @@ import { experienceGroupAt, type ExperienceGroup } from "@/lib/experience-groups
 import {
   LOW_SAMPLE_MEMBER_THRESHOLD,
   distinctStatisticsMembers,
+  normalizeStatisticsDominanceLimit,
   normalizeStatisticsMinimumGroupSize,
   statisticsGroupIsVisible,
 } from "@/lib/statistics-privacy";
@@ -137,13 +138,14 @@ function producerContributionValues<T extends ContractRow>(items: T[], value: (r
 function protectGroups<T extends ContractRow>(
   groups: Array<[string | number, T[]]>,
   minimumGroupSize: number,
+  dominanceLimit: number,
   options: {
     additiveEconomicValues?: boolean;
     hasPublishedTotal?: boolean;
     contributions?: (items: T[]) => number[];
   } = {},
 ) {
-  const guard = new PrivacyGuard({ minimumGroupSize, dominanceLimit: 0.8 });
+  const guard = new PrivacyGuard({ minimumGroupSize, dominanceLimit });
   const cells = groups.map(([key, items]) => ({
     key: String(key),
     contributorIds: items.map(item => item.rightsHolderId),
@@ -276,10 +278,11 @@ function rightsDistribution(items: ContractRow[], keys: string[], agreementCanAp
 export async function getAdminStatistics(orgId: string, filters: StatisticsFilters) {
   const db = createServiceClient();
   const { data: organisation, error: organisationError } = await db.from("organisations")
-    .select("statistics_contract_scope,statistics_minimum_group_size").eq("id", orgId).single();
+    .select("statistics_contract_scope,statistics_minimum_group_size,statistics_dominance_limit,statistics_low_sample_threshold").eq("id", orgId).single();
   if (organisationError) throw new Error(organisationError.message);
   const includeDrafts = organisation.statistics_contract_scope === "validated_and_drafts";
   const minimumGroupSize = normalizeStatisticsMinimumGroupSize(organisation.statistics_minimum_group_size);
+  const dominanceLimit = normalizeStatisticsDominanceLimit(organisation.statistics_dominance_limit);
   const { data, error } = await db.rpc("get_statistics_facts", {
     target_org_id: orgId,
     include_drafts: includeDrafts,
@@ -332,6 +335,8 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
       suppressed: true,
       minimum: minimumGroupSize,
       lowSampleThreshold: LOW_SAMPLE_MEMBER_THRESHOLD,
+      dominanceLimit,
+      calculationVersion: "union-stats-v1",
       suppressionCount: 1,
       suppressionReasons: { minimum_count: 1 },
       memberCount: null,
@@ -344,7 +349,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
   const salaryRows = salaryOutliers.included;
   const salaryOutlierIds = new Set(salaryOutliers.excluded.map(item => item.item.id));
 
-  const salary = protectGroups(groupRows(salaryRows, row => row.year), minimumGroupSize, { hasPublishedTotal: true }).map(([year, items, cell]) => {
+  const salary = protectGroups(groupRows(salaryRows, row => row.year), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([year, items, cell]) => {
     const monthly = personWeighted(items, row => salaryDataToMonthly(row.data));
     const daily = personWeighted(items, row => salaryDataToWeekly(row.data) / 5);
     return {
@@ -359,6 +364,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
   const salaryByCategory = protectGroups(
     groupRows(salaryRows.filter(row => row.category === "feature" || row.category === "documentary"), row => `${row.year}:${row.category}`),
     minimumGroupSize,
+    dominanceLimit,
     { hasPublishedTotal: true },
   ).map(([key, items, cell]) => {
     const [year, category] = String(key).split(":");
@@ -380,6 +386,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
   const pension = protectGroups(
     groupRows(rows.filter(row => pensionValue(row) != null), row => row.year),
     minimumGroupSize,
+    dominanceLimit,
     { hasPublishedTotal: true },
   ).map(([year, items, cell]) => ({
     year: Number(year),
@@ -390,6 +397,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
   const workingWeeks = protectGroups(
     groupRows(rows.filter(row => (statisticsNumber(row.data.workingWeeks) ?? 0) > 0), row => row.year),
     minimumGroupSize,
+    dominanceLimit,
     { hasPublishedTotal: true },
   ).map(([year, items, cell]) => {
     const values = personWeightedSummary(items, row => weeksInYear(
@@ -406,7 +414,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     };
   }).sort((left, right) => left.year - right.year);
 
-  const contractCounts = protectGroups(groupRows(rows, row => row.year), minimumGroupSize, { hasPublishedTotal: true }).map(([year, items, cell]) => ({
+  const contractCounts = protectGroups(groupRows(rows, row => row.year), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([year, items, cell]) => ({
     year: Number(year),
     total: visibleNumber(items.length, cell),
     aLoen: visibleNumber(items.filter(row => row.type === "a-løn").length, cell),
@@ -414,7 +422,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     ...sampleMeta(items, disclosure(cell)),
   })).sort((left, right) => left.year - right.year);
 
-  const rights = protectGroups(groupRows(rows.filter(row => row.category), row => String(row.category)), minimumGroupSize, { hasPublishedTotal: true }).map(([category, items, cell]) => {
+  const rights = protectGroups(groupRows(rows.filter(row => row.category), row => String(row.category)), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([category, items, cell]) => {
     const streaming = rightsDistribution(items, ["svod", "streamingReservation", "streaming", "rightsOverview.streamingforbehold"], true);
     const copydan = rightsDistribution(items, ["copydan", "copydanReservation", "rightsOverview.copydanforbehold"], true);
     const royalty = rightsDistribution(items, ["royalty", "royaltyClause"]);
@@ -430,7 +438,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     };
   });
 
-  const rightsByYear = protectGroups(groupRows(rows, row => row.year), minimumGroupSize, { hasPublishedTotal: true }).map(([year, items, cell]) => {
+  const rightsByYear = protectGroups(groupRows(rows, row => row.year), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([year, items, cell]) => {
     const streaming = rightsDistribution(items, ["svod", "streamingReservation", "streaming", "rightsOverview.streamingforbehold"], true);
     const copydan = rightsDistribution(items, ["copydan", "copydanReservation", "rightsOverview.copydanforbehold"], true);
     const royalty = rightsDistribution(items, ["royalty", "royaltyClause"]);
@@ -446,14 +454,14 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     };
   }).sort((left, right) => left.year - right.year);
 
-  const gender = protectGroups(groupRows(salaryRows.filter(row => row.gender), row => String(row.gender)), minimumGroupSize, { hasPublishedTotal: true }).map(([genderKey, items, cell]) => ({
+  const gender = protectGroups(groupRows(salaryRows.filter(row => row.gender), row => String(row.gender)), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([genderKey, items, cell]) => ({
     gender: String(genderKey),
     count: new Set(items.map(row => row.rightsHolderId)).size,
     avgSalary: visibleNumber(personWeighted(items, row => salaryDataToMonthly(row.data)).average, cell),
     ...sampleMeta(items, disclosure(cell, outlierCountFor(items, salaryOutlierIds))),
   }));
 
-  const aiClauses = protectGroups(groupRows(rows, row => row.year), minimumGroupSize, { hasPublishedTotal: true }).map(([year, items, cell]) => ({
+  const aiClauses = protectGroups(groupRows(rows, row => row.year), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([year, items, cell]) => ({
     year: Number(year),
     withClause: visibleNumber(items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === true).length, cell),
     withoutClause: visibleNumber(items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === false).length, cell),
@@ -469,6 +477,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
   const contributions = protectGroups(
     groupRows(contributionRows, row => row.year),
     minimumGroupSize,
+    dominanceLimit,
     {
       additiveEconomicValues: true,
       hasPublishedTotal: true,
@@ -497,6 +506,9 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
 
   return {
     minimum: minimumGroupSize,
+    minimumGroupSize,
+    dominanceLimit,
+    calculationVersion: "union-stats-v1",
     lowSampleThreshold: LOW_SAMPLE_MEMBER_THRESHOLD,
     includeDrafts,
     ...sampleMeta(rows),

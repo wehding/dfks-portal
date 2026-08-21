@@ -1,6 +1,9 @@
 export const DEFAULT_STATISTICS_MINIMUM_GROUP_SIZE = 5;
 export const MIN_STATISTICS_MINIMUM_GROUP_SIZE = 3;
 export const MAX_STATISTICS_MINIMUM_GROUP_SIZE = 100;
+export const DEFAULT_STATISTICS_DOMINANCE_LIMIT = 0.8;
+export const MIN_STATISTICS_DOMINANCE_LIMIT = 0.5;
+export const MAX_STATISTICS_DOMINANCE_LIMIT = 1;
 export const LOW_SAMPLE_MEMBER_THRESHOLD = 5;
 
 export function normalizeStatisticsMinimumGroupSize(value: unknown) {
@@ -9,6 +12,15 @@ export function normalizeStatisticsMinimumGroupSize(value: unknown) {
   return Math.min(
     MAX_STATISTICS_MINIMUM_GROUP_SIZE,
     Math.max(MIN_STATISTICS_MINIMUM_GROUP_SIZE, parsed),
+  );
+}
+
+export function normalizeStatisticsDominanceLimit(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_STATISTICS_DOMINANCE_LIMIT;
+  return Math.min(
+    MAX_STATISTICS_DOMINANCE_LIMIT,
+    Math.max(MIN_STATISTICS_DOMINANCE_LIMIT, parsed),
   );
 }
 

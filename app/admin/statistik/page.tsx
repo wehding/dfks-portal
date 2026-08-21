@@ -26,6 +26,7 @@ type YearRow = {
 };
 type StatisticsPayload = {
   suppressed: boolean; minimum: number; lowSampleThreshold: number; lowSample?: boolean; includeDrafts?: boolean; memberCount: number | null; contractCount?: number; validatedCount?: number; draftCount?: number; years: number[];
+  minimumGroupSize?: number; dominanceLimit?: number; calculationVersion?: string;
   suppressionCount?: number; suppressionReasons?: Partial<Record<SuppressionReason, number>>; outlierExcludedCount?: number;
   salary?: Array<YearRow & { monthlyRate: SafeNumber; averageMonthlyRate: SafeNumber; dailyRate: SafeNumber }>;
   salaryByCategory?: Array<YearRow & { category: string; monthlyRate: SafeNumber; averageMonthlyRate: SafeNumber }>;
@@ -120,6 +121,7 @@ type AiSeriesRow = {
 
 type AiAnswer = {
   suppressed?: boolean; minimum?: number; explanation?: string; understoodAs?: string; interpretedBy?: "rules" | "ai";
+  minimumGroupSize?: number; dominanceLimit?: number; calculationVersion?: string;
   suppressionCount?: number; suppressionReasons?: Partial<Record<SuppressionReason, number>>;
   caveats?: string[]; chart?: "line" | "bar" | "table";
   plan?: { metrics?: string[]; compareBy?: string[]; adjustForInflation?: boolean };
@@ -303,6 +305,9 @@ export default function AdminStatistikPage() {
         {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Ikke nok data til et sikkert resultat</AlertTitle><AlertDescription>Det valgte udsnit indeholder færre end {aiAnswer.minimum ?? 3} forskellige personer. Prøv en længere periode, færre filtre eller en bredere produktionstype.</AlertDescription></Alert>}
         {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4">
           <div className="space-y-1 text-sm"><p className="font-medium">Sådan blev spørgsmålet forstået</p><p>{aiAnswer.understoodAs}</p><p className="text-muted-foreground">{aiAnswer.explanation}</p></div>
+          <p className="text-xs text-muted-foreground">
+            Beregnet med mindst {aiAnswer.minimumGroupSize ?? aiAnswer.minimum ?? 3} personer pr. gruppe og dominansgrænse på {Math.round((aiAnswer.dominanceLimit ?? 0.8) * 100)} %. Beregningsversion: {aiAnswer.calculationVersion ?? "union-stats-v1"}.
+          </p>
           {aiAnswer.visualization && <section className="space-y-3" aria-labelledby="combined-statistics-result">
             <div><h3 id="combined-statistics-result" className="font-semibold">Samlet statistik</h3><p className="text-sm text-muted-foreground">{aiAnswer.visualization.explanation}</p></div>
             {chartSelectionError && <Alert><AlertTitle>Den valgte graf kan ikke bruges</AlertTitle><AlertDescription>{chartSelectionError}</AlertDescription></Alert>}
@@ -327,6 +332,13 @@ export default function AdminStatistikPage() {
       <Select value={gender} onValueChange={setGender}><SelectTrigger className="w-full"><SelectValue placeholder="Køn" /></SelectTrigger><SelectContent><SelectItem value="all">Alle køn</SelectItem><SelectItem value="male">Mand</SelectItem><SelectItem value="female">Kvinde</SelectItem><SelectItem value="other">Andet</SelectItem></SelectContent></Select>
       {!data?.suppressed && <Button variant="outline" className="w-full" onClick={exportCsv}><Download className="mr-2 h-4 w-4" />CSV</Button>}
     </div>
+    {data && <Alert>
+      <ShieldCheck className="h-4 w-4" />
+      <AlertTitle>Statistikpolicy for denne visning</AlertTitle>
+      <AlertDescription>
+        Grupper kræver mindst {data.minimumGroupSize ?? data.minimum} forskellige personer. Økonomiske celler sløres, hvis de to største producenter overstiger {Math.round((data.dominanceLimit ?? 0.8) * 100)} % af cellens total. Beregningsversion: {data.calculationVersion ?? "union-stats-v1"}.
+      </AlertDescription>
+    </Alert>}
 
     {data?.suppressed ? <Card><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok personer til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} forskellige personer. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : <>
       {((data?.suppressionCount ?? 0) > 0 || (data?.outlierExcludedCount ?? 0) > 0) && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Diskretionsregler er anvendt</AlertTitle><AlertDescription>{(data?.suppressionCount ?? 0) > 0 && <span className="block">Nogle felter vises som N/A, fordi de ikke må udleveres som statistik. {dataProtectionSummary}</span>}{(data?.outlierExcludedCount ?? 0) > 0 && <span className="block">{data?.outlierExcludedCount} åbenlyse afvigere er frasorteret før beregning af løn, medianer og bidrag.</span>}<span className="block">Grafer og CSV-eksport bruger de samme slørede tal som tabellerne.</span></AlertDescription></Alert>}
