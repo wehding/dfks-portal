@@ -9,7 +9,7 @@ import {
     Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff, Pencil,
 } from "lucide-react"
 import { saveFeedback, getTrainingExamples } from "@/lib/ai-feedback"
-import { fetchAftalelicensBatch, fetchScreeningSourceRowsForBatch } from "@/app/actions/screenings"
+import { fetchAftalelicensBatch, fetchScreeningSourceRowsForBatch, fetchWorksAndContractsForMatching } from "@/app/actions/screenings"
 import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -50,7 +50,8 @@ import type {
     AftalelicensBatch, AftalelicensKilde, AftalelicensVaerk,
     AftalelicensVaegtet, SortStatus, VaerkType, AftalelicensVaegtExtra, FilterRule,
 } from "@/lib/streaming-types"
-import { mockWorks, mockContracts } from "@/lib/mock-data"
+// mockWorks/mockContracts (lib/mock-data) er ikke længere importeret her —
+// erstattet af fetchWorksAndContractsForMatching() (rigtig databaseparring).
 
 // ── Mock data ─────────────────────────────────────────────────
 
@@ -532,6 +533,15 @@ function SortTable({ vaerker, onUpdate }: {
     const addRuleRef = useRef<((rule: Omit<FilterRule, "id" | "createdAt">) => void) | null>(null)
     const autoRejectedRef = useRef<Set<string>>(new Set())
     const currentRulesRef = useRef<FilterRule[]>(loadFilterRulesLocal())
+    const [dbWorks, setDbWorks] = useState<MatchingWork[]>([])
+
+    // Hent egne, registrerede værker til DB-match-trinnet nedenfor — erstatter
+    // tidligere mockWorks.
+    useEffect(() => {
+        fetchWorksAndContractsForMatching().then(res => {
+            if (res.success) setDbWorks(res.works)
+        }).catch(() => { /* behold tom DB-match ved fejl */ })
+    }, [])
 
     const handleRulesChange = (rules: FilterRule[]) => {
         currentRulesRef.current = rules
@@ -642,15 +652,6 @@ function SortTable({ vaerker, onUpdate }: {
 
     const BATCH_SIZE = 50
 
-    // Mapning fra mockWorks.category → VaerkType
-    const CATEGORY_TO_VAERKTYPE: Record<string, VaerkType> = {
-        feature: "spillefilm",
-        tvSeries: "tv_serie_lang",
-        documentary: "dokumentarfilm",
-        short: "kortfilm",
-        animation: "spillefilm",
-    }
-
     const runAiGrovsortering = async () => {
         const pending = vaerker.filter(v => v.sortStatus === "pending")
         if (pending.length === 0) { toast.info("Ingen afventende titler at sortere"); return }
@@ -663,7 +664,7 @@ function SortTable({ vaerker, onUpdate }: {
 
         // ── Trin 1: DB-match ─────────────────────────────────────
         // Titler der matcher vores værksdatabase godkendes direkte — ingen AI nødvendig
-        const workIdx = buildWorkIndex()
+        const workIdx = buildWorkIndex(dbWorks)
         const unmatched: typeof pending = []
 
         for (const v of pending) {
@@ -673,16 +674,16 @@ function SortTable({ vaerker, onUpdate }: {
             if (works.length > 1) { unmatched.push(v); continue }
             const work = works[0]
             if (work) {
-                const vaerkType = CATEGORY_TO_VAERKTYPE[work.category] ?? undefined
+                // vaerkType sættes bevidst ikke her — den fastlægges i den
+                // eksisterende, dedikerede sorterings-UI, ikke gættet ud fra
+                // et endnu ikke fuldt afklaret works.type-vokabular.
                 onUpdate(v.id, {
                     sortStatus: "approved",
-                    vaerkType,
                     sortedAt: new Date().toISOString(),
                     sortedBy: "db",
                 })
                 allSuggestions.set(v.id, {
                     status: "godkend",
-                    type: vaerkType,
                     reason: "Match i værksdatabase",
                 })
                 dbMatch++
@@ -1575,9 +1576,9 @@ function normalizeTitle(t: string) {
 }
 
 // Byg et opslag: normaliseret titel → kontrakter der indeholder titlen
-function buildContractIndex() {
-    const idx = new Map<string, typeof mockContracts>()
-    mockContracts.forEach(c => {
+function buildContractIndex(contracts: MatchingContract[]) {
+    const idx = new Map<string, MatchingContract[]>()
+    contracts.forEach(c => {
         const key = normalizeTitle(c.title)
         if (!idx.has(key)) idx.set(key, [])
         idx.get(key)!.push(c)
@@ -1586,9 +1587,9 @@ function buildContractIndex() {
 }
 
 // Byg et opslag: normaliseret titel → Work[] (kan være flere ved duplikate titler)
-function buildWorkIndex() {
-    const idx = new Map<string, (typeof mockWorks[0])[]>()
-    mockWorks.forEach(w => {
+function buildWorkIndex(works: MatchingWork[]) {
+    const idx = new Map<string, MatchingWork[]>()
+    works.forEach(w => {
         const key = normalizeTitle(w.title)
         if (!idx.has(key)) idx.set(key, [])
         idx.get(key)!.push(w)
@@ -1606,9 +1607,9 @@ function fuzzyScore(a: string, b: string): number {
 }
 
 // Find top-3 fuzzy matches for a title (threshold: 0.35)
-function findFuzzyMatches(title: string, extraWorks: FuzzyWork[] = []): FuzzyMatch[] {
+function findFuzzyMatches(title: string, works: MatchingWork[], extraWorks: FuzzyWork[] = []): FuzzyMatch[] {
     const allWorks: FuzzyWork[] = [
-        ...mockWorks.map(w => ({ id: w.id, title: w.title, category: w.category, productionYear: w.premiereYear })),
+        ...works.map(w => ({ id: w.id, title: w.title, category: w.type, productionYear: w.year })),
         ...extraWorks,
     ]
     return allWorks
@@ -1618,12 +1619,14 @@ function findFuzzyMatches(title: string, extraWorks: FuzzyWork[] = []): FuzzyMat
         .slice(0, 3)
 }
 
+interface MatchingWork { id: string; title: string; type?: string; year?: number; duration_minutes?: number }
+interface MatchingContract { id: string; userId?: string; userName: string; title: string; category?: string; creditedRoles: string[]; duration?: number; premiereYear?: number }
 interface FuzzyWork { id: string; title: string; category?: string; productionYear?: number }
 interface FuzzyMatch { work: FuzzyWork; score: number }
 
-function autoMatch(vaerker: AftalelicensVaerk[]): VaerkMatch[] {
-    const contractIdx = buildContractIndex()
-    const workIdx = buildWorkIndex()
+function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contracts: MatchingContract[]): VaerkMatch[] {
+    const contractIdx = buildContractIndex(contracts)
+    const workIdx = buildWorkIndex(works)
 
     return vaerker
         .filter(v => v.sortStatus === "approved")
@@ -1654,7 +1657,7 @@ function autoMatch(vaerker: AftalelicensVaerk[]): VaerkMatch[] {
                     matchedWorkTitle: undefined,
                     matchScore: "none" as const,
                     hasDuplicates: true,
-                    fuzzyMatches: works.map(w => ({ work: { id: w.id, title: w.title, category: w.category, productionYear: w.premiereYear }, score: 1 })),
+                    fuzzyMatches: works.map(w => ({ work: { id: w.id, title: w.title, category: w.type, productionYear: w.year }, score: 1 })),
                     rettighedshavere,
                     confirmed: false,
                 }
@@ -1679,7 +1682,7 @@ function autoMatch(vaerker: AftalelicensVaerk[]): VaerkMatch[] {
             }
 
             // Ingen eksakt match — kør fuzzy
-            const fuzzyMatches = findFuzzyMatches(v.rawTitle)
+            const fuzzyMatches = findFuzzyMatches(v.rawTitle, works)
             return {
                 vaerkId: v.id,
                 rawTitle: v.rawTitle,
@@ -1780,7 +1783,23 @@ function ParringTab({ vaerker, onConfirmed }: {
     onConfirmed: (matches: VaerkMatch[]) => void
 }) {
     const [extraWorks, setExtraWorks] = useState<FuzzyWork[]>([])
-    const [matches, setMatches] = useState<VaerkMatch[]>(() => autoMatch(vaerker))
+    const [realWorks, setRealWorks] = useState<MatchingWork[]>([])
+    const [realContracts, setRealContracts] = useState<MatchingContract[]>([])
+    const [matches, setMatches] = useState<VaerkMatch[]>([])
+
+    // Hent egne, registrerede værker og validerede kontrakter fra databasen —
+    // erstatter tidligere mockWorks/mockContracts. Kør autoMatch igen, når
+    // data er hentet, så parringen sker mod rigtig data, ikke eksempeldata.
+    useEffect(() => {
+        fetchWorksAndContractsForMatching().then(res => {
+            if (res.success) {
+                setRealWorks(res.works)
+                setRealContracts(res.contracts)
+                setMatches(autoMatch(vaerker, res.works, res.contracts))
+            }
+        }).catch(() => { /* behold tom matching ved fejl */ })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
     const [searchDialog, setSearchDialog] = useState<string | null>(null)
     const [workSearch, setWorkSearch] = useState("")
     const [confirmed, setConfirmed] = useState(false)
@@ -1825,17 +1844,17 @@ function ParringTab({ vaerker, onConfirmed }: {
 
     const workSearchResults = useMemo(() => {
         const all = [
-            ...mockWorks,
+            ...realWorks.map(w => ({ id: w.id, title: w.title, category: w.type ?? "", editors: [] as string[], directors: [] as string[] })),
             ...extraWorks.map(w => ({ id: w.id, title: w.title, category: w.category ?? "", editors: [], directors: [] })),
         ]
         if (!workSearch.trim()) return all
         const q = workSearch.toLowerCase()
         return all.filter(w => w.title.toLowerCase().includes(q))
-    }, [workSearch, extraWorks])
+    }, [workSearch, extraWorks, realWorks])
 
     const linkFuzzy = (groupKey: string, fuzzyWork: FuzzyWork) => {
-        const realWork = mockWorks.find(w => w.id === fuzzyWork.id)
-        const contracts = realWork ? mockContracts.filter(c => normalizeTitle(c.title) === normalizeTitle(realWork.title)) : []
+        const realWork = realWorks.find(w => w.id === fuzzyWork.id)
+        const contracts = realWork ? realContracts.filter(c => normalizeTitle(c.title) === normalizeTitle(realWork.title)) : []
         const equalShare = contracts.length > 0 ? Math.round(100 / contracts.length) : 100
         const rettigheder = contracts.map(c => ({
             userId: c.userId,
@@ -1908,7 +1927,7 @@ function ParringTab({ vaerker, onConfirmed }: {
     }
 
     const linkWork = (groupKey: string, work: { id: string; title: string }) => {
-        const contracts = mockContracts.filter(c => normalizeTitle(c.title) === normalizeTitle(work.title))
+        const contracts = realContracts.filter(c => normalizeTitle(c.title) === normalizeTitle(work.title))
         const equalShare = contracts.length > 0 ? Math.round(100 / contracts.length) : 100
         const rettigheder = contracts.map(c => ({
             userId: c.userId,
@@ -2395,7 +2414,7 @@ function ParringTab({ vaerker, onConfirmed }: {
                             {workSearchResults.length === 0 ? (
                                 <div className="px-4 py-6 text-center text-sm text-muted-foreground">Ingen resultater</div>
                             ) : workSearchResults.map(work => {
-                                const contracts = mockContracts.filter(c => normalizeTitle(c.title) === normalizeTitle(work.title))
+                                const contracts = realContracts.filter(c => normalizeTitle(c.title) === normalizeTitle(work.title))
                                 return (
                                     <button
                                         key={work.id}

@@ -490,3 +490,83 @@ export async function fetchScreeningSourceRowsForBatch(batchKey: string) {
 
   return { success: true, rows: data ?? [] };
 }
+
+// ── Værk-/kontrakt-data til aftalelicens-matching ────────────────────────
+// Erstatter tidligere mockWorks/mockContracts i autoMatch()/buildWorkIndex()/
+// buildContractIndex()/findFuzzyMatches() — parring af sorterede titler mod
+// egne, registrerede værker og validerede kontrakter skal ske mod rigtig
+// data, ikke eksempeldata.
+
+export type MatchingWorkRow = { id: string; title: string; type?: string; year?: number; duration_minutes?: number };
+export type MatchingContractRow = { id: string; userId?: string; userName: string; title: string; category?: string; creditedRoles: string[]; duration?: number; premiereYear?: number };
+
+export async function fetchWorksAndContractsForMatching() {
+  const user = await currentUser();
+  const empty = { works: [] as MatchingWorkRow[], contracts: [] as MatchingContractRow[] };
+  if (!user) return { success: false, error: "Ikke logget ind", ...empty };
+  const isAdmin = await isUserAdmin(user.id);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", ...empty };
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation", ...empty };
+
+  const db = createServiceClient();
+
+  const { data: works, error: worksError } = await db
+    .from("works")
+    .select("id, title, type, year, duration_minutes")
+    .eq("org_id", orgId);
+  if (worksError) {
+    console.error("Fejl ved hentning af works til matching:", worksError);
+    return { success: false, error: worksError.message, ...empty };
+  }
+
+  const { data: contractRows, error: contractsError } = await db
+    .from("contracts")
+    .select(`
+      id, rights_holder_id, work_id,
+      works ( title, type, year, duration_minutes ),
+      rettighedshavere ( full_name ),
+      contract_validations ( extracted_data )
+    `)
+    .eq("org_id", orgId)
+    .in("status", ["valideret", "arkiveret"])
+    .not("work_id", "is", null);
+  if (contractsError) {
+    console.error("Fejl ved hentning af contracts til matching:", contractsError);
+    return { success: false, error: contractsError.message, ...empty };
+  }
+
+  const contracts = (contractRows ?? []).map(c => {
+    const work = Array.isArray(c.works) ? c.works[0] : c.works;
+    const rh = Array.isArray(c.rettighedshavere) ? c.rettighedshavere[0] : c.rettighedshavere;
+    const validation = Array.isArray(c.contract_validations) ? c.contract_validations[0] : c.contract_validations;
+    const extracted = (validation?.extracted_data ?? {}) as Record<string, unknown>;
+    const creditedRolesRaw = extracted.creditedRoles ?? extracted.creditedFunction;
+    const creditedRoles = typeof creditedRolesRaw === "string"
+      ? creditedRolesRaw.split(/[,/]/).map(s => s.trim()).filter(Boolean)
+      : Array.isArray(creditedRolesRaw) ? creditedRolesRaw as string[] : [];
+    return {
+      id: c.id,
+      userId: c.rights_holder_id,
+      userName: rh?.full_name ?? "Ukendt",
+      title: work?.title ?? "",
+      category: work?.type,
+      creditedRoles,
+      duration: work?.duration_minutes,
+      premiereYear: work?.year,
+    };
+  }).filter(c => c.title);
+
+  return {
+    success: true,
+    works: (works ?? []).map(w => ({
+      id: w.id, title: w.title,
+      type: w.type ?? undefined, year: w.year ?? undefined, duration_minutes: w.duration_minutes ?? undefined,
+    })),
+    contracts: contracts.map(c => ({
+      ...c,
+      userId: c.userId ?? undefined, category: c.category ?? undefined,
+      duration: c.duration ?? undefined, premiereYear: c.premiereYear ?? undefined,
+    })),
+  };
+}

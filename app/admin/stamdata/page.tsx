@@ -531,13 +531,9 @@ function VaegteTab() {
             const cfg = res.config
             if (!cfg) return
             const weightsMap = cfg.weights ?? {}
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             setVaegte(DEFAULT_VAEGTE.map(v => ({ ...v, weight: weightsMap[v.type] ?? v.weight })))
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             setExtra({ ...DEFAULT_VAEGT_EXTRA, ...cfg.extra })
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             if (cfg.reservePercent != null) setHensaettelserPct(cfg.reservePercent)
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             if (cfg.socialPercent != null) setSocialPct(cfg.socialPercent)
         }).catch(() => { /* keep defaults */ })
     }, [])
