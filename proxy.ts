@@ -125,7 +125,6 @@ export async function proxy(req: NextRequest) {
             return NextResponse.redirect(url)
         }
         const prototypePrefixes = [
-            "/admin/aftalelicens",
             "/admin/indbetalinger",
             "/admin/udbetalinger",
             "/admin/streaming",
