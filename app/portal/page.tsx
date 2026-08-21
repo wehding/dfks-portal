@@ -15,13 +15,13 @@ import { normalizeStatisticsMinimumGroupSize } from "@/lib/statistics-privacy";
 import { memberSalaryBenchmark } from "@/lib/member-statistics";
 import { requireMemberContext } from "@/lib/org";
 import { OrgContextNotice } from "@/components/navigation/org-context-notice";
+import { loadMemberWorkReviewTasks } from "@/lib/server/member-work-review-tasks";
+import { uniqueMemberWorkReviewCount } from "@/lib/member-work-review";
 
 type ContractRow = { id: string; working_title: string | null; work_id: string | null; contract_comments: Array<{ author_role: string; member_read_at: string | null }> | null };
 type InboxThread = { id: string; subject: string; member_messages: Array<{ author_role: string; created_at: string }> | null; member_message_participants: Array<{ user_id: string; last_read_at: string | null }> | null };
 type AssignmentRow = { work_id: string | null; works: { id: string; title: string | null; contracts: Array<{ id: string }> | null } | null };
-type EpisodeScopeRow = { id: string; season_number: number; works: { title: string | null } | null };
 type ShareTaskRow = { id: string; case_id: string; works: { title: string | null } | null };
-type CollaborationReviewRow = { id: string; status: string };
 
 export default async function PortalDashboardPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const supabase = await createClient();
@@ -43,18 +43,17 @@ export default async function PortalDashboardPage({ searchParams }: { searchPara
   const orgId = memberContext.orgId;
   const affiliations = Array.isArray(holder.org_affiliations) ? holder.org_affiliations : [holder.org_affiliations];
   const affiliation = affiliations.find(row => row?.org_id === orgId) ?? null;
-  const [{ data: contracts }, { data: workRequests }, { data: screeningClaims }, { data: inboxThreads }, { data: assignments }, { data: episodeScopes }, { data: shareTasks }, { data: collaborationReviews }] = await Promise.all([
+  const [{ data: contracts }, { data: workRequests }, { data: screeningClaims }, { data: inboxThreads }, { data: assignments }, { data: shareTasks }, reviewTasks] = await Promise.all([
     db.from("contracts").select("id,working_title,work_id,contract_comments(author_role,member_read_at)").eq("org_id", orgId).eq("rights_holder_id", holder.id),
     db.from("work_change_requests").select("id,status,created_at").eq("org_id", orgId).eq("requested_by_rights_holder_id", holder.id).eq("status", "pending"),
     db.from("screening_claims").select("id,title,status,created_at").eq("org_id", orgId).eq("profile_id", user.id).eq("status", "pending"),
     db.from("member_message_threads").select("id,subject,member_messages(author_role,created_at),member_message_participants(user_id,last_read_at)").eq("org_id", orgId).eq("rights_holder_id", holder.id),
     db.from("work_assignments").select("work_id,works(id,title,contracts(id))").eq("org_id", orgId).eq("rights_holder_id", holder.id),
-    db.from("member_series_episode_scopes").select("id,season_number,works:series_work_id(title)").eq("org_id", orgId).eq("rights_holder_id", holder.id).eq("status", "pending"),
     db.from("work_share_participants").select("id,case_id,works:work_id(title)").eq("org_id", orgId).eq("rights_holder_id", holder.id).eq("relationship_status", "pending"),
-    db.from("member_work_collaboration_reviews").select("id,status").eq("org_id", orgId).eq("rights_holder_id", holder.id).in("status", ["pending", "disputed"]),
+    loadMemberWorkReviewTasks(db, { orgId, rightsHolderId: holder.id }),
   ]);
   const contractRows = (contracts ?? []) as ContractRow[];
-  const collaborationRows = (collaborationReviews ?? []) as CollaborationReviewRow[];
+  const reviewWorkCount = uniqueMemberWorkReviewCount(reviewTasks);
   const unreadThreads = ((inboxThreads ?? []) as InboxThread[]).filter(thread => {
     const lastRead = thread.member_message_participants?.find(participant => participant.user_id === user.id)?.last_read_at ?? "";
     return (thread.member_messages ?? []).some(message => message.author_role === "admin" && message.created_at > lastRead);
@@ -87,20 +86,13 @@ export default async function PortalDashboardPage({ searchParams }: { searchPara
       title: `${contractsWithoutWork.length} kontrakt${contractsWithoutWork.length === 1 ? "" : "er"} uden værk tilknyttet`,
       text: "Gå til Mine kontrakter og tilknyt de korrekte værker.",
     }] : []),
-    ...(collaborationRows.length ? [{
-      key: "collaboration-review",
-      href: "/portal/mine-vaerker?collaborationReview=1",
+    ...(reviewWorkCount ? [{
+      key: "work-review",
+      href: "/portal/mine-vaerker?review=1",
       icon: ListTodo,
-      title: `${collaborationRows.length} værk${collaborationRows.length === 1 ? "" : "er eller afsnit"} mangler medklippergennemgang`,
-      text: "Markér dem, du har klippet alene, eller tilføj medklippere og dit eget foreløbige procentbud.",
+      title: `${reviewWorkCount} værk${reviewWorkCount === 1 ? "" : "er"} mangler gennemgang`,
+      text: "Bekræft afsnit og eventuelle medklippere på dine værker.",
     }] : []),
-    ...((episodeScopes ?? []) as unknown as EpisodeScopeRow[]).map(scope => ({
-      key: `episode-scope-${scope.id}`,
-      href: `/portal/mine-vaerker?episodeScope=${scope.id}`,
-      icon: ListTodo,
-      title: `${scope.works?.title ?? "Serie"} · sæson ${scope.season_number}`,
-      text: "Vælg de afsnit, du arbejdede på, eller bekræft hele sæsonen.",
-    })),
     ...((shareTasks ?? []) as unknown as ShareTaskRow[]).map(task => ({
       key: `share-task-${task.id}`,
       href: `/portal/mine-vaerker?shareTask=${task.case_id}`,
@@ -111,18 +103,17 @@ export default async function PortalDashboardPage({ searchParams }: { searchPara
     ...contractRows.filter(contract => (contract.contract_comments ?? []).some(comment => comment.author_role === "admin" && !comment.member_read_at)).map(contract => ({ key: `message-${contract.id}`, href: `/portal/mine-kontrakter?contract=${contract.id}`, icon: MessageSquare, title: contract.working_title || "Ny kontraktbesked", text: "Læs det nye svar fra DFKS." })),
     ...unreadThreads.map(thread => ({ key: `inbox-${thread.id}`, href: `/portal?thread=${thread.id}`, icon: MessageSquare, title: thread.subject, text: "Læs den nye besked fra DFKS." })),
   ];
-  // Lønstatistik: egen grundløn pr. uge pr. år vs. gennemsnittet for bidragende medlemmer.
+  // Lønstatistik: egen ugeløn inklusive relevante tillæg vs. personvægtet median.
   const optedOut = typeof affiliation?.statistics_participation === "boolean"
     ? !affiliation.statistics_participation
     : Boolean((holder as { opt_out_statistics?: boolean | null }).opt_out_statistics);
   let salaryPoints: SalaryStatPoint[] = [];
   let benchmarkAvailable = false;
   let benchmarkPointsByExperience: Partial<Record<ExperienceGroup, SalaryStatPoint[]>> = {};
-  let ownStatisticsContracts: Array<{ id: string; title: string; year: number; weekly: number }> = [];
   {
     const [{ data: orgContracts }, { data: participantRows }, { data: organisation }] = await Promise.all([
       db.from("contracts")
-        .select("id,type,status,working_title,start_date,contract_date,rights_holder_id,rettighedshavere(professional_start_year)")
+        .select("id,type,status,start_date,contract_date,rights_holder_id,rettighedshavere(professional_start_year)")
         .eq("org_id", orgId),
       db.from("org_affiliations")
         .select("rights_holder_id,statistics_participation")
@@ -157,7 +148,6 @@ export default async function PortalDashboardPage({ searchParams }: { searchPara
       const weekly = salaryDataToWeekly(extracted);
       if (!Number.isFinite(weekly) || weekly <= 0 || !Number.isFinite(year)) continue;
       salaryRows.push({ year, weekly, mine: isMine, contributes, holderId: contract.rights_holder_id ?? null, professionalStartYear: holderDetails?.professional_start_year ?? null });
-      if (isMine) ownStatisticsContracts.push({ id: contract.id, title: contract.working_title || "Kontrakt", year, weekly: Math.round(weekly) });
     }
     const avg = (list: number[]) => (list.length ? Math.round(list.reduce((sum, value) => sum + value, 0) / list.length) : null);
     // Median pr. MEDLEM (ikke pr. kontrakt). Medlemsbenchmark kræver både
@@ -183,7 +173,6 @@ export default async function PortalDashboardPage({ searchParams }: { searchPara
       salaryPoints = salaryPoints.map(point => ({ ...point, gennemsnit: null }));
     }
     benchmarkAvailable = salaryPoints.some(point => point.gennemsnit != null);
-    ownStatisticsContracts = ownStatisticsContracts.sort((left, right) => right.year - left.year || left.title.localeCompare(right.title, "da"));
   }
   const waitingItems = [
     ...(workRequests ?? []).map(request => ({ key: `request-${request.id}`, href: `/portal/mine-vaerker?request=${request.id}`, icon: Clock3, title: "Værksrettelse", text: "Din rettelse afventer DFKS." })),
@@ -198,7 +187,7 @@ export default async function PortalDashboardPage({ searchParams }: { searchPara
       <DashboardCard title="Kræver handling" count={actionItems.length} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
       <DashboardCard title="Afventer DFKS" count={waitingItems.length} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />
     </div>
-    <SalaryStatsCard points={salaryPoints} benchmarkPointsByExperience={benchmarkPointsByExperience} optedOut={optedOut} benchmarkAvailable={benchmarkAvailable} contracts={ownStatisticsContracts} />
+    <SalaryStatsCard points={salaryPoints} benchmarkPointsByExperience={benchmarkPointsByExperience} optedOut={optedOut} benchmarkAvailable={benchmarkAvailable} />
     <section className="space-y-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><MessageSquare className="h-5 w-5 text-amber-500" />Beskeder fra DFKS</h2>
       <MemberInboxPanel />

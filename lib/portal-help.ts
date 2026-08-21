@@ -41,6 +41,15 @@ export const MINE_KONTRAKTER_HELP: HelpTopic[] = [
 
 export const MINE_VAERKER_HELP: HelpTopic[] = [
   {
+    title: "Gennemgå afsnit og medklippere",
+    body: "Gennemgangen samler de steder, hvor du mangler at vælge serieafsnit eller bekræfte eventuelle medklippere. På film og enkeltværker bekræfter du, om du klippede alene, eller tilføjer de andre klippere. På serier vælger du først sæsonens afsnit og gennemgår derefter hvert afsnit.",
+    tips: [
+      "Du kan lukke gennemgangen og fortsætte senere.",
+      "Hvis du oplyser, at du klippede alene, men en anden klipper allerede er registreret, sendes oplysningen til DFKS som en indsigelse.",
+      "Et tomt medklipperfelt efter gennemgang betyder, at du har bekræftet, at du klippede alene.",
+    ],
+  },
+  {
     title: "Tilføj værk",
     body: "Her kan du tilknytte film, serier og andre værker, som du har arbejdet på. Søg efter titlen, vælg værket og angiv din rolle. For serier vælger du også de afsnit, du har arbejdet på.",
     tips: [
@@ -94,8 +103,10 @@ const PORTAL_HELP_BY_SECTION: Record<string, PortalHelpContent> = {
     title: "Hjælp til overblik",
     intro: "Overblikket samler dine værker, kontrakter, beskeder og næste opgaver.",
     topics: [
-      { title: "Dine næste skridt", body: "Kort og mærker viser, hvor der mangler oplysninger, en forbindelse eller et svar." },
-      { title: "Lønstatistik", body: "Det er frivilligt at bidrage med løndata. Du kan ændre dit valg under Min profil." },
+      { title: "Kræver handling", body: "Her står opgaver, du selv skal åbne og afslutte. Værkgennemgangen omfatter både valg af serieafsnit og bekræftelse af eventuelle medklippere." },
+      { title: "Afventer DFKS", body: "Her står rettelser og indberetninger, du allerede har sendt. De forsvinder, når DFKS har behandlet dem eller beder dig om nye oplysninger." },
+      { title: "Min lønudvikling", body: "Din egen kurve viser ugeløn inklusive relevante tillæg fra kontrakter med brugbar løn og dato." },
+      { title: "Sammenlign med organisationen", body: "Organisationens kurve er en anonymiseret, personvægtet median, så medlemmer med mange kontrakter ikke fylder mere end andre. Det er frivilligt at deltage i den fælles statistik, og valget administreres på Min profil." },
     ],
   },
   "mine-vaerker": { title: "Hjælp til Mine værker", intro: "Sådan finder, tilføjer og retter du de værker, du har arbejdet på.", topics: MINE_VAERKER_HELP },

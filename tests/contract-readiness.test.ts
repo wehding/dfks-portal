@@ -60,3 +60,12 @@ test("ugelønsresume tæller aldrig to navne for samme personlige tillæg", () =
   assert.equal(weeklySalaryWithPersonalSupplement({ salary: 15000, loentillaeg: 2000 }), 17000);
   assert.equal(weeklySalaryWithPersonalSupplement({ personalSupplement: 1000 }), null);
 });
+
+test("På et splitsekund medregner efterarbejdstillæg præcis én gang", () => {
+  assert.equal(weeklySalaryWithPersonalSupplement({
+    salary: 9249,
+    personalSupplement: 2751,
+    postProductionSupplement: 2000,
+    otherSupplements: [{ category: "efterarbejde", amount: 2000 }],
+  }), 14000);
+});
