@@ -31,6 +31,8 @@ En jurist indstiller retention på syv år i fanen Governance. En anden bruger m
 
 Bucket Lock er irreversibel og indgår ikke i rollback. Gamle KMS-versioner må ikke destrueres, mens de signerer materiale inden for retentionperioden.
 
+Den fulde fireøjneprocedure, stopkriterier, kommandoer og efterkontrol findes i [Bucket Lock-manualen](./c57921-bucket-lock-manual.md).
+
 ## Revisionsbeviser
 
 Kør efter deployment:

@@ -10,6 +10,12 @@
 - KMS: `audit-signing`, version 1, `EC_SIGN_P256_SHA256`, softwarebeskyttet og enabled.
 - WORM-bucket: `dfks-audit-worm-hip-orbit-498717-g8`, offentlig adgang blokeret, uniform bucket-adgang og syv års retention.
 - Bucket Lock: **ikke låst**. Låsning afventer en gyldig fireøjnegodkendelse.
+
+## Alarmhotfix 21. august 2026
+
+Fraværsalarmen oprettede fejlagtigt hændelser for en udgået Cloud Run-revision og dens tidligere 5xx-tidsserie. Alarmen er ændret til at reducere alle revisions- og statuskode-tidsserier til én serie grupperet på `service_name`. Den aktive revision `dfks-audit-siem-worker-00002-txx` svarede efter ændringen med HTTP 200 på både `/run` og `/sign-retention`.
+
+Bucket Lock blev ikke ændret som del af hotfixet. Den særskilte [Bucket Lock-manual](./c57921-bucket-lock-manual.md) skal følges efter afsluttet observation og fireøjnegodkendelse.
 - Scheduler-job: levering og retention-signering hvert femte minut; verifiering dagligt kl. 02:23 UTC. Alle tre blev aktiveret 21. august 2026 ca. 06:21 UTC.
 - Observationsperiode: 21. august 2026 06:21 UTC til 24. august 2026 06:21 UTC.
 

@@ -367,13 +367,15 @@ resource "google_monitoring_alert_policy" "worker_absent" {
       filter   = "metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${local.service_name}\""
       duration = "900s"
       aggregations {
-        alignment_period   = "300s"
-        per_series_aligner = "ALIGN_RATE"
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_RATE"
+        cross_series_reducer = "REDUCE_SUM"
+        group_by_fields      = ["resource.label.service_name"]
       }
     }
   }
   documentation {
-    content   = "Kontrollér Cloud Scheduler-job, Cloud Run-revision og OIDC/IAM. Alarmen er forventet, mens Scheduler bevidst er pauset."
+    content   = "Kontrollér Cloud Scheduler-job, aktiv Cloud Run-revision og OIDC/IAM. Alarmen evalueres samlet for servicen, så gamle revisioner og tidligere statuskoder ikke udløser separate fraværsalarmer. Pausér politikken eksplicit under planlagt Scheduler-pause."
     mime_type = "text/markdown"
   }
 }
