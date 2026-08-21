@@ -415,3 +415,46 @@ export async function testOrganisationForeningLetConnection() {
   const result = await testForeningLetCredentials(createServiceClient(), orgId);
   return { success: true, ...result };
 }
+
+// ── Aftalelicens-vægtningskonfiguration ─────────────────────────────────
+// Erstatter de tidligere, ikke-org-specifikke localStorage-nøgler
+// (dfks_vaerkvaegte, dfks_vaegt_extra, dfks_hensaettelser_pct,
+// dfks_sociale_pct) — se migration
+// 20260820200000_organisations_aftalelicens_weight_config.sql.
+
+export type AftalelicensWeightConfig = {
+  weights: Record<string, number>;
+  extra: {
+    dokLangPoints: number; dokMellemPoints: number; dokKortPoints: number;
+    dokLangMin: number; dokMellemMin: number;
+    dokSerieLangMin: number; dokSerieKortPoints: number;
+    supplerendeKlipFaktor: number; genudsendelseFaktor: number; genudsendelseMaaneder: number;
+  };
+  reservePercent: number;
+  socialPercent: number;
+};
+
+export async function getAftalelicensWeightConfig() {
+  const orgId = await currentAdminOrg();
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("organisations")
+    .select("aftalelicens_weight_config")
+    .eq("id", orgId)
+    .single();
+  if (error) throw new Error(error.message);
+  return { success: true, config: (data?.aftalelicens_weight_config ?? null) as AftalelicensWeightConfig | null };
+}
+
+export async function updateAftalelicensWeightConfig(config: AftalelicensWeightConfig) {
+  const orgId = await currentAdminOrg();
+  const db = createServiceClient();
+  const { error } = await db
+    .from("organisations")
+    .update({ aftalelicens_weight_config: config, updated_at: new Date().toISOString() })
+    .eq("id", orgId);
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/admin/aftalelicens");
+  return { success: true };
+}

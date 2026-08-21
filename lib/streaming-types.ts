@@ -356,6 +356,15 @@ export interface AftalelicensVaerk {
     season?: number         // Sæsonnummer (fx 3)
     episode?: number        // Afsnitsnummer (fx 7)
     productionYear?: number // Produktionsår
+    // Berigende kontekst fra Simply.TV — vigtig for korrekt AI-sortering af
+    // titler, der ikke er umiddelbart genkendelige på titel/kanal/varighed
+    // alene (fx nyere, ikke-hardkodede fiktionsserier).
+    category?: string       // Simply.TVs primære kategori (Movies/Series/Documentary/Kids)
+    genre?: string
+    description?: string
+    productionCountries?: string[]
+    directors?: string[]
+    actors?: string
     isGenudsendelse?: boolean
     vaerkType?: VaerkType
     sortStatus: SortStatus

@@ -2,6 +2,9 @@
  * app/api/aftalelicens/grovsorter/route.ts
  *
  * Grovsortering af TV-titler fra Copydan-data.
+ * Trin 0: match mod egen, validerede værksdatabase (ingen hardkodede titler —
+ *         kendte, registrerede værker godkendes automatisk, medmindre admin
+ *         har flaget dem som ikke rettighedsberettiget)
  * Trin 1: regelbaseret præ-filter (hurtig, høj præcision)
  * Trin 2: AI-klassifikation af de resterende tvetydige titler
  */
@@ -11,6 +14,9 @@ import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { requireAdminApi } from "@/lib/api-auth"
 import { consumeRateLimit } from "@/lib/server/rate-limit"
+import { createServiceClient } from "@/lib/supabase/service"
+import { normalizeScreeningTitle } from "@/lib/screening-utils"
+import { resolveOrgId } from "@/lib/org"
 
 const SYSTEM = `Du er ekspert i dansk TV-produktion og aftalelicens. Du hjælper Dansk Filmklipperselskab (DFKS) med at grovsortera TV-titler fra Copydan-data.
 
@@ -43,8 +49,12 @@ Dette gælder: nyhedsmagasiner (f.eks. 21 Søndag, Magasinet, Indblik), forbruge
 SKELNE: En dokumentarfilm fortæller en kreativ/kunstnerisk historie = "godkend". Et journalistisk program undersøger/rapporterer en sag = "afvis".
 Tvivl om journalistisk vs. dokumentar → "usikker".
 
+Yderligere kontekst, når den er tilgængelig (kategori, genre, medvirkende, beskrivelse) — brug den AKTIVT, især for titler der ikke er umiddelbart genkendelige alene ud fra titlen:
+- kategori "Series"/"Movies" er en stærk indikator for "godkend", uafhængigt af om titlen selv er kendt
+- En beskrivelse der tydeligt fortæller en fiktiv/dramatisk historie (karakterer, plot) = "godkend"; en beskrivelse der beskriver en undersøgelse/sag/reportage = sandsynligvis journalistik = "afvis"
+- Kendte skuespillernavne i "medvirkende" understøtter "godkend", men er ikke i sig selv afgørende alene
+
 Vigtige regler:
-- Borgen, Broen, Matador, Klovn og lignende kendte serier = "godkend" (tv_serie_lang)
 - Debatmagasiner og talkshows = "afvis" selvom de har klipning
 - Film med festivalhistorik (CPH:DOX, IDFA, Cannes, Berlin, Sundance m.fl.) = altid "godkend" med høj sikkerhed
 - Film nomineret til eller vinder af filmpris (Robert, Bodil, Oscar m.fl.) = altid "godkend"
@@ -106,6 +116,10 @@ interface Item {
     channel?: string
     duration?: number
     productionYear?: number
+    category?: string
+    genre?: string
+    description?: string
+    actors?: string
 }
 
 type PreResult = { status: "afvis" | "godkend"; type?: string; reason: string }
@@ -200,11 +214,43 @@ export async function POST(req: NextRequest) {
         const aiProvider = AI_CONFIG_DEFAULTS.grovsorter.provider
         const aiModel = AI_CONFIG_DEFAULTS.grovsorter.model
 
+        // Trin 0: Match mod egen, validerede værksdatabase — INGEN hardkodede
+        // titler. Et kendt, allerede registreret værk godkendes automatisk
+        // (medmindre eksplicit flaget ikke rettighedsberettiget), uafhængigt
+        // af om AI'en selv ville genkende titlen. Skalerer til enhver ny
+        // produktion, DFKS allerede har registreret, uden kodeændringer.
+        const worksDb = createServiceClient()
+        const orgId = await resolveOrgId(worksDb, auth.userId)
+        const { data: worksRows } = orgId ? await worksDb
+            .from("works")
+            .select("title, aftalelicens_rights_eligible")
+            .eq("org_id", orgId) : { data: [] }
+
+        const worksByNormalizedTitle = new Map<string, boolean>()
+        for (const w of worksRows ?? []) {
+            if (!w.title) continue
+            worksByNormalizedTitle.set(normalizeScreeningTitle(w.title), w.aftalelicens_rights_eligible !== false)
+        }
+
+        const worksMatchResults = new Map<string, { status: string; reason: string }>()
+        const remainingAfterWorksMatch: Item[] = []
+
+        for (const item of items as Item[]) {
+            const eligible = worksByNormalizedTitle.get(normalizeScreeningTitle(item.rawTitle))
+            if (eligible === undefined) {
+                remainingAfterWorksMatch.push(item)
+            } else if (eligible) {
+                worksMatchResults.set(item.id, { status: "godkend", reason: "Kendt, registreret værk" })
+            } else {
+                worksMatchResults.set(item.id, { status: "afvis", reason: "Værk flaget ikke rettighedsberettiget" })
+            }
+        }
+
         // Trin 1: Præ-filter — sortér åbenlyse tilfælde fra uden AI
         const preResults = new Map<string, { status: string; type?: string; reason: string }>()
         const aiItems: Item[] = []
 
-        for (const item of items as Item[]) {
+        for (const item of remainingAfterWorksMatch) {
             const pre = preFilter(item)
             if (pre) {
                 preResults.set(item.id, pre)
@@ -224,6 +270,10 @@ export async function POST(req: NextRequest) {
                     item.channel ? `(${item.channel})` : "",
                     item.duration ? `[${item.duration} min]` : "",
                     item.productionYear ? `[${item.productionYear}]` : "",
+                    item.category ? `kategori:${item.category}` : "",
+                    item.genre ? `genre:${item.genre}` : "",
+                    item.actors ? `medvirkende:${item.actors}` : "",
+                    item.description ? `"${item.description}"` : "",
                 ].filter(Boolean).join(" ")
             ).join("\n")
 
@@ -261,13 +311,14 @@ Returner et JSON-array med ét objekt per titel:
             }
         }
 
-        // Sammensæt resultater: præ-filter + AI
+        // Sammensæt resultater: værksdatabase-match + præ-filter + AI
         const results = [
+            ...Array.from(worksMatchResults.entries()).map(([id, r]) => ({ id, ...r })),
             ...Array.from(preResults.entries()).map(([id, r]) => ({ id, ...r })),
             ...aiResults,
         ]
 
-        console.log(`[grovsorter] ${items.length} titler → ${preResults.size} præ-filter, ${aiItems.length} AI`)
+        console.log(`[grovsorter] ${items.length} titler → ${worksMatchResults.size} værksmatch, ${preResults.size} præ-filter, ${aiItems.length} AI`)
 
         return NextResponse.json({ results })
     } catch (err: unknown) {
