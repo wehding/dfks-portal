@@ -938,11 +938,10 @@ function VaegteTab() {
 // ── AI-indstillinger ──────────────────────────────────────────
 
 type KeyStatus = { configured: boolean; source: "env" | "missing" }
-type AllKeyStatus = Record<"anthropic" | "openai" | "google", KeyStatus>
+type AllKeyStatus = Record<"anthropic" | "google", KeyStatus>
 
 const PROVIDER_LABELS: Record<string, string> = {
     anthropic: "Anthropic (Claude)",
-    openai:    "OpenAI (GPT)",
     google:    "Google (Gemini)",
 }
 
@@ -966,7 +965,7 @@ function AiKeySettings() {
                 </p>
             </div>
             <div className="space-y-3">
-                {(["anthropic", "openai", "google"] as const).map(provider => {
+                {(["anthropic", "google"] as const).map(provider => {
                     const s = status?.[provider]
                     return (
                         <div key={provider} className="space-y-1.5">

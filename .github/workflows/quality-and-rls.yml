@@ -49,8 +49,6 @@ jobs:
     name: Migrationer og RLS-tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      OPENAI_API_KEY: ci-placeholder
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

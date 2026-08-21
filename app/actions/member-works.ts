@@ -25,6 +25,8 @@ import { MEMBER_SERIES_PARENT_SELECT } from "@/lib/series-work-ownership";
 import { registerShareSuggestions } from "@/lib/server/work-share-cases";
 import { normalizeSharePercent } from "@/lib/work-share-distribution";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
+import { ensureMemberCollaborationReviews, resolveCollaborationReviewWorkIds } from "@/lib/server/work-collaboration-reviews";
+import { collaborationReviewStatusForSoloClaim } from "@/lib/work-collaboration-review";
 
 import { requireMemberContext } from "@/lib/org";
 
@@ -2178,6 +2180,147 @@ export async function updateMemberCoEditors(params: {
   }
   revalidatePath("/portal/mine-vaerker");
   return { success: true };
+}
+
+export async function submitContractCollaborationReview(params: {
+  rightsHolderId: string;
+  contractId: string;
+  workId: string;
+  seasonNumber?: number | null;
+  entries: Array<{
+    episodeNumber?: number | null;
+    soloConfirmed?: boolean;
+    selfSharePercent?: number | null;
+    coEditors?: ProposedCoEditor[];
+  }>;
+}) {
+  const db = createServiceClient();
+  const { user, context } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const orgId = context.orgId;
+  const { data: contract } = await db
+    .from("contracts")
+    .select("id, org_id, rights_holder_id, work_id, works(id,type,parent_work_id,episode_number)")
+    .eq("id", params.contractId)
+    .maybeSingle();
+  if (!contract || contract.org_id !== orgId || contract.rights_holder_id !== params.rightsHolderId || !contract.work_id) {
+    return { success: false as const, error: "Kontrakten blev ikke fundet." };
+  }
+  if (params.workId && params.workId !== contract.work_id) {
+    return { success: false as const, error: "Værket matcher ikke kontrakten." };
+  }
+
+  const relation = contract.works as unknown;
+  const contractWork = Array.isArray(relation) ? relation[0] : relation as { id?: string | null; type?: string | null; parent_work_id?: string | null; episode_number?: number | null } | null;
+  const isSeries = String(contractWork?.type ?? "").toLowerCase().includes("serie");
+  const seriesParentWorkId = isSeries ? contractWork?.parent_work_id ?? contract.work_id : null;
+  const seasonNumber = Math.max(1, Math.floor(Number(params.seasonNumber) || 1));
+  const entries = params.entries.slice(0, 100);
+  if (!entries.length) return { success: false as const, error: "Der er ikke noget at gemme." };
+
+  let soloCount = 0;
+  let coeditorCount = 0;
+  await ensureMemberCollaborationReviews(db, { orgId, rightsHolderId: params.rightsHolderId });
+
+  for (const entry of entries) {
+    const coEditors = normalizeCoEditors(entry.coEditors, context.terminology.default_role_label, context.terminology.coeditor_word);
+    if (!coEditors.length && !entry.soloConfirmed) {
+      return { success: false as const, error: "Bekræft at du har klippet alene, eller tilføj mindst én medklipper." };
+    }
+
+    const targetWorkIds = isSeries && entry.episodeNumber
+      ? await resolveCollaborationReviewWorkIds(db, {
+        workId: seriesParentWorkId ?? contract.work_id,
+        seasonNumber,
+        episodeNumber: entry.episodeNumber,
+      })
+      : await resolveCollaborationReviewWorkIds(db, { workId: contract.work_id });
+    if (!targetWorkIds.length) return { success: false as const, error: "Afsnittet eller værket kunne ikke findes." };
+
+    const { data: ownAssignment } = await db.from("work_assignments")
+      .select("id, role")
+      .eq("org_id", orgId)
+      .eq("rights_holder_id", params.rightsHolderId)
+      .in("work_id", targetWorkIds)
+      .limit(1)
+      .maybeSingle();
+    if (!ownAssignment) return { success: false as const, error: "Du kan kun gemme medklippere på egne værker eller afsnit." };
+
+    if (coEditors.length) {
+      const actorPercent = normalizeSharePercent(entry.selfSharePercent);
+      if (actorPercent === null) return { success: false as const, error: "Angiv din egen arbejdsandel mellem 0 og 100 procent." };
+      const targetWorkId = targetWorkIds[0];
+      await createWorkRequest({
+        db,
+        workId: targetWorkId,
+        userId: user.id,
+        rightsHolderId: params.rightsHolderId,
+        source: "Mine kontrakter - medklippere",
+        oldData: { contractId: params.contractId, workId: contract.work_id, episodeNumber: entry.episodeNumber ?? null },
+        proposedData: {
+          kind: "co_editors",
+          contractId: params.contractId,
+          episodeNumber: entry.episodeNumber ?? null,
+          coEditors,
+        },
+        comment: "",
+      });
+      await registerShareSuggestions(db, {
+        orgId,
+        workId: isSeries ? seriesParentWorkId ?? contract.work_id : targetWorkId,
+        seasonNumber: isSeries ? seasonNumber : null,
+        episodeNumber: isSeries ? entry.episodeNumber ?? null : null,
+        episodeNumbers: isSeries && entry.episodeNumber ? [entry.episodeNumber] : [],
+        actorUserId: user.id,
+        actorRightsHolderId: params.rightsHolderId,
+        actorRole: normalizeWorkEditorRole(ownAssignment.role ?? context.terminology.default_role_label, context.terminology.default_role_label, context.terminology.coeditor_word),
+        actorPercent,
+        suggestions: coEditors.map(editor => ({ name: editor.name, role: editor.role, rightsHolderId: editor.rightsHolderId })),
+      });
+      coeditorCount++;
+      continue;
+    }
+
+    const { data: allAssignments } = await db.from("work_assignments")
+      .select("work_id, rights_holder_id")
+      .eq("org_id", orgId)
+      .in("work_id", targetWorkIds)
+      .not("rights_holder_id", "is", null);
+    const othersByWork = new Map<string, Set<string>>();
+    for (const assignment of allAssignments ?? []) {
+      if (!assignment.rights_holder_id || assignment.rights_holder_id === params.rightsHolderId) continue;
+      const set = othersByWork.get(assignment.work_id) ?? new Set<string>();
+      set.add(assignment.rights_holder_id);
+      othersByWork.set(assignment.work_id, set);
+    }
+    const now = new Date().toISOString();
+    const updates = targetWorkIds.map(workId => {
+      const conflictCount = othersByWork.get(workId)?.size ?? 0;
+      return {
+        org_id: orgId,
+        rights_holder_id: params.rightsHolderId,
+        work_id: workId,
+        status: collaborationReviewStatusForSoloClaim(conflictCount),
+        source: "member_editor",
+        known_coeditor_count_at_response: conflictCount,
+        reviewed_by_user_id: user.id,
+        reviewed_at: now,
+        dispute_note: conflictCount ? "Medlemmet har oplyst, at værket eller afsnittet blev klippet alene, selv om andre rettighedshavere er registreret." : null,
+        resolved_by_user_id: null,
+        resolved_at: null,
+        updated_at: now,
+      };
+    });
+    const { error } = await db.from("member_work_collaboration_reviews")
+      .upsert(updates, { onConflict: "org_id,rights_holder_id,work_id" });
+    if (error) return { success: false as const, error: error.message };
+    soloCount += updates.length;
+  }
+
+  revalidatePath("/portal");
+  revalidatePath("/portal/mine-kontrakter");
+  revalidatePath("/portal/mine-vaerker");
+  revalidatePath("/admin/vaerker");
+  return { success: true as const, soloCount, coeditorCount };
 }
 
 export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWorkResult, seasonNumber?: number | null) {

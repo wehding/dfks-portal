@@ -1,12 +1,8 @@
-import OpenAI from "openai"
-
 // Google: text-embedding-004 (768 dim) — default
 // syv.ai: multilingual-e5-large-instruct (1024 dim) — via EMBEDDING_PROVIDER=syv
 
-const syvai = new OpenAI({
-    apiKey: process.env.SYV_API_KEY || "none",
-    baseURL: "https://embed.syv.ai/v1",
-})
+const SYV_EMBEDDING_URL = "https://embed.syv.ai/v1/embeddings"
+const SYV_EMBEDDING_MODEL = "intfloat/multilingual-e5-large-instruct"
 
 // Cache syv.ai-status i samme server-instans (nulstilles ved genstart)
 let syvTilgaengelig: boolean | null = null
@@ -14,10 +10,11 @@ let syvTilgaengelig: boolean | null = null
 async function erSyvOppe(): Promise<boolean> {
     if (syvTilgaengelig !== null) return syvTilgaengelig
     try {
-        const res = await fetch("https://embed.syv.ai/v1/embeddings", {
+        const apiKey = process.env.SYV_API_KEY || "none"
+        const res = await fetch(SYV_EMBEDDING_URL, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": "Bearer none" },
-            body: JSON.stringify({ model: "intfloat/multilingual-e5-large-instruct", input: "test" }),
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+            body: JSON.stringify({ model: SYV_EMBEDDING_MODEL, input: "test" }),
             signal: AbortSignal.timeout(3000),
         })
         syvTilgaengelig = res.ok
@@ -64,12 +61,30 @@ async function getGoogleEmbedding(tekst: string): Promise<number[]> {
 }
 
 async function getSyvEmbedding(tekst: string, erVidenbase: boolean): Promise<number[]> {
+    const apiKey = process.env.SYV_API_KEY
+    if (!apiKey) throw new Error("SYV_API_KEY mangler i miljøvariable")
+
     const prefix = erVidenbase
         ? "Represent this Danish legal clause for retrieval: "
         : "Represent this Danish legal contract text for retrieval: "
-    const response = await syvai.embeddings.create({
-        model: "intfloat/multilingual-e5-large-instruct",
-        input: prefix + tekst.slice(0, 8000),
+
+    const res = await fetch(SYV_EMBEDDING_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({
+            model: SYV_EMBEDDING_MODEL,
+            input: prefix + tekst.slice(0, 8000),
+        }),
+        signal: AbortSignal.timeout(30_000),
     })
-    return response.data[0].embedding // 1024 dim
+
+    if (!res.ok) {
+        const err = await res.text()
+        throw new Error(`syv.ai embedding API fejl ${res.status}: ${err}`)
+    }
+
+    const data = await res.json() as { data?: Array<{ embedding?: number[] }> }
+    const embedding = data.data?.[0]?.embedding
+    if (!Array.isArray(embedding)) throw new Error("syv.ai embedding API returnerede ikke en embedding")
+    return embedding // 1024 dim
 }

@@ -18,6 +18,7 @@ import { resolveSeriesScopeTarget, upsertMemberSeriesEpisodeScope } from "@/lib/
 import { auditHeadersContext } from "@/lib/audit-access-server";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
+import { extractWordText } from "@/lib/word-text";
 
 import { requireMemberContext, requireOrgId } from "@/lib/org";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
@@ -33,6 +34,12 @@ type ContractExtractData = {
 };
 
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
+
+function documentExtension(path: string | null | undefined) {
+  const clean = (path ?? "").split("?")[0]?.split("#")[0]?.toLowerCase() ?? "";
+  const match = clean.match(/\.([a-z0-9]+)$/);
+  return match?.[1] ?? "";
+}
 
 async function currentUser() {
   const supabase = await createClient();
@@ -633,6 +640,67 @@ export async function getContractSignedUrl(pdfUrl: string) {
     });
   }
   return { url: data?.signedUrl ?? null };
+}
+
+export async function getContractDocumentPreview(contractId: string) {
+  const user = await currentUser();
+  if (!user) return { kind: "none" as const, error: "Ikke logget ind" };
+  const db = createServiceClient();
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!rh) return { kind: "none" as const, error: "Ingen rettighedshaver-profil" };
+
+  const { data: contract } = await db
+    .from("contracts")
+    .select("id, org_id, rights_holder_id, working_title, pdf_url, processed_pdf_url")
+    .eq("id", contractId)
+    .maybeSingle();
+  if (!contract) return { kind: "none" as const, error: "Kontrakt ikke fundet" };
+  if (contract.rights_holder_id !== rh.id) {
+    const isAdmin = await assertAdminForOrg(db, user.id, contract.org_id);
+    if (!isAdmin) return { kind: "none" as const, error: "Ikke autoriseret" };
+  }
+
+  const path = contract.processed_pdf_url ?? contract.pdf_url;
+  if (!path) return { kind: "none" as const, error: "Kontrakten har ikke et dokument" };
+  const extension = documentExtension(path);
+  const fileName = path.split("/").pop() ?? "kontrakt";
+
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: contract.rights_holder_id === rh.id ? "member" : "admin" }, contract.rights_holder_id === rh.id ? "portal" : "admin", "contracts.document-preview"),
+    action: "read",
+    entityType: "contracts",
+    entityId: contract.id,
+    entityLabel: contract.working_title ?? "Kontraktdokument",
+    targetMemberUuid: contract.rights_holder_id,
+    purposeCode: contract.rights_holder_id === rh.id ? "member_self_service" : "contract_case_management",
+    legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+    dataCategories: ["contract_data", "salary_data"],
+    orgIds: [contract.org_id],
+  });
+
+  if (extension === "pdf") {
+    const { data, error } = await db.storage.from(BUCKET).createSignedUrl(path, 3600, { download: false });
+    if (error || !data?.signedUrl) return { kind: "none" as const, error: "Kunne ikke oprette preview-link" };
+    return { kind: "pdf" as const, url: data.signedUrl, fileName };
+  }
+
+  if (extension === "doc" || extension === "docx") {
+    const { data, error } = await db.storage.from(BUCKET).download(path);
+    if (error || !data) return { kind: "none" as const, error: "Kunne ikke hente Word-dokumentet" };
+    try {
+      const text = await extractWordText(Buffer.from(await data.arrayBuffer()), fileName);
+      return { kind: "word" as const, text, fileName };
+    } catch (error) {
+      console.error("[member-contracts] Word-preview fejlede", error);
+      return { kind: "none" as const, error: "Word-dokumentet kunne ikke vises som tekst" };
+    }
+  }
+
+  return { kind: "unsupported" as const, fileName, error: "Dokumenttypen kan ikke forhåndsvises automatisk" };
 }
 
 export async function deleteMemberContract(contractId: string) {
