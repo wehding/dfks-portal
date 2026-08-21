@@ -9,7 +9,7 @@ import {
     Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff, Pencil,
 } from "lucide-react"
 import { saveFeedback, getTrainingExamples } from "@/lib/ai-feedback"
-import { fetchAftalelicensBatch, fetchScreeningSourceRowsForBatch, fetchWorksAndContractsForMatching } from "@/app/actions/screenings"
+import { fetchAftalelicensBatch, fetchScreeningSourceRowsForBatch, fetchWorksAndContractsForMatching, updateScreeningSourceRowSort } from "@/app/actions/screenings"
 import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -3520,7 +3520,10 @@ export default function AftalelicensDetailPage() {
                 broadcastDate: r.screening_date ?? undefined,
                 duration: r.duration_minutes ?? undefined,
                 productionYear: r.production_year ?? undefined,
-                sortStatus: "pending" as AftalelicensVaerk["sortStatus"],
+                sortStatus: (r.sort_status ?? "pending") as AftalelicensVaerk["sortStatus"],
+                vaerkType: r.vaerk_type as VaerkType ?? undefined,
+                sortedBy: r.sorted_by ?? undefined,
+                sortedAt: r.sorted_at ?? undefined,
                 viewCount: r.view_count ?? undefined,
                 season: r.season ?? undefined,
                 episode: r.episode ?? undefined,
@@ -3555,6 +3558,15 @@ export default function AftalelicensDetailPage() {
     }, [id])
 
     const updateVaerk = (vaerkId: string, patch: Partial<AftalelicensVaerk>) => {
+        // Gem sorterings-/godkendelsesændringer til databasen løbende — erstatter
+        // tidligere ren React-tilstand, der gik tabt ved genindlæsning/logout.
+        if (patch.sortStatus !== undefined || patch.vaerkType !== undefined) {
+            void updateScreeningSourceRowSort(vaerkId, {
+                sortStatus: patch.sortStatus,
+                vaerkType: patch.vaerkType,
+                sortedBy: patch.sortedBy,
+            })
+        }
         setVaerker(prev => {
             const current = prev.find(v => v.id === vaerkId)
             if (current && patch.sortStatus && patch.sortStatus !== current.sortStatus) {

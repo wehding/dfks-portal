@@ -478,7 +478,7 @@ export async function fetchScreeningSourceRowsForBatch(batchKey: string) {
   const db = createServiceClient();
   const { data, error } = await db
     .from("screening_source_rows")
-    .select("id, title, normalized_title, channel, screening_date, duration_minutes, view_count, season, episode, production_year, category, genre, description, production_countries, directors, actors")
+    .select("id, title, normalized_title, channel, screening_date, duration_minutes, view_count, season, episode, production_year, category, genre, description, production_countries, directors, actors, sort_status, vaerk_type, sorted_by, sorted_at")
     .eq("org_id", orgId)
     .eq("batch_key", batchKey)
     .order("screening_date")
@@ -569,4 +569,39 @@ export async function fetchWorksAndContractsForMatching() {
       duration: c.duration ?? undefined, premiereYear: c.premiereYear ?? undefined,
     })),
   };
+}
+
+// ── Sorterings-/godkendelsestilstand ─────────────────────────────────────
+// Gemmer løbende, i takt med hver enkelt godkendelse/afvisning — erstatter
+// tidligere ren React-tilstand, der gik tabt ved genindlæsning/logout.
+
+export async function updateScreeningSourceRowSort(id: string, patch: {
+  sortStatus?: "pending" | "approved" | "rejected" | "flagged";
+  vaerkType?: string;
+  sortedBy?: string;
+}) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const isAdmin = await isUserAdmin(user.id);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin" };
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation" };
+
+  const db = createServiceClient();
+  const update: Record<string, unknown> = { sorted_at: new Date().toISOString() };
+  if (patch.sortStatus !== undefined) update.sort_status = patch.sortStatus;
+  if (patch.vaerkType !== undefined) update.vaerk_type = patch.vaerkType;
+  if (patch.sortedBy !== undefined) update.sorted_by = patch.sortedBy;
+
+  const { error } = await db
+    .from("screening_source_rows")
+    .update(update)
+    .eq("id", id)
+    .eq("org_id", orgId);
+
+  if (error) {
+    console.error("Fejl ved gem af sorteringsstatus:", error);
+    return { success: false, error: error.message };
+  }
+  return { success: true };
 }
