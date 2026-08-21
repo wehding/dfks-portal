@@ -72,6 +72,7 @@ import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import { normalizeCompanyName, type ExternalProductionCompany, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
 import { WorkShareCasePanel } from "@/components/admin/work-share-case-panel";
+import { normalizeWorkEditorRole, resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -425,7 +426,11 @@ function requestStatusLabel(status: string) {
 }
 
 function displayCreditRole(role: string | null | undefined) {
-  return role === "Hovedklipper" ? "Konceptuerende klipper" : role ?? "Klipper";
+  return normalizeWorkEditorRole(role, "Klipper", "Medklipper");
+}
+
+function adminEditorLabel(role: string | null | undefined) {
+  return resolveWorkEditorRelation({ view: "admin", editorCount: 1, storedRole: role }).combinedLabel;
 }
 
 const DIFF_KEYS = [
@@ -2246,7 +2251,7 @@ function VaerksadministrationContent() {
               </div>
               <div className="mt-3 text-xs text-muted-foreground">
                 {isSeason ? `${work.episode_count ?? 0} afsnit · Afsnit med kontrakt: ${work.overview_contract_count ?? 0}` : `DFI: ${work.dfi_id ?? "-"} · TMDB: ${work.tmdb_id ?? "-"} · Kontrakter: ${work.contracts?.length ?? 0}`}
-                {coEditors.length > 0 && <div className="mt-1 line-clamp-2">Medklippere: {coEditors.join(", ")}</div>}
+                {coEditors.length > 0 && <div className="mt-1 line-clamp-2">Klippere: {coEditors.join(", ")}</div>}
               </div>
             </MobileDataCard>
             {isSeason && isExpanded && (
@@ -2259,7 +2264,7 @@ function VaerksadministrationContent() {
                   </div>
                 )}
                 {episodes.map(episode => {
-                  const names = (episode.work_assignments ?? []).map(a => `${a.rettighedshavere?.full_name ?? "Ukendt"} (${displayCreditRole(a.role)})`);
+                  const names = (episode.work_assignments ?? []).map(a => `${a.rettighedshavere?.full_name ?? "Ukendt"} (${adminEditorLabel(a.role)})`);
                   return (
                     <button key={episode.id} type="button" onClick={() => openEdit(episode)} className="block w-full rounded-lg border bg-background p-3 text-left hover:bg-muted/50">
                       <div className="flex items-center justify-between gap-2">
@@ -2358,7 +2363,7 @@ function VaerksadministrationContent() {
                       const coEditors = [...new Set((work.work_assignments ?? [])
                         .map(a => a.rettighedshavere?.full_name)
                         .filter((name): name is string => Boolean(name)))];
-                      return coEditors.length > 0 ? <div>Medklippere: {coEditors.join(", ")}</div> : null;
+                      return coEditors.length > 0 ? <div>Klippere: {coEditors.join(", ")}</div> : null;
                     })()}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
@@ -2388,7 +2393,7 @@ function VaerksadministrationContent() {
                 )}
                 {isSeason && isExpanded && episodes.map(episode => {
                   const episodeStatus = displayStatus(episode);
-                  const episodeNames = (episode.work_assignments ?? []).map(a => `${a.rettighedshavere?.full_name ?? "Ukendt"} (${displayCreditRole(a.role)})`);
+                  const episodeNames = (episode.work_assignments ?? []).map(a => `${a.rettighedshavere?.full_name ?? "Ukendt"} (${adminEditorLabel(a.role)})`);
                   return (
                     <TableRow key={episode.id} className="bg-muted/20">
                       <TableCell className="pl-8"><input type="checkbox" checked={selectedIds.includes(episode.id)} onChange={() => toggleSelected(episode.id)} className="h-4 w-4" aria-label={`Vælg ${episode.title}`} /></TableCell>
@@ -2728,7 +2733,7 @@ function VaerksadministrationContent() {
                       {Object.keys(seasonCreditDrafts).length === 0 && <p className="text-sm text-muted-foreground">Ingen rettighedshavere er knyttet til sæsonen.</p>}
                     </div>
                     <div className="grid gap-3 rounded-md border border-dashed p-3 sm:grid-cols-[minmax(220px,1fr)_180px_auto] sm:items-end">
-                      <Field label="Tilføj klipper eller medklipper">
+                      <Field label="Tilføj klipper">
                         <RightsHolderAutocomplete value={newAssignment.rightsHolderId} onChange={rightsHolderId => setNewAssignment(previous => ({ ...previous, rightsHolderId }))} options={rightsHolders.filter(holder => !seasonCreditDrafts[holder.id])} />
                       </Field>
                       <Field label="Kreditering">

@@ -12,7 +12,7 @@ const READ: StaffModulePermission = { read: true, write: false, validate: false,
 const WRITE: StaffModulePermission = { read: true, write: true, validate: true, delete: false };
 const FULL: StaffModulePermission = { read: true, write: true, validate: true, delete: true };
 
-function modulePermissions(role: StaffRole): Record<StaffModule, StaffModulePermission> {
+export function staffModulePermissions(role: StaffRole): Record<StaffModule, StaffModulePermission> {
   const all = role === "superadmin" || role === "admin" || role === "org-admin";
   const legal = role === "jurist";
   const viewer = role === "viewer";
@@ -72,6 +72,6 @@ export async function resolveStaffAccess(db: SupabaseClient, requestedOrgId?: st
     allowedOrgIds,
     activeOrgId,
     activeRole,
-    modules: modulePermissions(activeRole),
+    modules: staffModulePermissions(activeRole),
   };
 }

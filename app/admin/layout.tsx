@@ -171,7 +171,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         const loadContextAndCounts = async () => {
             setContextError(null)
-            const contextResponse = await fetch("/api/admin/context", { cache: "no-store" })
+            const contextResponse = await fetch("/api/access/context", { cache: "no-store" })
             if (!contextResponse.ok) {
                 setUserRole(null)
                 setContextError("Menuen kunne ikke indlæses")
@@ -179,13 +179,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             }
             const context = await contextResponse.json() as {
                 orgId: string
-                role: string
-                isAssociationMember: boolean
+                role: string | null
+                canUseAdmin: boolean
+                canUseMember: boolean
                 brand: { logo_url: string | null; short_name: string }
                 organisations: Array<{ id: string; name: string }>
             }
+            if (!context.canUseAdmin || !context.role) {
+                router.replace(context.canUseMember ? "/portal" : "/")
+                return
+            }
             setUserRole(context.role)
-            setIsAssociationMember(context.isAssociationMember)
+            setIsAssociationMember(context.canUseMember)
             setBrand(context.brand)
             setActiveOrgId(context.orgId)
             setOrganisations(context.organisations ?? [])
@@ -217,7 +222,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             window.removeEventListener("works-updated", loadContextAndCounts)
             window.removeEventListener("admin-context-updated", loadContextAndCounts)
         }
-    }, [contextReload])
+    }, [contextReload, router])
 
     const setupRouteActive = SETUP_NAV_ITEMS.some(item => pathname === item.href || pathname.startsWith(`${item.href}/`))
 
@@ -229,15 +234,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
 
     const handleOrganisationChange = async (orgId: string) => {
-        const response = await fetch("/api/admin/context", {
+        const response = await fetch("/api/access/context", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ orgId }),
         })
         if (!response.ok) return
+        const result = await response.json() as { canUseAdmin?: boolean; canUseMember?: boolean }
         setActiveOrgId(orgId)
         window.dispatchEvent(new Event("admin-context-updated"))
-        router.refresh()
+        if (!result.canUseAdmin && result.canUseMember) router.replace("/portal")
+        else router.refresh()
     }
 
     const allowedKeys = userRole ? (ROLE_MODULES[userRole] ?? []) : []

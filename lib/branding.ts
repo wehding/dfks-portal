@@ -40,12 +40,19 @@ export function resolveBranding(org: Pick<DbOrganisation, "name" | "branding"> |
 
 export function resolveTerminology(org: Pick<DbOrganisation, "terminology"> | null): Required<OrgTerminology> {
   const t = org?.terminology ?? {};
-  const roleLabels = t.role_labels && t.role_labels.length ? t.role_labels : DEFAULT_TERMINOLOGY.role_labels;
+  const coeditorWord = t.coeditor_word ?? DEFAULT_TERMINOLOGY.coeditor_word;
+  const configuredRoleLabels = t.role_labels && t.role_labels.length ? t.role_labels : DEFAULT_TERMINOLOGY.role_labels;
+  const roleLabels = configuredRoleLabels.filter(label => {
+    const normalized = label.trim();
+    return normalized.localeCompare("Medklipper", "da", { sensitivity: "base" }) !== 0
+      && normalized.localeCompare(coeditorWord, "da", { sensitivity: "base" }) !== 0;
+  });
+  const selectableRoleLabels = roleLabels.length ? roleLabels : DEFAULT_TERMINOLOGY.role_labels;
   return {
     member_word: t.member_word ?? DEFAULT_TERMINOLOGY.member_word,
-    coeditor_word: t.coeditor_word ?? DEFAULT_TERMINOLOGY.coeditor_word,
-    role_labels: roleLabels,
-    default_role_label: resolveDefaultRoleLabel(roleLabels, t.default_role_label),
+    coeditor_word: coeditorWord,
+    role_labels: selectableRoleLabels,
+    default_role_label: resolveDefaultRoleLabel(selectableRoleLabels, t.default_role_label),
     onboarding_keywords: t.onboarding_keywords && t.onboarding_keywords.length ? t.onboarding_keywords : DEFAULT_TERMINOLOGY.onboarding_keywords,
   };
 }

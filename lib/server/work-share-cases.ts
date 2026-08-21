@@ -4,6 +4,7 @@ import type { createServiceClient } from "@/lib/supabase/service";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { normalizeSharePercent, type ShareScope } from "@/lib/work-share-distribution";
 import { markCollaborationReviewsCoeditorsReported } from "@/lib/server/work-collaboration-reviews";
+import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
 
@@ -97,7 +98,7 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
     org_id: params.orgId,
     work_id: params.workId,
     rights_holder_id: params.actorRightsHolderId,
-    role: params.actorRole,
+    role: normalizeWorkEditorRole(params.actorRole),
     relationship_status: "confirmed",
     response_scope: shareCase.resolution_scope,
     proposed_percent: actorPercent,
@@ -116,7 +117,7 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
         work_id: params.workId,
         rights_holder_id: suggestion.rightsHolderId,
         proposed_name: name,
-        role: suggestion.role || "Klipper",
+        role: normalizeWorkEditorRole(suggestion.role || "Klipper"),
         relationship_status: "pending",
         invited_by_rights_holder_id: params.actorRightsHolderId,
         updated_at: new Date().toISOString(),
@@ -140,7 +141,7 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
         org_id: params.orgId,
         work_id: params.workId,
         proposed_name: name,
-        role: suggestion.role || "Klipper",
+        role: normalizeWorkEditorRole(suggestion.role || "Klipper"),
         relationship_status: "pending_match",
         invited_by_rights_holder_id: params.actorRightsHolderId,
       });
