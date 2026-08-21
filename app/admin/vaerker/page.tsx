@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -46,7 +46,7 @@ import {
   fetchAdminSeasonEpisodes,
   fetchAdminRightsHolders,
   addAdminWorkRequestComment,
-  fetchAdminWorksForReview,
+  fetchAdminWorksPage,
   markAdminWorkMessagesReadByWorkIds,
   markWorkRequestCommentsRead,
   mergeAdminWorks,
@@ -398,18 +398,6 @@ function displayStatus(work: WorkRow) {
   if (hasPendingRequest(work) || work.status === "til_godkendelse") return "til_godkendelse";
   if (work.status === "aktiv") return "godkendt";
   return work.status;
-}
-
-function statusSortValue(work: WorkRow) {
-  const status = displayStatus(work);
-  const rank: Record<string, number> = {
-    til_godkendelse: 0,
-    godkendt: 1,
-    aktiv: 1,
-    afsluttet: 2,
-    arkiveret: 3,
-  };
-  return `${rank[status] ?? 9}-${STATUS_LABELS[status] ?? status}`;
 }
 
 function requestKindLabel(request: ChangeRequest) {
@@ -768,6 +756,10 @@ function VaerksadministrationContent() {
   const [filterConnection, setFilterConnection] = useState("all");
   const [filterMissingConnection, setFilterMissingConnection] = useState("none");
   const [pageSize, setPageSize] = useState(20);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalAllCount, setTotalAllCount] = useState(0);
+  const [serverStats, setServerStats] = useState({ total: 0, withContract: 0, missingContract: 0 });
   const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -832,6 +824,7 @@ function VaerksadministrationContent() {
   const { activeRh, setActiveRh } = useActiveRightsHolder();
   const [activeTab, setActiveTab] = useState<"oversigt" | "beskeder">("oversigt");
   const [beskedCount, setBeskedCount] = useState<number>(0);
+  const lookupsLoadedRef = useRef(false);
 
   useEffect(() => {
     async function fetchBeskedCount() {
@@ -844,33 +837,49 @@ function VaerksadministrationContent() {
     return () => window.removeEventListener("works-updated", reload);
   }, []);
 
-  const load = async () => {
+  const load = useCallback(async (page = currentPage) => {
     setLoading(true);
     try {
-      const res = await fetchAdminWorksForReview();
-      if (res.success) setWorks(res.works as unknown as WorkRow[]);
-
-      try {
-        const rightsRes = await fetchAdminRightsHolders();
-        if (rightsRes.success) setRightsHolders(rightsRes.rightsHolders as RightsHolder[]);
-      } catch (rightsErr: unknown) {
-        setRightsHolders([]);
-        setNotice(errorMessage(rightsErr, "Kunne ikke hente rettighedshavere, men værkerne er indlæst."));
+      const res = await fetchAdminWorksPage({
+        page,
+        pageSize,
+        search,
+        status: filterStatus,
+        type: filterType,
+        connection: filterConnection,
+        missingConnection: filterMissingConnection,
+        rightsHolderId: activeRh?.id ?? null,
+        sortKey,
+        sortDir,
+      });
+      if (res.success) {
+        setWorks(res.works as unknown as WorkRow[]);
+        setTotalCount(res.totalCount ?? 0);
+        setTotalAllCount(res.totalAllCount ?? res.totalCount ?? 0);
+        setServerStats(res.stats ?? { total: res.totalAllCount ?? res.totalCount ?? 0, withContract: 0, missingContract: 0 });
       }
-      try {
-        const broadcastersRes = await fetchAdminBroadcasters();
-        if (broadcastersRes.success && broadcastersRes.broadcasters.length > 0) {
-          setBroadcasterOptions(broadcastersRes.broadcasters as BroadcasterOption[]);
+
+      if (!lookupsLoadedRef.current) {
+        try {
+          const [rightsRes, broadcastersRes] = await Promise.all([
+            fetchAdminRightsHolders(),
+            fetchAdminBroadcasters(),
+          ]);
+          if (rightsRes.success) setRightsHolders(rightsRes.rightsHolders as RightsHolder[]);
+          if (broadcastersRes.success && broadcastersRes.broadcasters.length > 0) {
+            setBroadcasterOptions(broadcastersRes.broadcasters as BroadcasterOption[]);
+          }
+          lookupsLoadedRef.current = true;
+        } catch (lookupErr: unknown) {
+          setNotice(errorMessage(lookupErr, "Kunne ikke hente opslagslister, men værkerne er indlæst."));
         }
-      } catch (broadcastersErr: unknown) {
-        setNotice(errorMessage(broadcastersErr, "Kunne ikke hente broadcaster-listen fra databasen."));
       }
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke hente værker."));
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeRh?.id, currentPage, filterConnection, filterMissingConnection, filterStatus, filterType, pageSize, search, sortDir, sortKey]);
 
   const handlePreviewEnrichment = async () => {
     setEnrichmentOpen(true);
@@ -928,8 +937,16 @@ function VaerksadministrationContent() {
   }, [editingSeasonGroup, editing, addOpen]);
 
   useEffect(() => {
-    load();
-  }, []);
+    const timeout = window.setTimeout(() => {
+      void load(currentPage);
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [currentPage, load]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setSelectedIds([]);
+  }, [activeRh?.id, filterConnection, filterMissingConnection, filterStatus, filterType, pageSize, search, sortDir, sortKey]);
 
   useEffect(() => {
     const requestedStatus = searchParams.get("status");
@@ -1008,65 +1025,13 @@ function VaerksadministrationContent() {
   }, [broadcasterOptions]);
 
   const filtered = useMemo(() => {
-    let list = [...works];
-    if (activeRh) list = list.filter(work =>
-      work.work_assignments?.some(assignment => assignment.rettighedshavere?.id === activeRh.id)
-    );
-    if (filterStatus === "beskeder") list = list.filter(work => unreadMemberMessageCount(work) > 0);
-    else if (filterStatus !== "all") list = list.filter(work => displayStatus(work) === filterStatus);
-    if (filterType !== "all") list = list.filter(work => work.type === filterType);
-    if (filterConnection === "dfi") list = list.filter(work => Boolean(work.dfi_id));
-    else if (filterConnection === "tmdb") list = list.filter(work => Boolean(work.tmdb_id));
-    else if (filterConnection === "imdb") list = list.filter(work => Boolean(work.imdb_id));
-    else if (filterConnection === "local") list = list.filter(work => !work.dfi_id && !work.tmdb_id && !work.imdb_id);
-    if (filterMissingConnection === "dfi") list = list.filter(work => !work.dfi_id);
-    else if (filterMissingConnection === "tmdb") list = list.filter(work => !work.tmdb_id);
-    else if (filterMissingConnection === "imdb") list = list.filter(work => !work.imdb_id);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(work =>
-        work.title?.toLowerCase().includes(q) ||
-        work.type?.toLowerCase().includes(q) ||
-        String(work.year ?? "").includes(q) ||
-        work.dfi_id?.toLowerCase().includes(q) ||
-        String(work.tmdb_id ?? "").includes(q) ||
-        (getWorkBroadcaster(work) ?? "").toLowerCase().includes(q) ||
-        work.work_assignments?.some(assignment =>
-          assignment.rettighedshavere?.full_name?.toLowerCase().includes(q)
-        )
-      );
-    }
-    list.sort((a, b) => {
-      const direction = sortDir === "asc" ? 1 : -1;
-      if (sortKey === "year") return ((a.year ?? 0) - (b.year ?? 0)) * direction;
-
-      const values: Record<Exclude<SortKey, "year">, [string, string]> = {
-        title: [a.title ?? "", b.title ?? ""],
-        type: [workTypeLabel(a.type), workTypeLabel(b.type)],
-        data: [
-          `${a.dfi_id ?? ""} ${a.tmdb_id ?? ""} ${a.duration_minutes ?? ""} ${a.season_count ?? ""} ${a.episode_count ?? ""}`,
-          `${b.dfi_id ?? ""} ${b.tmdb_id ?? ""} ${b.duration_minutes ?? ""} ${b.season_count ?? ""} ${b.episode_count ?? ""}`,
-        ],
-        broadcaster: [getWorkBroadcaster(a) ?? "", getWorkBroadcaster(b) ?? ""],
-        status: [statusSortValue(a), statusSortValue(b)],
-      };
-      const [left, right] = values[sortKey];
-      return left.localeCompare(right, "da-DK", { numeric: true, sensitivity: "base" }) * direction;
-    });
-    return list;
-  }, [works, activeRh, filterStatus, filterType, filterConnection, filterMissingConnection, search, sortKey, sortDir]);
-  const visibleWorks = filtered.slice(0, pageSize);
+    return works;
+  }, [works]);
+  const visibleWorks = filtered;
 
   const stats = useMemo(() => {
-    const activeWorks = works.filter(work => displayStatus(work) !== "arkiveret");
-    const total = activeWorks.reduce((sum, work) => sum + (work.is_season_group ? work.episode_count ?? 0 : 1), 0);
-    const withContract = activeWorks.reduce((sum, work) => sum + (work.is_season_group ? work.overview_contract_count ?? 0 : (work.contracts ?? []).length > 0 ? 1 : 0), 0);
-    return {
-      total,
-      withContract,
-      missingContract: Math.max(total - withContract, 0),
-    };
-  }, [works]);
+    return serverStats;
+  }, [serverStats]);
 
   const selectionIdsForWork = (work: WorkRow) => work.is_season_group ? work.child_work_ids ?? [] : [work.id];
   const selectedWorks = useMemo(
@@ -1480,11 +1445,10 @@ function VaerksadministrationContent() {
       });
       setNotice(decision === "approved" ? "Rettelsen er godkendt." : "Rettelsen er afvist.");
       setAdminComment("");
-      const res = await fetchAdminWorksForReview();
-      if (res.success) {
-        const freshWorks = res.works as unknown as WorkRow[];
-        setWorks(freshWorks);
-        const updatedEditing = freshWorks.find(work => work.id === editingWorkId) ?? null;
+      await load();
+      if (editingWorkId) {
+        const detail = await fetchAdminWorkDetail(editingWorkId);
+        const updatedEditing = detail.success ? detail.work as WorkRow : null;
         if (decision !== "approved" && updatedEditing) {
           setEditing(updatedEditing);
           setEditForm(toForm(updatedEditing));
@@ -1520,12 +1484,10 @@ function VaerksadministrationContent() {
     try {
       await addAdminWorkRequestComment({ requestId: activeRequestId, message: adminComment });
       setAdminComment("");
-      const res = await fetchAdminWorksForReview();
-      if (res.success) {
-        const freshWorks = res.works as unknown as WorkRow[];
-        setWorks(freshWorks);
-        const updatedEditing = freshWorks.find(work => work.id === editingWorkId) ?? null;
-        if (updatedEditing) setEditing(updatedEditing);
+      await load();
+      if (editingWorkId) {
+        const detail = await fetchAdminWorkDetail(editingWorkId);
+        if (detail.success && detail.work) setEditing(detail.work as WorkRow);
       }
       setNotice("Svar sendt til bruger.");
       notifyWorksUpdated();
@@ -2118,7 +2080,7 @@ function VaerksadministrationContent() {
         <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
         <ResetFiltersButton
           active={Boolean(search || filterStatus !== "all" || filterType !== "all" || filterConnection !== "all" || filterMissingConnection !== "none" || activeRh)}
-          onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterConnection("all"); setFilterMissingConnection("none"); setActiveRh(null); setSelectedIds([]); setPageSize(20); }}
+          onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterConnection("all"); setFilterMissingConnection("none"); setActiveRh(null); setSelectedIds([]); setPageSize(20); setCurrentPage(1); }}
         />
         <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
           <Search className="h-4 w-4" />
@@ -2154,7 +2116,18 @@ function VaerksadministrationContent() {
         )}
       </div>
 
-      <ListResultSummary filteredCount={filtered.length} totalCount={works.length} selectedCount={selectedIds.length} />
+      <ListResultSummary filteredCount={totalCount} totalCount={totalAllCount} selectedCount={selectedIds.length} loading={loading} />
+      {totalCount > pageSize && (
+        <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-muted-foreground">
+          <span>Side {currentPage} af {Math.max(1, Math.ceil(totalCount / pageSize))}</span>
+          <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1 || loading} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}>
+            Forrige
+          </Button>
+          <Button type="button" variant="outline" size="sm" disabled={currentPage >= Math.ceil(totalCount / pageSize) || loading} onClick={() => setCurrentPage(page => page + 1)}>
+            Næste
+          </Button>
+        </div>
+      )}
 
       {selectedIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
