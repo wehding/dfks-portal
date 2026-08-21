@@ -3,9 +3,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { errorMessage } from "@/lib/error-message";
 import React, { useMemo, useState, useEffect } from "react";
-import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Sparkles, Link as LinkIcon, History } from "lucide-react";
-import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, fetchMemberContractsList, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
-import { addManualWorkAndLinkContract, fetchMemberSeriesEpisodeOptions, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Sparkles, Link as LinkIcon, History, Plus } from "lucide-react";
+import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, fetchMemberContractsList, getContractDocumentPreview, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
+import { addManualWorkAndLinkContract, fetchMemberSeriesEpisodeOptions, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, submitContractCollaborationReview, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
 import { retryMemberAttachmentAnalysis } from "@/app/actions/member-attachments";
 import { confirmContractEpisodes } from "@/app/actions/contract-episode-confirmations";
@@ -34,6 +34,7 @@ import { SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 import { ListResultSummary } from "@/components/list-result-summary";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
+const COLLABORATION_ROLES = ["Klipper", "Film Editor", "Klippeassistent", "Dramaturg", "Klipper/Instruktør"];
 
 type Validation = { has_credit_clause: boolean | null; has_overenskomst_incorporation: boolean | null; notes: string | null; extracted_data?: Record<string, unknown> | null; validated_at?: string | null } | null;
 type Attachment = { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string; ai_status?: "analyserer" | "klar" | "fejl" | null; ai_result?: Record<string, unknown> | null };
@@ -60,6 +61,27 @@ export type Contract = {
   contract_validations: Validation[] | Validation;
   contract_attachments: Attachment[];
   contract_comments: ContractComment[];
+};
+
+type DocumentPreview =
+  | { kind: "pdf"; url: string; fileName?: string | null }
+  | { kind: "word"; text: string; fileName?: string | null }
+  | { kind: "unsupported"; fileName?: string | null; error?: string | null };
+
+type CollaborationCoEditor = {
+  id: string;
+  name: string;
+  role: string;
+};
+
+type CollaborationEntry = {
+  key: string;
+  episodeNumber: number | null;
+  title: string;
+  soloConfirmed: boolean;
+  coEditors: CollaborationCoEditor[];
+  selfSharePercent: string;
+  percentTouched: boolean;
 };
 
 const STATUS_MAP: Record<string, { label: string; bg: string; color: string }> = {
@@ -153,6 +175,34 @@ function normalizeContract(contract: Contract): Contract {
   };
 }
 
+function newLocalId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function suggestedSelfSharePercent(coEditorCount: number) {
+  if (coEditorCount <= 0) return "";
+  const value = Math.round((100 / (coEditorCount + 1)) * 100) / 100;
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+function parsePercentInput(value: string) {
+  const parsed = Number(value.replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function contractDocumentPath(contract: Contract | null) {
+  return contract?.processed_pdf_url ?? contract?.pdf_url ?? null;
+}
+
+function pathExtension(path: string | null | undefined) {
+  const clean = (path ?? "").split("?")[0]?.split("#")[0]?.toLowerCase() ?? "";
+  return clean.match(/\.([a-z0-9]+)$/)?.[1] ?? "";
+}
+
+function collaborationKey(episodeNumber: number | null, workId: string | null | undefined) {
+  return episodeNumber ? `episode:${episodeNumber}` : `work:${workId ?? "none"}`;
+}
+
 function contractMessages(comments: ContractComment[]): MessageThreadMessage[] {
   return comments.map(comment => ({
     id: comment.id,
@@ -211,6 +261,7 @@ export default function MineKontrakterClient({
   const [msg, setMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
   const [viewUrl, setViewUrl] = useState<string | null>(null);
+  const [documentPreview, setDocumentPreview] = useState<DocumentPreview | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
   const [contractVersions, setContractVersions] = useState<ContractVersion[]>([]);
   const [workSearch, setWorkSearch] = useState("");
@@ -232,6 +283,8 @@ export default function MineKontrakterClient({
   const [episodesLoading, setEpisodesLoading] = useState(false);
   const [episodesError, setEpisodesError] = useState<string | null>(null);
   const [editingLinkedEpisodes, setEditingLinkedEpisodes] = useState(false);
+  const [collaborationEntries, setCollaborationEntries] = useState<Record<string, CollaborationEntry>>({});
+  const [collaborationSaving, setCollaborationSaving] = useState(false);
 
   useEffect(() => {
     if (!selectedContract) return;
@@ -239,6 +292,64 @@ export default function MineKontrakterClient({
     setSelectedEpisodes(selectedContract.episode_numbers ?? []);
     setEditingLinkedEpisodes(false);
   }, [selectedContract]);
+
+  const selectedContractIsSeries = Boolean(selectedContract?.works?.type && String(selectedContract.works.type).toLowerCase().includes("serie"));
+  const completeLinkedEpisodeOptions = useMemo(() => buildCompleteEpisodeOptions({
+    episodeCount: detectedEpisodeCount ?? episodeOptions.length,
+    externalOptions: episodeOptions,
+    seasonNumber: Number(addSeason) || 1,
+  }), [addSeason, detectedEpisodeCount, episodeOptions]);
+  const collaborationTargets = useMemo(() => {
+    if (!selectedContract?.work_id) return [];
+    if (!selectedContractIsSeries) {
+      return [{
+        key: collaborationKey(null, selectedContract.work_id),
+        episodeNumber: null,
+        title: formatContractWorkTitle(selectedContract),
+      }];
+    }
+    return selectedEpisodes.map(number => {
+      const option = completeLinkedEpisodeOptions.find(item => item.number === number);
+      const title = option?.title?.trim()
+        ? `Afsnit ${number} - ${option.title.trim()}`
+        : `Afsnit ${number}`;
+      return {
+        key: collaborationKey(number, selectedContract.work_id),
+        episodeNumber: number,
+        title,
+      };
+    });
+  }, [completeLinkedEpisodeOptions, selectedContract, selectedContractIsSeries, selectedEpisodes]);
+
+  useEffect(() => {
+    if (!selectedContract?.work_id) {
+      setCollaborationEntries({});
+      return;
+    }
+    setCollaborationEntries(previous => {
+      const next: Record<string, CollaborationEntry> = {};
+      for (const target of collaborationTargets) {
+        next[target.key] = previous[target.key] ?? {
+          key: target.key,
+          episodeNumber: target.episodeNumber,
+          title: target.title,
+          soloConfirmed: false,
+          coEditors: [],
+          selfSharePercent: "",
+          percentTouched: false,
+        };
+        next[target.key] = { ...next[target.key], title: target.title, episodeNumber: target.episodeNumber };
+      }
+      return next;
+    });
+  }, [collaborationTargets, selectedContract?.work_id]);
+
+  useEffect(() => {
+    if (!selectedContract?.work_id || !selectedContractIsSeries || episodeOptions.length || episodesLoading) return;
+    void loadLinkedEpisodeOptions(Number(selectedContract.season_number) || 1);
+    // loadLinkedEpisodeOptions reads current selectedContract intentionally.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedContract?.id, selectedContract?.work_id, selectedContractIsSeries]);
 
   async function loadLinkedEpisodeOptions(requestedSeason?: number) {
     if (!selectedContract?.work_id) return;
@@ -288,6 +399,104 @@ export default function MineKontrakterClient({
     setContracts(previous => previous.map(contract => contract.id === updated.id ? updated : contract));
     setEditingLinkedEpisodes(false);
     toast.success("Værk og afsnit er opdateret");
+  }
+
+  function updateCollaborationEntry(key: string, updater: (entry: CollaborationEntry) => CollaborationEntry) {
+    setCollaborationEntries(previous => {
+      const current = previous[key];
+      if (!current) return previous;
+      return { ...previous, [key]: updater(current) };
+    });
+  }
+
+  function addCollaborationCoEditor(key: string) {
+    updateCollaborationEntry(key, entry => {
+      const coEditors = [...entry.coEditors, { id: newLocalId(), name: "", role: "Klipper" }];
+      return {
+        ...entry,
+        soloConfirmed: false,
+        coEditors,
+        selfSharePercent: entry.percentTouched ? entry.selfSharePercent : suggestedSelfSharePercent(coEditors.length),
+      };
+    });
+  }
+
+  function updateCollaborationCoEditor(key: string, editorId: string, patch: Partial<CollaborationCoEditor>) {
+    updateCollaborationEntry(key, entry => ({
+      ...entry,
+      coEditors: entry.coEditors.map(editor => editor.id === editorId ? { ...editor, ...patch } : editor),
+    }));
+  }
+
+  function removeCollaborationCoEditor(key: string, editorId: string) {
+    updateCollaborationEntry(key, entry => {
+      const coEditors = entry.coEditors.filter(editor => editor.id !== editorId);
+      return {
+        ...entry,
+        coEditors,
+        selfSharePercent: entry.percentTouched ? entry.selfSharePercent : suggestedSelfSharePercent(coEditors.length),
+      };
+    });
+  }
+
+  function setCollaborationSolo(key: string, checked: boolean) {
+    updateCollaborationEntry(key, entry => checked ? { ...entry, soloConfirmed: true, coEditors: [], selfSharePercent: "", percentTouched: false } : { ...entry, soloConfirmed: false });
+  }
+
+  async function handleSaveCollaboration() {
+    if (!selectedContract?.work_id) return;
+    const rows = collaborationTargets.map(target => collaborationEntries[target.key]).filter(Boolean);
+    if (!rows.length) {
+      toast.error(selectedContractIsSeries ? "Vælg mindst ét afsnit først." : "Værket mangler.");
+      return;
+    }
+    for (const row of rows) {
+      const coEditors = row.coEditors.filter(editor => editor.name.trim());
+      if (!coEditors.length && !row.soloConfirmed) {
+        toast.error(`Bekræft solo eller tilføj medklipper for ${row.title}.`);
+        return;
+      }
+      if (coEditors.length && parsePercentInput(row.selfSharePercent) === null) {
+        toast.error(`Angiv din egen foreløbige procent for ${row.title}.`);
+        return;
+      }
+    }
+
+    setCollaborationSaving(true);
+    try {
+      if (selectedContractIsSeries) {
+        const completeOptions = completeLinkedEpisodeOptions;
+        const entireSeason = completeOptions.length > 0 && completeOptions.every(option => selectedEpisodes.includes(option.number));
+        const confirmation = await confirmContractEpisodes({
+          contractId: selectedContract.id,
+          seasonNumber: Number(addSeason) || 1,
+          episodeNumbers: selectedEpisodes,
+          entireSeason,
+        });
+        if (!confirmation.success) throw new Error(confirmation.error ?? "Afsnitsvalget kunne ikke gemmes");
+      }
+      const result = await submitContractCollaborationReview({
+        rightsHolderId,
+        contractId: selectedContract.id,
+        workId: selectedContract.work_id,
+        seasonNumber: selectedContractIsSeries ? Number(addSeason) || 1 : null,
+        entries: rows.map(row => ({
+          episodeNumber: row.episodeNumber,
+          soloConfirmed: row.soloConfirmed,
+          selfSharePercent: parsePercentInput(row.selfSharePercent),
+          coEditors: row.coEditors
+            .filter(editor => editor.name.trim())
+            .map(editor => ({ name: editor.name, role: editor.role })),
+        })),
+      });
+      if (!result.success) throw new Error(result.error ?? "Medklipperoplysningerne kunne ikke gemmes");
+      toast.success("Solo/medklipperoplysninger er gemt.");
+      setMsg({ type: "success", text: "Solo/medklipperoplysninger er gemt." });
+    } catch (error) {
+      toast.error(errorMessage(error) || "Oplysningerne kunne ikke gemmes.");
+    } finally {
+      setCollaborationSaving(false);
+    }
   }
 
   // Live polling for at opdatere titler og status på nyligt uploadede kontrakter i baggrunden
@@ -604,6 +813,11 @@ export default function MineKontrakterClient({
     setManualWorkMatches([]);
     setManualLinkRetry(null);
     setViewUrl(null);
+    setDocumentPreview(null);
+    setEpisodeOptions([]);
+    setDetectedEpisodeCount(null);
+    setEpisodesError(null);
+    setCollaborationEntries({});
     setContractVersions([]);
     void fetch(`/api/portal/contracts/${contract.id}/versions`, { cache: "no-store" })
       .then(response => response.ok ? response.json() : null)
@@ -616,20 +830,34 @@ export default function MineKontrakterClient({
       setContracts(prev => prev.map(c => c.id === contract.id ? normalized : c));
     }
     void markCommentsRead(normalized);
-    const pdfUrl = normalized.processed_pdf_url ?? normalized.pdf_url ?? contract.processed_pdf_url ?? contract.pdf_url;
-    if (!pdfUrl) return;
     setViewLoading(true);
-    const res = await getContractSignedUrl(pdfUrl);
-    setViewUrl(res.url ?? null);
-    setViewLoading(false);
+    try {
+      const preview = await getContractDocumentPreview(contract.id);
+      if (preview.kind === "pdf") {
+        setViewUrl(preview.url);
+        setDocumentPreview(preview);
+      } else if (preview.kind === "word" || preview.kind === "unsupported") {
+        setDocumentPreview(preview);
+      } else if (preview.error) {
+        setDocumentPreview({ kind: "unsupported", error: preview.error });
+      }
+    } finally {
+      setViewLoading(false);
+    }
   }
 
   async function openContractVersion(version: ContractVersion) {
     const path = version.processed_pdf_url ?? version.pdf_url;
     if (!path) return;
+    if (pathExtension(path) !== "pdf") {
+      setViewUrl(null);
+      setDocumentPreview({ kind: "unsupported", fileName: path.split("/").pop(), error: "Denne version kan kun åbnes manuelt, hvis filen ikke er PDF." });
+      return;
+    }
     setViewLoading(true);
     const result = await getContractSignedUrl(path);
     setViewUrl(result.url ?? null);
+    setDocumentPreview(result.url ? { kind: "pdf", url: result.url, fileName: path.split("/").pop() } : null);
     setViewLoading(false);
   }
 
@@ -967,6 +1195,19 @@ export default function MineKontrakterClient({
     if (res.url) window.open(res.url, "_blank");
   }
 
+  async function openOriginalContractDocument() {
+    const path = contractDocumentPath(selectedContract);
+    if (!path) return;
+    setViewLoading(true);
+    const res = await getContractSignedUrl(path);
+    setViewLoading(false);
+    if (res.url) window.open(res.url, "_blank", "noopener,noreferrer");
+    else toast.error(res.error ?? "Dokumentet kunne ikke åbnes.");
+  }
+
+  const hasDocumentPreview = Boolean(viewUrl || documentPreview?.kind === "word");
+  const selectedDocumentPath = contractDocumentPath(selectedContract);
+
   return (
     <div className={editorOnly ? "contents [&>:not(.member-contract-editor-overlay)]:hidden" : "flex flex-col gap-6"}>
 
@@ -1243,17 +1484,26 @@ export default function MineKontrakterClient({
           className="member-contract-editor-overlay fixed inset-0 bg-black/40 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6"
           onClick={e => { if (e.target === e.currentTarget) closeContractEditor(); }}
         >
-          <div className={`bg-background text-foreground rounded-t-xl border flex max-h-[96svh] w-full overflow-hidden sm:rounded-xl sm:max-h-[90vh] ${viewUrl ? "max-w-5xl" : "max-w-md"}`}>
+          <div className={`bg-background text-foreground rounded-t-xl border flex max-h-[96svh] w-full overflow-hidden sm:rounded-xl sm:max-h-[90vh] ${hasDocumentPreview ? "max-w-5xl" : "max-w-md"}`}>
 
-            {/* PDF-viewer */}
-            {viewUrl && (
+            {/* Dokument-preview */}
+            {hasDocumentPreview && (
               <div className="hidden flex-1 bg-muted md:block">
-                <iframe src={`${viewUrl}#navpanes=0`} className="w-full h-full border-0" title="Kontrakt" />
+                {viewUrl ? (
+                  <iframe src={`${viewUrl}#navpanes=0`} className="h-full w-full border-0" title="Kontrakt" />
+                ) : documentPreview?.kind === "word" ? (
+                  <div className="h-full overflow-auto bg-background p-5 text-sm leading-relaxed text-foreground">
+                    <div className="mb-3 flex items-center gap-2 border-b pb-3 text-xs font-semibold text-muted-foreground">
+                      <FileText className="h-4 w-4" /> Word-preview som tekst
+                    </div>
+                    <pre className="whitespace-pre-wrap break-words font-sans">{documentPreview.text || "Word-dokumentet indeholder ingen læsbar tekst."}</pre>
+                  </div>
+                ) : null}
               </div>
             )}
 
             {/* Sidebar */}
-            <div className={`${viewUrl ? "w-full md:w-[360px]" : "w-full"} flex shrink-0 flex-col gap-4 overflow-y-auto p-4 sm:p-7`}>
+            <div className={`${hasDocumentPreview ? "w-full md:w-[360px]" : "w-full"} flex shrink-0 flex-col gap-4 overflow-y-auto p-4 sm:p-7`}>
 
               {/* Titel + luk */}
               <div className="flex items-center justify-between">
@@ -1271,6 +1521,23 @@ export default function MineKontrakterClient({
               {viewUrl && (
                 <Button type="button" variant="outline" className="md:hidden" onClick={() => window.open(viewUrl, "_blank", "noopener,noreferrer")}>
                   Åbn PDF
+                </Button>
+              )}
+              {documentPreview?.kind === "word" && (
+                <div className="max-h-72 overflow-auto rounded-lg border bg-background p-3 text-sm md:hidden">
+                  <p className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground"><FileText className="h-3.5 w-3.5" />Word-preview som tekst</p>
+                  <pre className="whitespace-pre-wrap break-words font-sans leading-relaxed">{documentPreview.text || "Word-dokumentet indeholder ingen læsbar tekst."}</pre>
+                </div>
+              )}
+              {documentPreview?.kind === "unsupported" && documentPreview.error && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                  {documentPreview.error}
+                </div>
+              )}
+              {selectedDocumentPath && (
+                <Button type="button" variant="outline" onClick={() => void openOriginalContractDocument()} disabled={viewLoading}>
+                  {viewLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileText className="mr-2 h-4 w-4" />}
+                  Åbn/download original
                 </Button>
               )}
               {contractVersions.length > 1 && (
@@ -1453,6 +1720,89 @@ export default function MineKontrakterClient({
                   </div>
                 )}
               </div>
+
+              {selectedContract.work_id && selectedContract.works && (
+                <div className="rounded-lg border p-3">
+                  <div className="mb-3">
+                    <p className="text-sm font-bold text-foreground">Solo og medklippere</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Bekræft pr. {selectedContractIsSeries ? "afsnit" : "værk"}, om du har klippet alene, eller tilføj medklippere.
+                    </p>
+                  </div>
+                  {selectedContractIsSeries && collaborationTargets.length === 0 ? (
+                    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+                      Vælg eller indlæs afsnit først, før du gemmer solo/medklipperoplysninger.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {collaborationTargets.map(target => {
+                        const entry = collaborationEntries[target.key];
+                        if (!entry) return null;
+                        return (
+                          <div key={target.key} className="space-y-3 rounded-md border bg-muted/20 p-3">
+                            <div className="min-w-0">
+                              <p className="break-words text-sm font-semibold text-foreground">{entry.title}</p>
+                            </div>
+                            <label className={`flex items-start gap-2 text-sm ${entry.coEditors.length ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}>
+                              <input
+                                type="checkbox"
+                                checked={entry.soloConfirmed}
+                                disabled={entry.coEditors.length > 0}
+                                onChange={event => setCollaborationSolo(target.key, event.target.checked)}
+                                className="mt-0.5 h-4 w-4"
+                              />
+                              <span>{selectedContractIsSeries ? "Jeg har klippet dette afsnit alene" : "Jeg har klippet dette værk alene"}</span>
+                            </label>
+
+                            {entry.coEditors.map(editor => (
+                              <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_auto]">
+                                <Input
+                                  value={editor.name}
+                                  onChange={event => updateCollaborationCoEditor(target.key, editor.id, { name: event.target.value })}
+                                  placeholder="Navn på medklipper"
+                                  aria-label="Navn på medklipper"
+                                />
+                                <select
+                                  value={editor.role}
+                                  onChange={event => updateCollaborationCoEditor(target.key, editor.id, { role: event.target.value })}
+                                  className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                                  aria-label={`Rolle for ${editor.name || "medklipper"}`}
+                                >
+                                  {COLLABORATION_ROLES.map(role => <option key={role} value={role}>{role}</option>)}
+                                </select>
+                                <Button type="button" variant="outline" size="sm" onClick={() => removeCollaborationCoEditor(target.key, editor.id)}>
+                                  Fjern
+                                </Button>
+                              </div>
+                            ))}
+
+                            {entry.coEditors.length > 0 && (
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-muted-foreground">Din foreløbige arbejdsandel (%)</Label>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={entry.selfSharePercent}
+                                  onChange={event => updateCollaborationEntry(target.key, current => ({ ...current, selfSharePercent: event.target.value, percentTouched: true }))}
+                                  className="max-w-40"
+                                />
+                              </div>
+                            )}
+
+                            <Button type="button" variant="outline" size="sm" onClick={() => addCollaborationCoEditor(target.key)}>
+                              <Plus className="mr-1.5 h-4 w-4" /> Tilføj medklipper
+                            </Button>
+                          </div>
+                        );
+                      })}
+                      <Button type="button" className="w-full" disabled={collaborationSaving || linkingSaving || episodesLoading} onClick={() => void handleSaveCollaboration()}>
+                        {collaborationSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Gem solo/medklippere
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <StatusBadge status={selectedContract.status} />
               {shouldShowWorkLinkBadge(hasLinkedWork(selectedContract.work_id), selectedContract.status) && <WorkLinkBadge linked={hasLinkedWork(selectedContract.work_id)} />}

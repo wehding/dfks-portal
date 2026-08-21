@@ -954,77 +954,20 @@ export default function OnboardingClient({
               )}
               
               <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-                <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
-                  <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "10px" }}>
-                    Dine data, dine rettigheder
-                  </div>
-                  {!legalDocumentsReady && (
-                    <div style={{ marginBottom: "14px", border: "1px solid var(--destructive)", borderRadius: "8px", padding: "12px 14px", color: "var(--destructive)", fontSize: "13px", lineHeight: 1.5 }}>
-                      Juridisk onboarding mangler databaseopsætning. Kontakt administrator, så de nyeste migrationer kan blive kørt.
-                    </div>
-                  )}
-                  <div style={{ display: "grid", gap: "12px" }}>
-                    {legalDocuments.map(document => (
-                      <details key={document.document_type} open={document.document_type === "privacy_notice"} style={{ border: "1px solid var(--border)", borderRadius: "8px", background: "var(--surface-container-lowest)" }}>
-                        <summary style={{ cursor: "pointer", padding: "12px 14px", fontSize: "14px", fontWeight: 700, color: "var(--on-surface)" }}>
-                          {LEGAL_DOCUMENT_TYPE_LABELS[document.document_type]} · version {document.version || 1}
-                        </summary>
-                        <div style={{ borderTop: "1px solid var(--border)", padding: "12px 14px", whiteSpace: "pre-wrap", fontSize: "13px", lineHeight: 1.65, color: "var(--on-surface-variant)" }}>
-                          {document.body}
-                        </div>
-                      </details>
-                    ))}
-                  </div>
-                  <label style={{ marginTop: "16px", display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={legalAccepted}
-                      onChange={event => setLegalAccepted(event.target.checked)}
-                      style={{ marginTop: "3px", width: "18px", height: "18px", accentColor: "var(--primary)" }}
-                    />
-                    <span style={{ fontSize: "13px", lineHeight: 1.55, color: "var(--on-surface)" }}>
-                      Jeg har læst og accepterer de aktuelle vilkår, privatlivsoplysninger, AI-transparens og kontraktanalysevilkår for portalen.
-                    </span>
-                  </label>
-                  <a
-                    href={PRIVACY_POLICY_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ marginTop: "12px", display: "inline-flex", fontSize: "13px", fontWeight: 600, color: "var(--primary)" }}
-                  >
-                    Læs fuld privatlivspolitik
-                  </a>
-                </div>
-
                 {/* Lønstatistik */}
-                <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", overflow: "hidden" }}>
+                {!isOrganisationMember && <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", overflow: "hidden" }}>
                   <div style={{ padding: "20px 24px", display: "flex", gap: "14px" }}>
                     <div style={{ fontSize: "28px", flexShrink: 0 }}>📊</div>
                     <div>
                       <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "10px" }}>
-                        Hjælp alle klippere til at forhandle bedre løn
+                        Anonym markedsstatistik
                       </div>
-                      <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", lineHeight: 1.7, margin: "0 0 10px" }}>
-                        Når du deler dine anonymiserede løndata, kan vi beregne realistiske branchegennemsnit — opdelt på genre.
-                        Det er konkret viden til din næste lønforhandling.
+                      <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", lineHeight: 1.7, margin: 0 }}>
+                        Som ikke-medlem vælger du selv, om dine overordnede vilkår må indgå i anonym markedsstatistik.
                       </p>
-                      <div style={{ fontSize: "12px", color: "var(--tertiary)", fontStyle: "italic", fontWeight: 500 }}>
-                        🔒 Dine data behandles altid anonymiseret og aggregeret.
-                      </div>
                     </div>
                   </div>
-                  {isOrganisationMember ? <div style={{
-                    padding: "16px 24px",
-                    backgroundColor: "var(--surface-container-low)",
-                    borderTop: "1px solid var(--outline-variant)",
-                  }}>
-                    <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
-                      Du deltager som medlem af organisationen
-                    </div>
-                    <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "4px", lineHeight: 1.5 }}>
-                      Som medlem er du oplyst om, at foreningen bruger overordnede kontrakt- og lønoplysninger til anonymiseret statistikarbejde under faste diskretionsgrænser.
-                    </div>
-                  </div> : <div style={{
+                  <div style={{
                     display: "grid", gap: "10px",
                     padding: "16px 24px",
                     backgroundColor: "var(--surface-container-low)",
@@ -1057,8 +1000,8 @@ export default function OnboardingClient({
                         Nej tak, brug kun min kontrakt som dokumentation for mine rettigheder og udbetalinger.
                       </span>
                     </label>
-                  </div>}
-                </div>
+                  </div>
+                </div>}
 
                 {/* Kønsoplysninger Dropdown */}
                 <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
@@ -1114,6 +1057,56 @@ export default function OnboardingClient({
                   <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)" }}>Primært arbejdsområde (valgfrit)</div>
                   <select value={formData.primary_work_region_code} onChange={event => handleField("primary_work_region_code", event.target.value)} style={{ marginTop: "12px", width: "100%", maxWidth: "360px", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}><option value="">Vælg område</option>{statisticsProfile.workRegions.map(option => <option key={option.code} value={option.code}>{locale === "en" ? option.nameEn : option.nameDa}</option>)}</select>
                 </div>}
+
+                <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
+                  <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "8px" }}>
+                    Dine data, dine rettigheder
+                  </div>
+                  <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", lineHeight: 1.6, margin: "0 0 14px" }}>
+                    Her accepterer du de aktuelle vilkår for portalen: privatlivsoplysninger, brugervilkår, AI-transparens og kontraktanalyse. Du kan folde den samlede juridiske tekst ud og læse detaljerne her på siden.
+                  </p>
+                  {!legalDocumentsReady && (
+                    <div style={{ marginBottom: "14px", border: "1px solid var(--destructive)", borderRadius: "8px", padding: "12px 14px", color: "var(--destructive)", fontSize: "13px", lineHeight: 1.5 }}>
+                      Juridisk onboarding mangler databaseopsætning. Kontakt administrator, så de nyeste migrationer kan blive kørt.
+                    </div>
+                  )}
+                  <details style={{ border: "1px solid var(--border)", borderRadius: "8px", background: "var(--surface-container-lowest)", marginBottom: "16px" }}>
+                    <summary style={{ cursor: "pointer", padding: "12px 14px", fontSize: "14px", fontWeight: 700, color: "var(--on-surface)" }}>
+                      Læs privatliv, brugervilkår, AI-transparens og kontraktanalyse
+                    </summary>
+                    <div style={{ borderTop: "1px solid var(--border)", padding: "14px", display: "grid", gap: "18px" }}>
+                      {legalDocuments.map(document => (
+                        <section key={document.document_type}>
+                          <h3 style={{ margin: "0 0 8px", fontSize: "14px", fontWeight: 700, color: "var(--on-surface)" }}>
+                            {LEGAL_DOCUMENT_TYPE_LABELS[document.document_type]}
+                          </h3>
+                          <div style={{ whiteSpace: "pre-wrap", fontSize: "13px", lineHeight: 1.65, color: "var(--on-surface-variant)" }}>
+                            {document.body}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  </details>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={legalAccepted}
+                      onChange={event => setLegalAccepted(event.target.checked)}
+                      style={{ marginTop: "3px", width: "18px", height: "18px", accentColor: "var(--primary)" }}
+                    />
+                    <span style={{ fontSize: "13px", lineHeight: 1.55, color: "var(--on-surface)" }}>
+                      Jeg har læst og accepterer de aktuelle vilkår, privatlivsoplysninger, AI-transparens og kontraktanalysevilkår for portalen.
+                    </span>
+                  </label>
+                  <a
+                    href={PRIVACY_POLICY_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ marginTop: "12px", display: "inline-flex", fontSize: "13px", fontWeight: 600, color: "var(--primary)" }}
+                  >
+                    Læs fuld privatlivspolitik
+                  </a>
+                </div>
               </div>
             </div>
           )}
