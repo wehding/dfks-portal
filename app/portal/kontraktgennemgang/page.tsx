@@ -354,20 +354,19 @@ export default function PortalKontraktgennemgangPage() {
                 setMemberName(user.user_metadata?.full_name ?? null)
                 setMemberEmail(user.email ?? null)
                 setMemberId(user.id)
-                const supabase = createClient()
-                const { data: roleRow } = await supabase
-                    .from("user_org_roles")
-                    .select("org_id")
-                    .eq("user_id", user.id)
-                    .limit(1)
-                    .maybeSingle()
-                setOrgId(roleRow?.org_id ?? null)
-                loadReviews(user.id)
+                const response = await fetch("/api/access/context", { cache: "no-store" })
+                const context = response.ok
+                    ? await response.json() as { orgId?: string; canUseMember?: boolean }
+                    : null
+                const activeOrgId = context?.canUseMember ? context.orgId ?? null : null
+                setOrgId(activeOrgId)
+                if (activeOrgId) loadReviews(user.id, activeOrgId)
+                else setReviewsLoading(false)
             }
         })
     }, [])
 
-    async function loadReviews(uid: string) {
+    async function loadReviews(uid: string, activeOrgId: string) {
         setReviewsLoading(true)
         const supabase = createClient()
         const [activeRes, archiveRes] = await Promise.all([
@@ -375,12 +374,14 @@ export default function PortalKontraktgennemgangPage() {
                 .from("contract_reviews")
                 .select("id, file_name, producer_name, production_type, status, updated_at")
                 .eq("member_id", uid)
+                .eq("org_id", activeOrgId)
                 .in("status", ["afventer", "behandling"])
                 .order("updated_at", { ascending: false }),
             supabase
                 .from("contract_reviews")
                 .select("id, file_name, producer_name, production_type, updated_at")
                 .eq("member_id", uid)
+                .eq("org_id", activeOrgId)
                 .eq("status", "afsluttet")
                 .order("updated_at", { ascending: false }),
         ])
@@ -482,7 +483,7 @@ export default function PortalKontraktgennemgangPage() {
             }
             setSubmitted(true)
             // Opdater sagsliste i baggrunden
-            if (memberId) loadReviews(memberId)
+            if (memberId && orgId) loadReviews(memberId, orgId)
         } catch (err: unknown) {
             toast.error(errorMessage(err) ?? "Kunne ikke sende kontrakten — prøv igen")
         } finally {

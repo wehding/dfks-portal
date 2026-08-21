@@ -3,6 +3,7 @@ import "server-only";
 import { analyserKontrakt } from "@/lib/analyse";
 import { maskPersonalData } from "@/lib/mask-text";
 import { createServiceClient } from "@/lib/supabase/service";
+import { recordAuditEvent } from "@/lib/audit-log-server";
 
 type ExistingReviewAnalysisInput = {
   reviewId: string;
@@ -94,5 +95,24 @@ export async function analyseExistingContractReview(input: ExistingReviewAnalysi
     .select()
     .single();
   if (updateError) throw new Error(updateError.message);
+  await recordAuditEvent({
+    context: {
+      source: input.source,
+      actorUserId: input.actorUserId ?? null,
+      actorOrgId: input.orgId,
+      correlationId: input.reviewId,
+      mode: "summary",
+    },
+    action: "ai_analysis",
+    entityType: "contract_reviews",
+    entityId: input.reviewId,
+    entityLabel: "AI-analyse af kontraktgennemgang",
+    targetMemberUuid: input.memberId ?? null,
+    purposeCode: "contract_review",
+    legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)",
+    dataCategories: ["contract_data", "salary_data", "ai_analysis"],
+    orgIds: [input.orgId],
+    metadata: { outcome: "completed" },
+  });
   return { review: updated, analysis };
 }

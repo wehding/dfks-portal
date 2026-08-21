@@ -24,6 +24,9 @@ import { companyMatchScore, normalizeCompanyBaseName, type ProductionCompanyOpti
 import { sampleSizeBand } from "@/lib/statistics/privacy-guard";
 import { buildStatisticsVisualization } from "@/lib/statistics/visualization";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
+import { auditRequestContext } from "@/lib/audit-access-server";
+import { recordAuditEvent } from "@/lib/audit-log-server";
+import type { AuditContext } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -37,15 +40,43 @@ async function recordStatisticsAudit(input: {
   suppressionCount: number;
   pointCount: number;
   seriesCount: number;
+  policy: {
+    minimumGroupSize: number;
+    dominanceLimit: number;
+    calculationVersion: string;
+  };
+  context: AuditContext;
 }) {
   const fingerprint = createHash("sha256").update(JSON.stringify(input.plan)).digest("hex");
+  const auditEventId = await recordAuditEvent({
+    context: input.context,
+    action: "ai_analysis",
+    entityType: "statistics_query",
+    entityLabel: "Anonymiseret statistikforespørgsel",
+    purposeCode: "collective_statistics",
+    legalBasis: "GDPR Art. 9(2)(d)",
+    dataCategories: ["contract_data", "salary_data", "union_membership_data", "aggregated_statistics"],
+    orgIds: [input.orgId],
+    metadata: {
+      queryFingerprint: fingerprint,
+      calculationVersion: input.policy.calculationVersion,
+      suppressionCount: input.suppressionCount,
+      pointCount: input.pointCount,
+      seriesCount: input.seriesCount,
+      statisticsPolicy: {
+        minimumGroupSize: input.policy.minimumGroupSize,
+        dominanceLimit: input.policy.dominanceLimit,
+      },
+    },
+  });
   const { error } = await createServiceClient().rpc("record_statistics_query_audit", {
     target_org_id: input.orgId,
     target_actor_user_id: input.actorUserId,
     target_query_fingerprint: fingerprint,
-    target_calculation_version: STATISTICS_CALCULATION_VERSION,
+    target_calculation_version: input.policy.calculationVersion,
     target_suppression_count: input.suppressionCount,
     target_result_shape: { pointCount: input.pointCount, seriesCount: input.seriesCount },
+    target_audit_event_id: auditEventId,
   });
   if (error) throw new Error("Statistikforespørgslen kunne ikke revisionslogges sikkert.");
 }
@@ -157,6 +188,7 @@ export async function POST(request: NextRequest) {
   const session = await createClient();
   const caller = await assertAdminRole(session, USER_ADMIN_ROLES);
   if (!caller) return NextResponse.json({ error: "Ingen statistikadgang" }, { status: 403 });
+  const auditContext = auditRequestContext(request, caller, "admin", "admin.statistics.query");
   const rateLimit = await consumeRateLimit({
     bucket: "statistics-query",
     identifier: createHash("sha256").update(`${caller.orgId}:${caller.userId}`).digest("hex"),
@@ -216,12 +248,21 @@ export async function POST(request: NextRequest) {
     const segments = buildStatisticsQuerySegments(plan, producers.resolved);
     const allSeries: ReturnType<typeof extractStatisticsSeries> = [];
     let minimum = 5;
+    let dominanceLimit = 0.8;
     let includeDrafts = false;
     let suppressedSegments = 0;
+    let suppressedCells = 0;
+    const suppressionReasons: Record<string, number> = {};
     for (const segment of segments) {
       const statistics = await getAdminStatistics(caller.orgId, segment.filters);
       minimum = statistics.minimum;
+      dominanceLimit = Number(statistics.dominanceLimit ?? dominanceLimit);
       includeDrafts ||= Boolean(statistics.includeDrafts);
+      suppressedCells += Number(statistics.suppressionCount ?? 0);
+      const reasons = typeof statistics.suppressionReasons === "object" && statistics.suppressionReasons
+        ? statistics.suppressionReasons as Record<string, number>
+        : {};
+      for (const [reason, count] of Object.entries(reasons)) suppressionReasons[reason] = (suppressionReasons[reason] ?? 0) + Number(count);
       if (statistics.suppressed) {
         suppressedSegments += 1;
         continue;
@@ -239,11 +280,16 @@ export async function POST(request: NextRequest) {
     if (!allSeries.length) {
       await recordStatisticsAudit({
         orgId: caller.orgId, actorUserId: caller.userId, plan,
-        suppressionCount: suppressedSegments, pointCount: 0, seriesCount: 0,
+        suppressionCount: suppressedSegments + suppressedCells, pointCount: 0, seriesCount: 0,
+        policy: { minimumGroupSize: minimum, dominanceLimit, calculationVersion: STATISTICS_CALCULATION_VERSION },
+        context: auditContext,
       });
       await finishAiUsageRun(runId, "succeeded");
       return NextResponse.json({
         suppressed: true, minimum, plan, interpretedBy,
+        minimumGroupSize: minimum,
+        dominanceLimit,
+        calculationVersion: STATISTICS_CALCULATION_VERSION,
         understoodAs: describeStatisticsPlan(plan),
         explanation: "Der blev ikke fundet et tilstrækkeligt datagrundlag til den valgte kombination.",
         caveats: ["Små eller tomme udsnit returneres ikke som statistik."],
@@ -265,26 +311,37 @@ export async function POST(request: NextRequest) {
     const visualization = buildStatisticsVisualization(comparison, plan.chart);
     await recordStatisticsAudit({
       orgId: caller.orgId, actorUserId: caller.userId, plan,
-      suppressionCount: suppressedSegments, pointCount: comparison.length,
+      suppressionCount: suppressedSegments + suppressedCells, pointCount: comparison.length,
       seriesCount: new Set(comparison.map(row => row.seriesKey)).size,
+      policy: { minimumGroupSize: minimum, dominanceLimit, calculationVersion: STATISTICS_CALCULATION_VERSION },
+      context: auditContext,
     });
     await finishAiUsageRun(runId, "succeeded");
     const caveats = [
-      ...(comparison.some(row => row.lowSample) ? ["Mindst ét datapunkt bygger på færre end fem forskellige personer og skal tolkes med forsigtighed."] : []),
+      ...(comparison.some(row => row.lowSample) ? [`Mindst ét datapunkt bygger på færre end ${minimum} forskellige personer og skal tolkes med forsigtighed.`] : []),
       ...(includeDrafts ? ["Kladdekontrakter indgår efter organisationens indstilling og kan indeholde endnu ikke kontrollerede data."] : []),
       ...(new Set(comparison.map(row => row.year)).size < 2 ? ["Resultatet dækker kun ét år og kan derfor ikke vise en udvikling over tid."] : []),
       ...(suppressedSegments ? [`${suppressedSegments} lille delgruppe er udeladt, fordi den ikke opfylder organisationens minimumsgrænse.`] : []),
+      ...(suppressionReasons.minimum_count ? [`${suppressionReasons.minimum_count} datapunkt(er) er sløret, fordi de bygger på for få forskellige personer.`] : []),
+      ...(suppressionReasons.dominance ? [`${suppressionReasons.dominance} økonomiske datapunkt(er) er sløret, fordi få producenter overstiger dominansgrænsen på ${Math.round(dominanceLimit * 100)} %.`] : []),
+      ...(suppressionReasons.secondary ? [`${suppressionReasons.secondary} datapunkt(er) er sekundært sløret for at forhindre bagudregning.`] : []),
+      ...(comparison.some(row => (row.outlierExcludedCount ?? 0) > 0) ? ["Åbenlyse løn-afvigere er frasorteret før beregning af løn- og bidragstal."] : []),
       ...(inflationUnavailable ? ["Inflationsdata er midlertidigt utilgængelige. Løntallene vises derfor nominelt uden inflationskorrektion."] : []),
     ];
     return NextResponse.json({
       suppressed: false,
       minimum,
+      minimumGroupSize: minimum,
+      dominanceLimit,
+      calculationVersion: STATISTICS_CALCULATION_VERSION,
       plan,
       interpretedBy,
       understoodAs: describeStatisticsPlan(plan),
       chart: plan.chart,
       includeDrafts,
       lowSample: comparison.some(row => row.lowSample),
+      suppressionCount: suppressedSegments + suppressedCells,
+      suppressionReasons,
       series: comparison,
       visualization,
       metricMeta: plan.metrics.map(metric => ({ metric, ...STATISTICS_METRIC_META[metric] })),

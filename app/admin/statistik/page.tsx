@@ -18,23 +18,68 @@ import { useI18n } from "@/lib/i18n";
 import { EXPERIENCE_GROUPS } from "@/lib/experience-groups";
 import type { CombinedChartType, StatisticsVisualization } from "@/lib/statistics/visualization";
 
-type YearRow = { year: number; memberCount: number; contractCount: number; validatedCount: number; draftCount: number; lowSample: boolean };
+type SafeNumber = number | null;
+type SuppressionReason = "minimum_count" | "dominance" | "secondary";
+type YearRow = {
+  year: number; memberCount: number; contractCount: number; validatedCount: number; draftCount: number; lowSample: boolean;
+  suppressed?: boolean; suppressionReason?: SuppressionReason; outlierExcludedCount?: number;
+};
 type StatisticsPayload = {
   suppressed: boolean; minimum: number; lowSampleThreshold: number; lowSample?: boolean; includeDrafts?: boolean; memberCount: number | null; contractCount?: number; validatedCount?: number; draftCount?: number; years: number[];
-  salary?: Array<YearRow & { monthlyRate: number; dailyRate: number }>;
-  salaryByCategory?: Array<YearRow & { category: string; monthlyRate: number }>;
-  pension?: Array<YearRow & { avgPensionPercent: number }>;
-  workingWeeks?: Array<YearRow & { avgWeeks: number; medianWeeks: number }>;
-  contractCounts?: Array<YearRow & { total: number; aLoen: number; leverandoer: number }>;
-  rights?: Array<{ category: string; svodPercent: number; svodUnknown: number; copydanPercent: number; copydanUnknown: number; royaltyPercent: number; royaltyUnknown: number; memberCount: number }>;
-  gender?: Array<{ gender: string; count: number; avgSalary: number }>;
-  aiClauses?: Array<YearRow & { withClause: number; withoutClause: number; pct: number }>;
-  contributions?: Array<YearRow & { contractCount: number; totalHolidayPayAmount: number; totalBetaAmount: number }>;
+  minimumGroupSize?: number; dominanceLimit?: number; calculationVersion?: string;
+  suppressionCount?: number; suppressionReasons?: Partial<Record<SuppressionReason, number>>; outlierExcludedCount?: number;
+  salary?: Array<YearRow & { monthlyRate: SafeNumber; averageMonthlyRate: SafeNumber; dailyRate: SafeNumber }>;
+  salaryByCategory?: Array<YearRow & { category: string; monthlyRate: SafeNumber; averageMonthlyRate: SafeNumber }>;
+  pension?: Array<YearRow & { avgPensionPercent: SafeNumber }>;
+  workingWeeks?: Array<YearRow & { avgWeeks: SafeNumber; medianWeeks: SafeNumber }>;
+  contractCounts?: Array<YearRow & { total: SafeNumber; aLoen: SafeNumber; leverandoer: SafeNumber }>;
+  rights?: Array<{ category: string; svodPercent: SafeNumber; svodUnknown: SafeNumber; copydanPercent: SafeNumber; copydanUnknown: SafeNumber; royaltyPercent: SafeNumber; royaltyUnknown: SafeNumber; memberCount: number; suppressed?: boolean; suppressionReason?: SuppressionReason; outlierExcludedCount?: number }>;
+  gender?: Array<{ gender: string; count: number; avgSalary: SafeNumber; suppressed?: boolean; suppressionReason?: SuppressionReason; outlierExcludedCount?: number }>;
+  aiClauses?: Array<YearRow & { withClause: SafeNumber; withoutClause: SafeNumber; unknownCount: SafeNumber; pct: SafeNumber }>;
+  contributions?: Array<YearRow & { contractCount: number; totalHolidayPayAmount: SafeNumber; totalBetaAmount: SafeNumber; incompleteContributionCount: SafeNumber }>;
 };
 
 const tooltipStyle = { backgroundColor: "rgba(255,255,255,.95)", border: "1px solid #ddd", borderRadius: 8, fontSize: 12 };
 const categoryLabels: Record<string, string> = { feature: "Spillefilm", tvSeries: "TV-serie", documentary: "Dokumentarfilm", docSeries: "Dok.-serie", short: "Kortfilm", tvEntertainment: "TV-underholdning", reality: "Reality", other: "Andet" };
 const formatKr = (value: number) => `${value.toLocaleString("da-DK")} kr.`;
+const formatSafeKr = (value: SafeNumber) => value == null ? "N/A" : formatKr(value);
+const formatSafeValue = (value: SafeNumber, suffix = "") => value == null ? "N/A" : `${value.toLocaleString("da-DK", { maximumFractionDigits: 1 })}${suffix}`;
+const safeTotal = (...values: SafeNumber[]) => values.every(value => typeof value === "number") ? values.reduce((sum, value) => sum + (value ?? 0), 0) : null;
+const suppressionLabels: Record<SuppressionReason, string> = {
+  minimum_count: "sløret: for få personer",
+  dominance: "sløret: dominans",
+  secondary: "sekundært sløret",
+};
+const suppressionDescriptions: Record<SuppressionReason, string> = {
+  minimum_count: "for få forskellige personer",
+  dominance: "få producenter fylder for meget i tallet",
+  secondary: "ekstra sløring, så skjulte tal ikke kan regnes baglæns",
+};
+function basisText(row: { memberCount?: number; count?: number; lowSample?: boolean; suppressed?: boolean; suppressionReason?: SuppressionReason; outlierExcludedCount?: number }) {
+  const parts = [`${row.memberCount ?? row.count ?? 0} personer`];
+  if (row.suppressed) parts.push(suppressionLabels[row.suppressionReason ?? "minimum_count"]);
+  else if (row.lowSample) parts.push("statistisk usikkert");
+  if ((row.outlierExcludedCount ?? 0) > 0) parts.push(`${row.outlierExcludedCount} afviger(e) frasorteret`);
+  return parts.join(" · ");
+}
+function suppressionSummaryText(reasons?: Partial<Record<SuppressionReason, number>>) {
+  const entries = Object.entries(reasons ?? {}) as Array<[SuppressionReason, number]>;
+  return entries
+    .filter(([, count]) => count > 0)
+    .map(([reason, count]) => `${count} ${count === 1 ? "celle" : "celler"}: ${suppressionDescriptions[reason] ?? reason}`)
+    .join(" · ");
+}
+function suppressionExportText(reason?: SuppressionReason) {
+  return `Sløret af diskretionshensyn${reason ? `: ${suppressionDescriptions[reason]}` : ""}`;
+}
+function aiBasisText(row: Pick<AiSeriesRow, "sampleBand" | "outlierExcludedCount">) {
+  const parts = [row.sampleBand ?? "—"];
+  if ((row.outlierExcludedCount ?? 0) > 0) parts.push(`${row.outlierExcludedCount} afviger(e) frasorteret`);
+  return parts.join(" · ");
+}
+function hasVisibleStatisticRows(rows?: Array<{ suppressed?: boolean }>) {
+  return (rows ?? []).some(row => !row.suppressed);
+}
 const querySuggestions = [
   "Hvordan har medianlønnen for spillefilm og dokumentarfilm udviklet sig siden 2022?",
   "Sammenlign gennemsnitslønnen for A-løn og leverandørkontrakter over alle år.",
@@ -56,7 +101,7 @@ const demoRights = [
 ];
 
 function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<string | number>> }) {
-  return <div className="max-w-full overflow-x-auto rounded-lg border"><Table className="min-w-max"><TableHeader><TableRow>{headers.map((header, index) => <TableHead key={`${header}-${index}`}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.map((row, index) => <TableRow key={index}>{row.map((value, cell) => <TableCell key={cell}>{value}</TableCell>)}</TableRow>)}</TableBody></Table></div>;
+  return <div className="max-w-full overflow-x-auto rounded-lg border"><Table className="min-w-max"><TableHeader><TableRow>{headers.map((header, index) => <TableHead key={`${header}-${index}`}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.length ? rows.map((row, index) => <TableRow key={index}>{row.map((value, cell) => <TableCell key={cell}>{value}</TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={headers.length} className="text-muted-foreground">Ingen synlige datapunkter med de valgte filtre.</TableCell></TableRow>}</TableBody></Table></div>;
 }
 
 function formatStatisticsValue(value: number, unit: "dkk" | "percent" | "weeks" | "count") {
@@ -71,11 +116,13 @@ type AiSeriesRow = {
   seriesKey: string; seriesLabel: string; metric: string; metricLabel: string;
   unit: "dkk" | "percent" | "weeks" | "count";
   inflationIndex?: number | null; realValue?: number | null; realChangePercent?: number | null;
-  sampleBand?: string;
+  sampleBand?: string; outlierExcludedCount?: number;
 };
 
 type AiAnswer = {
   suppressed?: boolean; minimum?: number; explanation?: string; understoodAs?: string; interpretedBy?: "rules" | "ai";
+  minimumGroupSize?: number; dominanceLimit?: number; calculationVersion?: string;
+  suppressionCount?: number; suppressionReasons?: Partial<Record<SuppressionReason, number>>;
   caveats?: string[]; chart?: "line" | "bar" | "table";
   plan?: { metrics?: string[]; compareBy?: string[]; adjustForInflation?: boolean };
   lowSample?: boolean; includeDrafts?: boolean; candidates?: Array<{ id: string; name: string }>;
@@ -145,18 +192,23 @@ export default function AdminStatistikPage() {
     data?.pension,
     data?.workingWeeks,
     data?.contributions,
-  ].filter(rows => (rows?.length ?? 0) > 0).length, [data]);
+  ].filter(rows => hasVisibleStatisticRows(rows)).length, [data]);
   const showDemonstrations = Boolean(data?.suppressed) || availableStatisticsCount < 2;
+  const dataProtectionSummary = suppressionSummaryText(data?.suppressionReasons);
   const salaryCategoryChart = useMemo(() => {
     const rows = new Map<number, { year: number; feature?: number; documentary?: number }>();
     for (const item of data?.salaryByCategory ?? []) {
       const row = rows.get(item.year) ?? { year: item.year };
-      if (item.category === "feature") row.feature = item.monthlyRate;
-      if (item.category === "documentary") row.documentary = item.monthlyRate;
+      if (item.category === "feature" && item.monthlyRate != null) row.feature = item.monthlyRate;
+      if (item.category === "documentary" && item.monthlyRate != null) row.documentary = item.monthlyRate;
       rows.set(item.year, row);
     }
     return [...rows.values()].sort((left, right) => left.year - right.year);
   }, [data]);
+  const contractCountsChart = useMemo(() => (data?.contractCounts ?? [])
+    .filter(row => !row.suppressed && (row.aLoen != null || row.leverandoer != null))
+    .map(row => ({ year: row.year, aLoen: row.aLoen ?? undefined, leverandoer: row.leverandoer ?? undefined }))
+    .sort((left, right) => left.year - right.year), [data]);
   const activeAiChart = aiAnswer?.visualization
     ? selectedChart === "auto" ? aiAnswer.visualization.chart : selectedChart
     : "table";
@@ -173,7 +225,15 @@ export default function AdminStatistikPage() {
   };
   const exportCsv = () => {
     const rows = data?.contributions ?? [];
-    const csv = ["År;Medlemmer;Kontrakter;Feriepenge;BETA;I alt", ...rows.map(row => [row.year, row.memberCount, row.contractCount, row.totalHolidayPayAmount, row.totalBetaAmount, row.totalHolidayPayAmount + row.totalBetaAmount].join(";"))].join("\n");
+    const csv = ["År;Medlemmer;Kontrakter;Feriepenge;BETA;I alt;Diskretion", ...rows.map(row => [
+      row.year,
+      row.memberCount,
+      row.contractCount,
+      row.totalHolidayPayAmount ?? "N/A",
+      row.totalBetaAmount ?? "N/A",
+      safeTotal(row.totalHolidayPayAmount, row.totalBetaAmount) ?? "N/A",
+      row.suppressed ? suppressionExportText(row.suppressionReason) : "",
+    ].join(";"))].join("\n");
     const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = `dfks-statistik-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url);
   };
@@ -242,17 +302,20 @@ export default function AdminStatistikPage() {
         <div className="flex flex-wrap gap-2">{querySuggestions.map(suggestion => <Button key={suggestion} type="button" size="sm" variant="outline" className="h-auto whitespace-normal text-left" onClick={() => void askStatistics(suggestion)} disabled={aiLoading}>{suggestion}</Button>)}</div>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap"><Button className="w-full sm:w-auto" onClick={() => void askStatistics()} disabled={aiLoading || aiQuestion.trim().length < 5}>{aiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Undersøg</Button><Select value={selectedChart} onValueChange={value => setSelectedChart(value as "auto" | CombinedChartType)}><SelectTrigger className="w-full sm:w-64"><SelectValue placeholder="Resultatvisning" /></SelectTrigger><SelectContent><SelectItem value="auto">Resultatvisning: Automatisk</SelectItem>{selectableCharts.map(chart => <SelectItem key={chart} value={chart}>{chartLabels[chart]}</SelectItem>)}</SelectContent></Select></div>
         {aiError && <Alert variant="destructive"><AlertTitle>{aiError.title}</AlertTitle><AlertDescription><span className="block">{aiError.reason}</span>{aiError.suggestion && <span className="mt-1 block">Forslag: {aiError.suggestion}</span>}</AlertDescription></Alert>}
-        {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Ikke nok data til et sikkert resultat</AlertTitle><AlertDescription>Det valgte udsnit indeholder færre end {aiAnswer.minimum ?? 5} forskellige personer. Prøv en længere periode, færre filtre eller en bredere produktionstype.</AlertDescription></Alert>}
+        {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Ikke nok data til et sikkert resultat</AlertTitle><AlertDescription>Det valgte udsnit indeholder færre end {aiAnswer.minimum ?? 3} forskellige personer. Prøv en længere periode, færre filtre eller en bredere produktionstype.</AlertDescription></Alert>}
         {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4">
           <div className="space-y-1 text-sm"><p className="font-medium">Sådan blev spørgsmålet forstået</p><p>{aiAnswer.understoodAs}</p><p className="text-muted-foreground">{aiAnswer.explanation}</p></div>
+          <p className="text-xs text-muted-foreground">
+            Beregnet med mindst {aiAnswer.minimumGroupSize ?? aiAnswer.minimum ?? 3} personer pr. gruppe og dominansgrænse på {Math.round((aiAnswer.dominanceLimit ?? 0.8) * 100)} %. Beregningsversion: {aiAnswer.calculationVersion ?? "union-stats-v1"}.
+          </p>
           {aiAnswer.visualization && <section className="space-y-3" aria-labelledby="combined-statistics-result">
             <div><h3 id="combined-statistics-result" className="font-semibold">Samlet statistik</h3><p className="text-sm text-muted-foreground">{aiAnswer.visualization.explanation}</p></div>
             {chartSelectionError && <Alert><AlertTitle>Den valgte graf kan ikke bruges</AlertTitle><AlertDescription>{chartSelectionError}</AlertDescription></Alert>}
             {!chartSelectionError && activeAiChart !== "table" && <Card><CardHeader><CardTitle className="text-sm">{chartLabels[activeAiChart]}</CardTitle></CardHeader><CardContent className="h-[360px] min-w-0"><ResponsiveChartContainer minWidth={0}><AiChartView chart={activeAiChart} visualization={aiAnswer.visualization} /></ResponsiveChartContainer></CardContent></Card>}
-            <DataTable headers={["Serie", "År", "Resultat", "Kontrakter", "Grundlag", "Reel værdi", "Realændring"]} rows={(aiAnswer.series ?? []).map(row => [row.seriesLabel, row.year, formatStatisticsValue(row.value, row.unit), row.contractCount, row.sampleBand ?? "—", row.realValue == null ? "—" : formatStatisticsValue(row.realValue, row.unit), row.realChangePercent == null ? "—" : `${row.realChangePercent}%`])} />
+            <DataTable headers={["Serie", "År", "Resultat", "Kontrakter", "Grundlag", "Reel værdi", "Realændring"]} rows={(aiAnswer.series ?? []).map(row => [row.seriesLabel, row.year, formatStatisticsValue(row.value, row.unit), row.contractCount, aiBasisText(row), row.realValue == null ? "—" : formatStatisticsValue(row.realValue, row.unit), row.realChangePercent == null ? "—" : `${row.realChangePercent}%`])} />
           </section>}
           {Boolean(aiAnswer.caveats?.length) && <Alert><AlertTitle>Forbehold ved resultatet</AlertTitle><AlertDescription><ul className="list-disc space-y-1 pl-5">{aiAnswer.caveats?.map(caveat => <li key={caveat}>{caveat}</li>)}</ul></AlertDescription></Alert>}
-          {aiAnswer.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Mindst ét datapunkt bygger på færre end 5 forskellige personer.</AlertDescription></Alert>}
+          {aiAnswer.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Mindst ét datapunkt ligger under den valgte advarselsgrænse for små grupper. Tolk derfor udviklingen forsigtigt.</AlertDescription></Alert>}
         </div>}
       </CardContent>
     </Card>
@@ -269,19 +332,27 @@ export default function AdminStatistikPage() {
       <Select value={gender} onValueChange={setGender}><SelectTrigger className="w-full"><SelectValue placeholder="Køn" /></SelectTrigger><SelectContent><SelectItem value="all">Alle køn</SelectItem><SelectItem value="male">Mand</SelectItem><SelectItem value="female">Kvinde</SelectItem><SelectItem value="other">Andet</SelectItem></SelectContent></Select>
       {!data?.suppressed && <Button variant="outline" className="w-full" onClick={exportCsv}><Download className="mr-2 h-4 w-4" />CSV</Button>}
     </div>
+    {data && <Alert>
+      <ShieldCheck className="h-4 w-4" />
+      <AlertTitle>Statistikpolicy for denne visning</AlertTitle>
+      <AlertDescription>
+        Grupper kræver mindst {data.minimumGroupSize ?? data.minimum} forskellige personer. Økonomiske celler sløres, hvis de to største producenter overstiger {Math.round((data.dominanceLimit ?? 0.8) * 100)} % af cellens total. Beregningsversion: {data.calculationVersion ?? "union-stats-v1"}.
+      </AlertDescription>
+    </Alert>}
 
     {data?.suppressed ? <Card><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok personer til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} forskellige personer. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : <>
+      {((data?.suppressionCount ?? 0) > 0 || (data?.outlierExcludedCount ?? 0) > 0) && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Diskretionsregler er anvendt</AlertTitle><AlertDescription>{(data?.suppressionCount ?? 0) > 0 && <span className="block">Nogle felter vises som N/A, fordi de ikke må udleveres som statistik. {dataProtectionSummary}</span>}{(data?.outlierExcludedCount ?? 0) > 0 && <span className="block">{data?.outlierExcludedCount} åbenlyse afvigere er frasorteret før beregning af løn, medianer og bidrag.</span>}<span className="block">Grafer og CSV-eksport bruger de samme slørede tal som tabellerne.</span></AlertDescription></Alert>}
       <div className="grid grid-cols-3 gap-2 sm:gap-4"><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.memberCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Samlet antal kontrakter</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.contractCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{salaryContractCount}</CardContent></Card></div>
       <Tabs defaultValue="salary"><div className="-mx-3 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"><TabsList className="w-max min-w-full justify-start"><TabsTrigger value="salary">Løn</TabsTrigger><TabsTrigger value="pension">Pension</TabsTrigger><TabsTrigger value="weeks">Arbejdsuger</TabsTrigger><TabsTrigger value="rights">Rettigheder</TabsTrigger><TabsTrigger value="gender">Køn</TabsTrigger><TabsTrigger value="contracts">Kontrakter</TabsTrigger><TabsTrigger value="contributions">Bidrag</TabsTrigger><TabsTrigger value="ai">AI-forbehold</TabsTrigger><TabsTrigger value="individual">Individdata</TabsTrigger></TabsList></div>
-        <TabsContent value="salary" className="space-y-4"><Card><CardContent className="h-[360px] pt-6"><ResponsiveChartContainer><LineChart data={salaryCategoryChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${value / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line connectNulls dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line connectNulls dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent></Card><DataTable headers={["År", "Produktionstype", "Kontrakter", "Median månedsløn", "Grundlag"]} rows={(data?.salaryByCategory ?? []).map(row => [row.year, categoryLabels[row.category] ?? row.category, row.contractCount, formatKr(row.monthlyRate), `${row.memberCount} personer${row.lowSample ? " · statistisk usikkert" : ""}`])} /></TabsContent>
-        <TabsContent value="pension"><DataTable headers={["År", "Medlemmer", "Gennemsnitlig pension"]} rows={(data?.pension ?? []).map(row => [row.year, row.memberCount, `${row.avgPensionPercent}%`])} /></TabsContent>
-        <TabsContent value="weeks"><DataTable headers={["År", "Medlemmer", "Gennemsnit", "Median"]} rows={(data?.workingWeeks ?? []).map(row => [row.year, row.memberCount, `${row.avgWeeks} uger`, `${row.medianWeeks} uger`])} /></TabsContent>
-        <TabsContent value="rights"><DataTable headers={["Produktionstype", "Medlemmer", "Streaming", "Ukendt", "Copydan", "Ukendt", "Royalty", "Ukendt"]} rows={(data?.rights ?? []).map(row => [categoryLabels[row.category] ?? row.category, row.memberCount, `${row.svodPercent}%`, row.svodUnknown, `${row.copydanPercent}%`, row.copydanUnknown, `${row.royaltyPercent}%`, row.royaltyUnknown])} /></TabsContent>
-        <TabsContent value="gender"><DataTable headers={["Køn", "Personer", "Gennemsnitlig registreret løn"]} rows={(data?.gender ?? []).map(row => [row.gender === "female" ? "Kvinde" : row.gender === "male" ? "Mand" : "Andet", row.count, formatKr(row.avgSalary)])} /></TabsContent>
-        <TabsContent value="contracts"><Card><CardContent className="h-[360px] pt-6"><ResponsiveChartContainer><BarChart data={data?.contractCounts ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} /><Legend /><Bar dataKey="aLoen" name="A-løn" fill="#3b82f6" /><Bar dataKey="leverandoer" name="Leverandør" fill="#f59e0b" /></BarChart></ResponsiveChartContainer></CardContent></Card></TabsContent>
-        <TabsContent value="contributions"><DataTable headers={["År", "Medlemmer", "Kontrakter", "Feriepenge", "BETA", "I alt"]} rows={(data?.contributions ?? []).map(row => [row.year, row.memberCount, row.contractCount, formatKr(row.totalHolidayPayAmount), formatKr(row.totalBetaAmount), formatKr(row.totalHolidayPayAmount + row.totalBetaAmount)])} /></TabsContent>
-        <TabsContent value="ai"><DataTable headers={["År", "Medlemmer", "Med forbehold", "Uden forbehold", "Andel"]} rows={(data?.aiClauses ?? []).map(row => [row.year, row.memberCount, row.withClause, row.withoutClause, `${row.pct}%`])} /></TabsContent>
-        <TabsContent value="individual"><Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Individrangering er deaktiveret</AlertTitle><AlertDescription>Årsindkomst og kontraktdata for enkelte personer vises ikke på adminsiden. Statistikken præsenteres kun som grupper med mindst {data?.minimum ?? 5} forskellige personer, og grupper under 5 personer markeres som usikre.</AlertDescription></Alert></TabsContent>
+        <TabsContent value="salary" className="space-y-4"><Card><CardContent className="h-[360px] pt-6"><ResponsiveChartContainer><LineChart data={salaryCategoryChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${value / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line connectNulls dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line connectNulls dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent></Card><DataTable headers={["År", "Produktionstype", "Kontrakter", "Median månedsløn", "Grundlag"]} rows={(data?.salaryByCategory ?? []).map(row => [row.year, categoryLabels[row.category] ?? row.category, row.contractCount, formatSafeKr(row.monthlyRate), basisText(row)])} /></TabsContent>
+        <TabsContent value="pension"><DataTable headers={["År", "Medlemmer", "Gennemsnitlig pension", "Grundlag"]} rows={(data?.pension ?? []).map(row => [row.year, row.memberCount, formatSafeValue(row.avgPensionPercent, "%"), basisText(row)])} /></TabsContent>
+        <TabsContent value="weeks"><DataTable headers={["År", "Medlemmer", "Gennemsnit", "Median", "Grundlag"]} rows={(data?.workingWeeks ?? []).map(row => [row.year, row.memberCount, formatSafeValue(row.avgWeeks, " uger"), formatSafeValue(row.medianWeeks, " uger"), basisText(row)])} /></TabsContent>
+        <TabsContent value="rights"><DataTable headers={["Produktionstype", "Medlemmer", "Streaming", "Ukendt", "Copydan", "Ukendt", "Royalty", "Ukendt", "Grundlag"]} rows={(data?.rights ?? []).map(row => [categoryLabels[row.category] ?? row.category, row.memberCount, formatSafeValue(row.svodPercent, "%"), row.svodUnknown ?? "N/A", formatSafeValue(row.copydanPercent, "%"), row.copydanUnknown ?? "N/A", formatSafeValue(row.royaltyPercent, "%"), row.royaltyUnknown ?? "N/A", basisText(row)])} /></TabsContent>
+        <TabsContent value="gender"><DataTable headers={["Køn", "Personer", "Gennemsnitlig registreret løn", "Grundlag"]} rows={(data?.gender ?? []).map(row => [row.gender === "female" ? "Kvinde" : row.gender === "male" ? "Mand" : "Andet", row.count, formatSafeKr(row.avgSalary), basisText(row)])} /></TabsContent>
+        <TabsContent value="contracts" className="space-y-4"><Card><CardContent className="h-[360px] pt-6">{contractCountsChart.length ? <ResponsiveChartContainer><BarChart data={contractCountsChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} /><Legend /><Bar dataKey="aLoen" name="A-løn" fill="#3b82f6" /><Bar dataKey="leverandoer" name="Leverandør" fill="#f59e0b" /></BarChart></ResponsiveChartContainer> : <div className="flex h-full items-center justify-center text-center text-sm text-muted-foreground">Ingen synlige kontrakttal med de valgte filtre.</div>}</CardContent></Card><DataTable headers={["År", "Medlemmer", "Kontrakter", "A-løn", "Leverandør", "Grundlag"]} rows={(data?.contractCounts ?? []).map(row => [row.year, row.memberCount, formatSafeValue(row.total), formatSafeValue(row.aLoen), formatSafeValue(row.leverandoer), basisText(row)])} /></TabsContent>
+        <TabsContent value="contributions"><DataTable headers={["År", "Medlemmer", "Kontrakter", "Feriepenge", "BETA", "I alt", "Grundlag"]} rows={(data?.contributions ?? []).map(row => [row.year, row.memberCount, row.contractCount, formatSafeKr(row.totalHolidayPayAmount), formatSafeKr(row.totalBetaAmount), formatSafeKr(safeTotal(row.totalHolidayPayAmount, row.totalBetaAmount)), basisText(row)])} /></TabsContent>
+        <TabsContent value="ai"><DataTable headers={["År", "Medlemmer", "Med forbehold", "Uden forbehold", "Andel", "Grundlag"]} rows={(data?.aiClauses ?? []).map(row => [row.year, row.memberCount, row.withClause ?? "N/A", row.withoutClause ?? "N/A", formatSafeValue(row.pct, "%"), basisText(row)])} /></TabsContent>
+        <TabsContent value="individual"><Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Individrangering er deaktiveret</AlertTitle><AlertDescription>Årsindkomst og kontraktdata for enkelte personer vises ikke på adminsiden. Statistikken præsenteres kun som grupper med mindst {data?.minimum ?? 3} forskellige personer, og små grupper markeres som usikre.</AlertDescription></Alert></TabsContent>
       </Tabs>
       {data?.includeDrafts && <Alert><AlertTitle>Kladder indgår</AlertTitle><AlertDescription>Organisationens indstilling medtager kladekontrakter. De kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata.</AlertDescription></Alert>}
       {data?.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Det valgte resultat bygger på {data.memberCount} forskellige personer. Vær forsigtig med konklusioner baseret på færre end {data.lowSampleThreshold} personer.</AlertDescription></Alert>}

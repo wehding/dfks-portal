@@ -10,7 +10,7 @@ import { getKeyStatus } from "@/lib/ai-key-store"
 import { requireAdminApi } from "@/lib/api-auth"
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles"
 
-const PROVIDERS = ["anthropic", "openai", "google"] as const
+const PROVIDERS = ["anthropic", "google"] as const
 
 export async function GET() {
     const auth = await requireAdminApi(USER_ADMIN_ROLES)

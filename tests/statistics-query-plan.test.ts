@@ -51,8 +51,19 @@ test("queryplan afviser ukendte mål og fri SQL", () => {
 
 test("serien indeholder kun aggregerede værdier og korrekt måleenhed", () => {
   assert.deepEqual(extractStatisticsSeries("contract_count", { contractCounts: [{ year: 2025, total: 12, contractCount: 12, memberCount: 10, validatedCount: 9, draftCount: 3, lowSample: false, secret: "nej" }] }), [
-    { year: 2025, value: 12, contractCount: 12, memberCount: 10, validatedCount: 9, draftCount: 3, lowSample: false, seriesKey: "result", seriesLabel: "Resultat", metric: "contract_count", metricLabel: "Antal kontrakter", unit: "count" },
+    { year: 2025, value: 12, contractCount: 12, memberCount: 10, validatedCount: 9, draftCount: 3, lowSample: false, seriesKey: "result", seriesLabel: "Resultat", metric: "contract_count", metricLabel: "Antal kontrakter", unit: "count", suppressed: false, suppressionReason: undefined, outlierExcludedCount: 0 },
   ]);
+});
+
+test("slørede statistikceller bliver ikke til AI-serier", () => {
+  const rows = extractStatisticsSeries("median_monthly_salary", {
+    salary: [
+      { year: 2025, monthlyRate: null, contractCount: 2, memberCount: 2, suppressed: true, suppressionReason: "minimum_count" },
+      { year: 2026, monthlyRate: 45_000, contractCount: 5, memberCount: 5, suppressed: false },
+    ],
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].year, 2026);
 });
 
 test("median og gennemsnitlig løn bruger forskellige aggregerede værdier", () => {

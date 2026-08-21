@@ -376,6 +376,9 @@ export type StatisticsSeriesRow = {
   metric: StatisticsMetric;
   metricLabel: string;
   unit: "dkk" | "percent" | "weeks" | "count";
+  suppressed?: boolean;
+  suppressionReason?: "minimum_count" | "dominance" | "secondary";
+  outlierExcludedCount?: number;
 };
 
 export function extractStatisticsSeries(
@@ -387,6 +390,7 @@ export function extractStatisticsSeries(
   const meta = STATISTICS_METRIC_META[metric];
   const rows = Array.isArray(statistics[meta.sourceKey]) ? statistics[meta.sourceKey] as Array<Record<string, unknown>> : [];
   return rows.flatMap(row => {
+    if (row.suppressed === true) return [];
     const value = metric === "contributions"
       ? Number(row.totalHolidayPayAmount ?? 0) + Number(row.totalBetaAmount ?? 0)
       : Number(row[meta.valueKey] ?? Number.NaN);
@@ -397,6 +401,9 @@ export function extractStatisticsSeries(
       validatedCount: Number(row.validatedCount ?? 0), draftCount: Number(row.draftCount ?? 0),
       lowSample: Boolean(row.lowSample), seriesKey, seriesLabel, metric,
       metricLabel: meta.label, unit: meta.unit,
+      suppressed: false,
+      suppressionReason: undefined,
+      outlierExcludedCount: Number(row.outlierExcludedCount ?? 0),
     }];
   });
 }

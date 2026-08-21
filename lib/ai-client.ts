@@ -2,7 +2,7 @@
  * lib/ai-client.ts
  *
  * Unified server-side AI caller.
- * Understøtter Anthropic, OpenAI og Google Gemini med samme interface.
+ * Understøtter Anthropic og Google Gemini med samme interface.
  * Bruges fra Next.js API routes — kører kun server-side.
  */
 
@@ -98,8 +98,6 @@ export async function callAiDetailed(opts: AiCallOptions): Promise<AiCallResult>
     switch (provider) {
         case "anthropic":
             return callAnthropic(model, system, userMessage, maxTokens, enableWebSearch, opts)
-        case "openai":
-            return callOpenAi(model, system, userMessage, maxTokens, opts)
         case "google":
             return callGoogle(model, system, userMessage, maxTokens, opts)
         default:
@@ -215,42 +213,6 @@ async function callAnthropic(model: string, system: string, userMessage: string,
 
     await recordAiUsage({ context: opts?.usageContext, provider: "anthropic", model: safeModel, usage: totalUsage, inputChars: system.length + userMessage.length, latencyMs: Date.now() - startedAt, providerRequestId, status: "failed", errorCode: "tool_round_limit" })
     return { text: "", usage: totalUsage, providerRequestId }
-}
-
-// ── OpenAI ────────────────────────────────────────────────────
-
-async function callOpenAi(model: string, system: string, userMessage: string, maxTokens: number, opts?: AiCallOptions): Promise<AiCallResult> {
-    const apiKey = getApiKey("openai")
-    if (!apiKey) throw new Error("OpenAI API-nøgle mangler — sæt den i Stamdata → Indstillinger → API-nøgler")
-
-    const ALLOWED = ["gpt-4o-mini", "gpt-4o", "o3-mini"]
-    const safeModel = ALLOWED.includes(model) ? model : "gpt-4o"
-
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-            model: safeModel,
-            max_tokens: maxTokens,
-            messages: [
-                { role: "system", content: system },
-                { role: "user", content: userMessage },
-            ],
-            ...(opts?.responseJson ? { response_format: { type: "json_object" } } : {}),
-        }),
-        signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
-    })
-
-    if (!res.ok) throw await providerError("openai", res)
-    const data = await res.json()
-    return {
-        text: data.choices?.[0]?.message?.content ?? "",
-        usage: { inputTokens: Number(data.usage?.prompt_tokens ?? 0), outputTokens: Number(data.usage?.completion_tokens ?? 0) },
-        providerRequestId: res.headers.get("x-request-id"),
-    }
 }
 
 // ── Google Gemini ─────────────────────────────────────────────

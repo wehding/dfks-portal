@@ -8,8 +8,9 @@ import { useI18n } from "@/lib/i18n";
 import { PageHeader } from "@/components/page-header";
 import { AdminInboxPanel } from "@/components/admin/admin-inbox-panel";
 import { Badge } from "@/components/ui/badge";
+import { OrgContextNotice } from "@/components/navigation/org-context-notice";
 
-export function AdminDashboard({ metrics }: { metrics: AdminDashboardMetrics }) {
+export function AdminDashboard({ metrics, notice }: { metrics: AdminDashboardMetrics; notice?: string | null }) {
   const { t, locale } = useI18n();
   const shortcuts = [
     { id: "contracts", href: "/admin/kontrakter?tab=valideringskoe", icon: CheckCircle, label: t("admin.dashboard.validateContracts"), description: t("admin.dashboard.validateContractsDescription"), tasks: metrics.tasks.contractValidationsPending, messages: metrics.messages.contracts, secondary: t("admin.dashboard.validatedContracts"), secondaryValue: metrics.validatedContracts },
@@ -19,6 +20,7 @@ export function AdminDashboard({ metrics }: { metrics: AdminDashboardMetrics }) 
   ].filter(item => process.env.NODE_ENV !== "production" || item.id !== "screenings");
   return <div className="max-w-5xl space-y-8">
     <PageHeader title={t("admin.dashboard.title")} subtitle={t("admin.dashboard.subtitle")} />
+    <OrgContextNotice notice={notice} />
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {shortcuts.map(item => <div key={item.id} className={`group flex min-h-44 flex-col rounded-lg border p-4 transition-colors hover:bg-muted/40 ${item.tasks ? "border-amber-300 bg-amber-50/60 dark:bg-amber-950/20" : ""}`}>
         <Link href={item.href} className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

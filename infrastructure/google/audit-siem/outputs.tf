@@ -1,0 +1,9 @@
+output "cloud_run_service" { value = google_cloud_run_v2_service.worker.name }
+output "cloud_run_uri" { value = google_cloud_run_v2_service.worker.uri }
+output "cloud_run_revision" { value = google_cloud_run_v2_service.worker.latest_ready_revision }
+output "worker_image" { value = var.worker_image }
+output "kms_key" { value = google_kms_crypto_key.signing.id }
+output "kms_key_version" { value = "${google_kms_crypto_key.signing.id}/cryptoKeyVersions/1" }
+output "worm_bucket" { value = google_storage_bucket.worm.name }
+output "worm_retention_locked" { value = var.lock_worm_retention }
+output "scheduler_enabled" { value = var.enable_scheduler }

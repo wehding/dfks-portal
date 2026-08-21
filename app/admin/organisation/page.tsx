@@ -9,7 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImportConnectionsSettings } from "@/components/admin/import-connections-settings";
+import { LegalDocumentSettings } from "@/components/admin/legal-document-settings";
 
 type FormState = {
   org_id: string;
@@ -27,6 +29,7 @@ type FormState = {
   producer_categories: string[];
   statistics_contract_scope: "validated_only" | "validated_and_drafts";
   statistics_minimum_group_size: number;
+  statistics_dominance_limit: number;
   statistics_profile_config: {
     professional_start_year: boolean;
     primary_profession_type: boolean;
@@ -63,6 +66,7 @@ const emptyForm: FormState = {
   producer_categories: [],
   statistics_contract_scope: "validated_only",
   statistics_minimum_group_size: 5,
+  statistics_dominance_limit: 0.8,
   statistics_profile_config: { professional_start_year: true, primary_profession_type: false, secondary_profession_types: false, usual_work_mode: false, primary_work_region: false },
   statistics_work_regions: [],
   onboarding_keywords: ["klip", "edit"],
@@ -85,6 +89,8 @@ export default function OrganisationSettingsPage() {
   const [connectionPending, setConnectionPending] = useState(false);
   const [loginUrl, setLoginUrl] = useState("");
   const [savedStatisticsMinimum, setSavedStatisticsMinimum] = useState(5);
+  const [savedStatisticsDominance, setSavedStatisticsDominance] = useState(0.8);
+  const [activeTab, setActiveTab] = useState("organisation");
 
   useEffect(() => {
     let active = true;
@@ -107,6 +113,7 @@ export default function OrganisationSettingsPage() {
           producer_categories: settings.producer_categories,
           statistics_contract_scope: settings.statistics_contract_scope,
           statistics_minimum_group_size: settings.statistics_minimum_group_size,
+          statistics_dominance_limit: settings.statistics_dominance_limit,
           statistics_profile_config: settings.statistics_profile_config,
           statistics_work_regions: settings.statistics_work_regions,
           onboarding_keywords: settings.onboarding_keywords,
@@ -121,6 +128,7 @@ export default function OrganisationSettingsPage() {
           foreninglet_credential_source: settings.foreninglet.credential_source,
         });
         setSavedStatisticsMinimum(settings.statistics_minimum_group_size);
+        setSavedStatisticsDominance(settings.statistics_dominance_limit);
         setLoginUrl(`${window.location.origin}/?org=${settings.id}`);
       })
       .catch(error => toast.error(error instanceof Error ? error.message : "Kunne ikke hente organisationen."))
@@ -180,6 +188,12 @@ export default function OrganisationSettingsPage() {
       ? window.confirm("En statistikgrænse under 5 kan gøre enkeltpersoner genkendelige i små grupper. Vil du gemme denne grænse?")
       : false;
     if (lowersStatisticsThreshold && !confirmLowStatisticsThreshold) return;
+    const raisesDominanceLimit = form.statistics_dominance_limit > 0.8
+      && form.statistics_dominance_limit !== savedStatisticsDominance;
+    const confirmHighStatisticsDominance = raisesDominanceLimit
+      ? window.confirm("En dominansgrænse over 80 % viser flere økonomiske tal, men øger risikoen for at dominerende producenter kan genkendes. Ændringen bliver auditlogget. Vil du gemme denne grænse?")
+      : false;
+    if (raisesDominanceLimit && !confirmHighStatisticsDominance) return;
 
     startTransition(async () => {
       try {
@@ -198,7 +212,9 @@ export default function OrganisationSettingsPage() {
           producer_categories: form.producer_categories,
           statistics_contract_scope: form.statistics_contract_scope,
           statistics_minimum_group_size: form.statistics_minimum_group_size,
+          statistics_dominance_limit: form.statistics_dominance_limit,
           confirm_low_statistics_threshold: confirmLowStatisticsThreshold,
+          confirm_high_statistics_dominance: confirmHighStatisticsDominance,
           statistics_profile_config: form.statistics_profile_config,
           statistics_work_regions: form.statistics_work_regions,
           onboarding_keywords: form.onboarding_keywords,
@@ -210,6 +226,7 @@ export default function OrganisationSettingsPage() {
         });
         const settings = await getOrganisationSettings();
         setSavedStatisticsMinimum(settings.statistics_minimum_group_size);
+        setSavedStatisticsDominance(settings.statistics_dominance_limit);
         setForm(current => ({
           ...current,
           foreninglet_username: "",
@@ -289,13 +306,22 @@ export default function OrganisationSettingsPage() {
             Tilpas navn, logo, afsender-mail og de fagord organisationens brugere ser i portalen.
           </p>
         </div>
-        <Button className="w-full sm:w-auto" onClick={handleSave} disabled={isPending || !canSave}>
-          {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-          Gem ændringer
-        </Button>
+        {activeTab === "organisation" && (
+          <Button className="w-full sm:w-auto" onClick={handleSave} disabled={isPending || !canSave}>
+            {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            Gem ændringer
+          </Button>
+        )}
       </div>
 
-      <ImportConnectionsSettings />
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start">
+          <TabsTrigger value="organisation">Organisation</TabsTrigger>
+          <TabsTrigger value="legal">Brugerrettigheder og juridiske tekster</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="organisation" className="space-y-6">
+          <ImportConnectionsSettings />
 
       <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
         <h2 className="text-base font-semibold">Branding</h2>
@@ -416,6 +442,28 @@ export default function OrganisationSettingsPage() {
           {form.statistics_minimum_group_size < 5 && (
             <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
               Grupper under standarden på 5 personer kræver særlig omtanke. Den ufravigelige diskretionsgrænse er 3 forskellige personer.
+            </div>
+          )}
+        </div>
+        <div className="mt-4 max-w-md space-y-2">
+          <Label htmlFor="statistics-dominance-limit">Dominansgrænse for virksomheder</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="statistics-dominance-limit"
+              type="number"
+              min={50}
+              max={100}
+              value={Math.round(form.statistics_dominance_limit * 100)}
+              onChange={event => setForm(current => ({ ...current, statistics_dominance_limit: Number(event.target.value) / 100 }))}
+            />
+            <span className="text-sm text-muted-foreground">%</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Standard er 80 %. Lavere grænse er mere forsigtig og slører flere tal. Højere grænse viser flere tal, men øger risikoen for at en dominerende producent kan genkendes.
+          </p>
+          {form.statistics_dominance_limit > 0.8 && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+              En grænse over 80 % skal kunne forklares ved audit. Ændringen auditlogges med gammel og ny værdi.
             </div>
           )}
         </div>
@@ -644,6 +692,13 @@ export default function OrganisationSettingsPage() {
           </div>
         </div>
       </section>
+
+        </TabsContent>
+
+        <TabsContent value="legal" className="space-y-6">
+          <LegalDocumentSettings />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

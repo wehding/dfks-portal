@@ -1,9 +1,12 @@
 "use server";
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- Admin list rows from dynamic Supabase joins are normalized at this module boundary. */
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
+import { headers } from "next/headers";
 import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncContractProducerRelations } from "@/lib/server/production-company-relations";
@@ -14,8 +17,13 @@ import { parseLocalEpisodeCode } from "@/lib/series-episodes";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { effectiveCopydanStatus, normalizeTriState, weeklySalaryWithPersonalSupplement } from "@/lib/contract-list-status";
 import { resolveSeriesScopeTarget, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
+import { auditHeadersContext } from "@/lib/audit-access-server";
+import { recordAuditEvent } from "@/lib/audit-log-server";
+import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
+import { extractWordText } from "@/lib/word-text";
 
-import { requireOrgId } from "@/lib/org";
+import { requireMemberContext, requireOrgId } from "@/lib/org";
+import { getContractImportStates } from "@/app/actions/contract-imports";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
 const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -29,6 +37,12 @@ type ContractExtractData = {
 };
 
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
+
+function documentExtension(path: string | null | undefined) {
+  const clean = (path ?? "").split("?")[0]?.split("#")[0]?.toLowerCase() ?? "";
+  const match = clean.match(/\.([a-z0-9]+)$/);
+  return match?.[1] ?? "";
+}
 
 async function currentUser() {
   const supabase = await createClient();
@@ -74,6 +88,36 @@ async function contractValidationBlocker(
 
 type SeriesEpisodeWork = { id: string; title: string | null; season_number: number | null; episode_number: number | null; parent_work_id: string | null };
 
+type AdminContractsPageParams = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: string;
+  type?: string;
+  rightsHolderId?: string | null;
+  sortKey?: "production" | "rightsHolder" | "employer" | "type" | "overenskomst" | "period" | "status";
+  sortDir?: "asc" | "desc";
+};
+
+function clampPageSize(value: number | undefined) {
+  if (!value || Number.isNaN(value)) return 20;
+  return Math.min(Math.max(Math.floor(value), 10), 200);
+}
+
+function normalizeSearch(value: string | undefined) {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function uniqueIds(values: Array<string | null | undefined>) {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function intersectIds(base: Set<string> | null, next: Iterable<string>) {
+  const nextSet = new Set(next);
+  if (!base) return nextSet;
+  return new Set([...base].filter(id => nextSet.has(id)));
+}
+
 // Henter alle afsnit-værker for en serie (selve serien + dens børneværker) i en org.
 // parentId valideres som UUID før strenginterpolation i .or(...) (defense-in-depth mod filter-injection).
 async function fetchSeriesEpisodeWorks(
@@ -92,6 +136,247 @@ async function fetchSeriesEpisodeWorks(
   return { episodeWorks, error: null };
 }
 
+async function matchingAdminContractIds(
+  db: ReturnType<typeof createServiceClient>,
+  orgId: string,
+  params: AdminContractsPageParams,
+) {
+  let ids: Set<string> | null = null;
+  const q = normalizeSearch(params.search);
+
+  if (q) {
+    const like = `%${q}%`;
+    const matches = new Set<string>();
+    if (isUuid(q)) {
+      const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).eq("id", q).limit(1);
+      if (error) throw new Error(error.message);
+      for (const row of data ?? []) matches.add(row.id);
+    }
+    const directColumns = ["working_title", "type", "overenskomst", "status", "document_processing_status"];
+    const directResults = await Promise.all(directColumns.map(column =>
+      db.from("contracts").select("id").eq("org_id", orgId).ilike(column, like).limit(5000)
+    ));
+    for (const result of directResults) {
+      if (result.error) throw new Error(result.error.message);
+      for (const row of result.data ?? []) matches.add(row.id);
+    }
+
+    const numeric = Number(q);
+    if (Number.isFinite(numeric)) {
+      const { data, error } = await db
+        .from("contracts")
+        .select("id")
+        .eq("org_id", orgId)
+        .or(`contract_date.ilike.%${numeric}%,start_date.ilike.%${numeric}%,end_date.ilike.%${numeric}%`)
+        .limit(5000);
+      if (error) throw new Error(error.message);
+      for (const row of data ?? []) matches.add(row.id);
+    }
+
+    const [{ data: holders, error: holdersError }, { data: employers, error: employersError }, { data: works, error: worksError }] = await Promise.all([
+      db.from("rettighedshavere").select("id").eq("org_id", orgId).ilike("full_name", like).limit(5000),
+      db.from("employers").select("id").eq("org_id", orgId).ilike("name", like).limit(5000),
+      db.from("works").select("id").eq("org_id", orgId).ilike("title", like).limit(5000),
+    ]);
+    if (holdersError) throw new Error(holdersError.message);
+    if (employersError) throw new Error(employersError.message);
+    if (worksError) throw new Error(worksError.message);
+
+    const holderIds = uniqueIds((holders ?? []).map(row => row.id));
+    const employerIds = uniqueIds((employers ?? []).map(row => row.id));
+    const workIds = uniqueIds((works ?? []).map(row => row.id));
+    const relationResults = await Promise.all([
+      holderIds.length ? db.from("contracts").select("id").eq("org_id", orgId).in("rights_holder_id", holderIds).limit(5000) : Promise.resolve({ data: [], error: null }),
+      employerIds.length ? db.from("contracts").select("id").eq("org_id", orgId).in("employer_id", employerIds).limit(5000) : Promise.resolve({ data: [], error: null }),
+      workIds.length ? db.from("contracts").select("id").eq("org_id", orgId).in("work_id", workIds).limit(5000) : Promise.resolve({ data: [], error: null }),
+    ]);
+    for (const result of relationResults) {
+      if (result.error) throw new Error(result.error.message);
+      for (const row of result.data ?? []) matches.add(row.id);
+    }
+
+    if (q.includes("mangler") && q.includes("værk")) {
+      const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("work_id", null).limit(5000);
+      if (error) throw new Error(error.message);
+      for (const row of data ?? []) matches.add(row.id);
+    }
+    if (q.includes("mangler") && (q.includes("ejer") || q.includes("rettighedshaver"))) {
+      const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("rights_holder_id", null).limit(5000);
+      if (error) throw new Error(error.message);
+      for (const row of data ?? []) matches.add(row.id);
+    }
+
+    ids = intersectIds(ids, matches);
+  }
+
+  if (params.rightsHolderId) {
+    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).eq("rights_holder_id", params.rightsHolderId).limit(5000);
+    if (error) throw new Error(error.message);
+    ids = intersectIds(ids, (data ?? []).map(row => row.id));
+  }
+
+  if (params.status === "beskeder") {
+    const { data, error } = await db
+      .from("contract_comments")
+      .select("contract_id")
+      .eq("author_role", "member")
+      .is("admin_read_at", null)
+      .limit(5000);
+    if (error) throw new Error(error.message);
+    ids = intersectIds(ids, (data ?? []).map(row => row.contract_id));
+  } else if (params.status === "missingOwner") {
+    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("rights_holder_id", null).limit(5000);
+    if (error) throw new Error(error.message);
+    ids = intersectIds(ids, (data ?? []).map(row => row.id));
+  } else if (params.status === "missingWork") {
+    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("work_id", null).neq("status", "valideret").limit(5000);
+    if (error) throw new Error(error.message);
+    ids = intersectIds(ids, (data ?? []).map(row => row.id));
+  } else if (params.status === "validationPending") {
+    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).not("work_id", "is", null).not("rights_holder_id", "is", null).neq("status", "valideret").limit(5000);
+    if (error) throw new Error(error.message);
+    ids = intersectIds(ids, (data ?? []).map(row => row.id));
+  } else if (params.status === "validationRecommended") {
+    const { data, error } = await db
+      .from("contract_validations")
+      .select("contract_id, has_credit_clause, has_overenskomst_incorporation")
+      .or("has_credit_clause.eq.false,has_overenskomst_incorporation.eq.false")
+      .limit(5000);
+    if (error) throw new Error(error.message);
+    ids = intersectIds(ids, (data ?? []).map(row => row.contract_id));
+  }
+
+  return ids;
+}
+
+export async function fetchAdminContractsPage(params: AdminContractsPageParams = {}) {
+  const session = await createClient();
+  const caller = await assertAdminRole(session, ADMIN_ROLES);
+  if (!caller) return { success: false, error: "Ikke autoriseret", contracts: [], totalCount: 0, totalAllCount: 0 };
+
+  const db = createServiceClient();
+  const orgId = caller.orgId;
+  const pageSize = clampPageSize(params.pageSize);
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const matchedIds = await matchingAdminContractIds(db, orgId, params);
+  if (matchedIds && matchedIds.size === 0) {
+    const { count: totalAllCount } = await db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null);
+    return { success: true, contracts: [], totalCount: 0, totalAllCount: totalAllCount ?? 0, stats: { total: totalAllCount ?? 0, validerede: 0 } };
+  }
+
+  const selectFields = `
+    id, type, overenskomst, status, pdf_url, processed_pdf_url,
+    document_processing_status, document_processing_error_code, superseded_by_contract_id,
+    contract_date, start_date, end_date, created_at,
+    employer_id, rights_holder_id, working_title,
+    season_number, episode_numbers,
+    employers (name),
+    rettighedshavere (full_name),
+    works (id, title, type, poster_url),
+    contract_validations (has_credit_clause, has_overenskomst_incorporation)
+  `;
+  let countQuery = db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null);
+  let listQuery = db.from("contracts").select(selectFields).eq("org_id", orgId).is("superseded_by_contract_id", null);
+  const applyFilters = (query: any) => {
+    let next = query;
+    if (matchedIds) next = next.in("id", [...matchedIds]);
+    if (params.status && !["all", "beskeder", "missingOwner", "missingWork", "validationPending", "validationRecommended"].includes(params.status)) next = next.eq("status", params.status);
+    if (params.type && params.type !== "all") next = next.eq("type", params.type);
+    return next;
+  };
+  countQuery = applyFilters(countQuery);
+  listQuery = applyFilters(listQuery);
+
+  const ascending = params.sortDir !== "desc";
+  if (params.sortKey === "rightsHolder") listQuery = listQuery.order("rights_holder_id", { ascending });
+  else if (params.sortKey === "employer") listQuery = listQuery.order("employer_id", { ascending });
+  else if (params.sortKey === "type") listQuery = listQuery.order("type", { ascending });
+  else if (params.sortKey === "overenskomst") listQuery = listQuery.order("overenskomst", { ascending });
+  else if (params.sortKey === "status") listQuery = listQuery.order("status", { ascending });
+  else if (params.sortKey === "period") listQuery = listQuery.order("start_date", { ascending, nullsFirst: false }).order("contract_date", { ascending, nullsFirst: false });
+  else listQuery = listQuery.order("created_at", { ascending: false });
+
+  const [{ count, error: countError }, { data, error }, { count: totalAllCount }, { count: validatedCount }] = await Promise.all([
+    countQuery,
+    listQuery.range(from, to),
+    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null),
+    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null).eq("status", "valideret"),
+  ]);
+  if (countError) return { success: false, error: countError.message, contracts: [], totalCount: 0, totalAllCount: 0 };
+  if (error) return { success: false, error: error.message, contracts: [], totalCount: 0, totalAllCount: 0 };
+
+  const rawContracts = (data ?? []) as any[];
+  const contractIds = rawContracts.map(row => row.id);
+  const [commentsResult, jobsResult, importStates] = await Promise.all([
+    contractIds.length
+      ? db.from("contract_comments").select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at").in("contract_id", contractIds).eq("author_role", "member").is("admin_read_at", null).order("created_at", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+    contractIds.length
+      ? db.from("contract_ai_jobs").select("contract_id, status, error_message, created_at").in("contract_id", contractIds).is("attachment_id", null).order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
+    getContractImportStates(contractIds),
+  ]);
+  if (commentsResult.error) return { success: false, error: commentsResult.error.message, contracts: [], totalCount: 0, totalAllCount: 0 };
+  if (jobsResult.error) return { success: false, error: jobsResult.error.message, contracts: [], totalCount: 0, totalAllCount: 0 };
+
+  const commentsByContract: Record<string, Array<Record<string, unknown>>> = {};
+  for (const comment of commentsResult.data ?? []) {
+    if (!commentsByContract[comment.contract_id]) commentsByContract[comment.contract_id] = [];
+    commentsByContract[comment.contract_id].push(comment);
+  }
+  const latestJobByContract: Record<string, { status: string; error_message: string | null; created_at: string }> = {};
+  for (const job of jobsResult.data ?? []) {
+    if (!latestJobByContract[job.contract_id]) latestJobByContract[job.contract_id] = job;
+  }
+  const contracts = rawContracts.map(row => {
+    const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations;
+    return {
+      id: row.id,
+      type: row.type,
+      overenskomst: row.overenskomst,
+      status: row.status,
+      pdf_url: row.pdf_url,
+      processed_pdf_url: row.processed_pdf_url ?? null,
+      document_processing_status: row.document_processing_status ?? "pending",
+      document_processing_error_code: row.document_processing_error_code ?? null,
+      superseded_by_contract_id: row.superseded_by_contract_id ?? null,
+      previous_version_count: 0,
+      contract_date: row.contract_date,
+      start_date: row.start_date,
+      end_date: row.end_date,
+      created_at: row.created_at,
+      employer_id: row.employer_id ?? null,
+      employer_name: row.employers?.name ?? null,
+      rights_holder_id: row.rights_holder_id ?? null,
+      rights_holder_name: row.rettighedshavere?.full_name ?? null,
+      work_id: row.works?.id ?? null,
+      working_title: row.working_title ?? null,
+      work_title: row.works?.title ?? null,
+      work_poster_url: row.works?.poster_url ?? null,
+      season_number: row.season_number ?? null,
+      episode_numbers: row.episode_numbers ?? null,
+      contract_comments: commentsByContract[row.id] ?? [],
+      contract_attachments: [],
+      validation_data: null,
+      validation_has_credit_clause: validation?.has_credit_clause ?? null,
+      validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
+      ai_job_status: latestJobByContract[row.id]?.status ?? null,
+      ai_job_error: latestJobByContract[row.id]?.error_message ?? null,
+      import_status: importStates.success ? importStates.states[row.id] ?? null : null,
+    };
+  });
+
+  return {
+    success: true,
+    contracts,
+    totalCount: count ?? contracts.length,
+    totalAllCount: totalAllCount ?? count ?? contracts.length,
+    stats: { total: totalAllCount ?? count ?? contracts.length, validerede: validatedCount ?? 0 },
+  };
+}
+
 export async function uploadMemberContract(formData: FormData) {
   const supabase = await createClient();
   const db = createServiceClient();
@@ -106,7 +391,9 @@ export async function uploadMemberContract(formData: FormData) {
     .single();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
 
-  const orgId = await requireOrgId(db, user.id);
+  const memberContext = await requireMemberContext(db, user.id);
+  const orgId = memberContext.orgId;
+  if (memberContext.rightsHolderId !== rh.id) return { success: false, error: "Ingen rettighedshaverprofil i den aktive organisation" };
 
   const file = formData.get("file") as File | null;
   if (!file) return { success: false, error: "Ingen fil modtaget" };
@@ -212,7 +499,9 @@ export async function saveUploadedContract(params: {
     .maybeSingle();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
 
-  const orgId = await requireOrgId(db, user.id);
+  const memberContext = await requireMemberContext(db, user.id);
+  const orgId = memberContext.orgId;
+  if (memberContext.rightsHolderId !== rh.id) return { success: false, error: "Ingen rettighedshaverprofil i den aktive organisation" };
   if (!params.filePath.startsWith(`${orgId}/`)) {
     return { success: false, error: "Filstien tilhører ikke din organisation" };
   }
@@ -342,7 +631,9 @@ export async function queueUploadedContractAiJob(contractId: string) {
 
   const { data: rh } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
-  const orgId = await requireOrgId(db, user.id);
+  const memberContext = await requireMemberContext(db, user.id);
+  const orgId = memberContext.orgId;
+  if (memberContext.rightsHolderId !== rh.id) return { success: false, error: "Ingen rettighedshaverprofil i den aktive organisation" };
   const { data: contract } = await db
     .from("contracts")
     .select("id,pdf_url")
@@ -408,20 +699,36 @@ export async function fetchMemberContractsList() {
   if (!user) return { success: false, error: "Ikke logget ind", contracts: [] };
 
   const db = createServiceClient();
+  const memberContext = await requireMemberContext(db, user.id);
   const { data: rh } = await db
     .from("rettighedshavere")
     .select("id")
     .eq("user_id", user.id)
     .maybeSingle();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet", contracts: [] };
+  if (memberContext.rightsHolderId !== rh.id) return { success: false, error: "Ingen rettighedshaverprofil i den aktive organisation", contracts: [] };
 
   const { data, error } = await db
     .from("contracts")
-    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at)")
+    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, validated_at)")
+    .eq("org_id", memberContext.orgId)
     .eq("rights_holder_id", rh.id)
     .order("created_at", { ascending: false });
 
   if (error) return { success: false, error: error.message, contracts: [] };
+  const orgId = await requireOrgId(db, user.id);
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId, role: "member" }, "portal", "portal.contracts.list"),
+    action: "read",
+    entityType: "contracts",
+    entityLabel: "Mine kontrakter",
+    targetMemberUuid: rh.id,
+    purposeCode: "member_self_service",
+    legalBasis: "GDPR Art. 6(1)(b)",
+    dataCategories: ["contract_data", "salary_data", "message_data"],
+    orgIds: [orgId],
+    metadata: { resultCount: data?.length ?? 0 },
+  });
   return { success: true, contracts: data ?? [] };
 }
 
@@ -524,13 +831,25 @@ export async function fetchMemberContractDetail(contractId: string) {
 
   const { data, error } = await db
     .from("contracts")
-    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
+    .select("id, org_id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
     .eq("id", contractId)
     .eq("rights_holder_id", rh.id)
     .maybeSingle();
 
   if (error) return { success: false, error: error.message };
   if (!data) return { success: false, error: "Kontrakten blev ikke fundet." };
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: data.org_id, role: "member" }, "portal", "portal.contracts.detail"),
+    action: "read",
+    entityType: "contracts",
+    entityId: contractId,
+    entityLabel: data.working_title ?? "Egen kontrakt",
+    targetMemberUuid: rh.id,
+    purposeCode: "member_self_service",
+    legalBasis: "GDPR Art. 6(1)(b)",
+    dataCategories: ["contract_data", "salary_data", "message_data", "ai_analysis"],
+    orgIds: [data.org_id],
+  });
   return { success: true, contract: data };
 }
 
@@ -551,7 +870,13 @@ export async function getContractSignedUrl(pdfUrl: string) {
     .eq("pdf_url", pdfUrl)
     .maybeSingle();
 
+  let auditOrgId: string;
+  let targetMemberUuid: string | null;
+  let entityId: string | null = null;
   if (contract) {
+    auditOrgId = contract.org_id;
+    targetMemberUuid = contract.rights_holder_id;
+    entityId = contract.id;
     if (contract.rights_holder_id !== rh.id) {
       const isAdmin = await assertAdminForOrg(db, user.id, contract.org_id);
       if (!isAdmin) return { url: null, error: "Ikke autoriseret" };
@@ -565,6 +890,8 @@ export async function getContractSignedUrl(pdfUrl: string) {
     const relation = (attachment as { contracts?: { org_id: string; rights_holder_id: string | null } | { org_id: string; rights_holder_id: string | null }[] | null } | null)?.contracts;
     const owner = Array.isArray(relation) ? relation[0] : relation;
     if (!owner) return { url: null, error: "Fil ikke fundet" };
+    auditOrgId = owner.org_id;
+    targetMemberUuid = owner.rights_holder_id;
     if (owner.rights_holder_id !== rh.id) {
       const isAdmin = await assertAdminForOrg(db, user.id, owner.org_id);
       if (!isAdmin) return { url: null, error: "Ikke autoriseret" };
@@ -572,7 +899,82 @@ export async function getContractSignedUrl(pdfUrl: string) {
   }
 
   const { data } = await db.storage.from(BUCKET).createSignedUrl(pdfUrl, 3600);
+  if (data?.signedUrl) {
+    await recordAuditEvent({
+      context: auditHeadersContext(await headers(), { userId: user.id, orgId: auditOrgId, role: targetMemberUuid === rh.id ? "member" : "admin" }, targetMemberUuid === rh.id ? "portal" : "admin", "contracts.document-download"),
+      action: "download",
+      entityType: "contracts",
+      entityId,
+      entityLabel: "Kontraktdokument",
+      targetMemberUuid,
+      purposeCode: targetMemberUuid === rh.id ? "member_self_service" : "contract_case_management",
+      legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+      dataCategories: ["contract_data", "salary_data"],
+      orgIds: [auditOrgId],
+    });
+  }
   return { url: data?.signedUrl ?? null };
+}
+
+export async function getContractDocumentPreview(contractId: string) {
+  const user = await currentUser();
+  if (!user) return { kind: "none" as const, error: "Ikke logget ind" };
+  const db = createServiceClient();
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!rh) return { kind: "none" as const, error: "Ingen rettighedshaver-profil" };
+
+  const { data: contract } = await db
+    .from("contracts")
+    .select("id, org_id, rights_holder_id, working_title, pdf_url, processed_pdf_url")
+    .eq("id", contractId)
+    .maybeSingle();
+  if (!contract) return { kind: "none" as const, error: "Kontrakt ikke fundet" };
+  if (contract.rights_holder_id !== rh.id) {
+    const isAdmin = await assertAdminForOrg(db, user.id, contract.org_id);
+    if (!isAdmin) return { kind: "none" as const, error: "Ikke autoriseret" };
+  }
+
+  const path = contract.processed_pdf_url ?? contract.pdf_url;
+  if (!path) return { kind: "none" as const, error: "Kontrakten har ikke et dokument" };
+  const extension = documentExtension(path);
+  const fileName = path.split("/").pop() ?? "kontrakt";
+
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: contract.rights_holder_id === rh.id ? "member" : "admin" }, contract.rights_holder_id === rh.id ? "portal" : "admin", "contracts.document-preview"),
+    action: "read",
+    entityType: "contracts",
+    entityId: contract.id,
+    entityLabel: contract.working_title ?? "Kontraktdokument",
+    targetMemberUuid: contract.rights_holder_id,
+    purposeCode: contract.rights_holder_id === rh.id ? "member_self_service" : "contract_case_management",
+    legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+    dataCategories: ["contract_data", "salary_data"],
+    orgIds: [contract.org_id],
+  });
+
+  if (extension === "pdf") {
+    const { data, error } = await db.storage.from(BUCKET).createSignedUrl(path, 3600, { download: false });
+    if (error || !data?.signedUrl) return { kind: "none" as const, error: "Kunne ikke oprette preview-link" };
+    return { kind: "pdf" as const, url: data.signedUrl, fileName };
+  }
+
+  if (extension === "doc" || extension === "docx") {
+    const { data, error } = await db.storage.from(BUCKET).download(path);
+    if (error || !data) return { kind: "none" as const, error: "Kunne ikke hente Word-dokumentet" };
+    try {
+      const text = await extractWordText(Buffer.from(await data.arrayBuffer()), fileName);
+      return { kind: "word" as const, text, fileName };
+    } catch (error) {
+      console.error("[member-contracts] Word-preview fejlede", error);
+      return { kind: "none" as const, error: "Word-dokumentet kunne ikke vises som tekst" };
+    }
+  }
+
+  return { kind: "unsupported" as const, fileName, error: "Dokumenttypen kan ikke forhåndsvises automatisk" };
 }
 
 export async function deleteMemberContract(contractId: string) {
@@ -710,6 +1112,19 @@ export async function getContractValidation(contractId: string, includeEpisodes 
   // hasSavedValidation afspejler om der faktisk findes gemte valideringsdata FØR merge med værkets
   // fallback-felter — så UI kan skelne "endnu ingen validering" fra "felter fyldt fra det linkede værk".
   const hasSavedValidation = Boolean(data?.extracted_data && Object.keys(data.extracted_data as Record<string, unknown>).length > 0);
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: "admin" }, "admin", "admin.contracts.validation"),
+    action: "read",
+    entityType: "contracts",
+    entityId: contractId,
+    entityLabel: valueText((contract as { working_title?: unknown }).working_title, "Kontraktvalidering"),
+    targetMemberUuid: contract.rights_holder_id,
+    purposeCode: "contract_validation",
+    legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+    dataCategories: ["contract_data", "salary_data", "ai_analysis"],
+    orgIds: [contract.org_id],
+    metadata: { includeEpisodes },
+  });
   return {
     success: true,
     extractedData,
@@ -895,7 +1310,7 @@ export async function updateAdminContractEpisodeAssignments(params: {
   // Default-rolle udledes fra organisationens terminologi (fx "Klipper" for DFKS), ikke hardcodet.
   const { data: orgForRole } = await db.from("organisations").select("terminology").eq("id", contract.org_id).maybeSingle();
   const defaultRole = resolveDefaultRole(orgForRole ?? null);
-  const role = (existing ?? []).find(item => item.role)?.role ?? defaultRole;
+  const role = normalizeWorkEditorRole((existing ?? []).find(item => item.role)?.role ?? defaultRole, defaultRole);
   const additions = selectedIds.filter(id => !existingWorkIds.has(id)).map(workId => ({
     org_id: contract.org_id,
     work_id: workId,
@@ -1224,6 +1639,19 @@ export async function fetchAdminContractEditorData(contractId: string) {
           registrationNumber: entity?.registration_number ?? undefined,
         };
       });
+
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId, role: "admin" }, "admin", "admin.contracts.editor"),
+    action: "read",
+    entityType: "contracts",
+    entityId: contractId,
+    entityLabel: contract.working_title ?? "Kontrakteditor",
+    targetMemberUuid: contract.rights_holder_id,
+    purposeCode: "contract_case_management",
+    legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+    dataCategories: ["contract_data", "salary_data", "message_data", "ai_analysis"],
+    orgIds: [orgId],
+  });
 
   return {
     success: true,

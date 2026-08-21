@@ -33,6 +33,7 @@ jobs:
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: node scripts/check-i18n-coverage.mjs
+      - run: npm run audit:coverage
       - run: node --import tsx --test tests/*.test.ts tests/*.test.tsx
       - run: npm run build
       - name: Test OCR-worker
@@ -40,13 +41,14 @@ jobs:
         run: npm ci && npm test && node --check server.mjs && node --check processor.mjs && node --check backfill.mjs
       - name: Byg OCR-workerens container
         run: docker build --tag dfks-contract-document-worker:test cloud-run/contract-document-worker
+      - name: Test og byg audit WORM-worker
+        working-directory: cloud-run/audit-siem-worker
+        run: npm ci && npm test && node --check server.mjs && node --check siem.mjs && docker build --tag dfks-audit-siem-worker:test .
 
   database-security:
     name: Migrationer og RLS-tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      OPENAI_API_KEY: ci-placeholder
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

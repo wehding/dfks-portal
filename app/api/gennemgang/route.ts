@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
       ]);
       const status = message.includes("Ikke-understøttet") || message.includes("PDF-analyse kræver")
         ? 400
-        : message.includes("Ingen tekst")
+        : message.includes("Ingen tekst") || message.includes("læsbar tekst")
           ? 422
           : 500;
       return NextResponse.json({ error: message, reviewId: intake.reviewId }, { status });

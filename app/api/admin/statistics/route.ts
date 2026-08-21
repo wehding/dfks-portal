@@ -4,6 +4,8 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { getAdminStatistics } from "@/lib/admin-statistics";
 import { isExperienceGroup } from "@/lib/experience-groups";
+import { auditRequestContext } from "@/lib/audit-access-server";
+import { recordAuditEvent } from "@/lib/audit-log-server";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +34,29 @@ export async function GET(req: NextRequest) {
   const experienceGroup = isExperienceGroup(experienceGroupValue) ? experienceGroupValue : null;
   try {
     const data = await getAdminStatistics(caller.orgId, { years, gender, categories, contractType, producerIds, producerTypeCodes, membershipTypes, professionType, experienceGroup });
+    await recordAuditEvent({
+      context: auditRequestContext(req, caller, "admin", "admin.statistics.aggregate"),
+      action: "search",
+      entityType: "statistics_query",
+      entityLabel: "Anonymiseret statistik",
+      purposeCode: "collective_statistics",
+      legalBasis: "GDPR Art. 9(2)(d)",
+      dataCategories: ["contract_data", "salary_data", "union_membership_data", "aggregated_statistics"],
+      orgIds: [caller.orgId],
+      metadata: {
+        filterCategories: [
+          years.length ? "year" : null,
+          gender ? "gender" : null,
+          categories.length ? "production_category" : null,
+          contractType ? "contract_type" : null,
+          producerIds.length ? "producer" : null,
+          producerTypeCodes.length ? "producer_type" : null,
+          membershipTypes.length ? "membership" : null,
+          professionType ? "profession" : null,
+          experienceGroup ? "experience" : null,
+        ].filter(Boolean),
+      },
+    });
     return NextResponse.json(data, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     console.error("[admin-statistics] Aggregation failed", error instanceof Error ? error.message : "Unknown error");

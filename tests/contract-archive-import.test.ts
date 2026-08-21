@@ -151,7 +151,8 @@ test("regnearksdata udfylder kun tomme AI-felter og noter tilføjes", () => {
   assert.equal(merged.workTitle, "AI-titel");
   assert.equal(merged.creditedFunction, "Medklipper");
   assert.equal(merged.specialNotes, "Eksisterende\n\nArkivimport: Supplerende");
-  assert.equal(normalizeArchiveCredit("B-klipper"), "Klipper");
+  assert.equal(normalizeArchiveCredit("B-klipper"), "B-klipper");
+  assert.equal(normalizeArchiveCredit("Medklipper"), "Klipper");
   assert.equal(normalizeArchiveDate("13.08.2026"), "2026-08-13");
   assert.equal(normalizeArchiveDate("31.02.2026"), null);
 });

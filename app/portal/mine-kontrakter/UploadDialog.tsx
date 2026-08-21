@@ -394,17 +394,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { toast.error("Ikke logget ind"); return null; }
 
-      const { data: orgRole } = await supabase.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
-      let orgId = orgRole?.org_id as string | undefined;
-      if (!orgId) {
-        // Fallback: nyinviterede medlemmer kan mangle user_org_roles — brug rettighedshaverens org-tilknytning.
-        const { data: rhOrg } = await supabase.from("rettighedshavere").select("org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
-        const affiliation = Array.isArray(rhOrg?.org_affiliations) ? rhOrg?.org_affiliations[0] : rhOrg?.org_affiliations;
-        orgId = (affiliation as { org_id?: string } | null | undefined)?.org_id;
-      }
-      if (!orgId) { toast.error("Din bruger er ikke knyttet til en organisation"); return null; }
+      const contextResponse = await fetch("/api/access/context", { cache: "no-store" });
+      const access = contextResponse.ok
+        ? await contextResponse.json() as { orgId?: string; rightsHolderId?: string | null; canUseMember?: boolean }
+        : null;
+      const orgId = access?.canUseMember ? access.orgId : undefined;
+      if (!orgId || !access?.rightsHolderId) { toast.error("Vælg en organisation, hvor du er rettighedshaver"); return null; }
 
-      const { data: rhRow } = await supabase.from("rettighedshavere").select("id, full_name").eq("user_id", user.id).single();
+      const { data: rhRow } = await supabase.from("rettighedshavere").select("id, full_name").eq("id", access.rightsHolderId).single();
       if (!rhRow) { toast.error("Ingen rettighedshaver-profil"); return null; }
 
       const roles = isSeries

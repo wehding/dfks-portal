@@ -3,6 +3,8 @@ import { createServerClient } from "@supabase/ssr"
 import { INVITE_COOKIE, getInviteGateCode } from "@/lib/auth/invite-gate"
 import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onboarding-state"
 import { isPublicPath } from "@/lib/auth/public-paths"
+import { readActiveOrgIdFromRequest } from "@/lib/active-org-context"
+import { resolveAppAccessContext } from "@/lib/app-access-context"
 
 export async function proxy(req: NextRequest) {
     const { pathname } = req.nextUrl
@@ -106,20 +108,20 @@ export async function proxy(req: NextRequest) {
         }
     }
 
-    // Adminflader må aldrig beskyttes alene af den klient-renderede menu.
-    // En server-side rolleforespørgsel afviser medlemmer, før adminlayoutet køres.
+    // Admin- og medlemsflader bruger samme signerede organisationskontekst.
+    // En kombinationsbruger får kun den del af appen, vedkommende har adgang til
+    // i den aktive organisation.
+    const needsAppContext = (pathname.startsWith("/admin") || pathname.startsWith("/portal")) && Boolean(user)
+    const appContext = needsAppContext
+        ? await resolveAppAccessContext(supabase, readActiveOrgIdFromRequest(req), user?.id)
+        : null
+
     if (pathname.startsWith("/admin") && user) {
-        const { data: staffRole } = await supabase
-            .from("user_org_roles")
-            .select("role")
-            .eq("user_id", user.id)
-            .in("role", ["superadmin", "admin", "org-admin", "jurist", "viewer"])
-            .limit(1)
-            .maybeSingle()
-        if (!staffRole) {
+        if (!appContext?.canUseAdmin) {
             const url = req.nextUrl.clone()
-            url.pathname = "/portal"
+            url.pathname = appContext?.canUseMember ? "/portal" : "/"
             url.search = ""
+            if (appContext?.canUseMember) url.searchParams.set("notice", "admin-org-required")
             return NextResponse.redirect(url)
         }
         const prototypePrefixes = [
@@ -139,6 +141,14 @@ export async function proxy(req: NextRequest) {
             url.searchParams.set("notice", "module-not-ready")
             return NextResponse.redirect(url)
         }
+    }
+
+    if (pathname.startsWith("/portal") && user && !appContext?.canUseMember) {
+        const url = req.nextUrl.clone()
+        url.pathname = appContext?.canUseAdmin ? "/admin" : "/onboarding"
+        url.search = ""
+        if (appContext?.canUseAdmin) url.searchParams.set("notice", "member-org-required")
+        return NextResponse.redirect(url)
     }
 
     // /superadmin/* kræver superadmin-rolle fra user_org_roles

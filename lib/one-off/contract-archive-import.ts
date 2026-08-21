@@ -369,8 +369,10 @@ export function normalizeArchiveProductionType(value: string | null) {
 export function normalizeArchiveCredit(value: string | null) {
   const normalized = normalizeMatchText(value);
   if (!normalized) return null;
-  if (normalized === "b klipper" || normalized === "b-klipper") return "Klipper";
-  if (normalized.includes("medklipper")) return "Medklipper";
+  if (normalized === "b klipper" || normalized === "b-klipper") return "B-klipper";
+  if (normalized.includes("medklipper")) return "Klipper";
+  if (normalized.includes("supplerende") && normalized.includes("klipper")) return "Supplerende klipper";
+  if ((normalized.includes("koncept") || normalized.includes("hoved")) && normalized.includes("klipper")) return "Konceptuerende klipper";
   if (normalized.includes("assistent")) return "Klipperassistent";
   if (normalized.includes("fotograf")) return "Fotograf";
   if (normalized.includes("instrukt")) return "Instruktør";

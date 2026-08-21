@@ -1,11 +1,14 @@
 import "server-only";
 
 import { contributionForContract, salaryDataToMonthly, salaryDataToWeekly } from "@/lib/statistics-calculations";
+import { DataStandardizer } from "@/lib/statistics/data-standardizer";
+import { PrivacyGuard, type PrivacyCell } from "@/lib/statistics/privacy-guard";
 import { createServiceClient } from "@/lib/supabase/service";
 import { experienceGroupAt, type ExperienceGroup } from "@/lib/experience-groups";
 import {
   LOW_SAMPLE_MEMBER_THRESHOLD,
   distinctStatisticsMembers,
+  normalizeStatisticsDominanceLimit,
   normalizeStatisticsMinimumGroupSize,
   statisticsGroupIsVisible,
 } from "@/lib/statistics-privacy";
@@ -73,11 +76,18 @@ type ContractRow = {
   data: Record<string, unknown>;
 };
 
+type SuppressionReason = NonNullable<PrivacyCell["suppressionReason"]>;
+type DisclosureMeta = {
+  suppressed: boolean;
+  suppressionReason?: SuppressionReason;
+  outlierExcludedCount: number;
+};
+
 function overlaps(left: string[], right?: string[]) {
   return !right?.length || right.some(value => left.includes(value));
 }
 
-function sampleMeta(items: ContractRow[]) {
+function sampleMeta(items: ContractRow[], disclosure?: Partial<DisclosureMeta>) {
   const memberCount = distinctStatisticsMembers(items);
   return {
     contractCount: items.length,
@@ -85,13 +95,93 @@ function sampleMeta(items: ContractRow[]) {
     validatedCount: items.filter(item => item.status === "valideret").length,
     draftCount: items.filter(item => item.status === "kladde").length,
     lowSample: memberCount < LOW_SAMPLE_MEMBER_THRESHOLD,
+    suppressed: disclosure?.suppressed ?? false,
+    suppressionReason: disclosure?.suppressionReason,
+    outlierExcludedCount: disclosure?.outlierExcludedCount ?? 0,
   };
 }
 
-function groupSafe<T extends ContractRow>(rows: T[], key: (row: T) => string | number, minimumGroupSize: number) {
+function groupRows<T extends ContractRow>(rows: T[], key: (row: T) => string | number) {
   const groups = new Map<string | number, T[]>();
   for (const row of rows) groups.set(key(row), [...(groups.get(key(row)) ?? []), row]);
-  return [...groups.entries()].filter(([, items]) => statisticsGroupIsVisible(items, minimumGroupSize));
+  return [...groups.entries()];
+}
+
+function hourlySalary(row: ContractRow) {
+  const weekly = salaryDataToWeekly(row.data);
+  return Number.isFinite(weekly) && weekly > 0 ? weekly / 37 : null;
+}
+
+function salaryOutlierFilter(rows: ContractRow[]) {
+  const salaryRows = rows.filter(row => {
+    const monthly = salaryDataToMonthly(row.data);
+    return Number.isFinite(monthly) && monthly > 0 && hourlySalary(row) != null;
+  });
+  return new DataStandardizer().filterHourlyOutliers(salaryRows, hourlySalary);
+}
+
+function outlierCountFor<T extends ContractRow>(items: T[], outlierIds: Set<string>) {
+  return items.filter(item => outlierIds.has(item.id)).length;
+}
+
+function producerContributionValues<T extends ContractRow>(items: T[], value: (row: T) => number) {
+  const byProducer = new Map<string, number>();
+  for (const item of items) {
+    const calculated = value(item);
+    if (!Number.isFinite(calculated) || calculated <= 0 || !item.producerIds.length) continue;
+    const share = calculated / item.producerIds.length;
+    for (const producerId of item.producerIds) byProducer.set(producerId, (byProducer.get(producerId) ?? 0) + share);
+  }
+  return [...byProducer.values()];
+}
+
+function protectGroups<T extends ContractRow>(
+  groups: Array<[string | number, T[]]>,
+  minimumGroupSize: number,
+  dominanceLimit: number,
+  options: {
+    additiveEconomicValues?: boolean;
+    hasPublishedTotal?: boolean;
+    contributions?: (items: T[]) => number[];
+  } = {},
+) {
+  const guard = new PrivacyGuard({ minimumGroupSize, dominanceLimit });
+  const cells = groups.map(([key, items]) => ({
+    key: String(key),
+    contributorIds: items.map(item => item.rightsHolderId),
+    contributions: options.contributions?.(items),
+  }));
+  const protectedCells = guard.protectCells(cells, {
+    additiveEconomicValues: options.additiveEconomicValues,
+    hasPublishedTotal: options.hasPublishedTotal,
+  });
+  const byKey = new Map(protectedCells.map(cell => [cell.key, cell]));
+  return groups.map(([key, items]) => [key, items, byKey.get(String(key))] as const);
+}
+
+function visibleNumber(value: number, cell: PrivacyCell | undefined) {
+  return cell?.suppressed ? null : value;
+}
+
+function disclosure(cell: PrivacyCell | undefined, outlierExcludedCount = 0): DisclosureMeta {
+  return {
+    suppressed: Boolean(cell?.suppressed),
+    suppressionReason: cell?.suppressionReason,
+    outlierExcludedCount,
+  };
+}
+
+function suppressionSummary(rows: Array<{ suppressed?: boolean; suppressionReason?: string | null }>) {
+  const reasons: Record<string, number> = {};
+  for (const row of rows) {
+    if (!row.suppressed) continue;
+    const reason = row.suppressionReason ?? "unknown";
+    reasons[reason] = (reasons[reason] ?? 0) + 1;
+  }
+  return {
+    suppressionCount: Object.values(reasons).reduce((sum, value) => sum + value, 0),
+    suppressionReasons: reasons,
+  };
 }
 
 function median(values: number[]) {
@@ -188,10 +278,11 @@ function rightsDistribution(items: ContractRow[], keys: string[], agreementCanAp
 export async function getAdminStatistics(orgId: string, filters: StatisticsFilters) {
   const db = createServiceClient();
   const { data: organisation, error: organisationError } = await db.from("organisations")
-    .select("statistics_contract_scope,statistics_minimum_group_size").eq("id", orgId).single();
+    .select("statistics_contract_scope,statistics_minimum_group_size,statistics_dominance_limit,statistics_low_sample_threshold").eq("id", orgId).single();
   if (organisationError) throw new Error(organisationError.message);
   const includeDrafts = organisation.statistics_contract_scope === "validated_and_drafts";
   const minimumGroupSize = normalizeStatisticsMinimumGroupSize(organisation.statistics_minimum_group_size);
+  const dominanceLimit = normalizeStatisticsDominanceLimit(organisation.statistics_dominance_limit);
   const { data, error } = await db.rpc("get_statistics_facts", {
     target_org_id: orgId,
     include_drafts: includeDrafts,
@@ -244,32 +335,47 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
       suppressed: true,
       minimum: minimumGroupSize,
       lowSampleThreshold: LOW_SAMPLE_MEMBER_THRESHOLD,
+      dominanceLimit,
+      calculationVersion: "union-stats-v1",
+      suppressionCount: 1,
+      suppressionReasons: { minimum_count: 1 },
       memberCount: null,
       years,
       includeDrafts,
     };
   }
 
-  const salary = groupSafe(rows.filter(row => Number.isFinite(salaryDataToMonthly(row.data)) && salaryDataToMonthly(row.data) > 0), row => row.year, minimumGroupSize).map(([year, items]) => {
+  const salaryOutliers = salaryOutlierFilter(rows);
+  const salaryRows = salaryOutliers.included;
+  const salaryOutlierIds = new Set(salaryOutliers.excluded.map(item => item.item.id));
+
+  const salary = protectGroups(groupRows(salaryRows, row => row.year), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([year, items, cell]) => {
     const monthly = personWeighted(items, row => salaryDataToMonthly(row.data));
     const daily = personWeighted(items, row => salaryDataToWeekly(row.data) / 5);
     return {
       year: Number(year),
-      monthlyRate: monthly.median,
-      averageMonthlyRate: monthly.average,
-      dailyRate: daily.median,
-      ...sampleMeta(items),
+      monthlyRate: visibleNumber(monthly.median, cell),
+      averageMonthlyRate: visibleNumber(monthly.average, cell),
+      dailyRate: visibleNumber(daily.median, cell),
+      ...sampleMeta(items, disclosure(cell, outlierCountFor(items, salaryOutlierIds))),
     };
   }).sort((left, right) => left.year - right.year);
 
-  const salaryByCategory = groupSafe(
-    rows.filter(row => Number.isFinite(salaryDataToMonthly(row.data)) && salaryDataToMonthly(row.data) > 0 && (row.category === "feature" || row.category === "documentary")),
-    row => `${row.year}:${row.category}`,
+  const salaryByCategory = protectGroups(
+    groupRows(salaryRows.filter(row => row.category === "feature" || row.category === "documentary"), row => `${row.year}:${row.category}`),
     minimumGroupSize,
-  ).map(([key, items]) => {
+    dominanceLimit,
+    { hasPublishedTotal: true },
+  ).map(([key, items, cell]) => {
     const [year, category] = String(key).split(":");
     const values = personWeighted(items, row => salaryDataToMonthly(row.data));
-    return { year: Number(year), category, monthlyRate: values.median, averageMonthlyRate: values.average, ...sampleMeta(items) };
+    return {
+      year: Number(year),
+      category,
+      monthlyRate: visibleNumber(values.median, cell),
+      averageMonthlyRate: visibleNumber(values.average, cell),
+      ...sampleMeta(items, disclosure(cell, outlierCountFor(items, salaryOutlierIds))),
+    };
   }).sort((left, right) => left.year - right.year || left.category.localeCompare(right.category));
 
   const pensionValue = (row: ContractRow) => {
@@ -277,89 +383,137 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     if (value != null && value >= 0) return value;
     return row.data.pensionStatus === "not_applicable" ? 0 : null;
   };
-  const pension = groupSafe(rows.filter(row => pensionValue(row) != null), row => row.year, minimumGroupSize).map(([year, items]) => ({
+  const pension = protectGroups(
+    groupRows(rows.filter(row => pensionValue(row) != null), row => row.year),
+    minimumGroupSize,
+    dominanceLimit,
+    { hasPublishedTotal: true },
+  ).map(([year, items, cell]) => ({
     year: Number(year),
-    avgPensionPercent: personWeightedAverage(items, row => pensionValue(row) ?? Number.NaN),
-    ...sampleMeta(items),
+    avgPensionPercent: visibleNumber(personWeightedAverage(items, row => pensionValue(row) ?? Number.NaN), cell),
+    ...sampleMeta(items, disclosure(cell)),
   })).sort((left, right) => left.year - right.year);
 
-  const workingWeeks = groupSafe(rows.filter(row => (statisticsNumber(row.data.workingWeeks) ?? 0) > 0), row => row.year, minimumGroupSize).map(([year, items]) => {
+  const workingWeeks = protectGroups(
+    groupRows(rows.filter(row => (statisticsNumber(row.data.workingWeeks) ?? 0) > 0), row => row.year),
+    minimumGroupSize,
+    dominanceLimit,
+    { hasPublishedTotal: true },
+  ).map(([year, items, cell]) => {
     const values = personWeightedSummary(items, row => weeksInYear(
       typeof row.data.startDate === "string" ? row.data.startDate : row.startDate,
       typeof row.data.endDate === "string" ? row.data.endDate : null,
       statisticsNumber(row.data.workingWeeks) ?? 0,
       Number(year),
     ), 1);
-    return { year: Number(year), avgWeeks: values.average, medianWeeks: values.median, ...sampleMeta(items) };
+    return {
+      year: Number(year),
+      avgWeeks: visibleNumber(values.average, cell),
+      medianWeeks: visibleNumber(values.median, cell),
+      ...sampleMeta(items, disclosure(cell)),
+    };
   }).sort((left, right) => left.year - right.year);
 
-  const contractCounts = groupSafe(rows, row => row.year, minimumGroupSize).map(([year, items]) => ({
+  const contractCounts = protectGroups(groupRows(rows, row => row.year), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([year, items, cell]) => ({
     year: Number(year),
-    total: items.length,
-    aLoen: items.filter(row => row.type === "a-løn").length,
-    leverandoer: items.filter(row => row.type !== "a-løn").length,
-    ...sampleMeta(items),
+    total: visibleNumber(items.length, cell),
+    aLoen: visibleNumber(items.filter(row => row.type === "a-løn").length, cell),
+    leverandoer: visibleNumber(items.filter(row => row.type !== "a-løn").length, cell),
+    ...sampleMeta(items, disclosure(cell)),
   })).sort((left, right) => left.year - right.year);
 
-  const rights = groupSafe(rows.filter(row => row.category), row => String(row.category), minimumGroupSize).map(([category, items]) => {
+  const rights = protectGroups(groupRows(rows.filter(row => row.category), row => String(row.category)), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([category, items, cell]) => {
     const streaming = rightsDistribution(items, ["svod", "streamingReservation", "streaming", "rightsOverview.streamingforbehold"], true);
     const copydan = rightsDistribution(items, ["copydan", "copydanReservation", "rightsOverview.copydanforbehold"], true);
     const royalty = rightsDistribution(items, ["royalty", "royaltyClause"]);
-    return { category: String(category), svodPercent: streaming.yesPercent, svodUnknown: streaming.unknownCount, copydanPercent: copydan.yesPercent, copydanUnknown: copydan.unknownCount, royaltyPercent: royalty.yesPercent, royaltyUnknown: royalty.unknownCount, ...sampleMeta(items) };
+    return {
+      category: String(category),
+      svodPercent: visibleNumber(streaming.yesPercent, cell),
+      svodUnknown: visibleNumber(streaming.unknownCount, cell),
+      copydanPercent: visibleNumber(copydan.yesPercent, cell),
+      copydanUnknown: visibleNumber(copydan.unknownCount, cell),
+      royaltyPercent: visibleNumber(royalty.yesPercent, cell),
+      royaltyUnknown: visibleNumber(royalty.unknownCount, cell),
+      ...sampleMeta(items, disclosure(cell)),
+    };
   });
 
-  const rightsByYear = groupSafe(rows, row => row.year, minimumGroupSize).map(([year, items]) => {
+  const rightsByYear = protectGroups(groupRows(rows, row => row.year), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([year, items, cell]) => {
     const streaming = rightsDistribution(items, ["svod", "streamingReservation", "streaming", "rightsOverview.streamingforbehold"], true);
     const copydan = rightsDistribution(items, ["copydan", "copydanReservation", "rightsOverview.copydanforbehold"], true);
     const royalty = rightsDistribution(items, ["royalty", "royaltyClause"]);
     return {
       year: Number(year),
-      streamingPercent: streaming.yesPercent,
-      streamingUnknown: streaming.unknownCount,
-      copydanPercent: copydan.yesPercent,
-      copydanUnknown: copydan.unknownCount,
-      royaltyPercent: royalty.yesPercent,
-      royaltyUnknown: royalty.unknownCount,
-      ...sampleMeta(items),
+      streamingPercent: visibleNumber(streaming.yesPercent, cell),
+      streamingUnknown: visibleNumber(streaming.unknownCount, cell),
+      copydanPercent: visibleNumber(copydan.yesPercent, cell),
+      copydanUnknown: visibleNumber(copydan.unknownCount, cell),
+      royaltyPercent: visibleNumber(royalty.yesPercent, cell),
+      royaltyUnknown: visibleNumber(royalty.unknownCount, cell),
+      ...sampleMeta(items, disclosure(cell)),
     };
   }).sort((left, right) => left.year - right.year);
 
-  const gender = groupSafe(rows.filter(row => row.gender), row => String(row.gender), minimumGroupSize).map(([genderKey, items]) => ({
+  const gender = protectGroups(groupRows(salaryRows.filter(row => row.gender), row => String(row.gender)), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([genderKey, items, cell]) => ({
     gender: String(genderKey),
     count: new Set(items.map(row => row.rightsHolderId)).size,
-    avgSalary: personWeighted(items, row => salaryDataToMonthly(row.data)).average,
-    ...sampleMeta(items),
+    avgSalary: visibleNumber(personWeighted(items, row => salaryDataToMonthly(row.data)).average, cell),
+    ...sampleMeta(items, disclosure(cell, outlierCountFor(items, salaryOutlierIds))),
   }));
 
-  const aiClauses = groupSafe(rows, row => row.year, minimumGroupSize).map(([year, items]) => ({
+  const aiClauses = protectGroups(groupRows(rows, row => row.year), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([year, items, cell]) => ({
     year: Number(year),
-    withClause: items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === true).length,
-    withoutClause: items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === false).length,
-    unknownCount: items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) == null).length,
+    withClause: visibleNumber(items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === true).length, cell),
+    withoutClause: visibleNumber(items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === false).length, cell),
+    unknownCount: visibleNumber(items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) == null).length, cell),
     pct: (() => {
       const known = items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) != null);
-      return known.length ? Math.round(known.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === true).length / known.length * 100) : 0;
+      return visibleNumber(known.length ? Math.round(known.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === true).length / known.length * 100) : 0, cell);
     })(),
-    ...sampleMeta(items),
+    ...sampleMeta(items, disclosure(cell)),
   })).sort((left, right) => left.year - right.year);
 
-  const contributions = groupSafe(rows.filter(row => (statisticsNumber(row.data.salary) ?? 0) > 0), row => row.year, minimumGroupSize).map(([year, items]) => {
+  const contributionRows = salaryRows.filter(row => (statisticsNumber(row.data.salary) ?? 0) > 0);
+  const contributions = protectGroups(
+    groupRows(contributionRows, row => row.year),
+    minimumGroupSize,
+    dominanceLimit,
+    {
+      additiveEconomicValues: true,
+      hasPublishedTotal: true,
+      contributions: items => producerContributionValues(items, row => {
+        const value = contributionForContract({ id: row.id, premiereYear: row.year, type: row.type, extractedData: row.data });
+        return (value?.holidayPay ?? 0) + (value?.beta ?? 0);
+      }),
+    },
+  ).map(([year, items, cell]) => {
     const values = items.map(row => contributionForContract({ id: row.id, premiereYear: row.year, type: row.type, extractedData: row.data })).filter(Boolean) as NonNullable<ReturnType<typeof contributionForContract>>[];
+    const holidayPay = Math.round(values.reduce((sum, value) => sum + (value.holidayPay ?? 0), 0));
+    const beta = Math.round(values.reduce((sum, value) => sum + (value.beta ?? 0), 0));
     return {
       year: Number(year),
-      totalHolidayPayAmount: Math.round(values.reduce((sum, value) => sum + (value.holidayPay ?? 0), 0)),
-      totalBetaAmount: Math.round(values.reduce((sum, value) => sum + (value.beta ?? 0), 0)),
-      incompleteContributionCount: values.filter(value => value.holidayPay == null || value.beta == null).length,
-      ...sampleMeta(items),
+      totalHolidayPayAmount: visibleNumber(holidayPay, cell),
+      totalBetaAmount: visibleNumber(beta, cell),
+      incompleteContributionCount: visibleNumber(values.filter(value => value.holidayPay == null || value.beta == null).length, cell),
+      ...sampleMeta(items, disclosure(cell, outlierCountFor(items, salaryOutlierIds))),
     };
   }).sort((left, right) => left.year - right.year);
 
+  const privacySummary = suppressionSummary([
+    ...salary, ...salaryByCategory, ...pension, ...workingWeeks, ...contractCounts,
+    ...rights, ...rightsByYear, ...gender, ...aiClauses, ...contributions,
+  ]);
+
   return {
-    suppressed: false,
     minimum: minimumGroupSize,
+    minimumGroupSize,
+    dominanceLimit,
+    calculationVersion: "union-stats-v1",
     lowSampleThreshold: LOW_SAMPLE_MEMBER_THRESHOLD,
     includeDrafts,
     ...sampleMeta(rows),
+    ...privacySummary,
+    outlierExcludedCount: salaryOutliers.excluded.length,
     years,
     salary,
     salaryByCategory,

@@ -693,7 +693,8 @@ export default function RettighedshavereAdminPage() {
         void getAdminRightsHolderProfile(rh.id, orgId).then(profile => {
             setEditForm(form => ({
                 ...form,
-                opt_out_statistics: profile.opt_out_statistics,
+                is_member: profile.is_member,
+                opt_out_statistics: profile.is_member ? false : profile.opt_out_statistics,
                 cpr_no: profile.cpr_no,
                 bank_account: profile.bank_account,
                 alternative_names: profile.alternative_names.join("\n"),
@@ -719,6 +720,7 @@ export default function RettighedshavereAdminPage() {
     async function handleEdit() {
         if (!editTarget || !orgId) return
         setEditSaving(true)
+        const optOutStatistics = editForm.is_member ? false : editForm.opt_out_statistics
         const updateResult = await updateRettighedshaverSecure(editTarget.id, orgId, {
             full_name: editForm.full_name.trim(),
             email: editForm.email || null,
@@ -727,7 +729,8 @@ export default function RettighedshavereAdminPage() {
             cpr_no: editForm.cpr_no || null,
             bank_account: editForm.bank_account || null,
             gender: editForm.gender || null,
-            opt_out_statistics: editForm.opt_out_statistics,
+            is_member: editForm.is_member,
+            opt_out_statistics: optOutStatistics,
             alternative_names: parseList(editForm.alternative_names),
             portrait_url: editForm.portrait_url || null,
             professional_start_year: editForm.professional_start_year ? Number(editForm.professional_start_year) : null,
@@ -1306,10 +1309,16 @@ export default function RettighedshavereAdminPage() {
                                     </SelectContent>
                                 </Select>
                             </div>
-                            <div className="flex items-end gap-2 pb-2">
-                                <input type="checkbox" id="edit-opt-out" checked={editForm.opt_out_statistics} onChange={e => setEditForm(f => ({ ...f, opt_out_statistics: e.target.checked }))} className="h-4 w-4" />
-                                <Label htmlFor="edit-opt-out" className="cursor-pointer">Fravalgt statistik</Label>
-                            </div>
+                            {editForm.is_member ? (
+                                <div className="flex items-end pb-2 text-sm text-muted-foreground">
+                                    Aktive medlemmer indgår i foreningens statistikarbejde.
+                                </div>
+                            ) : (
+                                <div className="flex items-end gap-2 pb-2">
+                                    <input type="checkbox" id="edit-opt-out" checked={editForm.opt_out_statistics} onChange={e => setEditForm(f => ({ ...f, opt_out_statistics: e.target.checked }))} className="h-4 w-4" />
+                                    <Label htmlFor="edit-opt-out" className="cursor-pointer">Fravalgt anonym markedsstatistik</Label>
+                                </div>
+                            )}
                         </div>
 
                         <section className="space-y-3 rounded-lg border p-3 sm:p-4">
@@ -1370,7 +1379,7 @@ export default function RettighedshavereAdminPage() {
                             </div>
                         </section>
                         <div className="flex items-center gap-2 pt-1">
-                            <input type="checkbox" id="edit-is-member" checked={editForm.is_member} onChange={e => setEditForm(f => ({ ...f, is_member: e.target.checked }))} className="h-4 w-4" />
+                            <input type="checkbox" id="edit-is-member" checked={editForm.is_member} onChange={e => setEditForm(f => ({ ...f, is_member: e.target.checked, opt_out_statistics: e.target.checked ? false : f.opt_out_statistics }))} className="h-4 w-4" />
                             <Label htmlFor="edit-is-member" className="cursor-pointer">Aktivt medlem</Label>
                         </div>
                         {editTarget?.user_id && <div className="space-y-3 rounded-lg border p-3 sm:p-4">

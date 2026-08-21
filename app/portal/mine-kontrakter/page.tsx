@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import MineKontrakterClient from "./MineKontrakterClient";
 import type { Contract } from "./MineKontrakterClient";
+import { requireMemberContext } from "@/lib/org";
 
 type WorkRelation = { id: string; title: string; year: number | null; type: string };
 type WorkAssignmentRow = { works: WorkRelation | WorkRelation[] | null };
@@ -49,11 +50,13 @@ export default async function MineKontrakterPage() {
   if (!user) redirect("/")
 
   const db = createServiceClient();
+  const memberContext = await requireMemberContext(db, user.id).catch(() => null);
+  if (!memberContext?.rightsHolderId) redirect("/admin?notice=member-org-required");
 
   const { data: rh } = await db
     .from("rettighedshavere")
     .select("id")
-    .eq("user_id", user.id)
+    .eq("id", memberContext.rightsHolderId)
     .maybeSingle();
 
   let contracts: unknown[] = [];
@@ -63,6 +66,7 @@ export default async function MineKontrakterPage() {
     const listRes = await db
       .from("contracts")
       .select(CONTRACT_LIST_SELECT)
+      .eq("org_id", memberContext.orgId)
       .eq("rights_holder_id", rh.id)
       .is("superseded_by_contract_id", null)
       .order("created_at", { ascending: false });
@@ -100,6 +104,7 @@ export default async function MineKontrakterPage() {
     ? await db
         .from("work_assignments")
         .select("works(id, title, year, type)")
+        .eq("org_id", memberContext.orgId)
         .eq("rights_holder_id", rh.id)
     : { data: [] };
 

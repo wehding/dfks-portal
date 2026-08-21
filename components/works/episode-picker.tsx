@@ -32,10 +32,11 @@ export function EpisodePicker({ options, selected, onChange, label = "Vælg afsn
           <Button type="button" variant="outline" size="sm" onClick={() => onChange([])}>{t("common.deselectAll")}</Button>
         </div>
       </div>
-      <div className={`grid gap-2 overflow-y-auto ${compact ? "max-h-36 grid-cols-2 sm:grid-cols-4" : "max-h-48 grid-cols-2 sm:grid-cols-3"}`}>
+      <div className={`grid min-w-0 gap-2 overflow-y-auto ${compact ? "max-h-36 grid-cols-2 sm:grid-cols-4" : "max-h-48 grid-cols-2 sm:grid-cols-3"}`}>
         {options.map(option => {
           const active = selected.includes(option.number);
-          return <button key={option.number} type="button" aria-pressed={active} onClick={() => toggle(option.number)} className={`rounded-md border px-2 py-2 text-left text-xs transition-colors ${active ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted"}`}>{episodeOptionLabel(option)}</button>;
+          const label = episodeOptionLabel(option);
+          return <button key={option.number} type="button" title={label} aria-pressed={active} onClick={() => toggle(option.number)} className={`min-w-0 whitespace-normal break-words rounded-md border px-2 py-2 text-left text-xs leading-snug transition-colors ${active ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted"}`}>{label}</button>;
         })}
       </div>
     </div>

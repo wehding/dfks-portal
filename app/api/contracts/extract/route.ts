@@ -20,6 +20,8 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { runContractExtraction } from "@/lib/contract-extract-core"
 import { isInternalWorkerSecret } from "@/lib/api-auth"
 import { consumeRateLimit, requestIdentifier } from "@/lib/server/rate-limit"
+import { auditRequestContext } from "@/lib/audit-access-server"
+import { recordAuditEvent } from "@/lib/audit-log-server"
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
 const MAX_MASKED_TEXT_CHARS = 250_000
@@ -98,8 +100,24 @@ export async function POST(req: NextRequest) {
             orgId: caller.orgId,
             actorUserId: caller.userId,
         })
-        if (!result.ok) return NextResponse.json({ error: "Kontrakten kunne ikke analyseres." }, { status: 502 })
-        return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek })
+        const auditCaller = caller.userId && caller.orgId ? { userId: caller.userId, orgId: caller.orgId, role: "admin" } : null
+        const auditContext = auditRequestContext(req, auditCaller, "api", "api.contracts.extract")
+        await recordAuditEvent({
+            context: auditContext,
+            action: "ai_analysis",
+            entityType: "contract_extraction",
+            entityLabel: "Kontraktudtræk",
+            purposeCode: "contract_data_extraction",
+            legalBasis: "GDPR Art. 6(1)(b)",
+            dataCategories: ["contract_data", "salary_data", "ai_analysis"],
+            orgIds: caller.orgId ? [caller.orgId] : [],
+            actorType: caller.userId ? "user" : "integration",
+            outcome: result.ok ? "success" : "failed",
+            errorCode: result.ok ? null : "ai_extraction_failed",
+            metadata: { inputMode: preMasked ? "pre_masked_text" : "masked_file", persisted: false },
+        })
+        if (!result.ok) return NextResponse.json({ error: "Kontrakten kunne ikke analyseres." }, { status: 502, headers: { "cache-control": "no-store" } })
+        return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek }, { headers: { "cache-control": "no-store" } })
     } catch (err: unknown) {
         console.error("[contract-extract] extraction failed", err instanceof Error ? err.name : "unknown")
         return NextResponse.json({ error: "Kontrakten kunne ikke analyseres." }, { status: 500 })

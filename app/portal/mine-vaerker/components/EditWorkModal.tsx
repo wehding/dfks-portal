@@ -638,7 +638,7 @@ export function EditWorkModal({
         <div className="mb-4 rounded-md bg-blue-50 p-3 text-sm text-blue-950 dark:bg-blue-500/10 dark:text-blue-100">
           <p className="font-medium">Hvad skal du gøre?</p>
           <p className="mt-1 text-xs leading-relaxed">
-            Hvis du ikke har klippet {editScope === "episode" ? "afsnittet" : "værket"} alene, skal du tilføje de andre klippere, der har arbejdet på {editScope === "episode" ? "afsnittet" : "værket"}. Når du tilføjer en medklipper, skal du også angive dit eget foreløbige procentbud. Hver medklipper bliver bedt om at angive sin egen andel. I kan ikke se hinandens bud, og DFKS fastsætter og offentliggør først den endelige fordeling. Hvis du har klippet {editScope === "episode" ? "afsnittet" : "værket"} alene, skal du vælge “Ingen medklipper” – du skal ikke angive en procent.
+            Hvis du ikke har klippet {editScope === "episode" ? "afsnittet" : "værket"} alene, skal du tilføje de andre klippere, der har arbejdet på {editScope === "episode" ? "afsnittet" : "værket"}. Når du tilføjer en medklipper, skal du også angive dit eget foreløbige procentbud. Hver medklipper bliver bedt om at angive sin egen andel. I kan ikke se hinandens bud, og DFKS fastsætter og offentliggør først den endelige fordeling. Hvis du har klippet {editScope === "episode" ? "afsnittet" : "værket"} alene, skal du vælge “Har klippet alene” – du skal ikke angive en procent.
           </p>
         </div>
         {assignment.rights_holder_id && collaborationReviewWorkIds.length > 0 && (
@@ -651,12 +651,12 @@ export function EditWorkModal({
                   if (!result.success) throw new Error(result.error);
                   const message = result.disputed
                     ? `Dit svar er gemt. ${result.disputed} værk eller afsnit afventer DFKS, fordi andre klippere allerede er registreret.`
-                    : "Dit svar ‘Ingen medklipper’ er gemt.";
+                    : "Dit svar ‘Har klippet alene’ er gemt.";
                   onWorkUpdated(message, true);
                 })
                 .catch(error => onWorkUpdated(error instanceof Error ? error.message : "Svaret kunne ikke gemmes.", false))
                 .finally(() => setSoloSaving(false));
-            }}>Ingen medklipper</Button>
+            }}>Har klippet alene</Button>
           </div>
         )}
         <div className="space-y-2">

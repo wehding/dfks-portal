@@ -48,3 +48,10 @@ config/ai-keys.json
 
 # supabase (lokal CLI-state)
 supabase/.temp/
+
+# generated audit evidence and local Terraform state
+/artifacts/audit-evidence/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan

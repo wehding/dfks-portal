@@ -8,6 +8,7 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { ensureWorkShareCase } from "@/lib/server/work-share-cases";
 import { isCompleteShareResolution, normalizeSharePercent } from "@/lib/work-share-distribution";
+import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { markCollaborationReviewsCoeditorsReported } from "@/lib/server/work-collaboration-reviews";
 
@@ -234,7 +235,7 @@ export async function resolveAdminShareCase(params: {
     if (finalPercent === null || finalPercent === undefined) continue;
     await db.from("work_assignments").upsert(targetWorkIds.map(workId => ({
       org_id: admin.orgId, work_id: workId, rights_holder_id: participant.rights_holder_id,
-      role: participant.role, share_percent: finalPercent,
+      role: normalizeWorkEditorRole(participant.role), share_percent: finalPercent,
     })), { onConflict: "work_id,rights_holder_id,role" });
   }
   const snapshot = { resolvedAt: new Date().toISOString(), reservePercent: params.reservePercent, participants: params.participants };

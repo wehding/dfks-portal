@@ -20,8 +20,11 @@ import { ExpandableListTrigger, SummaryCard, SummaryGrid } from "@/components/re
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { ListResultSummary } from "@/components/list-result-summary";
 import { fetchMemberShareTaskTarget } from "@/app/actions/work-share-cases";
-import { confirmNoCoeditors, fetchMemberCollaborationReviews } from "@/app/actions/work-collaboration-reviews";
+import { confirmNoCoeditors, fetchMemberCollaborationReviews, fetchMemberWorkReviewTasks } from "@/app/actions/work-collaboration-reviews";
 import MineKontrakterClient, { type Contract } from "../mine-kontrakter/MineKontrakterClient";
+import { resolveWorkEditorRelation } from "@/lib/work-editor-roles";
+import type { MemberWorkReviewTask } from "@/lib/member-work-review";
+import { collaborationReviewIndicator } from "@/lib/work-collaboration-review";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -214,8 +217,15 @@ function typeLabel(t: string, locale: "da" | "en" = "da") {
   return type ? labels[locale][type] : t ?? (locale === "da" ? "Ukendt" : "Unknown");
 }
 
-function displayRole(role: string | null | undefined) {
-  return role === "Hovedklipper" ? "Konceptuerende klipper" : role ?? "Klipper";
+function displayRole(role: string | null | undefined, defaultRole = "Klipper", coeditorWord = "Medklipper") {
+  return resolveWorkEditorRelation({
+    view: "member",
+    isSelf: true,
+    editorCount: 1,
+    storedRole: role,
+    defaultRole,
+    coeditorWord,
+  }).combinedLabel;
 }
 
 function requestKindLabel(request: ChangeRequest) {
@@ -275,7 +285,7 @@ function isSeriesType(type: string | null | undefined) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName, defaultRoleLabel, coeditorWord,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
@@ -286,6 +296,8 @@ export default function MineVaerkerClient({
   contractedWorkIds: string[];
   contracts: Contract[];
   organisationShortName: string;
+  defaultRoleLabel: string;
+  coeditorWord: string;
 }) {
   const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
@@ -304,11 +316,20 @@ export default function MineVaerkerClient({
     for (const a of allAssignments) {
       const name = a.rettighedshavere?.full_name;
       if (!name || !a.work_id) continue;
+      const relation = resolveWorkEditorRelation({
+        view: "member",
+        isSelf: false,
+        editorCount: 2,
+        storedRole: a.role,
+        defaultRole: defaultRoleLabel,
+        coeditorWord,
+      });
+      const displayName = `${name} (${relation.combinedLabel})`;
       if (!map[a.work_id]) map[a.work_id] = [];
-      if (!map[a.work_id].includes(name)) map[a.work_id].push(name);
+      if (!map[a.work_id].includes(displayName)) map[a.work_id].push(displayName);
     }
     return map;
-  }, [allAssignments]);
+  }, [allAssignments, coeditorWord, defaultRoleLabel]);
 
   const [search, setSearch]     = useState("");
   const [catFilter, setCatFilter] = useState("all");
@@ -324,8 +345,12 @@ export default function MineVaerkerClient({
   const [loadingSeries, setLoadingSeries] = useState<Set<string>>(new Set());
   const [seriesErrors, setSeriesErrors] = useState<Record<string, string>>({});
   const [collaborationReviews, setCollaborationReviews] = useState<CollaborationReview[]>([]);
-  const [collaborationReviewMode, setCollaborationReviewMode] = useState(false);
-  const [collaborationSelected, setCollaborationSelected] = useState<string[]>([]);
+  const [reviewTasks, setReviewTasks] = useState<MemberWorkReviewTask[]>([]);
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [reviewCompletedCount, setReviewCompletedCount] = useState(0);
+  const [resumeReviewAfterEdit, setResumeReviewAfterEdit] = useState(false);
+  const [bulkSoloWorkIds, setBulkSoloWorkIds] = useState<string[]>([]);
+  const [bulkSoloConfirmOpen, setBulkSoloConfirmOpen] = useState(false);
   const [collaborationSaving, setCollaborationSaving] = useState(false);
   const [collaborationFeedback, setCollaborationFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [contractChoices, setContractChoices] = useState<Contract[]>([]);
@@ -351,12 +376,16 @@ export default function MineVaerkerClient({
 
   const loadCollaborationReviews = React.useCallback(async () => {
     if (!rightsHolderId) return;
-    const result = await fetchMemberCollaborationReviews({ rightsHolderId });
-    if (!result.success) {
-      setMsg({ type: "error", text: result.error ?? "Medklipperopgaven kunne ikke indlæses." });
+    const [reviewResult, taskResult] = await Promise.all([
+      fetchMemberCollaborationReviews({ rightsHolderId }),
+      fetchMemberWorkReviewTasks({ rightsHolderId }),
+    ]);
+    if (!reviewResult.success || !taskResult.success) {
+      setMsg({ type: "error", text: (reviewResult.success ? taskResult.error : reviewResult.error) ?? "Gennemgangen kunne ikke indlæses." });
       return;
     }
-    setCollaborationReviews(result.reviews as unknown as CollaborationReview[]);
+    setCollaborationReviews(reviewResult.reviews as unknown as CollaborationReview[]);
+    setReviewTasks(taskResult.tasks);
   }, [rightsHolderId]);
 
   React.useEffect(() => {
@@ -365,8 +394,12 @@ export default function MineVaerkerClient({
   }, [loadCollaborationReviews]);
 
   React.useEffect(() => {
-    if (searchParams?.get("collaborationReview") === "1") setCollaborationReviewMode(true);
-  }, [searchParams]);
+    if (searchParams?.get("review") === "1" || searchParams?.get("collaborationReview") === "1") {
+      setReviewCompletedCount(0);
+      setReviewDialogOpen(true);
+      router.replace("/portal/mine-vaerker", { scroll: false });
+    }
+  }, [router, searchParams]);
 
   React.useEffect(() => {
     if (searchParams?.get("add") === "1") {
@@ -421,7 +454,7 @@ export default function MineVaerkerClient({
       if (sortKey === "title") { av = wa?.title ?? ""; bv = wb?.title ?? ""; }
       if (sortKey === "year")  { av = wa?.year  ?? 0; bv = wb?.year  ?? 0; }
       if (sortKey === "type")  { av = typeLabel(wa?.type ?? "", locale); bv = typeLabel(wb?.type ?? "", locale); }
-      if (sortKey === "role") { av = displayRole(a.role); bv = displayRole(b.role); }
+      if (sortKey === "role") { av = displayRole(a.role, defaultRoleLabel, coeditorWord); bv = displayRole(b.role, defaultRoleLabel, coeditorWord); }
       if (sortKey === "episode") {
         const sa = wa?.season_number ?? 0;
         const sb = wb?.season_number ?? 0;
@@ -444,26 +477,22 @@ export default function MineVaerkerClient({
       return 0;
     });
   const collaborationReviewByWork = new Map(collaborationReviews.map(review => [review.work_id, review]));
-  const pendingCollaborationReviews = collaborationReviews.filter(review => review.status === "pending");
   const disputedCollaborationReviews = collaborationReviews.filter(review => review.status === "disputed");
-  const openCollaborationReviews = [...pendingCollaborationReviews, ...disputedCollaborationReviews];
-  const allPendingCollaborationSelected = pendingCollaborationReviews.length > 0
-    && pendingCollaborationReviews.every(review => collaborationSelected.includes(review.work_id));
 
   const collaborationStatusBadge = (review?: CollaborationReview) => {
     if (!review) return null;
-    if (review.status === "pending") return <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Mangler medklippergennemgang</Badge>;
-    if (review.status === "disputed") return <Badge variant="outline" className="border-orange-400 bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">Indsigelse afventer DFKS</Badge>;
-    if (review.status === "solo_confirmed") return <Badge variant="outline" className="border-green-300 text-green-700">Ingen medklipper</Badge>;
-    return <Badge variant="outline" className="border-blue-300 text-blue-700">Medklippere oplyst</Badge>;
+    const indicator = collaborationReviewIndicator(review.status);
+    if (indicator === "confirm") return <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.review.confirmCoeditor")}</Badge>;
+    if (indicator === "dispute") return <Badge variant="outline" className="border-orange-400 bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">{t("works.review.disputePending")}</Badge>;
+    return null;
   };
 
-  const confirmSelectedAsSolo = async () => {
-    if (!rightsHolderId || !collaborationSelected.length) return;
+  const confirmSelectedAsSolo = async (workIds: string[]) => {
+    if (!rightsHolderId || !workIds.length) return;
     setCollaborationSaving(true);
     setCollaborationFeedback(null);
     try {
-      const result = await confirmNoCoeditors({ rightsHolderId, workIds: collaborationSelected, source: "member_bulk" });
+      const result = await confirmNoCoeditors({ rightsHolderId, workIds, source: workIds.length > 1 ? "member_bulk" : "member_editor" });
       if (!result.success) throw new Error(result.error);
       const feedback = {
         type: "success",
@@ -477,7 +506,11 @@ export default function MineVaerkerClient({
         const status = statusByWork.get(review.work_id);
         return status ? { ...review, status } : review;
       }));
-      setCollaborationSelected([]);
+      setSelected([]);
+      setBulkSoloWorkIds([]);
+      setBulkSoloConfirmOpen(false);
+      setReviewCompletedCount(count => count + workIds.length);
+      await loadCollaborationReviews();
       window.dispatchEvent(new CustomEvent("works-updated"));
     } catch (error) {
       setCollaborationFeedback({ type: "error", text: error instanceof Error ? error.message : "Svarene kunne ikke gemmes." });
@@ -547,7 +580,7 @@ export default function MineVaerkerClient({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium text-foreground">{ep.title}</span>
-                  <span className="mt-1 block text-xs">Rolle: {displayRole(assignment.role)}</span>
+                  <span className="mt-1 block text-xs">Rolle: {displayRole(assignment.role, defaultRoleLabel, coeditorWord)}</span>
                   <span className="mt-1 flex flex-wrap items-center gap-2 text-xs">Medklippere: {coEditors.length ? coEditors.join(", ") : "–"} {collaborationStatusBadge(collaborationReviewByWork.get(ep.id))}</span>
                   <span className="mt-0.5 block text-xs">{(ep.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(ep.id) ? "Kontrakt tilknyttet" : "Mangler kontrakt"}</span>
                 </span>
@@ -703,6 +736,88 @@ export default function MineVaerkerClient({
     });
   };
 
+  const openReviewTaskEditor = async (task: MemberWorkReviewTask) => {
+    setReviewDialogOpen(false);
+    setResumeReviewAfterEdit(true);
+    if (task.kind === "episode_selection") {
+      const seasonAssignment = assignments.find(assignment =>
+        assignment.works?.is_season_group
+        && assignment.works.parent_work_id === task.seriesWorkId
+        && assignment.works.season_number === task.seasonNumber
+      );
+      if (!seasonAssignment?.works) {
+        setResumeReviewAfterEdit(false);
+        setReviewDialogOpen(true);
+        setMsg({ type: "error", text: t("works.review.seasonUnavailable") });
+        return;
+      }
+      await openSeasonEdit(seasonAssignment.works);
+      return;
+    }
+
+    const loadedAssignment = assignments.find(assignment => assignment.id === task.assignmentId)
+      ?? Object.values(seriesEpisodes).flat().find(assignment => assignment.id === task.assignmentId);
+    if (loadedAssignment) {
+      await openEdit(loadedAssignment);
+      return;
+    }
+    const placeholder: Assignment = {
+      id: task.assignmentId,
+      work_id: task.workId,
+      rights_holder_id: rightsHolderId,
+      role: null,
+      contract_id: null,
+      episode_id: null,
+      episodes: null,
+      works: {
+        id: task.workId,
+        title: task.title,
+        type: task.parentWorkId ? "serie" : "",
+        year: null,
+        duration_minutes: null,
+        episode_count: null,
+        parent_work_id: task.parentWorkId,
+        season_number: task.seasonNumber,
+        episode_number: task.episodeNumber,
+        genre: null,
+        director: null,
+        status: null,
+        dfi_id: null,
+        tmdb_id: null,
+        poster_url: null,
+        description: null,
+      },
+    };
+    await openEdit(placeholder);
+  };
+
+  const beginSelectedSoloReview = () => {
+    const selectedSet = new Set(selected);
+    const selectedTasks = reviewTasks.filter(task => {
+      if (task.kind === "coeditor_review") return selectedSet.has(task.assignmentId);
+      const seasonAssignment = assignments.find(assignment =>
+        assignment.works?.is_season_group
+        && assignment.works.parent_work_id === task.seriesWorkId
+        && assignment.works.season_number === task.seasonNumber
+      );
+      return seasonAssignment ? selectionIdsFor(seasonAssignment).some(id => selectedSet.has(id)) : false;
+    });
+    if (!selectedTasks.length) {
+      setMsg({ type: "error", text: t("works.review.noOpenSelected") });
+      return;
+    }
+    const episodeTask = selectedTasks.find(task => task.kind === "episode_selection");
+    if (episodeTask) {
+      setReviewTasks(current => [episodeTask, ...current.filter(task => task.key !== episodeTask.key)]);
+      setReviewCompletedCount(0);
+      setReviewDialogOpen(true);
+      return;
+    }
+    const workIds = selectedTasks.flatMap(task => task.kind === "coeditor_review" ? [task.workId] : []);
+    setBulkSoloWorkIds([...new Set(workIds)]);
+    setBulkSoloConfirmOpen(true);
+  };
+
   React.useEffect(() => {
     const caseId = searchParams?.get("shareTask");
     if (!caseId || !rightsHolderId || shareTaskParamHandledRef.current === caseId) return;
@@ -795,6 +910,9 @@ export default function MineVaerkerClient({
 
   // ── Render ─────────────────────────────────────────────────
 
+  const currentReviewTask = reviewTasks[0] ?? null;
+  const reviewTotal = reviewCompletedCount + reviewTasks.length;
+
   return (
     <div className="flex flex-col gap-6">
 
@@ -826,19 +944,19 @@ export default function MineVaerkerClient({
         </div>
       )}
 
-      {openCollaborationReviews.length > 0 && (
+      {(reviewTasks.length > 0 || disputedCollaborationReviews.length > 0) && (
         <section className="rounded-lg border border-blue-200 bg-blue-50/70 p-4 text-blue-950 dark:border-blue-800 dark:bg-blue-950/20 dark:text-blue-100">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">
               <Users className="mt-0.5 h-5 w-5 shrink-0" />
               <div>
-                <h2 className="font-semibold">Gennemgå medklippere på dine værker</h2>
-                <p className="mt-1 text-sm leading-relaxed">Gennemgå alle dine værker og afsnit. Markér dem, du har klippet alene, og tryk “Ingen medklipper”. Hvis du ikke har klippet et værk eller afsnit alene, skal du åbne det og tilføje de andre klippere samt dit eget foreløbige procentbud.</p>
-                <p className="mt-1 text-xs opacity-80">{pendingCollaborationReviews.length} mangler svar{disputedCollaborationReviews.length ? ` · ${disputedCollaborationReviews.length} afventer DFKS` : ""}</p>
+                <h2 className="font-semibold">{t("works.review.title")}</h2>
+                <p className="mt-1 text-sm leading-relaxed">{t("works.review.description")}</p>
+                <p className="mt-1 text-xs opacity-80">{reviewTasks.length} {t("works.review.remaining")}{disputedCollaborationReviews.length ? ` · ${disputedCollaborationReviews.length} ${t("works.review.awaitingDfks")}` : ""}</p>
               </div>
             </div>
-            <Button type="button" onClick={() => setCollaborationReviewMode(value => !value)}>
-              {collaborationReviewMode ? "Luk gennemgang" : "Start gennemgang"}
+            <Button type="button" disabled={!reviewTasks.length} onClick={() => { setReviewCompletedCount(0); setReviewDialogOpen(true); }}>
+              {t("works.review.start")}
             </Button>
           </div>
         </section>
@@ -848,50 +966,6 @@ export default function MineVaerkerClient({
         <div className={`rounded-md px-3 py-2 text-sm ${collaborationFeedback.type === "success" ? "bg-green-50 text-green-800 dark:bg-green-950/30 dark:text-green-200" : "bg-red-50 text-red-800 dark:bg-red-950/30 dark:text-red-200"}`}>
           {collaborationFeedback.text}
         </div>
-      )}
-
-      {collaborationReviewMode && openCollaborationReviews.length > 0 && (
-        <section className="rounded-lg border bg-card p-4">
-          <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-semibold">Vælg værker og afsnit, du har klippet alene</h2>
-              <p className="mt-1 text-xs text-muted-foreground">Valgene her er kun til medklippergennemgangen og kan ikke slette værker.</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setCollaborationSelected(allPendingCollaborationSelected ? [] : pendingCollaborationReviews.map(review => review.work_id))}>
-                {allPendingCollaborationSelected ? "Fravælg alle" : "Vælg alle synlige"}
-              </Button>
-              <Button type="button" size="sm" disabled={!collaborationSelected.length || collaborationSaving} onClick={() => void confirmSelectedAsSolo()}>
-                Ingen medklipper{collaborationSelected.length ? ` (${collaborationSelected.length})` : ""}
-              </Button>
-            </div>
-          </div>
-          <div className="max-h-[520px] divide-y overflow-y-auto">
-            {openCollaborationReviews.map(review => {
-              const work = review.works;
-              const selectable = review.status === "pending";
-              return (
-                <label key={review.id} className={`flex items-start gap-3 py-3 ${selectable ? "cursor-pointer" : ""}`}>
-                  <input
-                    type="checkbox"
-                    className="mt-1 h-4 w-4"
-                    disabled={!selectable}
-                    checked={collaborationSelected.includes(review.work_id)}
-                    onChange={() => setCollaborationSelected(current => current.includes(review.work_id) ? current.filter(id => id !== review.work_id) : [...current, review.work_id])}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-medium">{work?.title ?? "Ukendt værk"}</span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">
-                      {work?.season_number ? `Sæson ${work.season_number}` : ""}{work?.episode_number ? `${work.season_number ? " · " : ""}Afsnit ${work.episode_number}` : ""}
-                    </span>
-                    {review.status === "disputed" && <span className="mt-1 block text-xs text-orange-700">Du har oplyst “Ingen medklipper”, men andre klippere er registreret. DFKS undersøger sagen.</span>}
-                  </span>
-                  {collaborationStatusBadge(review)}
-                </label>
-              );
-            })}
-          </div>
-        </section>
       )}
 
       {/* Tabel */}
@@ -905,6 +979,9 @@ export default function MineVaerkerClient({
                 <span className="text-sm font-semibold text-red-700">{selected.length} {t("works.selected")}</span>
                 <Button size="sm" variant="destructive" onClick={handleDeleteSelected} className="h-8 w-full gap-1.5 text-xs sm:w-auto">
                   <Trash2 className="h-3.5 w-3.5" /> {t("works.removeSelected")}
+                </Button>
+                <Button size="sm" variant="outline" onClick={beginSelectedSoloReview} className="h-8 w-full text-xs sm:w-auto">
+                  {t("works.review.soloAction")}
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setSelected([])} className="h-8 w-full text-xs sm:w-auto">{t("common.cancel")}</Button>
               </>
@@ -1076,7 +1153,6 @@ export default function MineVaerkerClient({
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button type="button" onClick={() => { if (isSeriesParent) void openSeasonEdit(w); else void openEdit(a); }} className="rounded text-left text-sm font-semibold leading-snug text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{w.title}{w.season_number != null ? ` - S${String(w.season_number).padStart(2, "0")}` : ""}</button>
-                    {needsEpisodeSelection && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.missingEpisodeSelection")}</Badge>}
                     {broadcasterLogo && (
                       <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1096,9 +1172,11 @@ export default function MineVaerkerClient({
 
               <div className="text-sm text-muted-foreground">{w.year ?? "–"}</div>
               <div className="text-sm text-muted-foreground">{typeLabel(w.type, locale)}</div>
-              <div className="text-sm text-muted-foreground">{displayRole(a.role)}</div>
+              <div className="text-sm text-muted-foreground">{displayRole(a.role, defaultRoleLabel, coeditorWord)}</div>
               <div className="text-sm text-muted-foreground">
-                {isSeriesParent ? (
+                {needsEpisodeSelection ? (
+                  <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.review.confirmEpisodes")}</Badge>
+                ) : isSeriesParent ? (
                   <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground">
                     {w.season_number != null ? `S${String(w.season_number).padStart(2, "0")} ` : ""}({w.episode_count ?? 0} afsnit)
                   </span>
@@ -1117,8 +1195,8 @@ export default function MineVaerkerClient({
               <div className="flex min-w-0 flex-col items-start gap-1 text-xs text-muted-foreground" title={(coEditorMap[w.id] ?? []).join(", ")}>
                 <span className="truncate">{(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}</span>
                 {!isSeriesParent && collaborationStatusBadge(directCollaborationReview)}
-                {isSeriesParent && seasonPendingReviews > 0 && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{seasonPendingReviews} afsnit mangler gennemgang</Badge>}
-                {isSeriesParent && seasonDisputedReviews > 0 && <Badge variant="outline" className="border-orange-400 bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">{seasonDisputedReviews} indsigelse afventer DFKS</Badge>}
+                {isSeriesParent && !needsEpisodeSelection && seasonPendingReviews > 0 && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.review.confirmCoeditor")}</Badge>}
+                {isSeriesParent && seasonDisputedReviews > 0 && <Badge variant="outline" className="border-orange-400 bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">{t("works.review.disputePending")}</Badge>}
               </div>
 
               {/* Kontrakt-badge */}
@@ -1161,7 +1239,6 @@ export default function MineVaerkerClient({
                           <span onClick={event => event.stopPropagation()}><ExpandableListTrigger expanded={isExpanded} onToggle={() => void toggleSeries(w)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} /></span>
                         )}
                         <button type="button" onClick={() => { if (isSeriesParent) void openSeasonEdit(w); else void openEdit(a); }} className="rounded text-left text-sm font-semibold leading-snug text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{w.title}{isSeriesParent && w.season_number != null ? ` · Sæson ${w.season_number}` : ""}</button>
-                        {needsEpisodeSelection && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.missingEpisodeSelection")}</Badge>}
                         {broadcasterLogo && (
                           <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1194,12 +1271,14 @@ export default function MineVaerkerClient({
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                     <div>
                       <p className="font-medium text-muted-foreground">Rolle</p>
-                      <p className="mt-0.5 text-foreground">{displayRole(a.role)}</p>
+                      <p className="mt-0.5 text-foreground">{displayRole(a.role, defaultRoleLabel, coeditorWord)}</p>
                     </div>
                     <div>
                       <p className="font-medium text-muted-foreground">{t("works.episodes")}</p>
                       <p className="mt-0.5 text-foreground">
-                        {isSeriesParent ? (
+                        {needsEpisodeSelection ? (
+                          <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.review.confirmEpisodes")}</Badge>
+                        ) : isSeriesParent ? (
                           <span>{w.episode_count ?? 0} afsnit</span>
                         ) : w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
                           <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground font-mono">
@@ -1223,8 +1302,8 @@ export default function MineVaerkerClient({
                     </p>
                     <div className="mt-1 flex flex-wrap gap-1">
                       {!isSeriesParent && collaborationStatusBadge(directCollaborationReview)}
-                      {isSeriesParent && seasonPendingReviews > 0 && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{seasonPendingReviews} afsnit mangler gennemgang</Badge>}
-                      {isSeriesParent && seasonDisputedReviews > 0 && <Badge variant="outline" className="border-orange-400 bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">{seasonDisputedReviews} indsigelse afventer DFKS</Badge>}
+                      {isSeriesParent && !needsEpisodeSelection && seasonPendingReviews > 0 && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.review.confirmCoeditor")}</Badge>}
+                      {isSeriesParent && seasonDisputedReviews > 0 && <Badge variant="outline" className="border-orange-400 bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">{t("works.review.disputePending")}</Badge>}
                     </div>
                   </div>
                 </div>
@@ -1249,6 +1328,75 @@ export default function MineVaerkerClient({
           {Math.min(filtered.length, pageSize)} {t("works.of")} {filtered.length} {t("works.worksLower")}
         </div>
       </div>
+
+      <Dialog open={reviewDialogOpen && Boolean(currentReviewTask)} onOpenChange={setReviewDialogOpen}>
+        <DialogContent className="w-[min(560px,calc(100vw-2rem))]">
+          {currentReviewTask && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{t("works.review.dialogTitle")}</DialogTitle>
+                <DialogDescription>
+                  {t("works.review.progress")
+                    .replace("{current}", String(Math.min(reviewCompletedCount + 1, reviewTotal)))
+                    .replace("{total}", String(reviewTotal))}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="rounded-lg border bg-muted/20 p-4">
+                  <p className="font-semibold">{currentReviewTask.title}</p>
+                  {currentReviewTask.seasonNumber != null && (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {t("works.season")} {currentReviewTask.seasonNumber}
+                      {currentReviewTask.kind === "coeditor_review" && currentReviewTask.episodeNumber != null
+                        ? ` · ${t("works.episode")} ${currentReviewTask.episodeNumber}`
+                        : ""}
+                    </p>
+                  )}
+                </div>
+                {currentReviewTask.kind === "episode_selection" ? (
+                  <div className="space-y-2">
+                    <p className="text-sm">{t("works.review.chooseEpisodesFirst")}</p>
+                    <p className="text-xs text-muted-foreground">{t("works.review.episodeFollowup")}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-sm">{t("works.review.confirmQuestion")}</p>
+                    <p className="text-xs text-muted-foreground">{t("works.review.shareExplanation")}</p>
+                  </div>
+                )}
+              </div>
+              <DialogFooter className="gap-2 sm:justify-between">
+                <Button type="button" variant="ghost" onClick={() => setReviewDialogOpen(false)}>{t("works.review.continueLater")}</Button>
+                <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                  {currentReviewTask.kind === "episode_selection" ? (
+                    <Button type="button" onClick={() => void openReviewTaskEditor(currentReviewTask)}>{t("works.review.chooseEpisodes")}</Button>
+                  ) : (
+                    <>
+                      <Button type="button" variant="outline" disabled={collaborationSaving} onClick={() => void confirmSelectedAsSolo([currentReviewTask.workId])}>
+                        {t("works.review.soloAction")}
+                      </Button>
+                      <Button type="button" onClick={() => void openReviewTaskEditor(currentReviewTask)}>{t("works.review.addCoeditor")}</Button>
+                    </>
+                  )}
+                </div>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkSoloConfirmOpen} onOpenChange={setBulkSoloConfirmOpen}>
+        <DialogContent className="w-[min(480px,calc(100vw-2rem))]">
+          <DialogHeader>
+            <DialogTitle>{t("works.review.bulkSoloTitle")}</DialogTitle>
+            <DialogDescription>{t("works.review.bulkSoloDescription").replace("{count}", String(bulkSoloWorkIds.length))}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setBulkSoloConfirmOpen(false)}>{t("common.cancel")}</Button>
+            <Button type="button" disabled={collaborationSaving} onClick={() => void confirmSelectedAsSolo(bulkSoloWorkIds)}>{t("works.review.confirmSolo")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={contractChoices.length > 0} onOpenChange={open => { if (!open) setContractChoices([]); }}>
         <DialogContent className="w-[min(480px,calc(100vw-2rem))]">
@@ -1303,7 +1451,7 @@ export default function MineVaerkerClient({
       {editAssignment && (
         <EditWorkModal
           isOpen={!!editAssignment}
-          onClose={closeEdit}
+          onClose={() => { setResumeReviewAfterEdit(false); closeEdit(); }}
           assignment={editAssignment}
           allAssignments={editScope === "season" ? editContextAssignments : allAssignments}
           editScope={editScope}
@@ -1329,7 +1477,13 @@ export default function MineVaerkerClient({
                 ? assignments.find(a => a.works?.is_season_group && a.works.parent_work_id === editedWork.parent_work_id && a.works.season_number === editedWork.season_number)?.works
                 : null;
               if (seasonGroup) void loadMemberSeason(seasonGroup, true);
-              void loadCollaborationReviews();
+              void loadCollaborationReviews().then(() => {
+                if (resumeReviewAfterEdit) {
+                  setReviewCompletedCount(count => count + 1);
+                  setResumeReviewAfterEdit(false);
+                  setReviewDialogOpen(true);
+                }
+              });
               closeEdit();
             }
           }}

@@ -10,8 +10,12 @@ import { normalizeSingleEmail } from "@/lib/email/mime";
 import { getForeningLetIntegration, testForeningLetCredentials, upsertForeningLetIntegration } from "@/lib/org-integrations";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import {
+  DEFAULT_STATISTICS_DOMINANCE_LIMIT,
+  MAX_STATISTICS_DOMINANCE_LIMIT,
   MAX_STATISTICS_MINIMUM_GROUP_SIZE,
+  MIN_STATISTICS_DOMINANCE_LIMIT,
   MIN_STATISTICS_MINIMUM_GROUP_SIZE,
+  normalizeStatisticsDominanceLimit,
   normalizeStatisticsMinimumGroupSize,
 } from "@/lib/statistics-privacy";
 
@@ -38,7 +42,9 @@ type OrganisationSettingsPayload = {
   producer_categories: string[];
   statistics_contract_scope: "validated_only" | "validated_and_drafts";
   statistics_minimum_group_size: number;
+  statistics_dominance_limit: number;
   confirm_low_statistics_threshold?: boolean;
+  confirm_high_statistics_dominance?: boolean;
   statistics_profile_config: {
     professional_start_year: boolean;
     primary_profession_type: boolean;
@@ -88,7 +94,7 @@ export async function getOrganisationSettings() {
   const db = createServiceClient();
   const { data, error } = await db
     .from("organisations")
-    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_minimum_group_size, statistics_profile_config")
+    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_minimum_group_size, statistics_dominance_limit, statistics_profile_config")
     .eq("id", orgId)
     .single();
 
@@ -132,6 +138,7 @@ export async function getOrganisationSettings() {
     contract_review_retention_updated_at: data.contract_review_retention_updated_at ?? null,
     statistics_contract_scope: data.statistics_contract_scope === "validated_and_drafts" ? "validated_and_drafts" as const : "validated_only" as const,
     statistics_minimum_group_size: normalizeStatisticsMinimumGroupSize(data.statistics_minimum_group_size),
+    statistics_dominance_limit: normalizeStatisticsDominanceLimit(data.statistics_dominance_limit),
     statistics_profile_config: {
       professional_start_year: (data.statistics_profile_config as Record<string, unknown> | null)?.professional_start_year !== false,
       primary_profession_type: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.primary_profession_type),
@@ -167,6 +174,13 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
     throw new Error(`Statistikgrænsen skal være et helt tal mellem ${MIN_STATISTICS_MINIMUM_GROUP_SIZE} og ${MAX_STATISTICS_MINIMUM_GROUP_SIZE}.`);
   }
   const statisticsMinimumGroupSize = normalizeStatisticsMinimumGroupSize(rawStatisticsMinimumGroupSize);
+  const rawStatisticsDominanceLimit = Number(payload.statistics_dominance_limit);
+  if (!Number.isFinite(rawStatisticsDominanceLimit)
+    || rawStatisticsDominanceLimit < MIN_STATISTICS_DOMINANCE_LIMIT
+    || rawStatisticsDominanceLimit > MAX_STATISTICS_DOMINANCE_LIMIT) {
+    throw new Error(`Dominansgrænsen skal være mellem ${Math.round(MIN_STATISTICS_DOMINANCE_LIMIT * 100)} og ${Math.round(MAX_STATISTICS_DOMINANCE_LIMIT * 100)} procent.`);
+  }
+  const statisticsDominanceLimit = normalizeStatisticsDominanceLimit(rawStatisticsDominanceLimit);
   const statisticsProfileConfig = {
     professional_start_year: Boolean(payload.statistics_profile_config?.professional_start_year),
     primary_profession_type: Boolean(payload.statistics_profile_config?.primary_profession_type),
@@ -192,15 +206,21 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   }
 
   const { data: previousOrganisation, error: previousOrganisationError } = await db.from("organisations")
-    .select("statistics_minimum_group_size")
+    .select("statistics_minimum_group_size,statistics_dominance_limit")
     .eq("id", orgId)
     .single();
   if (previousOrganisationError) throw new Error(previousOrganisationError.message);
   const previousStatisticsMinimum = normalizeStatisticsMinimumGroupSize(previousOrganisation.statistics_minimum_group_size);
+  const previousStatisticsDominance = normalizeStatisticsDominanceLimit(previousOrganisation.statistics_dominance_limit);
   if (statisticsMinimumGroupSize < 5
     && statisticsMinimumGroupSize !== previousStatisticsMinimum
     && payload.confirm_low_statistics_threshold !== true) {
     throw new Error("Bekræft, at en statistikgrænse under standarden på 5 kræver skærpet diskretion.");
+  }
+  if (statisticsDominanceLimit > DEFAULT_STATISTICS_DOMINANCE_LIMIT
+    && statisticsDominanceLimit !== previousStatisticsDominance
+    && payload.confirm_high_statistics_dominance !== true) {
+    throw new Error("Bekræft, at en dominansgrænse over 80 % viser flere tal og kræver en tydelig auditmæssig begrundelse.");
   }
 
   const branding: OrgBranding = {
@@ -232,6 +252,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
       contract_review_retention_updated_by: user?.id ?? null,
       statistics_contract_scope: statisticsContractScope,
       statistics_minimum_group_size: statisticsMinimumGroupSize,
+      statistics_dominance_limit: statisticsDominanceLimit,
       statistics_profile_config: statisticsProfileConfig,
       updated_at: new Date().toISOString(),
     })
@@ -239,7 +260,19 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
 
   if (error) throw new Error(error.message);
 
-  if (statisticsMinimumGroupSize !== previousStatisticsMinimum) {
+  const statisticsChanges = [
+    ...(statisticsMinimumGroupSize !== previousStatisticsMinimum ? [{
+      field: "statistics_minimum_group_size",
+      old: previousStatisticsMinimum,
+      new: statisticsMinimumGroupSize,
+    }] : []),
+    ...(statisticsDominanceLimit !== previousStatisticsDominance ? [{
+      field: "statistics_dominance_limit",
+      old: previousStatisticsDominance,
+      new: statisticsDominanceLimit,
+    }] : []),
+  ];
+  if (statisticsChanges.length) {
     await recordAuditEvent({
       context: {
         actorUserId: user?.id ?? null,
@@ -252,11 +285,13 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
       entityId: orgId,
       entityLabel: longName,
       orgIds: [orgId],
-      changes: [{
-        field: "statistics_minimum_group_size",
-        old: previousStatisticsMinimum,
-        new: statisticsMinimumGroupSize,
-      }],
+      purposeCode: "collective_statistics",
+      legalBasis: "GDPR Art. 9(2)(d)",
+      dataCategories: ["aggregated_statistics", "union_membership_data"],
+      metadata: {
+        auditNote: "Ændring af statistikpolicy påvirker sløring og skal kunne forklares ved revision.",
+      },
+      changes: statisticsChanges,
     });
   }
 

@@ -193,7 +193,7 @@ export default function MinProfilPage() {
             }
 
             const statisticsResult = await updateMemberStatisticsProfile({
-                optOutStatistics: !shareStatistics,
+                optOutStatistics: statisticsOptions?.profile.isOrganisationMember ? false : !shareStatistics,
                 professionalStartYear: professionalStartYear ? Number(professionalStartYear) : null,
                 primaryProfessionTypeId: primaryProfessionTypeId || null,
                 secondaryProfessionTypeIds,
@@ -484,9 +484,19 @@ export default function MinProfilPage() {
             </section>
 
             <section id="statistik" className="scroll-mt-20 rounded-lg border">
-                <div className="border-b px-5 py-4"><h2 className="font-medium">Statistikindstillinger</h2><p className="mt-1 text-sm text-muted-foreground">{statisticsOptions?.profile.isOrganisationMember ? "Aktive medlemmer deltager som udgangspunkt. Det er frivilligt, og du kan altid ændre valget her." : "Det er frivilligt at bidrage. Du kan altid ændre valget igen."}</p></div>
+                <div className="border-b px-5 py-4"><h2 className="font-medium">Statistikindstillinger</h2><p className="mt-1 text-sm text-muted-foreground">{statisticsOptions?.profile.isOrganisationMember ? "Som medlem er du oplyst om, at foreningen bruger overordnede kontrakt- og lønoplysninger til anonymiseret statistikarbejde." : "Det er frivilligt at bidrage. Du kan altid ændre valget igen."}</p></div>
                 <div className="space-y-4 p-5">
-                    <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-4 w-4" checked={shareStatistics} onChange={event => setShareStatistics(event.target.checked)} /><span><span className="block font-medium">Jeg bidrager til fælles lønstatistik</span><span className="text-sm text-muted-foreground">Dine data bruges kun i aggregerede resultater med mindst {statisticsOptions?.minimumGroupSize ?? 5} forskellige deltagere.</span></span></label>
+                    {statisticsOptions?.profile.isOrganisationMember ? (
+                        <div className="rounded-md border bg-muted/40 px-3 py-3 text-sm">
+                            <span className="block font-medium">Du deltager som medlem</span>
+                            <span className="text-muted-foreground">Dine data bruges kun i aggregerede resultater med mindst {statisticsOptions?.minimumGroupSize ?? 5} forskellige deltagere.</span>
+                        </div>
+                    ) : (
+                        <div className="grid gap-2">
+                            <label className="flex items-start gap-3 rounded-md border px-3 py-3"><input type="radio" name="profile-share-statistics" className="mt-1 h-4 w-4" checked={shareStatistics} onChange={() => setShareStatistics(true)} /><span><span className="block font-medium">Ja, jeg bidrager til fælles lønstatistik</span><span className="text-sm text-muted-foreground">Dine data bruges kun i aggregerede resultater med mindst {statisticsOptions?.minimumGroupSize ?? 5} forskellige deltagere.</span></span></label>
+                            <label className="flex items-start gap-3 rounded-md border px-3 py-3"><input type="radio" name="profile-share-statistics" className="mt-1 h-4 w-4" checked={!shareStatistics} onChange={() => setShareStatistics(false)} /><span><span className="block font-medium">Nej tak</span><span className="text-sm text-muted-foreground">Brug kun mine kontrakter som dokumentation for rettigheder og udbetalinger.</span></span></label>
+                        </div>
+                    )}
                     {statisticsOptions?.config.professional_start_year && <div className="space-y-1.5"><Label>Hvilket år begyndte du at arbejde professionelt som {statisticsOptions.professionLabel.toLocaleLowerCase(locale === "en" ? "en" : "da")}?</Label><Input type="number" min={1940} max={new Date().getFullYear()} value={professionalStartYear} onChange={event => setProfessionalStartYear(event.target.value)} className="max-w-48" /></div>}
                     {statisticsOptions?.config.primary_profession_type && statisticsOptions.professionTypes.length > 0 && <div className="space-y-1.5"><Label>Primær faggruppe</Label><select className="flex h-10 w-full max-w-sm rounded-md border bg-background px-3 text-sm" value={primaryProfessionTypeId} onChange={event => setPrimaryProfessionTypeId(event.target.value)}><option value="">Vælg faggruppe</option>{statisticsOptions.professionTypes.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></div>}
                     {statisticsOptions?.config.secondary_profession_types && statisticsOptions.professionTypes.length > 0 && <div className="space-y-2"><Label>Yderligere faggrupper</Label><div className="grid gap-2 sm:grid-cols-2">{statisticsOptions.professionTypes.filter(option => option.id !== primaryProfessionTypeId).map(option => <label key={option.id} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"><input type="checkbox" checked={secondaryProfessionTypeIds.includes(option.id)} onChange={event => setSecondaryProfessionTypeIds(current => event.target.checked ? [...new Set([...current, option.id])] : current.filter(id => id !== option.id))} />{option.name}</label>)}</div></div>}
