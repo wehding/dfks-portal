@@ -152,6 +152,7 @@ export async function fetchAuditEvents(
 }
 
 const SENSITIVE_KEY = /(password|token|secret|key|cpr|bank|account|konto|credential|body|message|content|html|email|phone|address|note)/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function sanitizeMetadata(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeMetadata);
@@ -160,6 +161,10 @@ function sanitizeMetadata(value: unknown): unknown {
     key,
     SENSITIVE_KEY.test(key) ? "[redacted]" : sanitizeMetadata(item),
   ]));
+}
+
+function safeUuid(value: string | null | undefined) {
+  return value && UUID_PATTERN.test(value) ? value : null;
 }
 
 export async function recordAuditEvent(input: {
@@ -204,12 +209,12 @@ export async function recordAuditEvent(input: {
     p_actor_type: input.actorType ?? (input.context.actorUserId ? "user" : input.context.source === "cron" || input.context.source === "import" ? "integration" : "system"),
     p_actor_org_id: input.context.actorOrgId ?? null,
     p_source: input.context.source,
-    p_correlation_id: input.context.correlationId ?? null,
+    p_correlation_id: safeUuid(input.context.correlationId),
     p_request_id: input.context.requestId ?? null,
     p_changes: input.changes ?? [],
     p_metadata: sanitizeMetadata(input.metadata ?? {}),
     p_missing_actor_context: !input.context.actorUserId && input.context.source === "api",
-    p_target_member_uuid: input.targetMemberUuid ?? null,
+    p_target_member_uuid: safeUuid(input.targetMemberUuid),
     p_purpose_code: input.purposeCode ?? null,
     p_legal_basis: input.legalBasis ?? null,
     p_data_categories: input.dataCategories ?? [],

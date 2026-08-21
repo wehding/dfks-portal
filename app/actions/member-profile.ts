@@ -8,6 +8,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { resolvePostLoginDestination } from "@/lib/auth/post-login";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import { resolveOrgId } from "@/lib/org";
+import { recordLegalDocumentAcceptances } from "@/lib/server/legal-document-records";
 
 export async function completeOnboarding(formData: FormData) {
   const supabase = await createClient();
@@ -51,15 +52,18 @@ export async function completeOnboarding(formData: FormData) {
   const affiliations = Array.isArray(holderContext?.org_affiliations) ? holderContext.org_affiliations : [holderContext?.org_affiliations];
   const affiliation = affiliations.find(row => row?.org_id === orgId) ?? null;
   const isOrganisationMember = Boolean(affiliation?.is_member);
-  const requestedStatisticsParticipation = formData.get("opt_out_statistics") !== "true";
-  // Medlemmer bliver automatisk tilmeldt af databasetriggeren. Ved en gentaget
-  // onboarding bevares et senere profilvalg, så onboarding ikke genindmelder en
-  // person, der efterfølgende har fravalgt statistik på Min profil.
-  const statisticsParticipation = isOrganisationMember
-    ? typeof affiliation?.statistics_participation === "boolean"
-      ? affiliation.statistics_participation
-      : true
-    : requestedStatisticsParticipation;
+  const rawStatisticsChoice = String(formData.get("statistics_participation_choice") ?? "");
+  if (!isOrganisationMember && rawStatisticsChoice !== "true" && rawStatisticsChoice !== "false") {
+    return { success: false, error: "Vælg om dine overordnede vilkår må bruges til anonym markedsstatistik." };
+  }
+  const statisticsParticipation = isOrganisationMember ? true : rawStatisticsChoice === "true";
+  let acceptedLegalDocumentIds: string[] = [];
+  try {
+    const parsed = JSON.parse(String(formData.get("accepted_legal_document_ids") ?? "[]"));
+    acceptedLegalDocumentIds = Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return { success: false, error: "De accepterede rettighedstekster kunne ikke læses." };
+  }
   const { data: organisation } = orgId ? await service.from("organisations").select("statistics_profile_config").eq("id", orgId).maybeSingle() : { data: null };
   const config = (organisation?.statistics_profile_config ?? {}) as Record<string, unknown>;
   const startYear = Number(formData.get("professional_start_year"));
@@ -116,6 +120,27 @@ export async function completeOnboarding(formData: FormData) {
   if (onboardingError || !onboardingSaved) {
     console.error("Onboarding: den atomiske profilopdatering fejlede", { code: onboardingError?.code ?? "rejected" });
     return { success: false, error: "Onboarding kunne ikke gemmes samlet. Ingen ændringer er gennemført. Prøv igen." };
+  }
+
+  try {
+    await recordLegalDocumentAcceptances(service, {
+      userId: user.id,
+      rightsHolderId: holderContext.id,
+      orgId,
+      audience: isOrganisationMember ? "member" : "non_member",
+      acceptedDocumentIds: acceptedLegalDocumentIds,
+    });
+    await service.from("org_affiliations").update({
+      statistics_participation: statisticsParticipation,
+      statistics_participation_source: isOrganisationMember ? "member_default" : "non_member_onboarding_choice",
+      statistics_participation_updated_at: new Date().toISOString(),
+      statistics_participation_updated_by: user.id,
+    }).eq("org_id", orgId).eq("rights_holder_id", holderContext.id);
+  } catch (error) {
+    await service.from("rettighedshavere")
+      .update({ onboarding_required_at: new Date().toISOString() })
+      .eq("id", holderContext.id);
+    return { success: false, error: error instanceof Error ? error.message : "Rettighedsteksterne kunne ikke registreres." };
   }
 
   try {
@@ -188,7 +213,7 @@ export async function getMemberStatisticsProfile() {
   return {
     success: true as const,
     profile: {
-      optOutStatistics: typeof affiliation?.statistics_participation === "boolean"
+      optOutStatistics: Boolean(affiliation?.is_member) ? false : typeof affiliation?.statistics_participation === "boolean"
         ? !affiliation.statistics_participation
         : Boolean(holder.opt_out_statistics),
       isOrganisationMember: Boolean(affiliation?.is_member),
@@ -230,11 +255,12 @@ export async function updateMemberStatisticsProfile(input: {
   const { data: holder } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
   const orgId = await resolveOrgId(db, user.id);
   if (!holder || !orgId) return { success: false, error: "Profilen er ikke knyttet til en organisation." };
+  const participates = current.profile.isOrganisationMember ? true : !Boolean(input.optOutStatistics);
   const { data: updated, error } = await db.rpc("update_member_statistics_profile", {
     target_rights_holder_id: holder.id,
     target_org_id: orgId,
     actor_user_id: user.id,
-    participates: !Boolean(input.optOutStatistics),
+    participates,
     start_year: current.config.professional_start_year ? year : null,
     primary_profession_id: current.config.primary_profession_type ? input.primaryProfessionTypeId || null : null,
     secondary_profession_ids: secondaryIds,
@@ -242,6 +268,12 @@ export async function updateMemberStatisticsProfile(input: {
     work_region_code: current.config.primary_work_region ? input.primaryWorkRegionCode || null : null,
   });
   if (error || !updated) return { success: false, error: "Statistikindstillingerne kunne ikke gemmes samlet." };
+  await db.from("org_affiliations").update({
+    statistics_participation: participates,
+    statistics_participation_source: current.profile.isOrganisationMember ? "member_default" : "non_member_profile_choice",
+    statistics_participation_updated_at: new Date().toISOString(),
+    statistics_participation_updated_by: user.id,
+  }).eq("org_id", orgId).eq("rights_holder_id", holder.id);
   revalidatePath("/portal");
   revalidatePath("/portal/min-profil");
   return { success: true };

@@ -24,6 +24,7 @@ export type AdminRightsHolderProfile = {
   bank_account: string;
   alternative_names: string[];
   portrait_url: string | null;
+  is_member: boolean;
   professional_start_year: number | null;
   primary_profession_type_id: string | null;
   secondary_profession_type_ids: string[];
@@ -68,6 +69,7 @@ type RightsHolderInput = {
   cpr_no?: string | null;
   bank_account?: string | null;
   gender?: string | null;
+  is_member?: boolean | null;
   opt_out_statistics?: boolean | null;
   alternative_names?: string[];
   portrait_url?: string | null;
@@ -113,7 +115,7 @@ export async function getAdminRightsHolderProfile(id: string, orgId: string): Pr
 
   const [{ data: holder, error: holderError }, { data: affiliation, error: affiliationError }, { data: secondary, error: secondaryError }, { data: identities, error: identitiesError }, { data: professionRows, error: professionsError }, { data: regionRows, error: regionsError }] = await Promise.all([
     db.from("rettighedshavere").select("cpr_no,bank_account,alternative_names,portrait_url,professional_start_year,primary_profession_type_id,usual_work_mode,primary_work_region_code").eq("id", id).single(),
-    db.from("org_affiliations").select("statistics_participation").eq("rights_holder_id", id).eq("org_id", orgId).single(),
+    db.from("org_affiliations").select("is_member,statistics_participation").eq("rights_holder_id", id).eq("org_id", orgId).single(),
     db.from("rights_holder_profession_types").select("profession_type_id").eq("rights_holder_id", id),
     db.from("rights_holder_external_identities").select("source,external_id").eq("rights_holder_id", id).order("source").order("external_id"),
     db.from("organisation_profession_types").select("profession_type_id,profession_types(name)").eq("org_id", orgId).order("display_order"),
@@ -133,12 +135,13 @@ export async function getAdminRightsHolderProfile(id: string, orgId: string): Pr
     bank_account: decrypted?.bank_account ?? "",
     alternative_names: (holder.alternative_names as string[] | null) ?? [],
     portrait_url: holder.portrait_url as string | null,
+    is_member: Boolean(affiliation?.is_member),
     professional_start_year: holder.professional_start_year as number | null,
     primary_profession_type_id: holder.primary_profession_type_id as string | null,
     secondary_profession_type_ids: (secondary ?? []).map(row => row.profession_type_id as string),
     usual_work_mode: holder.usual_work_mode as string | null,
     primary_work_region_code: holder.primary_work_region_code as string | null,
-    opt_out_statistics: affiliation?.statistics_participation === false,
+    opt_out_statistics: affiliation?.is_member ? false : affiliation?.statistics_participation === false,
     external_identities: externalIdentities,
     profession_types: (professionRows ?? []).map(row => ({ id: row.profession_type_id as string, name: (row.profession_types as unknown as { name?: string } | null)?.name ?? "" })).filter(row => row.name),
     work_regions: (regionRows ?? []).map(row => ({ code: row.code as string, name_da: row.name_da as string, name_en: row.name_en as string })),
@@ -338,27 +341,39 @@ export async function updateRettighedshaverSecure(
   } catch {
     return { success: false, error: "Rettighedshaveren tilhører ikke din organisation" };
   }
+  const { data: affiliation, error: affiliationError } = await db
+    .from("org_affiliations")
+    .select("is_member")
+    .eq("org_id", orgId)
+    .eq("rights_holder_id", id)
+    .single();
+  if (affiliationError) return { success: false, error: affiliationError.message };
+  const intendedMemberStatus = input.is_member ?? affiliation?.is_member ?? false;
+  const normalizedInput: RightsHolderInput = {
+    ...input,
+    opt_out_statistics: intendedMemberStatus ? false : input.opt_out_statistics,
+  };
 
-  const year = input.professional_start_year;
+  const year = normalizedInput.professional_start_year;
   if (year != null && (!Number.isInteger(year) || year < 1940 || year > new Date().getFullYear())) {
     return { success: false, error: "Startåret er ugyldigt" };
   }
   const allowedWorkModes = new Set(["employee", "company", "both", "other", "prefer_not_to_say"]);
-  if (input.usual_work_mode && !allowedWorkModes.has(input.usual_work_mode)) {
+  if (normalizedInput.usual_work_mode && !allowedWorkModes.has(normalizedInput.usual_work_mode)) {
     return { success: false, error: "Arbejdsformen er ugyldig" };
   }
-  if (input.portrait_url && !/^https?:\/\//i.test(input.portrait_url.trim())) {
+  if (normalizedInput.portrait_url && !/^https?:\/\//i.test(normalizedInput.portrait_url.trim())) {
     return { success: false, error: "Portræt-URL skal begynde med http:// eller https://" };
   }
-  const professionIds = [...new Set([input.primary_profession_type_id, ...(input.secondary_profession_type_ids ?? [])].filter((value): value is string => Boolean(value)))];
+  const professionIds = [...new Set([normalizedInput.primary_profession_type_id, ...(normalizedInput.secondary_profession_type_ids ?? [])].filter((value): value is string => Boolean(value)))];
   if (professionIds.length) {
     const { data: allowedRows, error: allowedError } = await db.from("organisation_profession_types").select("profession_type_id").eq("org_id", orgId).in("profession_type_id", professionIds);
     if (allowedError) return { success: false, error: allowedError.message };
     const allowedIds = new Set((allowedRows ?? []).map(row => row.profession_type_id as string));
     if (professionIds.some(professionId => !allowedIds.has(professionId))) return { success: false, error: "En valgt faggruppe er ikke tilgængelig i organisationen" };
   }
-  if (input.primary_work_region_code) {
-    const { data: region, error: regionError } = await db.from("organisation_work_regions").select("code").eq("org_id", orgId).eq("code", input.primary_work_region_code).eq("active", true).maybeSingle();
+  if (normalizedInput.primary_work_region_code) {
+    const { data: region, error: regionError } = await db.from("organisation_work_regions").select("code").eq("org_id", orgId).eq("code", normalizedInput.primary_work_region_code).eq("active", true).maybeSingle();
     if (regionError) return { success: false, error: regionError.message };
     if (!region) return { success: false, error: "Arbejdsområdet er ikke tilgængeligt i organisationen" };
   }
@@ -370,9 +385,9 @@ export async function updateRettighedshaverSecure(
     wikidata: /^Q\d+$/i,
     imdb: /^nm\d+$/i,
   };
-  if (input.external_identities) {
+  if (normalizedInput.external_identities) {
     for (const source of EXTERNAL_ID_SOURCES) {
-      normalizedIdentities[source] = [...new Set((input.external_identities[source] ?? []).map(value => value.trim()).filter(Boolean))].slice(0, 12);
+      normalizedIdentities[source] = [...new Set((normalizedInput.external_identities[source] ?? []).map(value => value.trim()).filter(Boolean))].slice(0, 12);
       if (normalizedIdentities[source].some(value => !identityPatterns[source].test(value))) return { success: false, error: `Et ${source.toUpperCase()}-id har ugyldigt format` };
     }
     const allIdentities = EXTERNAL_ID_SOURCES.flatMap(source => normalizedIdentities[source].map(externalId => ({ source, externalId })));
@@ -386,7 +401,7 @@ export async function updateRettighedshaverSecure(
   }
 
   const payload = Object.fromEntries(
-    Object.entries(securePayload(input)).filter(([key, value]) => {
+    Object.entries(securePayload(normalizedInput)).filter(([key, value]) => {
       if ((key === "cpr_no" || key === "bank_account") && value === null) return false;
       return true;
     })
@@ -406,18 +421,18 @@ export async function updateRettighedshaverSecure(
 
   if (updateResult.error) return { success: false, error: updateResult.error.message };
 
-  if (input.opt_out_statistics !== undefined) {
+  if (normalizedInput.opt_out_statistics !== undefined) {
     const { error: participationError } = await db.from("org_affiliations").update({
-      statistics_participation: !Boolean(input.opt_out_statistics),
-      statistics_participation_source: "admin_choice",
+      statistics_participation: intendedMemberStatus ? true : !Boolean(normalizedInput.opt_out_statistics),
+      statistics_participation_source: intendedMemberStatus ? "member_default" : "admin_choice",
       statistics_participation_updated_at: new Date().toISOString(),
       statistics_participation_updated_by: caller.userId,
     }).eq("org_id", orgId).eq("rights_holder_id", id);
     if (participationError) return { success: false, error: participationError.message };
   }
 
-  if (input.secondary_profession_type_ids !== undefined) {
-    const secondaryIds = [...new Set(input.secondary_profession_type_ids.filter(professionId => professionId !== input.primary_profession_type_id))].slice(0, 12);
+  if (normalizedInput.secondary_profession_type_ids !== undefined) {
+    const secondaryIds = [...new Set(normalizedInput.secondary_profession_type_ids.filter(professionId => professionId !== normalizedInput.primary_profession_type_id))].slice(0, 12);
     const { error: deleteError } = await db.from("rights_holder_profession_types").delete().eq("rights_holder_id", id);
     if (deleteError) return { success: false, error: deleteError.message };
     if (secondaryIds.length) {
@@ -425,7 +440,7 @@ export async function updateRettighedshaverSecure(
       if (insertError) return { success: false, error: insertError.message };
     }
   }
-  if (input.external_identities !== undefined) {
+  if (normalizedInput.external_identities !== undefined) {
     const { error: deleteError } = await db.from("rights_holder_external_identities").delete().eq("rights_holder_id", id);
     if (deleteError) return { success: false, error: deleteError.message };
     const identityRows = EXTERNAL_ID_SOURCES.flatMap(source => normalizedIdentities[source].map(externalId => ({ rights_holder_id: id, source, external_id: externalId, display_name: input.full_name, match_score: 1, match_reason: "admin", selected_automatically: false })));
