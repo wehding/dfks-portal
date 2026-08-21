@@ -1784,20 +1784,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         let active = true
         void (async () => {
-            const { createClient } = await import("@/lib/supabase/client")
-            const supabase = createClient()
-            const { data: { user } } = await supabase.auth.getUser()
-            if (!user) return
-            const { data: roleRow } = await supabase
-                .from("user_org_roles")
-                .select("org_id")
-                .eq("user_id", user.id)
-                .limit(1)
-                .maybeSingle()
-            const orgId = roleRow?.org_id
-            if (!orgId) return
-            const { data: org } = await supabase.from("organisations").select("terminology").eq("id", orgId).single()
-            const word = (org?.terminology as { coeditor_word?: string } | null)?.coeditor_word
+            const response = await fetch("/api/access/context", { cache: "no-store" })
+            if (!response.ok) return
+            const context = await response.json() as { terminology?: { coeditor_word?: string } }
+            const word = context.terminology?.coeditor_word
             if (active && word) setCoeditorWord(word)
         })()
         return () => { active = false }

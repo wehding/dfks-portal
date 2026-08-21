@@ -22,6 +22,7 @@ import { ListResultSummary } from "@/components/list-result-summary";
 import { fetchMemberShareTaskTarget } from "@/app/actions/work-share-cases";
 import { confirmNoCoeditors, fetchMemberCollaborationReviews } from "@/app/actions/work-collaboration-reviews";
 import MineKontrakterClient, { type Contract } from "../mine-kontrakter/MineKontrakterClient";
+import { resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -214,8 +215,15 @@ function typeLabel(t: string, locale: "da" | "en" = "da") {
   return type ? labels[locale][type] : t ?? (locale === "da" ? "Ukendt" : "Unknown");
 }
 
-function displayRole(role: string | null | undefined) {
-  return role === "Hovedklipper" ? "Konceptuerende klipper" : role ?? "Klipper";
+function displayRole(role: string | null | undefined, defaultRole = "Klipper", coeditorWord = "Medklipper") {
+  return resolveWorkEditorRelation({
+    view: "member",
+    isSelf: true,
+    editorCount: 1,
+    storedRole: role,
+    defaultRole,
+    coeditorWord,
+  }).combinedLabel;
 }
 
 function requestKindLabel(request: ChangeRequest) {
@@ -275,7 +283,7 @@ function isSeriesType(type: string | null | undefined) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName, defaultRoleLabel, coeditorWord,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
@@ -286,6 +294,8 @@ export default function MineVaerkerClient({
   contractedWorkIds: string[];
   contracts: Contract[];
   organisationShortName: string;
+  defaultRoleLabel: string;
+  coeditorWord: string;
 }) {
   const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
@@ -304,11 +314,20 @@ export default function MineVaerkerClient({
     for (const a of allAssignments) {
       const name = a.rettighedshavere?.full_name;
       if (!name || !a.work_id) continue;
+      const relation = resolveWorkEditorRelation({
+        view: "member",
+        isSelf: false,
+        editorCount: 2,
+        storedRole: a.role,
+        defaultRole: defaultRoleLabel,
+        coeditorWord,
+      });
+      const displayName = `${name} (${relation.combinedLabel})`;
       if (!map[a.work_id]) map[a.work_id] = [];
-      if (!map[a.work_id].includes(name)) map[a.work_id].push(name);
+      if (!map[a.work_id].includes(displayName)) map[a.work_id].push(displayName);
     }
     return map;
-  }, [allAssignments]);
+  }, [allAssignments, coeditorWord, defaultRoleLabel]);
 
   const [search, setSearch]     = useState("");
   const [catFilter, setCatFilter] = useState("all");
@@ -421,7 +440,7 @@ export default function MineVaerkerClient({
       if (sortKey === "title") { av = wa?.title ?? ""; bv = wb?.title ?? ""; }
       if (sortKey === "year")  { av = wa?.year  ?? 0; bv = wb?.year  ?? 0; }
       if (sortKey === "type")  { av = typeLabel(wa?.type ?? "", locale); bv = typeLabel(wb?.type ?? "", locale); }
-      if (sortKey === "role") { av = displayRole(a.role); bv = displayRole(b.role); }
+      if (sortKey === "role") { av = displayRole(a.role, defaultRoleLabel, coeditorWord); bv = displayRole(b.role, defaultRoleLabel, coeditorWord); }
       if (sortKey === "episode") {
         const sa = wa?.season_number ?? 0;
         const sb = wb?.season_number ?? 0;
@@ -547,7 +566,7 @@ export default function MineVaerkerClient({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium text-foreground">{ep.title}</span>
-                  <span className="mt-1 block text-xs">Rolle: {displayRole(assignment.role)}</span>
+                  <span className="mt-1 block text-xs">Rolle: {displayRole(assignment.role, defaultRoleLabel, coeditorWord)}</span>
                   <span className="mt-1 flex flex-wrap items-center gap-2 text-xs">Medklippere: {coEditors.length ? coEditors.join(", ") : "–"} {collaborationStatusBadge(collaborationReviewByWork.get(ep.id))}</span>
                   <span className="mt-0.5 block text-xs">{(ep.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(ep.id) ? "Kontrakt tilknyttet" : "Mangler kontrakt"}</span>
                 </span>
@@ -1096,7 +1115,7 @@ export default function MineVaerkerClient({
 
               <div className="text-sm text-muted-foreground">{w.year ?? "–"}</div>
               <div className="text-sm text-muted-foreground">{typeLabel(w.type, locale)}</div>
-              <div className="text-sm text-muted-foreground">{displayRole(a.role)}</div>
+              <div className="text-sm text-muted-foreground">{displayRole(a.role, defaultRoleLabel, coeditorWord)}</div>
               <div className="text-sm text-muted-foreground">
                 {isSeriesParent ? (
                   <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground">
@@ -1194,7 +1213,7 @@ export default function MineVaerkerClient({
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                     <div>
                       <p className="font-medium text-muted-foreground">Rolle</p>
-                      <p className="mt-0.5 text-foreground">{displayRole(a.role)}</p>
+                      <p className="mt-0.5 text-foreground">{displayRole(a.role, defaultRoleLabel, coeditorWord)}</p>
                     </div>
                     <div>
                       <p className="font-medium text-muted-foreground">{t("works.episodes")}</p>

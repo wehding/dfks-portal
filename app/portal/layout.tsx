@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { resolveBranding } from "@/lib/branding"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -91,6 +90,17 @@ type ContractCommentCounterRow = {
     member_read_at: string | null
 }
 type InboxParticipantCounterRow = { last_read_at: string | null; member_message_threads: { member_messages: Array<{ author_role: string; created_at: string }> } | null }
+type AccessContextResponse = {
+    userId: string
+    orgId: string
+    rightsHolderId: string | null
+    role: string | null
+    global: boolean
+    canUseAdmin: boolean
+    canUseMember: boolean
+    brand: { logo_url: string | null; short_name: string; long_name: string }
+    organisations: Array<{ id: string; name: string; canUseAdmin: boolean; canUseMember: boolean }>
+}
 
 export default function PortalLayout({
     children,
@@ -100,7 +110,11 @@ export default function PortalLayout({
     const { t } = useI18n()
     const pathname = usePathname()
     const router = useRouter()
-    const [roleList, setRoleList] = useState<string[]>([])
+    const [activeRole, setActiveRole] = useState<string | null>(null)
+    const [isSuperadmin, setIsSuperadmin] = useState(false)
+    const [hasAdminMenu, setHasAdminMenu] = useState(false)
+    const [activeOrgId, setActiveOrgId] = useState("")
+    const [organisations, setOrganisations] = useState<AccessContextResponse["organisations"]>([])
     const [pendingCount, setPendingCount] = useState<number>(0)
     const [pendingWorksCount, setPendingWorksCount] = useState<number>(0)
     const [pendingContractMessagesCount, setPendingContractMessagesCount] = useState<number>(0)
@@ -115,31 +129,22 @@ export default function PortalLayout({
         const supabase = createClient()
 
         const fetchCount = async () => {
-            const { data: { user } } = await supabase.auth.getUser()
-            if (!user) return
-            const { data: roleRow } = await supabase
-                .from("user_org_roles")
-                .select("org_id")
-                .eq("user_id", user.id)
-                .limit(1)
-                .maybeSingle()
-            const orgId = roleRow?.org_id
-            if (!orgId) return
-
-            // Hent foreningens branding (logo/navn) til white-label
-            supabase.from("organisations").select("name, logo_url, branding").eq("id", orgId).single().then(({ data: org }) => {
-                if (!org) return
-                const b = resolveBranding(org as never)
-                setBrand({ logo_url: (org as { logo_url?: string | null }).logo_url ?? null, short_name: b.short_name, long_name: b.long_name })
-            })
-
-            const { data: memberRow } = await supabase
-                .from("rettighedshavere")
-                .select("id,org_affiliations!inner(org_id)")
-                .eq("user_id", user.id)
-                .eq("org_affiliations.org_id", orgId)
-                .maybeSingle()
-            setIsAssociationMember(Boolean(memberRow?.id))
+            const contextResponse = await fetch("/api/access/context", { cache: "no-store" })
+            if (!contextResponse.ok) return
+            const context = await contextResponse.json() as AccessContextResponse
+            if (!context.canUseMember || !context.rightsHolderId) {
+                router.replace(context.canUseAdmin ? "/admin" : "/")
+                return
+            }
+            const orgId = context.orgId
+            const rightsHolderId = context.rightsHolderId
+            setActiveOrgId(orgId)
+            setActiveRole(context.role)
+            setIsSuperadmin(context.global)
+            setHasAdminMenu(context.canUseAdmin)
+            setIsAssociationMember(context.canUseMember)
+            setBrand(context.brand)
+            setOrganisations(context.organisations)
 
             const [contractsRes, worksRes, contractMessagesRes] = await Promise.all([
                 supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde"),
@@ -153,49 +158,43 @@ export default function PortalLayout({
             const { data: requests } = await supabase
                 .from("work_change_requests")
                 .select("id, work_change_request_comments(id, author_role, member_read_at)")
-                .eq("requested_by_user_id", user.id)
+                .eq("org_id", orgId)
+                .eq("requested_by_user_id", context.userId)
             setWorkMessageCount(((requests ?? []) as WorkRequestCounterRow[]).reduce((sum, request) => {
                 const comments = request.work_change_request_comments ?? []
                 return sum + comments.filter(comment => comment.author_role === "admin" && !comment.member_read_at).length
             }, 0))
 
-            const { data: rh } = await supabase
-                .from("rettighedshavere")
-                .select("id")
-                .eq("user_id", user.id)
-                .maybeSingle()
-            if (rh?.id) {
+            if (rightsHolderId) {
                 const [{ count: episodeTodoCount }, { count: shareTodoCount }, { count: collaborationTodoCount }] = await Promise.all([
-                    supabase.from("member_series_episode_scopes").select("id", { count: "exact", head: true }).eq("rights_holder_id", rh.id).eq("status", "pending"),
-                    supabase.from("work_share_participants").select("id", { count: "exact", head: true }).eq("rights_holder_id", rh.id).eq("relationship_status", "pending"),
-                    supabase.from("member_work_collaboration_reviews").select("id", { count: "exact", head: true }).eq("rights_holder_id", rh.id).in("status", ["pending", "disputed"]),
+                    supabase.from("member_series_episode_scopes").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).eq("status", "pending"),
+                    supabase.from("work_share_participants").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).eq("relationship_status", "pending"),
+                    supabase.from("member_work_collaboration_reviews").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).in("status", ["pending", "disputed"]),
                 ])
                 setMemberEpisodeTodoCount((episodeTodoCount ?? 0) + (shareTodoCount ?? 0) + (collaborationTodoCount ?? 0))
                 const { data: comments } = await supabase
                     .from("contract_comments")
-                    .select("id, author_role, member_read_at, contracts!inner(rights_holder_id)")
-                    .eq("contracts.rights_holder_id", rh.id)
+                    .select("id, author_role, member_read_at, contracts!inner(rights_holder_id,org_id)")
+                    .eq("contracts.org_id", orgId)
+                    .eq("contracts.rights_holder_id", rightsHolderId)
                 setContractMessageCount(((comments ?? []) as ContractCommentCounterRow[]).filter(comment => comment.author_role === "admin" && !comment.member_read_at).length)
             }
             const { data: inboxParticipants } = await supabase.from("member_message_participants")
-                .select("last_read_at,member_message_threads!inner(member_messages(author_role,created_at))")
-                .eq("user_id", user.id)
+                .select("last_read_at,member_message_threads!inner(org_id,member_messages(author_role,created_at))")
+                .eq("user_id", context.userId)
+                .eq("member_message_threads.org_id", orgId)
             setInboxMessageCount(((inboxParticipants ?? []) as unknown as InboxParticipantCounterRow[]).reduce((sum, participant) => sum + (participant.member_message_threads?.member_messages ?? []).filter(message => message.author_role === "admin" && message.created_at > (participant.last_read_at ?? "")).length, 0))
         }
 
-        supabase.auth.getUser().then(async ({ data: { user } }) => {
-            if (!user) return
-            const { data: roles } = await supabase
-                .from("user_org_roles")
-                .select("role")
-                .eq("user_id", user.id)
-            setRoleList((roles ?? []).map(r => r.role))
-            fetchCount()
-        })
+        void fetchCount()
 
         window.addEventListener("contracts-updated", fetchCount)
-        return () => window.removeEventListener("contracts-updated", fetchCount)
-    }, [])
+        window.addEventListener("admin-context-updated", fetchCount)
+        return () => {
+            window.removeEventListener("contracts-updated", fetchCount)
+            window.removeEventListener("admin-context-updated", fetchCount)
+        }
+    }, [router])
 
     const portalNavItems = [
         {
@@ -242,11 +241,7 @@ export default function PortalLayout({
 
     const visiblePortalNavItems = portalNavItems.filter(item => item.href !== "/portal/kontraktgennemgang" || isAssociationMember)
     const adminUserNavItems = isAssociationMember ? visiblePortalNavItems.filter(item => item.href !== "/portal/min-profil") : []
-    const primaryRole = ["superadmin", "admin", "org-admin", "jurist", "viewer"]
-        .find(role => roleList.includes(role)) ?? null
-    const hasAdminMenu = primaryRole !== null
-    const isSuperadmin = roleList.includes("superadmin")
-    const allowedKeys = ROLE_MODULES[primaryRole ?? ""] ?? []
+    const allowedKeys = ROLE_MODULES[activeRole ?? ""] ?? []
     const adminNavItems = ALL_ADMIN_NAV_ITEMS
         .filter(item => allowedKeys.includes(item.key))
         .map(item => ({
@@ -266,6 +261,20 @@ export default function PortalLayout({
         await supabase.auth.signOut()
         router.push("/")
         router.refresh()
+    }
+
+    const handleOrganisationChange = async (orgId: string) => {
+        const response = await fetch("/api/access/context", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ orgId }),
+        })
+        if (!response.ok) return
+        const result = await response.json() as { canUseAdmin?: boolean; canUseMember?: boolean }
+        setActiveOrgId(orgId)
+        window.dispatchEvent(new Event("admin-context-updated"))
+        if (!result.canUseMember && result.canUseAdmin) router.replace("/admin")
+        else router.refresh()
     }
 
     return (
@@ -460,6 +469,20 @@ export default function PortalLayout({
                         {currentPageTitle}
                     </h1>
                     <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
+                        {organisations.length > 1 && (
+                            <label className="flex items-center gap-1.5">
+                                <Building2 className="hidden h-4 w-4 text-muted-foreground sm:block" />
+                                <span className="sr-only">Aktiv organisation</span>
+                                <select
+                                    aria-label="Aktiv organisation"
+                                    value={activeOrgId}
+                                    onChange={event => void handleOrganisationChange(event.target.value)}
+                                    className="h-8 max-w-32 rounded-md border bg-background px-2 text-xs sm:max-w-52 sm:text-sm"
+                                >
+                                    {organisations.map(org => <option key={org.id} value={org.id}>{org.name}</option>)}
+                                </select>
+                            </label>
+                        )}
                         <PortalContextualHelp />
                         <LanguageToggle />
                         <ThemeToggle />

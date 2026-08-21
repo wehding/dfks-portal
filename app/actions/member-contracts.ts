@@ -17,8 +17,9 @@ import { effectiveCopydanStatus, normalizeTriState, weeklySalaryWithPersonalSupp
 import { resolveSeriesScopeTarget, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
 import { auditHeadersContext } from "@/lib/audit-access-server";
 import { recordAuditEvent } from "@/lib/audit-log-server";
+import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 
-import { requireOrgId } from "@/lib/org";
+import { requireMemberContext, requireOrgId } from "@/lib/org";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
 const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -109,7 +110,9 @@ export async function uploadMemberContract(formData: FormData) {
     .single();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
 
-  const orgId = await requireOrgId(db, user.id);
+  const memberContext = await requireMemberContext(db, user.id);
+  const orgId = memberContext.orgId;
+  if (memberContext.rightsHolderId !== rh.id) return { success: false, error: "Ingen rettighedshaverprofil i den aktive organisation" };
 
   const file = formData.get("file") as File | null;
   if (!file) return { success: false, error: "Ingen fil modtaget" };
@@ -215,7 +218,9 @@ export async function saveUploadedContract(params: {
     .maybeSingle();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
 
-  const orgId = await requireOrgId(db, user.id);
+  const memberContext = await requireMemberContext(db, user.id);
+  const orgId = memberContext.orgId;
+  if (memberContext.rightsHolderId !== rh.id) return { success: false, error: "Ingen rettighedshaverprofil i den aktive organisation" };
   if (!params.filePath.startsWith(`${orgId}/`)) {
     return { success: false, error: "Filstien tilhører ikke din organisation" };
   }
@@ -345,7 +350,9 @@ export async function queueUploadedContractAiJob(contractId: string) {
 
   const { data: rh } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
-  const orgId = await requireOrgId(db, user.id);
+  const memberContext = await requireMemberContext(db, user.id);
+  const orgId = memberContext.orgId;
+  if (memberContext.rightsHolderId !== rh.id) return { success: false, error: "Ingen rettighedshaverprofil i den aktive organisation" };
   const { data: contract } = await db
     .from("contracts")
     .select("id,pdf_url")
@@ -411,16 +418,19 @@ export async function fetchMemberContractsList() {
   if (!user) return { success: false, error: "Ikke logget ind", contracts: [] };
 
   const db = createServiceClient();
+  const memberContext = await requireMemberContext(db, user.id);
   const { data: rh } = await db
     .from("rettighedshavere")
     .select("id")
     .eq("user_id", user.id)
     .maybeSingle();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet", contracts: [] };
+  if (memberContext.rightsHolderId !== rh.id) return { success: false, error: "Ingen rettighedshaverprofil i den aktive organisation", contracts: [] };
 
   const { data, error } = await db
     .from("contracts")
     .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at)")
+    .eq("org_id", memberContext.orgId)
     .eq("rights_holder_id", rh.id)
     .order("created_at", { ascending: false });
 
@@ -958,7 +968,7 @@ export async function updateAdminContractEpisodeAssignments(params: {
   // Default-rolle udledes fra organisationens terminologi (fx "Klipper" for DFKS), ikke hardcodet.
   const { data: orgForRole } = await db.from("organisations").select("terminology").eq("id", contract.org_id).maybeSingle();
   const defaultRole = resolveDefaultRole(orgForRole ?? null);
-  const role = (existing ?? []).find(item => item.role)?.role ?? defaultRole;
+  const role = normalizeWorkEditorRole((existing ?? []).find(item => item.role)?.role ?? defaultRole, defaultRole);
   const additions = selectedIds.filter(id => !existingWorkIds.has(id)).map(workId => ({
     org_id: contract.org_id,
     work_id: workId,
