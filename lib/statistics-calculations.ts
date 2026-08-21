@@ -17,8 +17,16 @@ export function salaryToMonthly(salary: number, unit: string) {
 export function salarySupplements(data: Record<string, unknown> | null | undefined) {
   const personalSupplement = statisticsNumber(data?.personalSupplement ?? data?.loentillaeg) ?? 0;
   const others = Array.isArray(data?.otherSupplements) ? (data.otherSupplements as Array<{ category?: string; amount?: unknown }>) : [];
-  const efterarbejde = others.filter(s => s.category === "efterarbejde").reduce((sum, s) => sum + (statisticsNumber(s.amount) ?? 0), 0);
-  return personalSupplement + efterarbejde;
+  const structuredPostProduction = others
+    .filter(supplement => supplement.category === "efterarbejde")
+    .reduce((sum, supplement) => sum + (statisticsNumber(supplement.amount) ?? 0), 0);
+  // Older extractions used one dedicated field. It is only a fallback: a
+  // structured afterwork supplement is more precise and must never be counted
+  // twice when both representations are present.
+  const legacyPostProduction = structuredPostProduction > 0
+    ? 0
+    : statisticsNumber(data?.postProductionSupplement) ?? 0;
+  return personalSupplement + structuredPostProduction + legacyPostProduction;
 }
 
 export function salaryDataToWeekly(data: Record<string, unknown> | null | undefined) {

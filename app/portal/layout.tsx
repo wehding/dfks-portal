@@ -47,6 +47,8 @@ import { AppShellTopBar } from "@/components/navigation/app-shell-top-bar"
 import { resolveNavigationTitle } from "@/lib/navigation-title"
 import { PortalContextualHelp } from "@/components/portal/portal-contextual-help"
 import { OnboardingRequirementBanner } from "@/components/onboarding-requirement-banner"
+import { fetchMemberWorkReviewTasks } from "@/app/actions/work-collaboration-reviews"
+import { uniqueMemberWorkReviewCount } from "@/lib/member-work-review"
 
 const ALL_ADMIN_NAV_ITEMS = [
     { key: "kontrakter",           href: "/admin/kontrakter",           icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"          },
@@ -166,12 +168,12 @@ export default function PortalLayout({
             }, 0))
 
             if (rightsHolderId) {
-                const [{ count: episodeTodoCount }, { count: shareTodoCount }, { count: collaborationTodoCount }] = await Promise.all([
-                    supabase.from("member_series_episode_scopes").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).eq("status", "pending"),
+                const [reviewResult, { count: shareTodoCount }] = await Promise.all([
+                    fetchMemberWorkReviewTasks({ rightsHolderId }),
                     supabase.from("work_share_participants").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).eq("relationship_status", "pending"),
-                    supabase.from("member_work_collaboration_reviews").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).in("status", ["pending", "disputed"]),
                 ])
-                setMemberEpisodeTodoCount((episodeTodoCount ?? 0) + (shareTodoCount ?? 0) + (collaborationTodoCount ?? 0))
+                const workReviewCount = reviewResult.success ? uniqueMemberWorkReviewCount(reviewResult.tasks) : 0
+                setMemberEpisodeTodoCount(workReviewCount + (shareTodoCount ?? 0))
                 const { data: comments } = await supabase
                     .from("contract_comments")
                     .select("id, author_role, member_read_at, contracts!inner(rights_holder_id,org_id)")
@@ -189,9 +191,11 @@ export default function PortalLayout({
         void fetchCount()
 
         window.addEventListener("contracts-updated", fetchCount)
+        window.addEventListener("works-updated", fetchCount)
         window.addEventListener("admin-context-updated", fetchCount)
         return () => {
             window.removeEventListener("contracts-updated", fetchCount)
+            window.removeEventListener("works-updated", fetchCount)
             window.removeEventListener("admin-context-updated", fetchCount)
         }
     }, [router])

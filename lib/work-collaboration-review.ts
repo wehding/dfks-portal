@@ -7,3 +7,9 @@ export function collaborationReviewStatusForSoloClaim(otherRightsHolderCount: nu
 export function isOpenCollaborationReview(status: CollaborationReviewStatus) {
   return status === "pending" || status === "disputed";
 }
+
+export function collaborationReviewIndicator(status: CollaborationReviewStatus) {
+  if (status === "pending") return "confirm" as const;
+  if (status === "disputed") return "dispute" as const;
+  return null;
+}

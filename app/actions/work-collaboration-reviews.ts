@@ -9,6 +9,7 @@ import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { ensureMemberCollaborationReviews } from "@/lib/server/work-collaboration-reviews";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { collaborationReviewStatusForSoloClaim } from "@/lib/work-collaboration-review";
+import { loadMemberWorkReviewTasks } from "@/lib/server/member-work-review-tasks";
 
 async function ownContext(rightsHolderId: string) {
   const session = await createClient();
@@ -49,6 +50,20 @@ export async function fetchMemberCollaborationReviews(params: { rightsHolderId: 
       currentCoeditorCount: otherCounts.get(review.work_id)?.size ?? 0,
     })),
   };
+}
+
+export async function fetchMemberWorkReviewTasks(params: { rightsHolderId: string }) {
+  const { db, holder, orgId } = await ownContext(params.rightsHolderId);
+  try {
+    const tasks = await loadMemberWorkReviewTasks(db, { orgId, rightsHolderId: holder.id });
+    return { success: true as const, tasks };
+  } catch (error) {
+    return {
+      success: false as const,
+      error: error instanceof Error ? error.message : "Gennemgangen kunne ikke indlæses.",
+      tasks: [],
+    };
+  }
 }
 
 export async function confirmNoCoeditors(params: { rightsHolderId: string; workIds: string[]; source: "member_bulk" | "member_editor" }) {

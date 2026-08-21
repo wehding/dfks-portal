@@ -22,6 +22,31 @@ test("adds personal and post-production supplements consistently", () => {
   assert.equal(contributionForContract({ id: "a", type: "a-løn", premiereYear: 2025, extractedData: { ...data, workingWeeks: 2 } })?.totalSalary, 23_000);
 });
 
+test("uses legacy afterwork supplement only as a structured fallback", () => {
+  assert.equal(salaryDataToWeekly({
+    salary: 9_249,
+    salaryUnit: "weekly",
+    personalSupplement: 2_751,
+    postProductionSupplement: 2_000,
+  }), 14_000);
+  assert.equal(salaryDataToWeekly({
+    salary: 9_249,
+    salaryUnit: "weekly",
+    personalSupplement: 2_751,
+    postProductionSupplement: 2_000,
+    otherSupplements: [{ category: "efterarbejde", amount: 2_000 }],
+  }), 14_000);
+});
+
+test("does not interpret legacy free-text supplements automatically", () => {
+  assert.equal(salaryDataToWeekly({
+    salary: 9_249,
+    salaryUnit: "weekly",
+    personalSupplement: 2_751,
+    otherSupplements: "Efterarbejde 2.000 kr.",
+  }), 12_000);
+});
+
 test("aggregates actual producer contributions per year", () => {
   const rows = aggregateContributionsByYear([
     { id: "a", type: "a-løn", premiereYear: 2025, extractedData: { salary: 10_000, salaryUnit: "weekly", workingWeeks: 10, holidayPayRate: 1, betaRate: 0.5 } },

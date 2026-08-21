@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import { TrendingUp } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
@@ -34,7 +33,7 @@ function Chart({ points }: { points: SalaryStatPoint[] }) {
           <YAxis fontSize={12} tickFormatter={value => `${Math.round(Number(value) / 1000)}k`} width={40} />
           <Tooltip formatter={value => formatKr(Number(value))} labelFormatter={label => `År ${label}`} />
           <Legend />
-          <Line type="monotone" dataKey="egen" name="Din grundløn pr. uge" stroke="#111827" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+          <Line type="monotone" dataKey="egen" name="Din ugeløn inkl. relevante tillæg" stroke="#111827" strokeWidth={2} dot={{ r: 3 }} connectNulls />
           <Line type="monotone" dataKey="gennemsnit" name="Median pr. uge, alle medlemmer" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} connectNulls />
         </LineChart>
       </ResponsiveChartContainer>
@@ -58,12 +57,11 @@ function MockOverlay({ title, children }: { title: string; children: React.React
   );
 }
 
-export function SalaryStatsCard({ points, benchmarkPointsByExperience, optedOut, benchmarkAvailable, contracts }: {
+export function SalaryStatsCard({ points, benchmarkPointsByExperience, optedOut, benchmarkAvailable }: {
   points: SalaryStatPoint[];
   benchmarkPointsByExperience: Partial<Record<ExperienceGroup, SalaryStatPoint[]>>;
   optedOut: boolean;
   benchmarkAvailable: boolean;
-  contracts: Array<{ id: string; title: string; year: number; weekly: number }>;
 }) {
   const [experienceGroup, setExperienceGroup] = useState<"all" | ExperienceGroup>("all");
   const displayedPoints = useMemo(() => experienceGroup === "all" ? points : (benchmarkPointsByExperience[experienceGroup] ?? points.map(point => ({ ...point, gennemsnit: null }))), [benchmarkPointsByExperience, experienceGroup, points]);
@@ -81,7 +79,7 @@ export function SalaryStatsCard({ points, benchmarkPointsByExperience, optedOut,
         <section aria-labelledby="salary-own-title" className="space-y-2">
           <h3 id="salary-own-title" className="font-semibold">Min lønudvikling</h3>
           {ownPoints.length ? <Chart points={displayedPoints} /> : <MockOverlay title="Lønstatistikken er på vej"><p className="mt-1 text-sm text-muted-foreground">Din egen kurve vises, når mindst én kontrakt har en brugbar løn og dato.</p></MockOverlay>}
-          <p className="text-xs text-muted-foreground">Grundløn pr. uge beregnet ud fra dine egne kontrakter. Dine egne tal kan ses, selv om organisationssammenligningen endnu ikke kan vises.</p>
+          <p className="text-xs text-muted-foreground">Ugeløn inklusive relevante tillæg beregnet ud fra dine egne kontrakter. Dine egne tal kan ses, selv om organisationssammenligningen endnu ikke kan vises.</p>
         </section>
 
         <section aria-labelledby="salary-benchmark-title" className="space-y-2 rounded-lg border bg-muted/20 p-4">
@@ -90,16 +88,6 @@ export function SalaryStatsCard({ points, benchmarkPointsByExperience, optedOut,
           {optedOut ? <p className="text-sm text-muted-foreground">Du har fravalgt fælles statistik. Dine egne tal vises fortsat, men organisationsbenchmark er slået fra.</p> : displayedBenchmarkAvailable ? <p className="text-sm text-muted-foreground">Den gule kurve viser organisationens personvægtede median for den valgte erfaringsgruppe. Erfaring beregnes i det år, kontrakten er indgået.</p> : <p className="text-sm text-muted-foreground">Benchmark vises først ved mindst 10 kvalificerede kontrakter og et sikkert antal bidragydere i den valgte gruppe. Skjulte benchmarktal sendes ikke til din browser.</p>}
         </section>
 
-        <section aria-labelledby="salary-contracts-title" className="space-y-2">
-          <h3 id="salary-contracts-title" className="font-semibold">Mine kontrakter i beregningen</h3>
-          {contracts.length ? <div className="divide-y rounded-lg border">{contracts.map(contract => <Link key={contract.id} href={`/portal/mine-kontrakter?contract=${contract.id}`} className="flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><span className="min-w-0 truncate">{contract.title}</span><span className="shrink-0 text-muted-foreground">{contract.year} · {formatKr(contract.weekly)}/uge</span></Link>)}</div> : <p className="text-sm text-muted-foreground">Ingen kontrakter har endnu både en brugbar løn og dato.</p>}
-        </section>
-
-        <section aria-labelledby="salary-method-title" className="space-y-2 rounded-lg border p-4">
-          <h3 id="salary-method-title" className="font-semibold">Sådan beregnes statistikken</h3>
-          <p className="text-sm text-muted-foreground">Dagssats omregnes med fem arbejdsdage pr. uge, og månedsløn omregnes med 12 måneder fordelt på 52 uger. Organisationens benchmark beregnes først pr. person pr. år og derefter som median, så medlemmer med mange kontrakter ikke får større vægt.</p>
-          <Link href="/portal/min-profil#statistik" className="inline-flex text-sm font-medium underline underline-offset-2">Ændr dit statistikvalg på Min profil</Link>
-        </section>
       </CardContent>
     </Card>
   );
