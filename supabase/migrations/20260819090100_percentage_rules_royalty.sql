@@ -8,7 +8,9 @@ alter table public.agreement_percentage_rules
 
 alter table public.agreement_percentage_rules
   add constraint agreement_percentage_rules_label_key_check
-    check (label_key is null or label_key in ('beta_pulje', 'helligdagsbetaling', 'feriepenge', 'royalty'));
+    check (label_key is null or label_key in (
+      'beta_pulje', 'helligdagsbetaling', 'feriepenge', 'royalty', 'svod', 'copydan'
+    ));
 
 -- Tilføj production_type til royalty-regler (null = gælder alle produktionstyper)
 alter table public.agreement_percentage_rules
