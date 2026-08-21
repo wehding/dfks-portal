@@ -1,0 +1,29 @@
+# C-579/21 logdækningsmatrix
+
+Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-08-20. CI scanner alle `route.ts` under de registrerede følsomme områder og afviser nye endpoints uden auditregistrering eller en dokumenteret udeladelse.
+
+| Endpoint/serverhandling | Behandling | Datakategorier | Berørte medlemmer | Formål | Retsgrundlag | Audit-event | Målmedlem | Fejler lukket | Test | Ejer |
+|---|---|---|---|---|---|---|---|---|---|---|
+| app/api/admin/audit-log/sar/[id]/export/route.ts | Art. 15-generering og link | audit_metadata | subject_access_requests.target_member_uuid | indsigtsret | GDPR Art. 15 | sar_export / admin.audit.sar-export | indsigtsanmodning | Ja | tests/audit-sar.test.ts | Privacyteam |
+| app/api/admin/contracts/[id]/pdf/route.ts | Download af kontrakt-PDF | contract_data | contracts.rights_holder_id | sagsbehandling | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | download / admin.contracts.pdf | kontraktens rettighedshaver | Ja | tests/audit-log.test.ts | Portalteam |
+| app/api/admin/contracts/[id]/producers/route.ts | Producenter knyttet til kontrakt | contract_data | contracts.rights_holder_id | sagsbehandling | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | read / admin.contracts.producers | kontraktens rettighedshaver | Ja | tests/audit-log.test.ts | Portalteam |
+| app/api/admin/contracts/[id]/reanalyse/route.ts | AI-genanalyse | contract_data, salary_data, ai_analysis | contracts.rights_holder_id | kvalitetssikring | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | ai_analysis / admin.contracts.reanalyse | kontraktens rettighedshaver | Ja | tests/audit-log.test.ts | AI- og portalteam |
+| app/api/admin/contracts/[id]/route.ts | Kontraktdetaljer | contract_data, salary_data | contracts.rights_holder_id | sagsbehandling | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | read / admin.contracts.detail | kontraktens rettighedshaver | Ja | tests/audit-log.test.ts | Portalteam |
+| app/api/admin/contracts/[id]/versions/route.ts | Kontraktversioner | contract_data | contracts.rights_holder_id | versionskontrol | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | read / admin.contracts.versions | kontraktens rettighedshaver | Ja | tests/audit-log.test.ts | Portalteam |
+| app/api/admin/contracts/route.ts | Kontraktliste og søgning | contract_data, salary_data | rights_holder_id fra resultater | sagsbehandling | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | search / admin.contracts.list | resultaternes rettighedshavere | Ja | tests/audit-log.test.ts | Portalteam |
+| app/api/admin/contracts/validate/route.ts | Godkendelse af kontrakt | contract_data, salary_data | contracts.rights_holder_id | sagsbehandling | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | validate / admin.contracts.validate | kontraktens rettighedshaver efter validering | Ja | tests/audit-log.test.ts | Portalteam |
+| app/api/admin/rettighedshavere-search/route.ts | Medlemssøgning | identity_data, contact_data, union_membership_data | søgeresultater | medlemsadministration | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | search / admin.rights-holders.search | returnerede medlems-id'er | Ja | tests/audit-log.test.ts | Portalteam |
+| app/api/admin/statistics/query/route.ts | Statistisk analyse | salary_data, contract_data, union_membership_data | aggregeret forespørgselsmængde | faglig statistik | GDPR Art. 9(2)(d), Art. 89 | ai_analysis / admin.statistics.query | aggregerede medlems-id'er før diskretion | Ja | tests/statistics-privacy.test.ts | Statistikteam |
+| app/api/admin/statistics/route.ts | Filtreret aggregeret statistik | salary_data, contract_data, union_membership_data | aggregeret forespørgselsmængde | faglig statistik | GDPR Art. 9(2)(d), Art. 89 | search / admin.statistics.aggregate | aggregeret organisationsmængde før diskretion | Ja | tests/statistics-privacy.test.ts | Statistikteam |
+| app/api/contracts/extract/route.ts | OCR og AI-ekstraktion | contract_data, salary_data, ai_analysis | kontraktens rettighedshaver | kontraktanalyse | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | ai_analysis / contracts.extract | kontrakt/importkontekst | Ja | tests/audit-log.test.ts | AI- og portalteam |
+| app/api/contracts/jobs/process/route.ts | Baggrunds-OCR og AI-ekstraktion | contract_data, salary_data, ai_analysis | contracts.rights_holder_id | kontraktanalyse | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | ai_analysis / contract-import-processor | kontraktens rettighedshaver efter match | Ja | tests/contract-import-robust.test.ts | AI- og portalteam |
+| app/api/contracts/reviews/jobs/process/route.ts | AI-analyse af kontraktgennemgang | contract_data, salary_data, ai_analysis | contract_reviews.member_id | kontraktgennemgang | GDPR Art. 6(1)(b), Art. 9(2)(d) | ai_analysis / contract-review-analysis | gennemgangens medlems-id | Ja | tests/contract-review-job-status.test.ts | AI- og portalteam |
+| app/api/portal/audit-log/sar/[id]/export/route.ts | Medlemsdownload af Art. 15-rapport | audit_metadata | session til rettighedshaver | indsigtsret | GDPR Art. 15 | download / portal.audit.sar-export | autentificeret medlem | Ja | tests/audit-sar.test.ts | Privacyteam |
+| app/api/portal/audit-log/sar/route.ts | Medlemmets indsigtsanmodninger | audit_metadata | session til rettighedshaver | indsigtsret | GDPR Art. 15 | security_review / portal.audit.sar | autentificeret medlem | Ja | tests/audit-sar.test.ts | Privacyteam |
+| app/api/portal/contracts/[contractId]/versions/route.ts | Medlemmets kontraktversioner | contract_data | autentificeret medlems rettighedshaver-id | egen adgang | GDPR Art. 15 | read / portal.contracts.versions | session til rettighedshaver | Ja | tests/audit-log.test.ts | Portalteam |
+
+## Dokumenterede udeladelser
+
+| Endpoint | Begrundelse | Test | Ejer |
+|---|---|---|---|
+| app/api/admin/statistics/cpi/route.ts | Synkroniserer kun offentligt Danmarks Statistik-prisindeks og behandler ingen medlemsdata. | tests/statistics-cpi.test.ts | Statistikteam |

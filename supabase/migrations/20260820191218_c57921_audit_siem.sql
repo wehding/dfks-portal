@@ -9,6 +9,7 @@ alter table public.audit_events add constraint audit_events_action_check check (
   'require_onboarding','cancel_onboarding','complete_onboarding',
   'read','search','ai_analysis','sar_export','siem_delivery','security_review'
 ));
+
 alter table public.audit_events
   add column if not exists target_member_uuid uuid,
   add column if not exists purpose_code text,
@@ -23,11 +24,13 @@ alter table public.audit_events
   add column if not exists previous_hash bytea,
   add column if not exists payload_hash bytea,
   add column if not exists chain_hash bytea;
+
 alter table public.audit_events
   add constraint audit_events_purpose_code_length check (purpose_code is null or char_length(purpose_code) between 1 and 80),
   add constraint audit_events_system_component_length check (system_component is null or char_length(system_component) between 1 and 120),
   add constraint audit_events_outcome_check check (outcome in ('success','denied','failed','partial')),
   add constraint audit_events_schema_version_check check (schema_version between 1 and 100);
+
 create index if not exists audit_events_target_member_occurred_idx
   on public.audit_events (target_member_uuid, occurred_at desc, id desc)
   where target_member_uuid is not null;
@@ -37,14 +40,17 @@ create index if not exists audit_events_purpose_occurred_idx
 create index if not exists audit_events_component_occurred_idx
   on public.audit_events (system_component, occurred_at desc)
   where system_component is not null;
+
 -- Best-effort member backfill. The column intentionally has no foreign key so
 -- the audit trail survives later account/member deletion.
 drop trigger if exists audit_events_immutable on public.audit_events;
+
 update public.audit_events event
 set target_member_uuid = private.audit_safe_uuid(event.entity_id)
 where event.target_member_uuid is null
   and event.entity_type = 'rettighedshavere'
   and private.audit_safe_uuid(event.entity_id) is not null;
+
 update public.audit_events event
 set target_member_uuid = contract.rights_holder_id
 from public.contracts contract
@@ -52,6 +58,7 @@ where event.target_member_uuid is null
   and event.entity_type = 'contracts'
   and private.audit_safe_uuid(event.entity_id) = contract.id
   and contract.rights_holder_id is not null;
+
 create table if not exists private.audit_chain_state (
   singleton boolean primary key default true check (singleton),
   next_sequence bigint not null default 1,
@@ -59,6 +66,7 @@ create table if not exists private.audit_chain_state (
   updated_at timestamptz not null default now()
 );
 revoke all on private.audit_chain_state from public, anon, authenticated, service_role;
+
 create or replace function private.audit_payload_digest(row_data jsonb)
 returns bytea
 language sql immutable
@@ -70,6 +78,7 @@ as $$
   );
 $$;
 revoke all on function private.audit_payload_digest(jsonb) from public, anon, authenticated, service_role;
+
 do $$
 declare
   event_row record;
@@ -105,12 +114,14 @@ begin
       last_chain_hash = excluded.last_chain_hash,
       updated_at = excluded.updated_at;
 end $$;
+
 alter table public.audit_events
   alter column sequence_no set not null,
   alter column payload_hash set not null,
   alter column chain_hash set not null;
 create unique index if not exists audit_events_sequence_no_key on public.audit_events(sequence_no);
 create unique index if not exists audit_events_chain_hash_key on public.audit_events(chain_hash);
+
 create or replace function private.prepare_audit_event_integrity()
 returns trigger
 language plpgsql security definer
@@ -145,10 +156,12 @@ begin
 end;
 $$;
 revoke all on function private.prepare_audit_event_integrity() from public, anon, authenticated, service_role;
+
 drop trigger if exists audit_events_prepare_integrity on public.audit_events;
 create trigger audit_events_prepare_integrity
 before insert on public.audit_events
 for each row execute function private.prepare_audit_event_integrity();
+
 -- Delivery state is mutable and therefore separate from the audit record.
 create table public.audit_siem_outbox (
   event_id uuid primary key references public.audit_events(id) on delete cascade,
@@ -169,6 +182,7 @@ create index audit_siem_outbox_delivery_idx
 alter table public.audit_siem_outbox enable row level security;
 revoke all on public.audit_siem_outbox from public, anon, authenticated;
 grant select, insert, update, delete on public.audit_siem_outbox to service_role;
+
 create or replace function private.enqueue_audit_event_for_siem()
 returns trigger
 language plpgsql security definer
@@ -182,13 +196,16 @@ begin
 end;
 $$;
 revoke all on function private.enqueue_audit_event_for_siem() from public, anon, authenticated, service_role;
+
 drop trigger if exists audit_events_enqueue_siem on public.audit_events;
 create trigger audit_events_enqueue_siem
 after insert on public.audit_events
 for each row execute function private.enqueue_audit_event_for_siem();
+
 insert into public.audit_siem_outbox(event_id, sequence_no, status)
 select id, sequence_no, 'pending' from public.audit_events
 on conflict (event_id) do nothing;
+
 create table public.audit_siem_receipts (
   id uuid primary key default gen_random_uuid(),
   batch_id uuid not null unique,
@@ -207,6 +224,7 @@ create index audit_siem_receipts_delivered_idx on public.audit_siem_receipts(del
 alter table public.audit_siem_receipts enable row level security;
 revoke all on public.audit_siem_receipts from public, anon, authenticated;
 grant select, insert on public.audit_siem_receipts to service_role;
+
 create table public.subject_access_requests (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null,
@@ -237,6 +255,7 @@ create index subject_access_requests_member_created_idx
 alter table public.subject_access_requests enable row level security;
 revoke all on public.subject_access_requests from public, anon, authenticated;
 grant select, insert, update on public.subject_access_requests to service_role;
+
 create table public.subject_access_exports (
   id uuid primary key default gen_random_uuid(),
   request_id uuid not null references public.subject_access_requests(id) on delete cascade,
@@ -253,6 +272,7 @@ create index subject_access_exports_expiry_idx on public.subject_access_exports(
 alter table public.subject_access_exports enable row level security;
 revoke all on public.subject_access_exports from public, anon, authenticated;
 grant select, insert on public.subject_access_exports to service_role;
+
 create table public.audit_control_settings (
   singleton boolean primary key default true check (singleton),
   retention_years integer not null default 7 check (retention_years between 1 and 30),
@@ -268,6 +288,7 @@ insert into public.audit_control_settings(singleton) values (true) on conflict d
 alter table public.audit_control_settings enable row level security;
 revoke all on public.audit_control_settings from public, anon, authenticated;
 grant select, update on public.audit_control_settings to service_role;
+
 create table public.audit_retention_certificates (
   id uuid primary key default gen_random_uuid(),
   first_sequence bigint not null,
@@ -282,6 +303,7 @@ create table public.audit_retention_certificates (
 alter table public.audit_retention_certificates enable row level security;
 revoke all on public.audit_retention_certificates from public, anon, authenticated;
 grant select, insert on public.audit_retention_certificates to service_role;
+
 create or replace function private.guard_audit_immutability()
 returns trigger
 language plpgsql
@@ -292,12 +314,14 @@ begin
   raise exception 'Audit records are append-only';
 end;
 $$;
+
 create trigger audit_events_immutable before update or delete on public.audit_events
 for each row execute function private.guard_audit_immutability();
 create trigger audit_siem_receipts_immutable before update or delete on public.audit_siem_receipts
 for each row execute function private.guard_audit_immutability();
 create trigger audit_retention_certificates_immutable before update or delete on public.audit_retention_certificates
 for each row execute function private.guard_audit_immutability();
+
 -- Server-only append API. SECURITY DEFINER is required because service_role has
 -- no direct INSERT privilege; execution is explicitly revoked from browser roles.
 create or replace function public.append_audit_event(
@@ -370,6 +394,7 @@ grant execute on function public.append_audit_event(
   uuid,text,text,text[],inet,text,text,text,uuid[]
 ) to service_role;
 revoke insert, update, delete on public.audit_events, public.audit_event_organisations from service_role;
+
 create or replace function public.verify_audit_chain(p_from_sequence bigint default null, p_to_sequence bigint default null)
 returns table(sequence_no bigint, event_id uuid, valid boolean)
 language sql security definer
@@ -406,6 +431,7 @@ as $$
 $$;
 revoke all on function public.verify_audit_chain(bigint,bigint) from public, anon, authenticated;
 grant execute on function public.verify_audit_chain(bigint,bigint) to service_role;
+
 create or replace function public.claim_audit_siem_batch(p_limit integer default 100)
 returns table(event_id uuid, sequence_no bigint, event_payload jsonb, batch_id uuid)
 language plpgsql security definer
@@ -457,6 +483,7 @@ end;
 $$;
 revoke all on function public.claim_audit_siem_batch(integer) from public, anon, authenticated;
 grant execute on function public.claim_audit_siem_batch(integer) to service_role;
+
 create or replace function public.complete_audit_siem_batch(
   p_batch_id uuid,
   p_success boolean,
@@ -513,6 +540,7 @@ end;
 $$;
 revoke all on function public.complete_audit_siem_batch(uuid,boolean,text,text,text,text,text,text,text) from public, anon, authenticated;
 grant execute on function public.complete_audit_siem_batch(uuid,boolean,text,text,text,text,text,text,text) to service_role;
+
 create or replace function public.register_subject_access_export(
   p_request_id uuid,
   p_format text,
@@ -571,6 +599,7 @@ end;
 $$;
 revoke all on function public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz) from public, anon, authenticated;
 grant execute on function public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz) to service_role;
+
 create or replace function public.purge_expired_audit_events(
   retention interval default interval '7 years',
   batch_size integer default 10000
@@ -624,6 +653,7 @@ end;
 $$;
 revoke all on function public.purge_expired_audit_events(interval,integer) from public, anon, authenticated;
 grant execute on function public.purge_expired_audit_events(interval,integer) to service_role;
+
 comment on table public.audit_events is
   'Append-only and hash-chained audit trail for data access and business changes. Mutable SIEM/SAR workflow state is stored separately.';
 comment on column public.audit_events.ip_address is

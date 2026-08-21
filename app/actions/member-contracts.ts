@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
+import { headers } from "next/headers";
 import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncContractProducerRelations } from "@/lib/server/production-company-relations";
@@ -14,6 +15,8 @@ import { parseLocalEpisodeCode } from "@/lib/series-episodes";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { effectiveCopydanStatus, normalizeTriState, weeklySalaryWithPersonalSupplement } from "@/lib/contract-list-status";
 import { resolveSeriesScopeTarget, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
+import { auditHeadersContext } from "@/lib/audit-access-server";
+import { recordAuditEvent } from "@/lib/audit-log-server";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 
 import { requireMemberContext, requireOrgId } from "@/lib/org";
@@ -432,6 +435,19 @@ export async function fetchMemberContractsList() {
     .order("created_at", { ascending: false });
 
   if (error) return { success: false, error: error.message, contracts: [] };
+  const orgId = await requireOrgId(db, user.id);
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId, role: "member" }, "portal", "portal.contracts.list"),
+    action: "read",
+    entityType: "contracts",
+    entityLabel: "Mine kontrakter",
+    targetMemberUuid: rh.id,
+    purposeCode: "member_self_service",
+    legalBasis: "GDPR Art. 6(1)(b)",
+    dataCategories: ["contract_data", "salary_data", "message_data"],
+    orgIds: [orgId],
+    metadata: { resultCount: data?.length ?? 0 },
+  });
   return { success: true, contracts: data ?? [] };
 }
 
@@ -534,13 +550,25 @@ export async function fetchMemberContractDetail(contractId: string) {
 
   const { data, error } = await db
     .from("contracts")
-    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
+    .select("id, org_id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
     .eq("id", contractId)
     .eq("rights_holder_id", rh.id)
     .maybeSingle();
 
   if (error) return { success: false, error: error.message };
   if (!data) return { success: false, error: "Kontrakten blev ikke fundet." };
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: data.org_id, role: "member" }, "portal", "portal.contracts.detail"),
+    action: "read",
+    entityType: "contracts",
+    entityId: contractId,
+    entityLabel: data.working_title ?? "Egen kontrakt",
+    targetMemberUuid: rh.id,
+    purposeCode: "member_self_service",
+    legalBasis: "GDPR Art. 6(1)(b)",
+    dataCategories: ["contract_data", "salary_data", "message_data", "ai_analysis"],
+    orgIds: [data.org_id],
+  });
   return { success: true, contract: data };
 }
 
@@ -561,7 +589,13 @@ export async function getContractSignedUrl(pdfUrl: string) {
     .eq("pdf_url", pdfUrl)
     .maybeSingle();
 
+  let auditOrgId: string;
+  let targetMemberUuid: string | null;
+  let entityId: string | null = null;
   if (contract) {
+    auditOrgId = contract.org_id;
+    targetMemberUuid = contract.rights_holder_id;
+    entityId = contract.id;
     if (contract.rights_holder_id !== rh.id) {
       const isAdmin = await assertAdminForOrg(db, user.id, contract.org_id);
       if (!isAdmin) return { url: null, error: "Ikke autoriseret" };
@@ -575,6 +609,8 @@ export async function getContractSignedUrl(pdfUrl: string) {
     const relation = (attachment as { contracts?: { org_id: string; rights_holder_id: string | null } | { org_id: string; rights_holder_id: string | null }[] | null } | null)?.contracts;
     const owner = Array.isArray(relation) ? relation[0] : relation;
     if (!owner) return { url: null, error: "Fil ikke fundet" };
+    auditOrgId = owner.org_id;
+    targetMemberUuid = owner.rights_holder_id;
     if (owner.rights_holder_id !== rh.id) {
       const isAdmin = await assertAdminForOrg(db, user.id, owner.org_id);
       if (!isAdmin) return { url: null, error: "Ikke autoriseret" };
@@ -582,6 +618,20 @@ export async function getContractSignedUrl(pdfUrl: string) {
   }
 
   const { data } = await db.storage.from(BUCKET).createSignedUrl(pdfUrl, 3600);
+  if (data?.signedUrl) {
+    await recordAuditEvent({
+      context: auditHeadersContext(await headers(), { userId: user.id, orgId: auditOrgId, role: targetMemberUuid === rh.id ? "member" : "admin" }, targetMemberUuid === rh.id ? "portal" : "admin", "contracts.document-download"),
+      action: "download",
+      entityType: "contracts",
+      entityId,
+      entityLabel: "Kontraktdokument",
+      targetMemberUuid,
+      purposeCode: targetMemberUuid === rh.id ? "member_self_service" : "contract_case_management",
+      legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+      dataCategories: ["contract_data", "salary_data"],
+      orgIds: [auditOrgId],
+    });
+  }
   return { url: data?.signedUrl ?? null };
 }
 
@@ -720,6 +770,19 @@ export async function getContractValidation(contractId: string, includeEpisodes 
   // hasSavedValidation afspejler om der faktisk findes gemte valideringsdata FØR merge med værkets
   // fallback-felter — så UI kan skelne "endnu ingen validering" fra "felter fyldt fra det linkede værk".
   const hasSavedValidation = Boolean(data?.extracted_data && Object.keys(data.extracted_data as Record<string, unknown>).length > 0);
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: "admin" }, "admin", "admin.contracts.validation"),
+    action: "read",
+    entityType: "contracts",
+    entityId: contractId,
+    entityLabel: valueText((contract as { working_title?: unknown }).working_title, "Kontraktvalidering"),
+    targetMemberUuid: contract.rights_holder_id,
+    purposeCode: "contract_validation",
+    legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+    dataCategories: ["contract_data", "salary_data", "ai_analysis"],
+    orgIds: [contract.org_id],
+    metadata: { includeEpisodes },
+  });
   return {
     success: true,
     extractedData,
@@ -1234,6 +1297,19 @@ export async function fetchAdminContractEditorData(contractId: string) {
           registrationNumber: entity?.registration_number ?? undefined,
         };
       });
+
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId, role: "admin" }, "admin", "admin.contracts.editor"),
+    action: "read",
+    entityType: "contracts",
+    entityId: contractId,
+    entityLabel: contract.working_title ?? "Kontrakteditor",
+    targetMemberUuid: contract.rights_holder_id,
+    purposeCode: "contract_case_management",
+    legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+    dataCategories: ["contract_data", "salary_data", "message_data", "ai_analysis"],
+    orgIds: [orgId],
+  });
 
   return {
     success: true,

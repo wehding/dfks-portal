@@ -3,6 +3,8 @@ import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { requireStaffModuleApi } from "@/lib/api-auth"
 import { assertContractReviewInOrg } from "@/lib/authz"
 import { normalizeContractReviewAnalysisStatus, type ContractReviewJobSnapshot } from "@/lib/contract-review-job-status"
+import { auditRequestContext } from "@/lib/audit-access-server"
+import { recordAuditEvent } from "@/lib/audit-log-server"
 
 // GET /api/admin/contracts/[id]
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -88,7 +90,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         analysis_status: normalizeContractReviewAnalysisStatus({ aiStatus: data.ai_status, intakeStatus: data.intake_status, job }),
     }
 
-    return NextResponse.json({ data: normalizedData, assignees, canAssign, emailSource })
+    await recordAuditEvent({
+        context: auditRequestContext(req, { userId: auth.userId, orgId: auth.orgId, role: auth.role }, "admin", "admin.contract-reviews.detail"),
+        action: "read",
+        entityType: "contract_reviews",
+        entityId: id,
+        entityLabel: "Kontraktgennemgang",
+        purposeCode: "contract_case_management",
+        legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+        dataCategories: ["contract_data", "contact_data", "ai_analysis", "message_data"],
+        orgIds: [auth.orgId],
+    })
+
+    return NextResponse.json({ data: normalizedData, assignees, canAssign, emailSource }, { headers: { "cache-control": "no-store" } })
 }
 
 // PATCH /api/admin/contracts/[id]

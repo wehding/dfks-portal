@@ -223,6 +223,11 @@ export default function PortalLayout({
             icon: SHARED_NAV_ICONS.screenings,
         },
         {
+            label: t("nav.myDataAccess"),
+            href: "/portal/mine-data",
+            icon: ShieldCheck,
+        },
+        {
             label: t("nav.contractReview"),
             href: "/portal/kontraktgennemgang",
             icon: ScanSearch,

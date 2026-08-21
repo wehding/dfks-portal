@@ -9,13 +9,16 @@ import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles"
 import { postgrestIlikePattern } from "@/lib/postgrest-search"
+import { auditRequestContext, auditSearchFingerprint } from "@/lib/audit-access-server"
+import { recordAuditEvent } from "@/lib/audit-log-server"
 
 export async function GET(req: NextRequest) {
     const supabase = await createServerClient()
     const caller = await assertAdminRole(supabase, USER_ADMIN_ROLES)
     if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
-    const pattern = postgrestIlikePattern(req.nextUrl.searchParams.get("q") ?? "")
+    const rawQuery = req.nextUrl.searchParams.get("q") ?? ""
+    const pattern = postgrestIlikePattern(rawQuery)
     if (!pattern || pattern.length < 4) return NextResponse.json([])
 
     const admin = createAdminClient(
@@ -37,5 +40,16 @@ export async function GET(req: NextRequest) {
         console.error("[rights-holder-search] search failed", error.code)
         return NextResponse.json({ error: "Søgningen kunne ikke gennemføres." }, { status: 500 })
     }
-    return NextResponse.json(data ?? [])
+    await recordAuditEvent({
+        context: auditRequestContext(req, caller, "admin", "admin.rights-holders.search"),
+        action: "search",
+        entityType: "rettighedshavere",
+        entityLabel: "Rettighedshaversøgning",
+        purposeCode: "member_administration",
+        legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+        dataCategories: ["identity_data", "contact_data"],
+        orgIds: [caller.orgId],
+        metadata: { resultCount: data?.length ?? 0, queryFingerprint: auditSearchFingerprint(rawQuery) },
+    })
+    return NextResponse.json(data ?? [], { headers: { "cache-control": "no-store" } })
 }

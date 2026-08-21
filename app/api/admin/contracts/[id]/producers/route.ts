@@ -1,13 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireStaffModuleApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
+import { auditRequestContext } from "@/lib/audit-access-server";
+import { recordAuditEvent } from "@/lib/audit-log-server";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireStaffModuleApi("contracts", "read");
   if (!auth.ok) return auth.response;
   const { id } = await params;
   const db = createServiceClient();
-  const { data: contract } = await db.from("contracts").select("id").eq("id", id).eq("org_id", auth.orgId).maybeSingle();
+  const { data: contract } = await db.from("contracts").select("id,rights_holder_id").eq("id", id).eq("org_id", auth.orgId).maybeSingle();
   if (!contract) return NextResponse.json({ error: "Kontrakten blev ikke fundet." }, { status: 404 });
   const { data, error } = await db
     .from("contract_employers")
@@ -28,6 +30,19 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       legalName: entity?.legal_name ?? undefined,
       registrationNumber: entity?.registration_number ?? undefined,
     };
+  });
+  await recordAuditEvent({
+    context: auditRequestContext(request, auth, "admin", "admin.contracts.producers"),
+    action: "read",
+    entityType: "contracts",
+    entityId: id,
+    entityLabel: "Kontraktproducenter",
+    targetMemberUuid: contract.rights_holder_id,
+    purposeCode: "contract_case_management",
+    legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+    dataCategories: ["contract_data"],
+    orgIds: [auth.orgId],
+    metadata: { resultCount: selections.length },
   });
   return NextResponse.json({ data: selections });
 }

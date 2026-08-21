@@ -1,0 +1,7 @@
+project_id              = "dfks-production"
+environment             = "staging"
+worker_image            = "europe-north1-docker.pkg.dev/dfks-production/dfks-audit-workers/worker@sha256:REPLACE_WITH_DIGEST"
+notification_channel_id = "projects/dfks-production/notificationChannels/REPLACE_ME"
+scheduler_region        = "europe-west1"
+enable_scheduler        = false
+lock_worm_retention     = false

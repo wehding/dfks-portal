@@ -7,6 +7,8 @@ import { parseContractReviewDeleteIds } from "@/lib/contract-review-delete"
 import { drainContractReviewStorageDeletionQueue } from "@/lib/contract-review-retention"
 import { normalizeContractReviewAnalysisStatus, type ContractReviewJobSnapshot } from "@/lib/contract-review-job-status"
 import { postgrestIlikePattern } from "@/lib/postgrest-search"
+import { auditRequestContext, auditSearchFingerprint } from "@/lib/audit-access-server"
+import { recordAuditEvent } from "@/lib/audit-log-server"
 
 // GET /api/admin/contracts
 // Query params: queue=mine|all, status=afventer,behandling, productionType=..., search=..., page=1, limit=20
@@ -115,7 +117,23 @@ export async function GET(req: NextRequest) {
         }
     })
 
-    return NextResponse.json({ data: normalized, count: count ?? 0, page, limit })
+    await recordAuditEvent({
+        context: auditRequestContext(req, caller, "admin", "admin.contract-reviews.list"),
+        action: search || statusParam || productionTypeParam ? "search" : "read",
+        entityType: "contract_reviews",
+        entityLabel: "Kontraktgennemgange",
+        purposeCode: "contract_case_management",
+        legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+        dataCategories: ["contract_data", "contact_data", "ai_analysis"],
+        orgIds: [caller.orgId],
+        metadata: {
+            resultCount: normalized.length,
+            filters: { queue, hasStatus: Boolean(statusParam), hasProductionType: Boolean(productionTypeParam), hasSearch: Boolean(search) },
+            queryFingerprint: search ? auditSearchFingerprint(search) : null,
+        },
+    })
+
+    return NextResponse.json({ data: normalized, count: count ?? 0, page, limit }, { headers: { "cache-control": "no-store" } })
 }
 
 // DELETE /api/admin/contracts

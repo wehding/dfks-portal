@@ -3,6 +3,8 @@ import { createClient } from "@supabase/supabase-js"
 import { requireAdminApi } from "@/lib/api-auth"
 import { ADMIN_ROLES } from "@/lib/admin-roles"
 import { errorMessage } from "@/lib/error-message"
+import { auditRequestContext } from "@/lib/audit-access-server"
+import { recordAuditEvent } from "@/lib/audit-log-server"
 
 function sb() {
     return createClient(
@@ -31,6 +33,24 @@ export async function POST(req: NextRequest) {
             p_rights_holder_id: rightsHolderId ?? null,
         })
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+        const { data: contract } = await supabase.from("contracts")
+            .select("rights_holder_id")
+            .eq("id", contractId)
+            .eq("org_id", auth.orgId)
+            .maybeSingle()
+        await recordAuditEvent({
+            context: auditRequestContext(req, auth, "admin", "admin.contracts.validate"),
+            action: "validate",
+            entityType: "contracts",
+            entityId: contractId,
+            entityLabel: "Kontrakt godkendt",
+            targetMemberUuid: contract?.rights_holder_id ?? rightsHolderId ?? null,
+            purposeCode: "contract_case_management",
+            legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
+            dataCategories: ["contract_data", "salary_data"],
+            orgIds: [auth.orgId],
+        })
 
         return NextResponse.json({ ok: true })
     } catch (e) {

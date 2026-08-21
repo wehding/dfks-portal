@@ -3,6 +3,8 @@ import { csvAuditCell, isAuditAction, isAuditSource, type AuditEvent, type Audit
 import { fetchAuditEvents, recordAuditEvent } from "@/lib/audit-log-server";
 import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { z } from "zod";
+import { auditRequestContext } from "@/lib/audit-access-server";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +21,10 @@ function filtersFromRequest(req: NextRequest): AuditFilters {
     action: isAuditAction(action) ? action : undefined,
     entityType: params.get("entityType")?.slice(0, 100) || undefined,
     source: isAuditSource(source) ? source : undefined,
+    targetMemberUuid: z.string().uuid().safeParse(params.get("targetMemberUuid")).data,
+    purposeCode: params.get("purposeCode")?.slice(0, 80) || undefined,
+    systemComponent: params.get("systemComponent")?.slice(0, 120) || undefined,
+    outcome: z.enum(["success", "denied", "failed", "partial"]).safeParse(params.get("outcome")).data,
     query: params.get("query")?.slice(0, 100) || undefined,
   };
 }
@@ -38,30 +44,52 @@ export async function GET(req: NextRequest) {
     while (rows.length < 50000) {
       const page = await fetchAuditEvents(db, caller, { ...filters, cursor }, Math.min(1000, 50000 - rows.length));
       rows.push(...page.items);
-      if (!page.nextCursor) break;
+      if (!page.nextCursor) { cursor = undefined; break; }
       cursor = page.nextCursor;
     }
-    const header = ["Tidspunkt", "Organisation", "Aktør", "E-mail", "Rolle", "Handling", "Entitetstype", "Entitet", "Entitets-id", "Ændrede felter", "Kilde", "Korrelations-id"];
+    if (cursor) return NextResponse.json({ error: "Eksporten er for stor. Afgræns perioden eller organisationen." }, { status: 413 });
+    const header = [
+      "Hændelses-id", "Tidspunkt (UTC)", "Organisation", "Aktør", "E-mail", "Rolle", "Handling",
+      "Målmedlem", "Formål", "Retsgrundlag", "Datakategorier", "Systemkomponent", "Resultat", "Fejlkode",
+      "Entitetstype", "Entitet", "Entitets-id", "Ændrede felter", "Kilde", "Request-id", "Korrelations-id",
+      "Sekvens", "Integritet",
+      ...(caller.role === "superadmin" ? ["IP-adresse"] : []),
+    ];
     const csvRows = rows.map(event => [
+      event.id,
       event.occurredAt,
       event.organisations.map(org => org.name).join(" | "),
       event.actorDisplayName ?? (event.actorType === "system" ? "System" : "Integration"),
       event.actorEmail ?? "",
       event.actorRole ?? "",
       event.action,
+      event.targetMemberUuid ?? "",
+      event.purposeCode ?? "",
+      event.legalBasis ?? "",
+      event.dataCategories.join(" | "),
+      event.systemComponent ?? "",
+      event.outcome,
+      event.errorCode ?? "",
       event.entityType,
       event.entityLabel ?? "",
       event.entityId ?? "",
       changesSummary(event),
       event.source,
+      event.requestId ?? "",
       event.correlationId ?? "",
+      event.sequenceNo,
+      event.integrityValid ? "verificeret" : "fejl",
+      ...(caller.role === "superadmin" ? [event.ipAddress ?? ""] : []),
     ]);
     const csv = `\uFEFF${[header, ...csvRows].map(row => row.map(csvAuditCell).join(";")).join("\r\n")}`;
     await recordAuditEvent({
-      context: { actorUserId: caller.userId, actorOrgId: caller.orgId, actorRole: caller.role, source: "admin" },
+      context: auditRequestContext(req, caller, "admin", "admin.audit.export"),
       action: "export",
       entityType: "audit_events",
       entityLabel: "Auditlog CSV",
+      purposeCode: "audit_oversight",
+      legalBasis: "GDPR Art. 5(2), 24 og 32",
+      dataCategories: ["audit_metadata"],
       orgIds: caller.role === "superadmin" ? (filters.orgId ? [filters.orgId] : []) : [caller.orgId],
       metadata: { rowCount: rows.length, filteredOrganisation: filters.orgId ?? null },
     });
