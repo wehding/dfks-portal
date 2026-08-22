@@ -1990,6 +1990,8 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
     <div className="space-y-6">
       {!loading && <ListReadinessMarker route="admin-works" stage="primary" />}
       {!loading && works.length > 0 && <ListReadinessMarker route="admin-works" stage="first-row" />}
+      {!loading && <ListReadinessMarker route="admin-works" stage="secondary" />}
+      {!loading && <ListReadinessMarker route="admin-works" stage="complete" />}
       <PageHeader
         title="Værksarkiv"
         subtitle={`${filtered.length} af ${works.length} værker`}

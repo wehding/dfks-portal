@@ -1764,6 +1764,8 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         <div className="space-y-6">
             {!loading && <ListReadinessMarker route="admin-contracts" stage="primary" />}
             {!loading && contracts.length > 0 && <ListReadinessMarker route="admin-contracts" stage="first-row" />}
+            {!loading && <ListReadinessMarker route="admin-contracts" stage="secondary" />}
+            {!loading && <ListReadinessMarker route="admin-contracts" stage="complete" />}
             {view === "archive" && <SummaryGrid>
                 <SummaryCard label="Kontrakter i alt" value={stats.total} />
                 <YearCountCard contracts={contracts} availableYears={availableYears} currentYear={currentYear} />

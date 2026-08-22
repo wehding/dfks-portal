@@ -869,6 +869,8 @@ export default function MineVaerkerClient({
     <div className="flex flex-col gap-6">
       <ListReadinessMarker route="member-works" stage="primary" />
       {assignments.length > 0 && <ListReadinessMarker route="member-works" stage="first-row" />}
+      <ListReadinessMarker route="member-works" stage="secondary" />
+      <ListReadinessMarker route="member-works" stage="complete" />
 
       {/* Header */}
       <PortalPageHeader

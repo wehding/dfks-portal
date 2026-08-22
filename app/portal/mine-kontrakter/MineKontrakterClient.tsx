@@ -1245,6 +1245,8 @@ export default function MineKontrakterClient({
     <div className={editorOnly ? "contents [&>:not(.member-contract-editor-overlay)]:hidden" : "flex flex-col gap-6"}>
       {!editorOnly && <ListReadinessMarker route="member-contracts" stage="primary" />}
       {!editorOnly && contracts.length > 0 && <ListReadinessMarker route="member-contracts" stage="first-row" />}
+      {!editorOnly && <ListReadinessMarker route="member-contracts" stage="secondary" />}
+      {!editorOnly && <ListReadinessMarker route="member-contracts" stage="complete" />}
 
       {/* Header */}
       <PortalPageHeader

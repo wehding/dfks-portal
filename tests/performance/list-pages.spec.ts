@@ -52,7 +52,7 @@ for (const [routeName, path] of routes) {
       await page.goto(`${path}${path.includes("?") ? "&" : "?"}perf=${index}`);
       await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="first-row"]`).waitFor();
       const firstRowMs = performance.now() - started;
-      await page.waitForLoadState("networkidle");
+      await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="complete"]`).waitFor();
       samples.push({ firstRowMs, completeMs: performance.now() - started, requestCount, bytes });
       page.off("response", responseHandler);
     }
