@@ -2478,10 +2478,10 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                         ) : <>
                                         {navneTjekResult && (
                                             <div className={`p-2 rounded-md text-xs border ${
-                                                navneTjekResult.status === "match" 
-                                                    ? "bg-emerald-50 border-emerald-200 text-emerald-800" 
-                                                    : navneTjekResult.status === "delvist-match" 
-                                                    ? "bg-amber-50 border-amber-200 text-amber-800" 
+                                                navneTjekResult.status === "match"
+                                                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                                                    : navneTjekResult.status === "delvist-match"
+                                                    ? "bg-amber-50 border-amber-200 text-amber-800"
                                                     : "bg-rose-50 border-rose-200 text-rose-800"
                                             }`}>
                                                 <div className="font-semibold mb-0.5">
