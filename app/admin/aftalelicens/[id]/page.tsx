@@ -2869,6 +2869,10 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     })
 
     const handleBeregn = () => {
+        if (missingType.length > 0) {
+            toast.error("Beregningen er blokeret: Alle godkendte værker skal have en værktype")
+            return
+        }
         const rerunMarked = markAftalelicensReruns(approved, extra.genudsendelseMaaneder)
         const items: WeightedItem[] = rerunMarked.map(v => {
             const { points, base, tierLabel } = beregnPoints(v.vaerkType!, v.duration, vaegte, extra)
@@ -2909,9 +2913,9 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
 
     if (approved.length === 0) {
         return (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+            <div className="rounded-lg border border-red-400 bg-red-50 p-6 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200">
                 {missingType.length > 0
-                    ? `${missingType.length} godkendt${missingType.length === 1 ? " værk mangler" : "e værker mangler"} værktype: ${missingType.map(v => v.rawTitle).join(", ")}. Gå tilbage til Sortering og vælg en type.`
+                    ? `Beregningen er blokeret. ${missingType.length} godkendt${missingType.length === 1 ? " værk mangler" : "e værker mangler"} værktype: ${missingType.map(v => v.rawTitle).join(", ")}. Gå tilbage til Sortering og vælg en type.`
                     : "Sorter og godkend værker med en værktype for at beregne point."}
             </div>
         )
@@ -2920,10 +2924,10 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     return (
         <div className="space-y-6">
             {missingType.length > 0 && (
-                <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                <div className="flex items-start gap-2 rounded-lg border border-red-400 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
-                        {missingType.length} godkendt{missingType.length === 1 ? " værk mangler" : "e værker mangler"} værktype og kan ikke beregnes: {missingType.map(v => v.rawTitle).join(", ")}. Ret typen under Sortering.
+                        Beregningen er blokeret. {missingType.length} godkendt{missingType.length === 1 ? " værk mangler" : "e værker mangler"} værktype: {missingType.map(v => v.rawTitle).join(", ")}. Ret typen under Sortering.
                     </span>
                 </div>
             )}
@@ -2935,7 +2939,12 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                         Formel: <span className="font-mono">base-point(type) × minutter</span> — dokumentarfilm: tier bestemmer base-point ud fra varighed
                     </p>
                 </div>
-                <Button onClick={handleBeregn} className="gap-2">
+                <Button
+                    onClick={handleBeregn}
+                    className="gap-2"
+                    disabled={missingType.length > 0}
+                    title={missingType.length > 0 ? "Alle godkendte værker skal have en værktype før beregning" : undefined}
+                >
                     <Calculator className="h-4 w-4" />
                     Beregn point
                 </Button>
