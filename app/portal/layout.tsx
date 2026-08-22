@@ -135,7 +135,13 @@ export default function PortalLayout({
 
         const fetchCount = async () => {
             const contextResponse = await fetch("/api/access/context", { cache: "no-store" })
-            if (!contextResponse.ok) return
+            if (!contextResponse.ok) {
+                if (contextResponse.status === 401) {
+                    router.replace("/")
+                    router.refresh()
+                }
+                return
+            }
             const context = await contextResponse.json() as AccessContextResponse
             if (!context.canUseMember || !context.rightsHolderId) {
                 router.replace(context.canUseAdmin ? "/admin" : "/")

@@ -174,6 +174,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             const contextResponse = await fetch("/api/access/context", { cache: "no-store" })
             if (!contextResponse.ok) {
                 setUserRole(null)
+                if (contextResponse.status === 401) {
+                    router.replace("/")
+                    router.refresh()
+                    return
+                }
                 setContextError("Menuen kunne ikke indlæses")
                 return
             }
