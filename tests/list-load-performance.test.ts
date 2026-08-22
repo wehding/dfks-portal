@@ -73,6 +73,7 @@ test("Mit overblik streamer opgaver før statistik og indbakke", async () => {
 test("Kontraktgennemgang bruger smal side og målrettede medarbejderopslag", async () => {
   const route = await source("app/api/admin/contracts/route.ts");
   const page = await source("app/admin/kontraktgennemgang/page.tsx");
+  const client = await source("app/admin/kontraktgennemgang/review-page-client.tsx");
   const queue = await source("app/admin/kontraktgennemgang/review-queue.tsx");
   assert.doesNotMatch(route, /select\("\*"/);
   assert.doesNotMatch(route, /listUsers/);
@@ -80,7 +81,8 @@ test("Kontraktgennemgang bruger smal side og målrettede medarbejderopslag", asy
   assert.match(queue, /pageSize/);
   assert.match(queue, /filter: `org_id=eq\.\$\{orgId\}`/);
   assert.match(queue, /scheduleRefresh/);
-  assert.match(page, /dynamic\([\s\S]*manual-contract-review/);
+  assert.match(client, /dynamic\([\s\S]*manual-contract-review/);
+  assert.match(page, /getContractReviews/);
 });
 
 test("Producentlisten bruger pagineret RPC uden skjulte rettighedshaver-id'er", async () => {

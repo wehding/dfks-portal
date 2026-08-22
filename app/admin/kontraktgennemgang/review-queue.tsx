@@ -45,7 +45,13 @@ function relativeTime(value: string, locale: "da" | "en") {
   return formatter.format(-Math.floor(hours / 24), "day");
 }
 
-export function ContractReviewQueue() {
+export type ContractReviewQueueInitialData = {
+  data: DbContractReview[];
+  count: number;
+  orgId: string | null;
+};
+
+export function ContractReviewQueue({ initialData }: { initialData?: ContractReviewQueueInitialData }) {
   const { t, locale } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -56,15 +62,16 @@ export function ContractReviewQueue() {
   const [productionType, setProductionType] = useState(searchParams.get("productionType") ?? "all");
   const [page, setPage] = useState(Math.max(1, Number(searchParams.get("page")) || 1));
   const [pageSize, setPageSize] = useState([20, 50, 100].includes(Number(searchParams.get("limit"))) ? Number(searchParams.get("limit")) : 20);
-  const [reviews, setReviews] = useState<DbContractReview[]>([]);
-  const [count, setCount] = useState(0);
-  const [orgId, setOrgId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [reviews, setReviews] = useState<DbContractReview[]>(initialData?.data ?? []);
+  const [count, setCount] = useState(initialData?.count ?? 0);
+  const [orgId, setOrgId] = useState<string | null>(initialData?.orgId ?? null);
+  const [loading, setLoading] = useState(!initialData);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const requestId = useRef(0);
   const refreshTimer = useRef<number | null>(null);
+  const skipInitialRequest = useRef(Boolean(initialData));
 
   useEffect(() => {
     const timer = window.setTimeout(() => { setDebouncedSearch(search.trim()); setPage(1); }, 300);
@@ -93,7 +100,12 @@ export function ContractReviewQueue() {
     }
   }, [debouncedSearch, page, pageSize, productionType, queue, status]);
 
-  useEffect(() => { let cancelled = false; queueMicrotask(() => { if (!cancelled) void load(); }); return () => { cancelled = true; }; }, [load]);
+  useEffect(() => {
+    if (skipInitialRequest.current) { skipInitialRequest.current = false; return; }
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) void load(); });
+    return () => { cancelled = true; };
+  }, [load]);
   useEffect(() => {
     const params = new URLSearchParams();
     if (queue === "mine") params.set("queue", "mine");
