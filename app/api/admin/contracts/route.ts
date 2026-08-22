@@ -9,13 +9,17 @@ import { normalizeContractReviewAnalysisStatus, type ContractReviewJobSnapshot }
 import { postgrestIlikePattern } from "@/lib/postgrest-search"
 import { auditRequestContext, auditSearchFingerprint } from "@/lib/audit-access-server"
 import { recordAuditEvent } from "@/lib/audit-log-server"
+import { getAuthUserLabels } from "@/lib/server/auth-user-label-cache"
+import { createListLoadTimer } from "@/lib/server/list-load-timing"
 
 // GET /api/admin/contracts
 // Query params: queue=mine|all, status=afventer,behandling, productionType=..., search=..., page=1, limit=20
 export async function GET(req: NextRequest) {
+    const timer = createListLoadTimer("contract-reviews")
     const sessionClient = await createClient()
     const caller = await assertAdminRole(sessionClient, ADMIN_ROLES)
     if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
+    timer.mark("access")
 
     // Service role omgår RLS — admin-rute, ingen bruger-data-lækage
     const supabase = createAdminClient(
@@ -30,15 +34,21 @@ export async function GET(req: NextRequest) {
     const productionTypeParam = url.searchParams.get("productionType")
     const search = url.searchParams.get("search")?.trim()
     const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1") || 1)
-    const limit = Math.max(1, Math.min(Number.parseInt(url.searchParams.get("limit") ?? "20") || 20, 100))
+    const requestedLimit = Number.parseInt(url.searchParams.get("limit") ?? "20") || 20
+    const limit = [20, 50, 100].includes(requestedLimit) ? requestedLimit : 20
+    const sort = ["reviewed_at", "member_name", "status", "production_type"].includes(url.searchParams.get("sort") ?? "")
+        ? url.searchParams.get("sort")!
+        : "reviewed_at"
+    const ascending = url.searchParams.get("direction") === "asc"
     const offset = (page - 1) * limit
 
     let query = supabase
         .from("contract_reviews")
-        .select("*", { count: "exact" })
+        .select("id,contract_id,org_id,member_name,file_name,reviewed_at,production_type,producer_name,producer_overenskomst_bound,status,assigned_to,ai_status,intake_status", { count: "exact" })
         .eq("org_id", caller.orgId)
         .is("soft_deleted_at", null)
-        .order("reviewed_at", { ascending: false })
+        .order(sort, { ascending })
+        .order("id", { ascending })
         .range(offset, offset + limit - 1)
 
     if (queue === "mine") {
@@ -63,6 +73,7 @@ export async function GET(req: NextRequest) {
     }
 
     const { data, error, count } = await query
+    timer.mark("list")
 
     if (error) {
         console.error("[admin-contract-reviews] list failed", error.code)
@@ -72,15 +83,16 @@ export async function GET(req: NextRequest) {
     const reviews = data ?? []
     const reviewIds = reviews.map(review => review.id)
     const assigneeIds = [...new Set(reviews.map(review => review.assigned_to).filter((id): id is string => Boolean(id)))]
-    const [{ data: jobs }, authUsers] = await Promise.all([
+    const [{ data: jobs }, assigneeLabels] = await Promise.all([
         reviewIds.length
             ? supabase.from("contract_review_jobs")
                 .select("review_id,status,attempts,next_attempt_at,error_message,created_at")
                 .in("review_id", reviewIds)
                 .order("created_at", { ascending: false })
             : Promise.resolve({ data: [] }),
-        assigneeIds.length ? supabase.auth.admin.listUsers({ page: 1, perPage: 1000 }) : Promise.resolve({ data: { users: [] } }),
+        getAuthUserLabels(supabase, assigneeIds),
     ])
+    timer.mark("row-details")
     const latestJobByReview = new Map<string, ContractReviewJobSnapshot>()
     for (const job of jobs ?? []) {
         if (!latestJobByReview.has(job.review_id)) {
@@ -92,12 +104,6 @@ export async function GET(req: NextRequest) {
             } as ContractReviewJobSnapshot)
         }
     }
-    const assigneeLabels = new Map((authUsers.data?.users ?? [])
-        .filter(user => assigneeIds.includes(user.id))
-        .map(user => [user.id, typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name.trim()
-            ? user.user_metadata.full_name.trim()
-            : user.email ?? user.id]))
-
     const normalized = reviews.map(review => {
         const analysisJob = latestJobByReview.get(review.id) ?? null
         return {
@@ -132,8 +138,10 @@ export async function GET(req: NextRequest) {
             queryFingerprint: search ? auditSearchFingerprint(search) : null,
         },
     })
+    timer.mark("audit")
+    timer.finish({ route: "/api/admin/contracts", rows: normalized.length })
 
-    return NextResponse.json({ data: normalized, count: count ?? 0, page, limit }, { headers: { "cache-control": "no-store" } })
+    return NextResponse.json({ data: normalized, count: count ?? 0, page, limit, orgId: caller.orgId }, { headers: { "cache-control": "no-store" } })
 }
 
 // DELETE /api/admin/contracts

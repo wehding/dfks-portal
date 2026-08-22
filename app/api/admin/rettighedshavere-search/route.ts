@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
     if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
     const rawQuery = req.nextUrl.searchParams.get("q") ?? ""
+    const includeLinked = req.nextUrl.searchParams.get("scope") === "all"
     const pattern = postgrestIlikePattern(rawQuery)
     if (!pattern || pattern.length < 4) return NextResponse.json([])
 
@@ -27,14 +28,15 @@ export async function GET(req: NextRequest) {
         { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    const { data, error } = await admin
+    let query = admin
         .from("rettighedshavere")
         .select("id, full_name, email, org_affiliations!inner(org_id)")
         .eq("org_affiliations.org_id", caller.orgId)
-        .is("user_id", null)
         .or(`full_name.ilike.${pattern},email.ilike.${pattern}`)
         .order("full_name")
         .limit(8)
+    if (!includeLinked) query = query.is("user_id", null)
+    const { data, error } = await query
 
     if (error) {
         console.error("[rights-holder-search] search failed", error.code)

@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, Loader2, Plus, Radio, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { toast } from "sonner";
@@ -18,14 +19,15 @@ import { LinkedRecordEditorDialog } from "@/components/admin/linked-record-edito
 import { AdminListTools } from "@/components/admin/admin-list-tools";
 import { RightsHolderAutocomplete } from "@/components/admin/rights-holder-autocomplete";
 import { ListResultSummary } from "@/components/list-result-summary";
+import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 import { mergeCvrLegalEntity, producerAssociationLabel, resolveProducerAssociationStatus } from "@/lib/admin-producers";
 
 type LegalEntitySummary = { id: string; legal_name: string; registration_country: string; registration_type: string; registration_number: string | null; entity_kind: string; is_primary: boolean; registration_status: string | null; address?: string | null; contact_phone?: string | null; contact_email?: string | null; website?: string | null; industry_code?: string | null; industry_description?: string | null; company_type?: string | null };
 type BroadcasterOption = { id: string; name: string; logo_path: string | null; content_type: string | null };
 type ProducerTypeOption = { id: string; code: string; name: string; origin: "system" | "producentforeningen" | "custom" };
 type ProducerTypeRelation = ProducerTypeOption & { relation_id: string; source: "manual" | "producentforeningen" | "broadcaster" | "migration"; membership_type: "member" | "associate" | "unknown" | null };
-type AssociationMembership = { id: string; group_code: string; group_label: string; membership_type: "ordinary" | "associate" | "unknown"; source_name: string; owner_ceo_text: string | null; website: string | null; address: string | null; postal_city: string | null; source_url: string; is_active: boolean; verified_on: string; last_seen_at: string };
-type Producer = { id: string; name: string; dfi_company_id: number | null; broadcaster_id: string | null; broadcasters: { name: string; logo_path: string | null; content_type: string | null } | Array<{ name: string; logo_path: string | null; content_type: string | null }> | null; parent_name: string | null; status: "attention" | "active" | "inactive"; work_count: number; contract_count: number; latest_activity: string | null; legal_entities: LegalEntitySummary[]; aliases: string[]; producer_types: ProducerTypeRelation[]; association_memberships: AssociationMembership[] };
+type AssociationMembership = { id: string; group_code: string; group_label: string; membership_type: "ordinary" | "associate" | "unknown"; source_name?: string; owner_ceo_text?: string | null; website?: string | null; address?: string | null; postal_city?: string | null; source_url?: string; is_active?: boolean; verified_on?: string | null; last_seen_at?: string };
+type Producer = { id: string; name: string; dfi_company_id: number | null; broadcaster_id: string | null; broadcasters: { name: string; logo_path: string | null; content_type: string | null } | Array<{ name: string; logo_path: string | null; content_type: string | null }> | null; parent_name: string | null; status: "attention" | "active" | "inactive"; work_count: number; contract_count: number; latest_activity: string | null; legal_entities?: LegalEntitySummary[]; aliases?: string[]; producer_types: ProducerTypeRelation[]; association_memberships: AssociationMembership[] };
 type RightsHolder = { id: string; full_name: string };
 type WorkDetail = { id: string; title: string; type: string; year: number | null; status: string };
 type ContractDetail = { id: string; working_title: string | null; type: string; status: string; contract_date: string | null; created_at: string; rettighedshavere: { full_name: string | null } | Array<{ full_name: string | null }> | null };
@@ -53,18 +55,23 @@ const statusTone = { attention: "border-amber-300 bg-amber-100 text-amber-800", 
 
 export default function ProducersPage() {
   const { t, locale } = useI18n();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [producers, setProducers] = useState<Producer[]>([]);
   const [producerCounts, setProducerCounts] = useState({ filtered: 0, total: 0 });
-  const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([]);
+  const rightsHolders: RightsHolder[] = [];
   const [broadcasters, setBroadcasters] = useState<BroadcasterOption[]>([]);
   const [producerTypes, setProducerTypes] = useState<ProducerTypeOption[]>([]);
   const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("all");
-  const [associationGroup, setAssociationGroup] = useState("all");
-  const [rightsHolderId, setRightsHolderId] = useState("all");
-  const [sort, setSort] = useState("name");
-  const [direction, setDirection] = useState<"asc" | "desc">("asc");
+  const [query, setQuery] = useState(() => searchParams.get("query") ?? "");
+  const [debouncedQuery, setDebouncedQuery] = useState(query);
+  const [status, setStatus] = useState(() => searchParams.get("status") ?? "all");
+  const [associationGroup, setAssociationGroup] = useState(() => searchParams.get("associationGroup") ?? "all");
+  const [rightsHolderId, setRightsHolderId] = useState(() => searchParams.get("rightsHolderId") ?? "all");
+  const [sort, setSort] = useState(() => searchParams.get("sort") ?? "name");
+  const [direction, setDirection] = useState<"asc" | "desc">(() => searchParams.get("direction") === "desc" ? "desc" : "asc");
+  const [page, setPage] = useState(() => Math.max(1, Number(searchParams.get("page")) || 1));
+  const [pageSize, setPageSize] = useState(() => [20, 50, 100].includes(Number(searchParams.get("pageSize"))) ? Number(searchParams.get("pageSize")) : 20);
   const [selected, setSelected] = useState<string[]>([]);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Record<string, DetailState>>({});
@@ -77,6 +84,8 @@ export default function ProducersPage() {
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [editor, setEditor] = useState<ProducerDraft | null>(null);
+  const [editorProducer, setEditorProducer] = useState<Producer | null>(null);
+  const [editorLoading, setEditorLoading] = useState(false);
   const [savingEditor, setSavingEditor] = useState(false);
   const [dfiSearching, setDfiSearching] = useState(false);
   const [dfiResults, setDfiResults] = useState<Array<{ id: string; name: string }>>([]);
@@ -102,11 +111,31 @@ export default function ProducersPage() {
   }, [refreshKey]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => { setDebouncedQuery(query.trim()); setPage(1); }, 300);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => { setPage(1); }, [status, associationGroup, sort, direction]);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (debouncedQuery) params.set("query", debouncedQuery);
+    if (status !== "all") params.set("status", status);
+    if (associationGroup !== "all") params.set("associationGroup", associationGroup);
+    if (rightsHolderId !== "all") params.set("rightsHolderId", rightsHolderId);
+    if (sort !== "name") params.set("sort", sort);
+    if (direction !== "asc") params.set("direction", direction);
+    if (page > 1) params.set("page", String(page));
+    if (pageSize !== 20) params.set("pageSize", String(pageSize));
+    router.replace(`/admin/producenter${params.size ? `?${params}` : ""}`, { scroll: false });
+  }, [associationGroup, debouncedQuery, direction, page, pageSize, rightsHolderId, router, sort, status]);
+
+  useEffect(() => {
     const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
+    void (async () => {
       setLoading(true);
-      const params = new URLSearchParams({ sort, direction });
-      if (query.trim()) params.set("query", query.trim());
+      const params = new URLSearchParams({ sort, direction, page: String(page), pageSize: String(pageSize) });
+      if (debouncedQuery) params.set("query", debouncedQuery);
       if (status !== "all") params.set("status", status);
       if (associationGroup !== "all") params.set("associationGroup", associationGroup);
       if (rightsHolderId !== "all") params.set("rightsHolderId", rightsHolderId);
@@ -114,22 +143,44 @@ export default function ProducersPage() {
         const response = await fetch(`/api/admin/producers?${params}`, { signal: controller.signal });
         const json = await response.json();
         if (!response.ok) throw new Error(json.error);
-        setProducers(json.data ?? []); setProducerCounts({ filtered: Number(json.filteredCount ?? json.data?.length ?? 0), total: Number(json.totalCount ?? json.data?.length ?? 0) }); setRightsHolders(json.rightsHolders ?? []); setBroadcasters(json.broadcasters ?? []); setProducerTypes(json.producerTypes ?? []); setCanMerge(Boolean(json.canMerge)); setCanDelete(Boolean(json.canDelete));
+        setProducers(json.data ?? []); setProducerCounts({ filtered: Number(json.filteredCount ?? json.data?.length ?? 0), total: Number(json.totalCount ?? json.data?.length ?? 0) }); setCanMerge(Boolean(json.canMerge)); setCanDelete(Boolean(json.canDelete));
       } catch (error) {
         if ((error as Error).name !== "AbortError") setProducers([]);
       } finally { if (!controller.signal.aborted) setLoading(false); }
-    }, 250);
-    return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [query, status, associationGroup, rightsHolderId, sort, direction, refreshKey]);
+    })();
+    return () => controller.abort();
+  }, [debouncedQuery, status, associationGroup, rightsHolderId, sort, direction, page, pageSize, refreshKey]);
 
-  const openCreate = () => {
+  const loadEditorOptions = async () => {
+    if (broadcasters.length || producerTypes.length) return;
+    const response = await fetch("/api/admin/producers/options");
+    const json = await response.json();
+    if (!response.ok) throw new Error(json.error);
+    setBroadcasters(json.broadcasters ?? []);
+    setProducerTypes(json.producerTypes ?? []);
+  };
+
+  const openCreate = async () => {
+    setEditorLoading(true);
+    try { await loadEditorOptions(); }
+    catch (error) { toast.error(error instanceof Error ? error.message : "Redigeringsvalgene kunne ikke hentes"); }
+    finally { setEditorLoading(false); }
     setDfiResults([]);
     setCvrQuery("");
     setCvrResults([]);
     setEditorRelationsOpen(new Set());
     setEditor({ name: "", dfiCompanyId: "", isBroadcaster: false, broadcasterId: "", producerTypeIds: [], affectedWorkCount: 0, legalEntities: [{ ...emptyLegalEntity(), isPrimary: true }], deletedLegalEntityIds: [] });
   };
-  const openEdit = (producer: Producer) => {
+  const openEdit = async (producer: Producer) => {
+    setEditorLoading(true);
+    try {
+      const response = await fetch(`/api/admin/producers/${producer.id}?type=editor`);
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error);
+      const fullProducer = { ...producer, ...json.data } as Producer;
+      setEditorProducer(fullProducer);
+      setBroadcasters(json.broadcasters ?? []);
+      setProducerTypes(json.producerTypes ?? []);
     setDfiResults([]);
     setCvrQuery(producer.name);
     setCvrResults([]);
@@ -140,10 +191,10 @@ export default function ProducersPage() {
       dfiCompanyId: producer.dfi_company_id ? String(producer.dfi_company_id) : "",
       isBroadcaster: Boolean(producer.broadcaster_id),
       broadcasterId: producer.broadcaster_id ?? "",
-      producerTypeIds: producer.producer_types.filter(type => type.source === "manual").map(type => type.id),
+      producerTypeIds: fullProducer.producer_types.filter(type => type.source === "manual").map(type => type.id),
       affectedWorkCount: producer.work_count,
       deletedLegalEntityIds: [],
-      legalEntities: producer.legal_entities.length ? producer.legal_entities.map(entity => ({
+      legalEntities: fullProducer.legal_entities?.length ? fullProducer.legal_entities.map(entity => ({
         id: entity.id,
         legalName: entity.legal_name,
         registrationNumber: entity.registration_number ?? "",
@@ -158,6 +209,8 @@ export default function ProducersPage() {
         isPrimary: entity.is_primary,
       })) : [{ ...emptyLegalEntity(), legalName: producer.name, isPrimary: true }],
     });
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Producenten kunne ikke hentes"); }
+    finally { setEditorLoading(false); }
   };
   const updateLegalEntity = (index: number, values: Partial<LegalEntityDraft>) => setEditor(current => current ? ({
     ...current,
@@ -424,10 +477,10 @@ export default function ProducersPage() {
     </div>;
   };
 
-  const editingProducer = editor?.id ? producers.find(producer => producer.id === editor.id) ?? null : null;
+  const editingProducer = editor?.id ? editorProducer : null;
 
   return <div className="space-y-6">
-    <PageHeader title={t("admin.producers.title")} subtitle={t("admin.producers.subtitle")} actions={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void previewAssociationSync()}><RefreshCw className="mr-2 h-4 w-4" />Hent fra Producentforeningen</Button><Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" />Tilføj producent</Button></div>} />
+    <PageHeader title={t("admin.producers.title")} subtitle={t("admin.producers.subtitle")} actions={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void previewAssociationSync()}><RefreshCw className="mr-2 h-4 w-4" />Hent fra Producentforeningen</Button><Button disabled={editorLoading} onClick={() => void openCreate()}>{editorLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}Tilføj producent</Button></div>} />
     {lastSync && <p className="-mt-4 text-xs text-muted-foreground">Producentforeningen: seneste {lastSync.status === "applied" ? "gennemførte" : "forsøgte"} synkronisering {new Date(lastSync.applied_at ?? lastSync.created_at).toLocaleString("da-DK")}</p>}
     {!loading && <div className="grid grid-cols-3 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-4 xl:grid-cols-8">
       {[
@@ -448,12 +501,13 @@ export default function ProducersPage() {
       <div className="relative flex-1 lg:max-w-sm"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={event => setQuery(event.target.value)} className="pl-9 pr-9" placeholder={t("admin.producers.search")} />{query && <button type="button" aria-label={t("common.clearSearch")} onClick={() => setQuery("")} className="absolute right-3 top-2.5"><X className="h-4 w-4" /></button>}</div>
       <Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full lg:w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t("admin.producers.allStatuses")}</SelectItem><SelectItem value="attention">{statusLabel("attention")}</SelectItem><SelectItem value="active">{statusLabel("active")}</SelectItem><SelectItem value="inactive">{statusLabel("inactive")}</SelectItem></SelectContent></Select>
       <Select value={associationGroup} onValueChange={setAssociationGroup}><SelectTrigger className="w-full lg:w-60"><SelectValue placeholder="Producenttype" /></SelectTrigger><SelectContent><SelectItem value="all">Alle producenttyper</SelectItem><SelectItem value="ordinary">Medlem af Producentforeningen</SelectItem><SelectItem value="associate">Tilknyttet medlem</SelectItem><SelectItem value="none">Ikke medlem</SelectItem><SelectItem value="unknown">Uklassificeret medlemsstatus</SelectItem><SelectItem value="documentary">Dokumentarfilm</SelectItem><SelectItem value="feature_fiction">Spillefilm / fiktion</SelectItem><SelectItem value="tv">TV</SelectItem><SelectItem value="advertising">Reklamefilm</SelectItem><SelectItem value="dubbing">Dubbing</SelectItem><SelectItem value="animation">Animation</SelectItem><SelectItem value="streamer">Streamer</SelectItem><SelectItem value="broadcaster">Broadcaster</SelectItem></SelectContent></Select>
-      <div className="w-full lg:w-72"><RightsHolderAutocomplete options={rightsHolders} value={rightsHolderId === "all" ? "" : rightsHolderId} onChange={id => setRightsHolderId(id || "all")} placeholder={t("admin.producers.allRightsHolders")} /></div>
+      <div className="w-full lg:w-72"><RightsHolderAutocomplete options={rightsHolders} searchEndpoint="/api/admin/rettighedshavere-search?scope=all" value={rightsHolderId === "all" ? "" : rightsHolderId} onChange={id => { setRightsHolderId(id || "all"); setPage(1); }} placeholder={t("admin.producers.allRightsHolders")} /></div>
       <Select value={sort} onValueChange={setSort}><SelectTrigger className="w-full lg:hidden"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="name">{t("admin.producers.producer")}</SelectItem><SelectItem value="works">{t("admin.producers.works")}</SelectItem><SelectItem value="contracts">{t("admin.producers.contracts")}</SelectItem><SelectItem value="latest">{t("admin.producers.latest")}</SelectItem></SelectContent></Select>
       <Button variant="outline" onClick={() => setDirection(value => value === "asc" ? "desc" : "asc")}>{direction === "asc" ? "A–Z" : "Z–A"}</Button>
     </div>
     <Button variant="outline" className="w-full md:hidden" onClick={toggleAll}>{allSelected ? t("common.deselectAll") : t("common.selectAll")}</Button>
     <ListResultSummary filteredCount={producerCounts.filtered} totalCount={producerCounts.total} selectedCount={selected.length} loading={loading} />
+    {!loading && <ListReadinessMarker route="admin-producers" stage={producers.length ? "first-row" : "primary"} />}
     {selected.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3"><span className="text-sm font-medium">{t("common.selectedCount", { count: selected.length })}</span><div className="flex flex-wrap gap-2">{canMerge && selected.length === 2 && <Button variant="outline" size="sm" disabled={merging} onClick={mergeSelected}>{merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t("admin.producers.merge")}</Button>}{canDelete && <Button variant="destructive" size="sm" disabled={deleteLoading} onClick={() => void previewSelectedDeletion()}><Trash2 className="mr-2 h-4 w-4" />Slet valgte</Button>}<Button variant="outline" size="sm" onClick={() => setSelected([])}>{t("common.clearSelection")}</Button></div></div>}
 
     <AdminListTools pageKey="producers" title="Producenter" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"name",label:"Producent",index:2,required:true},{id:"parent",label:"Broadcaster/moderselskab",index:3},{id:"status",label:"Status",index:4},{id:"works",label:"Værker",index:5},{id:"contracts",label:"Kontrakter",index:6},{id:"latest",label:"Seneste aktivitet",index:7}]} />
@@ -477,7 +531,16 @@ export default function ProducersPage() {
         const broadcaster = Array.isArray(producer.broadcasters) ? producer.broadcasters[0] : producer.broadcasters;
         return <Fragment key={producer.id}><TableRow><TableCell><input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} /></TableCell><TableCell className="font-medium"><div className="flex flex-wrap items-center gap-2"><ExpandableListTrigger expanded={isExpanded} onToggle={() => toggleProducer(producer.id)} label={isExpanded ? `Skjul detaljer for ${producer.name}` : `Vis detaljer for ${producer.name}`} /><button type="button" className="text-left hover:underline" onClick={() => openEdit(producer)}>{producer.name}</button>{producer.dfi_company_id && <span className="text-xs font-normal text-muted-foreground">DFI #{producer.dfi_company_id}</span>}<ProducerAssociationBadge memberships={producer.association_memberships} />{producer.producer_types.map(type => <Badge key={`${type.source}-${type.id}`} variant="secondary">{type.name}</Badge>)}</div></TableCell><TableCell>{broadcaster ? <Badge variant="outline" className="gap-1"><Radio className="h-3 w-3" />{broadcaster.name}</Badge> : producer.parent_name ?? "—"}</TableCell><TableCell><Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge></TableCell><TableCell>{producer.work_count}</TableCell><TableCell>{producer.contract_count}</TableCell><TableCell>{producer.latest_activity ? new Date(producer.latest_activity).toLocaleDateString(locale === "da" ? "da-DK" : "en-GB") : "—"}</TableCell></TableRow>{isExpanded && <TableRow><TableCell colSpan={7} className="p-0"><ProducerDetails producer={producer} /></TableCell></TableRow>}</Fragment>;
       }) : <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">{t("common.noResults")}</TableCell></TableRow>}</TableBody></Table></ResponsiveTableFrame>
+      <div className="mt-4 flex flex-col gap-3 rounded-lg border px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <span className="text-xs text-muted-foreground">Side {page} af {Math.max(1, Math.ceil(producerCounts.filtered / pageSize))}</span>
+        <div className="flex items-center gap-2">
+          <Select value={String(pageSize)} onValueChange={value => { setPageSize(Number(value)); setPage(1); }}><SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger><SelectContent>{[20, 50, 100].map(value => <SelectItem key={value} value={String(value)}>{value} pr. side</SelectItem>)}</SelectContent></Select>
+          <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>Forrige</Button>
+          <Button size="sm" variant="outline" disabled={page * pageSize >= producerCounts.filtered} onClick={() => setPage(value => value + 1)}>Næste</Button>
+        </div>
+      </div>
     </>}
+    {!loading && <ListReadinessMarker route="admin-producers" stage="complete" />}
 
     <Dialog open={deleteOpen} onOpenChange={openState => { if (!deleteLoading) setDeleteOpen(openState); }}>
       <DialogContent className="max-w-xl">
@@ -542,7 +605,7 @@ export default function ProducersPage() {
               <div className="flex flex-wrap gap-1.5">{editingProducer.association_memberships.map(membership => <Badge key={membership.id} variant="secondary">{membership.group_label}{membership.membership_type === "associate" ? " · associeret" : membership.membership_type === "ordinary" ? " · ordinært" : ""}</Badge>)}</div>
               {editingProducer.association_memberships.find(membership => membership.owner_ceo_text)?.owner_ceo_text && <div><p className="text-xs font-medium text-muted-foreground">Ejere / CEO</p><p className="text-sm">{editingProducer.association_memberships.find(membership => membership.owner_ceo_text)?.owner_ceo_text}</p></div>}
               {editingProducer.association_memberships.find(membership => membership.website)?.website && <div><p className="text-xs font-medium text-muted-foreground">Website</p><a className="text-sm underline underline-offset-2" href={editingProducer.association_memberships.find(membership => membership.website)?.website ?? undefined} target="_blank" rel="noreferrer">{editingProducer.association_memberships.find(membership => membership.website)?.website}</a></div>}
-              <p className="text-xs text-muted-foreground">Senest bekræftet {new Date(editingProducer.association_memberships[0].verified_on).toLocaleDateString("da-DK")}. Feltet “Ejere / CEO” er kildens samlede betegnelse og opdeles ikke automatisk.</p>
+              <p className="text-xs text-muted-foreground">Senest bekræftet {editingProducer.association_memberships[0].verified_on ? new Date(editingProducer.association_memberships[0].verified_on).toLocaleDateString("da-DK") : "ukendt"}. Feltet “Ejere / CEO” er kildens samlede betegnelse og opdeles ikke automatisk.</p>
             </div> : <p className="text-sm text-muted-foreground">Producenten er ikke fundet i den seneste gennemførte medlemssynkronisering.</p>}
           </div>
           <div className="space-y-2 rounded-lg border p-3">

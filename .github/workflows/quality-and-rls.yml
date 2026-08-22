@@ -62,7 +62,7 @@ jobs:
         run: npx supabase stop --no-backup
 
   performance-smoke:
-    name: Performance smoke (4 listesider)
+    name: Performance smoke (7 centrale sider)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

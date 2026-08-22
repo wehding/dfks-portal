@@ -58,3 +58,43 @@ test("layouts løser adgang server-side og sprog genbruger serverens terminologi
   assert.match(i18n, /dfks-terminology/);
   assert.doesNotMatch(i18n, /\/api\/access\/context/);
 });
+
+test("Mit overblik streamer opgaver før statistik og indbakke", async () => {
+  const page = await source("app/portal/page.tsx");
+  const sections = await source("components/portal/dashboard-sections.tsx");
+  assert.match(page, /<Suspense[\s\S]*DashboardTasksSection/);
+  assert.match(page, /DashboardSalarySection/);
+  assert.match(page, /DashboardInboxSection/);
+  assert.match(sections, /member-dashboard-tasks/);
+  assert.match(sections, /member-dashboard-statistics/);
+  assert.doesNotMatch(page, /contract_validations/);
+});
+
+test("Kontraktgennemgang bruger smal side og målrettede medarbejderopslag", async () => {
+  const route = await source("app/api/admin/contracts/route.ts");
+  const page = await source("app/admin/kontraktgennemgang/page.tsx");
+  assert.doesNotMatch(route, /select\("\*"/);
+  assert.doesNotMatch(route, /listUsers/);
+  assert.match(route, /getAuthUserLabels/);
+  assert.match(page, /pageSize/);
+  assert.match(page, /filter: `org_id=eq\.\$\{orgId\}`/);
+  assert.match(page, /scheduleRefresh/);
+});
+
+test("Producentlisten bruger pagineret RPC uden skjulte rettighedshaver-id'er", async () => {
+  const route = await source("app/api/admin/producers/route.ts");
+  const migration = await source("supabase/migrations/20260822183000_paginated_admin_producers.sql");
+  assert.match(route, /list_admin_producer_summaries/);
+  assert.match(migration, /revoke all on function public\.list_admin_producer_summaries/);
+  assert.match(migration, /grant execute[\s\S]*service_role/);
+  assert.doesNotMatch(migration, /rights_holder_ids/);
+  assert.match(migration, /limit least\(greatest\(page_size, 1\), 100\)/);
+});
+
+test("medlemsindbakken henter først beskedindhold ved åbning", async () => {
+  const action = await source("app/actions/member-inbox.ts");
+  const panel = await source("components/portal/member-inbox-panel.tsx");
+  const listSection = action.slice(action.indexOf("export async function fetchMemberInbox()"), action.indexOf("export async function fetchMemberInboxThread"));
+  assert.doesNotMatch(listSection, /member_messages\([^)]*body/);
+  assert.match(panel, /fetchMemberInboxThread/);
+});

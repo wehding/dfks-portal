@@ -23,6 +23,7 @@ import { toast } from "sonner"
 import { resolveAnker, bygFeedbackPayload } from "@/lib/resolveAnker"
 import { PageHeader } from "@/components/page-header"
 import { ListResultSummary } from "@/components/list-result-summary"
+import { ListReadinessMarker } from "@/components/performance/list-readiness-marker"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -242,34 +243,68 @@ function Indbakke() {
     const [tab, setTab] = useState<"mine" | "alle">(() => searchParams.get("queue") === "mine" ? "mine" : "alle")
     const [reviews, setReviews] = useState<DbContractReview[]>([])
     const [totalCount, setTotalCount] = useState(0)
+    const [orgId, setOrgId] = useState<string | null>(null)
+    const [page, setPage] = useState(() => Math.max(1, Number(searchParams.get("page")) || 1))
+    const [pageSize, setPageSize] = useState(() => {
+        const value = Number(searchParams.get("limit")) || 20
+        return [20, 50, 100].includes(value) ? value : 20
+    })
     const [loading, setLoading] = useState(true)
     const [statusFilter, setStatusFilter] = useState<string[]>(() => searchParams.get("status")?.split(",").filter(Boolean) ?? [])
-    const [productionTypeFilter, setProductionTypeFilter] = useState<string[]>([])
-    const [search, setSearch] = useState("")
+    const [productionTypeFilter, setProductionTypeFilter] = useState<string[]>(() => searchParams.get("productionType")?.split(",").filter(Boolean) ?? [])
+    const [search, setSearch] = useState(() => searchParams.get("search") ?? "")
+    const [debouncedSearch, setDebouncedSearch] = useState(search)
     const [reanalysingIds, setReanalysingIds] = useState<Set<string>>(new Set())
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
     const [bulkUpdating, setBulkUpdating] = useState(false)
     const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false)
 
+    const requestIdRef = useRef(0)
+    const refreshTimerRef = useRef<number | null>(null)
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            setDebouncedSearch(search.trim())
+            setPage(1)
+        }, 300)
+        return () => window.clearTimeout(timer)
+    }, [search])
+
     const fetchReviews = useCallback(async (showLoading = true) => {
+        const requestId = ++requestIdRef.current
         if (showLoading) setLoading(true)
         const params = new URLSearchParams()
         params.set("queue", tab === "mine" ? "mine" : "all")
         if (statusFilter.length) params.set("status", statusFilter.join(","))
         if (productionTypeFilter.length) params.set("productionType", productionTypeFilter.join(","))
-        if (search) params.set("search", search)
-        params.set("limit", "50")
+        if (debouncedSearch) params.set("search", debouncedSearch)
+        params.set("page", String(page))
+        params.set("limit", String(pageSize))
 
         try {
             const resp = await fetch(`/api/admin/contracts?${params}`)
             const json = await resp.json()
+            if (requestId !== requestIdRef.current) return
             setReviews(json.data ?? [])
             setTotalCount(json.count ?? 0)
+            setOrgId(typeof json.orgId === "string" ? json.orgId : null)
         } catch {
+            if (requestId !== requestIdRef.current) return
             toast.error("Kunne ikke hente kontrakter")
         }
-        if (showLoading) setLoading(false)
-    }, [tab, statusFilter, productionTypeFilter, search])
+        if (showLoading && requestId === requestIdRef.current) setLoading(false)
+    }, [tab, statusFilter, productionTypeFilter, debouncedSearch, page, pageSize])
+
+    useEffect(() => {
+        const params = new URLSearchParams()
+        if (tab === "mine") params.set("queue", "mine")
+        if (statusFilter.length) params.set("status", statusFilter.join(","))
+        if (productionTypeFilter.length) params.set("productionType", productionTypeFilter.join(","))
+        if (debouncedSearch) params.set("search", debouncedSearch)
+        if (page > 1) params.set("page", String(page))
+        if (pageSize !== 20) params.set("limit", String(pageSize))
+        router.replace(`/admin/kontraktgennemgang${params.size ? `?${params}` : ""}`, { scroll: false })
+    }, [debouncedSearch, page, pageSize, productionTypeFilter, router, statusFilter, tab])
 
     useEffect(() => {
         let cancelled = false
@@ -287,43 +322,43 @@ function Indbakke() {
         return () => window.clearInterval(interval)
     }, [fetchReviews, reviews])
 
-    // ── Supabase Realtime — lyt på INSERT og UPDATE ───────────
+    const scheduleRefresh = useCallback(() => {
+        if (refreshTimerRef.current !== null) return
+        refreshTimerRef.current = window.setTimeout(() => {
+            refreshTimerRef.current = null
+            void fetchReviews(false)
+        }, 250)
+    }, [fetchReviews])
+
+    // ── Supabase Realtime — kun aktiv organisation ───────────
     useEffect(() => {
+        if (!orgId) return
         const supabase = createClient()
         const channel = supabase
-            .channel("contract_reviews_changes")
+            .channel(`contract_reviews_changes:${orgId}`)
             .on(
                 "postgres_changes",
-                { event: "INSERT", schema: "public", table: "contract_reviews" },
-                () => { void fetchReviews(false) }
+                { event: "INSERT", schema: "public", table: "contract_reviews", filter: `org_id=eq.${orgId}` },
+                scheduleRefresh
             )
             .on(
                 "postgres_changes",
-                { event: "UPDATE", schema: "public", table: "contract_reviews" },
-                () => { void fetchReviews(false) }
+                { event: "UPDATE", schema: "public", table: "contract_reviews", filter: `org_id=eq.${orgId}` },
+                scheduleRefresh
             )
             .on(
                 "postgres_changes",
-                { event: "DELETE", schema: "public", table: "contract_reviews" },
-                payload => {
-                    const deletedId = (payload.old as { id?: string }).id
-                    if (!deletedId) return
-                    setReviews(previous => {
-                        const existed = previous.some(review => review.id === deletedId)
-                        if (existed) setTotalCount(count => Math.max(0, count - 1))
-                        return previous.filter(review => review.id !== deletedId)
-                    })
-                    setSelectedIds(previous => {
-                        const next = new Set(previous)
-                        next.delete(deletedId)
-                        return next
-                    })
-                }
+                { event: "DELETE", schema: "public", table: "contract_reviews", filter: `org_id=eq.${orgId}` },
+                scheduleRefresh
             )
             .subscribe()
 
-        return () => { supabase.removeChannel(channel) }
-    }, [fetchReviews])
+        return () => {
+            if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current)
+            refreshTimerRef.current = null
+            supabase.removeChannel(channel)
+        }
+    }, [orgId, scheduleRefresh])
 
     const mineCount = reviews.filter(r => r.status !== "afsluttet").length
     const visibleIds = reviews.map(review => review.id)
@@ -433,13 +468,13 @@ function Indbakke() {
             {/* Tabs */}
             <div className="flex items-center gap-1 border-b">
                 <button
-                    onClick={() => setTab("alle")}
+                    onClick={() => { setTab("alle"); setPage(1) }}
                     className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${tab === "alle" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                 >
                     {t("admin.reviewQueue.all")} {totalCount > 0 && <span className="ml-1.5 text-xs bg-muted rounded-full px-1.5 py-0.5">{totalCount}</span>}
                 </button>
                 <button
-                    onClick={() => setTab("mine")}
+                    onClick={() => { setTab("mine"); setPage(1) }}
                     className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${tab === "mine" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                 >
                     {t("admin.reviewQueue.mine")} {mineCount > 0 && tab !== "mine" && <span className="ml-1.5 text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 rounded-full px-1.5 py-0.5">{mineCount}</span>}
@@ -460,7 +495,7 @@ function Indbakke() {
 
                 <Select
                     value={statusFilter.join(",") || "alle"}
-                    onValueChange={v => setStatusFilter(v === "alle" ? [] : v.split(","))}
+                    onValueChange={v => { setStatusFilter(v === "alle" ? [] : v.split(",")); setPage(1) }}
                 >
                     <SelectTrigger className="h-8 w-full text-xs sm:w-44">
                         <SelectValue placeholder="Status" />
@@ -476,7 +511,7 @@ function Indbakke() {
 
                 <Select
                     value={productionTypeFilter.join(",") || "alle"}
-                    onValueChange={v => setProductionTypeFilter(v === "alle" ? [] : v.split(","))}
+                    onValueChange={v => { setProductionTypeFilter(v === "alle" ? [] : v.split(",")); setPage(1) }}
                 >
                     <SelectTrigger className="h-8 w-full text-xs sm:w-44">
                         <SelectValue placeholder="Produktionstype" />
@@ -506,6 +541,7 @@ function Indbakke() {
             </Button>
 
             <ListResultSummary filteredCount={totalCount} totalCount={totalCount} selectedCount={selectedIds.size} loading={loading} />
+            {!loading && <ListReadinessMarker route="contract-reviews" stage={reviews.length ? "first-row" : "primary"} />}
 
             {selectedIds.size > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
                 <span className="text-sm font-medium">{selectedIds.size} valgt</span>
@@ -648,7 +684,21 @@ function Indbakke() {
                         </tbody>
                     </table>
                 </ResponsiveTableFrame>
+                <div className="flex flex-col gap-3 rounded-lg border px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <span className="text-xs text-muted-foreground">
+                        Side {page} af {Math.max(1, Math.ceil(totalCount / pageSize))}
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <Select value={String(pageSize)} onValueChange={value => { setPageSize(Number(value)); setPage(1) }}>
+                            <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+                            <SelectContent>{[20, 50, 100].map(value => <SelectItem key={value} value={String(value)}>{value} pr. side</SelectItem>)}</SelectContent>
+                        </Select>
+                        <Button type="button" size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>Forrige</Button>
+                        <Button type="button" size="sm" variant="outline" disabled={page * pageSize >= totalCount} onClick={() => setPage(value => value + 1)}>Næste</Button>
+                    </div>
+                </div>
             </>}
+            {!loading && <ListReadinessMarker route="contract-reviews" stage="complete" />}
         </div>
     )
 }
