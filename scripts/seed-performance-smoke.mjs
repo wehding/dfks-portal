@@ -41,7 +41,15 @@ const existingHolder = await db.from("rettighedshavere").select("id").eq("user_i
 if (existingHolder.error) throw existingHolder.error;
 const holderId = existingHolder.data?.id ?? preferredHolderId;
 const memberStatements = [
-  db.from("rettighedshavere").upsert({ id: holderId, user_id: user.id, full_name: "Performance Admin", email, onboarding_completed: true }),
+  db.from("rettighedshavere").upsert({
+    id: holderId,
+    user_id: user.id,
+    full_name: "Performance Admin",
+    email,
+    onboarding_completed: true,
+    onboarding_completed_at: "2026-01-01T00:00:00.000Z",
+    onboarding_required_at: null,
+  }),
   db.from("org_affiliations").upsert({ org_id: orgId, rights_holder_id: holderId, is_member: true, valid_to: null }, { onConflict: "org_id,rights_holder_id" }),
 ];
 for (const statement of memberStatements) {
