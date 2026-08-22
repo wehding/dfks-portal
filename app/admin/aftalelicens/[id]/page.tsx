@@ -19,6 +19,7 @@ import {
 import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { formatAftalelicensWorkTitle } from "@/lib/aftalelicens-work-title"
+import { applyAftalelicensRerunFactor, markAftalelicensReruns } from "@/lib/aftalelicens-reruns"
 import { formatScreeningDateTime, parseScreeningDate } from "@/lib/screening-date-time"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
@@ -2858,7 +2859,8 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     })
 
     const handleBeregn = () => {
-        const items: WeightedItem[] = approved.map(v => {
+        const rerunMarked = markAftalelicensReruns(approved, extra.genudsendelseMaaneder)
+        const items: WeightedItem[] = rerunMarked.map(v => {
             const { points, base, tierLabel } = beregnPoints(v.vaerkType!, v.duration, vaegte, extra)
             return {
                 vaerkId: v.id,
@@ -2866,42 +2868,14 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                 vaerkType: v.vaerkType!,
                 duration: v.duration ?? 0,
                 viewCount: v.viewCount,
-                isGenudsendelse: false, // beregnes nedenfor
-                points,
+                isGenudsendelse: v.isGenudsendelse ?? false,
+                points: applyAftalelicensRerunFactor(points, v.isGenudsendelse ?? false, extra.genudsendelseFaktor),
                 shareOfTotal: 0,
                 tierLabel,
                 base,
                 broadcastDate: v.broadcastDate,
             }
         })
-
-        // Detektér genudsendelser ud fra stamdata-indstillinger:
-        // samme titel genudsendt inden for genudsendelseMaaneder måneder af seneste premiere = genudsendelse
-        const monthDiff = (a: string, b: string) => {
-            const da = new Date(a), db = new Date(b)
-            return (db.getFullYear() - da.getFullYear()) * 12 + (db.getMonth() - da.getMonth())
-        }
-        const byTitle = new Map<string, WeightedItem[]>()
-        for (const item of items) {
-            const key = normalizeTitle(item.rawTitle)
-            if (!byTitle.has(key)) byTitle.set(key, [])
-            byTitle.get(key)!.push(item)
-        }
-        for (const group of byTitle.values()) {
-            if (group.length <= 1) continue
-            group.sort((a, b) => (a.broadcastDate ?? "").localeCompare(b.broadcastDate ?? ""))
-            let refDate = group[0].broadcastDate ?? ""
-            group.forEach((item, idx) => {
-                if (idx === 0) return
-                const diff = refDate ? monthDiff(refDate, item.broadcastDate ?? refDate) : 0
-                if (diff < extra.genudsendelseMaaneder) {
-                    item.isGenudsendelse = true
-                    item.points = Math.round(item.points * extra.genudsendelseFaktor)
-                } else {
-                    refDate = item.broadcastDate ?? refDate
-                }
-            })
-        }
 
         const totalPoints = items.reduce((s, i) => s + i.points, 0)
         items.forEach(i => { i.shareOfTotal = totalPoints > 0 ? i.points / totalPoints : 0 })
@@ -3526,7 +3500,10 @@ export default function AftalelicensDetailPage() {
     // Hent vaerker fra DB
     useEffect(() => {
         if (!id) return
-        fetchScreeningSourceRowsForBatch(id).then(res => {
+        Promise.all([
+            fetchScreeningSourceRowsForBatch(id),
+            getAftalelicensWeightConfig().catch(() => ({ config: null })),
+        ]).then(([res, weightResult]) => {
             if (!res.success) {
                 setLoadError(res.error ?? "Kunne ikke hente de importerede rækker")
                 return
@@ -3549,6 +3526,7 @@ export default function AftalelicensDetailPage() {
                 viewCount: r.view_count ?? undefined,
                 season: r.season ?? undefined,
                 episode: r.episode ?? undefined,
+                episodeId: r.episode_id ?? undefined,
                 episodeTitle: r.episode_title ?? undefined,
                 category: r.category ?? undefined,
                 genre: r.genre ?? undefined,
@@ -3557,8 +3535,11 @@ export default function AftalelicensDetailPage() {
                 directors: r.directors ?? undefined,
                 actors: r.actors ?? undefined,
             }))
-            vaerkerRef.current = mapped
-            setVaerker(mapped)
+            const rerunMonths = weightResult.config?.extra?.genudsendelseMaaneder
+                ?? DEFAULT_VAEGT_EXTRA.genudsendelseMaaneder
+            const marked = markAftalelicensReruns(mapped, rerunMonths)
+            vaerkerRef.current = marked
+            setVaerker(marked)
         }).catch(() => {
             setLoadError("Kunne ikke hente de importerede rækker")
         }).finally(() => setRowsLoading(false))

@@ -356,6 +356,7 @@ export interface AftalelicensVaerk {
     viewCount?: number      // TV2 Play: antal visninger
     season?: number         // Sæsonnummer (fx 3)
     episode?: number        // Afsnitsnummer (fx 7)
+    episodeId?: string      // Stabilt indholds-ID fra EPG-kilden
     episodeTitle?: string   // Afsnittets titel fra EPG-kilden
     productionYear?: number // Produktionsår
     // Berigende kontekst fra Simply.TV — vigtig for korrekt AI-sortering af
