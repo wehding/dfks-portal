@@ -3509,8 +3509,15 @@ export default function AftalelicensDetailPage() {
     useEffect(() => {
         if (!id) return
         fetchScreeningSourceRowsForBatch(id).then(res => {
+            if (!res.success) {
+                console.error("[aftalelicens] Kunne ikke hente rækker for batch:", id, res.error)
+                return
+            }
             const rows = res.rows
-            if (!rows || rows.length === 0) return
+            if (!rows || rows.length === 0) {
+                console.warn("[aftalelicens] Ingen rækker fundet for batch:", id)
+                return
+            }
             const mapped: AftalelicensVaerk[] = rows.map(r => ({
                 id: String(r.id),
                 batchId: id,
@@ -3535,7 +3542,7 @@ export default function AftalelicensDetailPage() {
                 actors: r.actors ?? undefined,
             }))
             setVaerker(mapped)
-        }).catch(() => { /* keep mock data */ })
+        }).catch(err => { console.error("[aftalelicens] Fejl ved hentning af rækker:", err) })
     }, [id])
     const [confirmedMatches, setConfirmedMatches] = useState<VaerkMatch[]>([])
     const [batch, setBatch] = useState<AftalelicensBatch>(MOCK_BATCH)
@@ -3545,7 +3552,14 @@ export default function AftalelicensDetailPage() {
     useEffect(() => {
         if (!id) return
         fetchAftalelicensBatch(id).then(res => {
-            if (!res.batch) return
+            if (!res.success) {
+                console.error("[aftalelicens] Kunne ikke hente batch:", id, res.error)
+                return
+            }
+            if (!res.batch) {
+                console.warn("[aftalelicens] Ingen batch fundet med ID:", id)
+                return
+            }
             const b = res.batch
             const mapped: AftalelicensBatch = {
                 id: b.id, kilde: b.kilde as AftalelicensKilde, year: b.year,
@@ -3554,7 +3568,7 @@ export default function AftalelicensDetailPage() {
                 status: b.status as AftalelicensBatch["status"], notes: b.notes ?? undefined,
             }
             setBatch(mapped)
-        }).catch(() => { /* keep mock data */ })
+        }).catch(err => { console.error("[aftalelicens] Fejl ved hentning af batch:", err) })
     }, [id])
 
     const updateVaerk = (vaerkId: string, patch: Partial<AftalelicensVaerk>) => {

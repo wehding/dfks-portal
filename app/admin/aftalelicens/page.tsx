@@ -713,19 +713,27 @@ export default function AftalelicensPage() {
     }
 
     const loadBatchesFromServer = async () => {
-        const result = await fetchAftalelicensBatches()
-        if (result.success) {
-            setBatches(result.batches.map(b => ({
-                id: b.id, kilde: b.kilde as AftalelicensKilde, year: b.year,
-                uploadedAt: b.uploaded_at, uploadedBy: b.uploaded_by ?? "Admin",
-                totalRows: b.total_rows, filteredRows: b.filtered_rows,
-                status: b.status as AftalelicensBatch["status"], notes: b.notes ?? undefined,
-            })))
-        } else if (batches.length === 0) {
-            // Kun brug mock-data som absolut sidste udvej, hvis selve hentningen
-            // fejlede OG der ikke allerede er noget at vise — aldrig som stille
-            // erstatning for et tomt, men gyldigt resultat.
-            setBatches(MOCK_BATCHES)
+        try {
+            const result = await fetchAftalelicensBatches()
+            if (result.success) {
+                setBatches(result.batches.map(b => ({
+                    id: b.id, kilde: b.kilde as AftalelicensKilde, year: b.year,
+                    uploadedAt: b.uploaded_at, uploadedBy: b.uploaded_by ?? "Admin",
+                    totalRows: b.total_rows, filteredRows: b.filtered_rows,
+                    status: b.status as AftalelicensBatch["status"], notes: b.notes ?? undefined,
+                })))
+            } else {
+                console.error("[aftalelicens] Kunne ikke hente batch-liste:", result.error)
+                // Kun brug mock-data som absolut sidste udvej, hvis selve hentningen
+                // fejlede OG der ikke allerede er noget at vise — aldrig som stille
+                // erstatning for et tomt, men gyldigt resultat.
+                if (batches.length === 0) setBatches(MOCK_BATCHES)
+            }
+        } catch (err) {
+            // Sikrer at batchesLoading altid nulstilles, selv ved en uventet,
+            // kastet fejl — ellers hænger siden permanent i "loading".
+            console.error("[aftalelicens] Uventet fejl ved hentning af batch-liste:", err)
+            if (batches.length === 0) setBatches(MOCK_BATCHES)
         }
         setBatchesLoading(false)
     }
