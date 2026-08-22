@@ -478,7 +478,7 @@ export async function fetchScreeningSourceRowsForBatch(batchKey: string) {
   const db = createServiceClient();
   const { data, error } = await db
     .from("screening_source_rows")
-    .select("id, title, normalized_title, channel, screening_date, duration_minutes, view_count, season, episode, production_year, category, genre, description, production_countries, directors, actors")
+    .select("id, title, normalized_title, channel, screening_date, duration_minutes, view_count, season, episode, production_year, category, genre, description, production_countries, directors, actors, sort_status, vaerk_type, sorted_by, sorted_at")
     .eq("org_id", orgId)
     .eq("batch_key", batchKey)
     .order("screening_date")
@@ -489,6 +489,61 @@ export async function fetchScreeningSourceRowsForBatch(batchKey: string) {
   }
 
   return { success: true, rows: data ?? [] };
+}
+
+export type ScreeningSourceRowSortUpdate = {
+  id: string;
+  sortStatus: "pending" | "approved" | "rejected" | "flagged";
+  vaerkType: string | null;
+  sortedBy: string | null;
+};
+
+export async function updateScreeningSourceRowSortStates(updates: ScreeningSourceRowSortUpdate[]) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind", failedIds: updates.map(update => update.id) };
+  const isAdmin = await isUserAdmin(user.id);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", failedIds: updates.map(update => update.id) };
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation", failedIds: updates.map(update => update.id) };
+
+  const uniqueUpdates = Array.from(new Map(updates.map(update => [update.id, update])).values());
+  if (uniqueUpdates.length === 0) return { success: true, failedIds: [] as string[] };
+  if (uniqueUpdates.length > 2_000) {
+    return { success: false, error: "For mange sorteringsændringer på én gang", failedIds: uniqueUpdates.map(update => update.id) };
+  }
+
+  const db = createServiceClient();
+  const failedIds: string[] = [];
+  const chunkSize = 50;
+
+  for (let index = 0; index < uniqueUpdates.length; index += chunkSize) {
+    const chunk = uniqueUpdates.slice(index, index + chunkSize);
+    const results = await Promise.all(chunk.map(update => db
+      .from("screening_source_rows")
+      .update({
+        sort_status: update.sortStatus,
+        vaerk_type: update.vaerkType,
+        sorted_by: update.sortedBy,
+        sorted_at: update.sortStatus === "pending" ? null : new Date().toISOString(),
+      })
+      .eq("id", update.id)
+      .eq("org_id", orgId)
+      .select("id")
+      .maybeSingle()));
+
+    results.forEach((result, resultIndex) => {
+      if (result.error || !result.data) {
+        failedIds.push(chunk[resultIndex].id);
+        console.error("Fejl ved gem af sorteringsstatus:", result.error ?? { id: chunk[resultIndex].id, reason: "Rækken blev ikke fundet" });
+      }
+    });
+  }
+
+  if (failedIds.length > 0) {
+    return { success: false, error: `${failedIds.length} sorteringsændring(er) kunne ikke gemmes`, failedIds };
+  }
+
+  return { success: true, failedIds: [] as string[] };
 }
 
 // ── Værk-/kontrakt-data til aftalelicens-matching ────────────────────────
