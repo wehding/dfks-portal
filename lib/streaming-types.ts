@@ -351,6 +351,7 @@ export interface AftalelicensVaerk {
     normalizedTitle?: string // Normaliseret/renset titel
     channel?: string
     broadcastDate?: string
+    broadcastTime?: string
     duration?: number       // Minutter
     viewCount?: number      // TV2 Play: antal visninger
     season?: number         // Sæsonnummer (fx 3)

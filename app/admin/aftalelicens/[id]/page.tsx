@@ -19,6 +19,7 @@ import {
 import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { formatAftalelicensWorkTitle } from "@/lib/aftalelicens-work-title"
+import { formatScreeningDateTime, parseScreeningDate } from "@/lib/screening-date-time"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -1133,7 +1134,7 @@ function SortTable({ vaerker, onUpdate }: {
                     <TableHeader>
                         <TableRow>
                             <SortableHead col="title"    label="Titel"    current={{ col: sortCol, dir: sortDir }} onSort={handleSort} />
-                            <SortableHead col="date"     label="Dato"     current={{ col: sortCol, dir: sortDir }} onSort={handleSort} className="w-[100px]" />
+                            <SortableHead col="date"     label="Dato og tid" current={{ col: sortCol, dir: sortDir }} onSort={handleSort} className="w-[145px]" />
                             <SortableHead col="channel"  label="Kanal"    current={{ col: sortCol, dir: sortDir }} onSort={handleSort} />
                             <SortableHead col="duration" label="Min."     current={{ col: sortCol, dir: sortDir }} onSort={handleSort} className="w-[80px]" />
                             <SortableHead col="vaerkType" label="Værktype" current={{ col: sortCol, dir: sortDir }} onSort={handleSort} className="w-[160px]" />
@@ -1173,9 +1174,9 @@ function SortTable({ vaerker, onUpdate }: {
                                         )}
                                     </div>
                                 </TableCell>
-                                <TableCell className="text-xs text-muted-foreground tabular-nums">
-                                    {v.broadcastDate
-                                        ? new Date(v.broadcastDate).toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit", year: "2-digit" })
+                                <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                                    {v.broadcastDate || v.broadcastTime
+                                        ? formatScreeningDateTime(v.broadcastDate, v.broadcastTime)
                                         : "—"}
                                 </TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{v.channel ?? "—"}</TableCell>
@@ -1556,6 +1557,7 @@ interface VaerkMatch {
     vaerkType?: VaerkType
     duration?: number
     broadcastDate?: string
+    broadcastTime?: string
     season?: number
     episode?: number
     episodeTitle?: string
@@ -1644,7 +1646,7 @@ function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contract
                 sharePercent: equalShare,
             }))
 
-            const identifiers = { season: v.season, episode: v.episode, episodeTitle: v.episodeTitle, broadcastDate: v.broadcastDate, productionYear: v.productionYear }
+            const identifiers = { season: v.season, episode: v.episode, episodeTitle: v.episodeTitle, broadcastDate: v.broadcastDate, broadcastTime: v.broadcastTime, productionYear: v.productionYear }
 
             // Duplikate titler — kræver manuel valg af det rigtige værk
             if (works.length > 1) {
@@ -1693,6 +1695,7 @@ function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contract
                 episode: v.episode,
                 episodeTitle: v.episodeTitle,
                 broadcastDate: v.broadcastDate,
+                broadcastTime: v.broadcastTime,
                 productionYear: v.productionYear,
                 matchedWorkId: undefined,
                 matchedWorkTitle: undefined,
@@ -2127,6 +2130,7 @@ function ParringTab({ vaerker, onConfirmed }: {
                                                 <p className="text-sm font-medium">{g.baseTitle}</p>
                                                 <p className="text-xs text-muted-foreground">
                                                     {g.episodes[0]?.duration ? `${g.episodes[0].duration} min` : ""}
+                                                    {` · ${formatScreeningDateTime(g.episodes[0]?.broadcastDate, g.episodes[0]?.broadcastTime)}`}
                                                     {g.episodes[0]?.productionYear != null && ` · ${g.episodes[0].productionYear}`}
                                                 </p>
                                             </div>
@@ -2274,14 +2278,12 @@ function ParringTab({ vaerker, onConfirmed }: {
                                 </TableRow>
                                 {/* Flere visninger af det samme episodeværk */}
                                 {g.isGrouped && isExpanded && g.episodes.map(ep => {
-                                    const screeningDate = ep.broadcastDate
-                                        ? new Date(ep.broadcastDate).toLocaleDateString("da-DK")
-                                        : "Ukendt dato"
+                                    const screeningDateTime = formatScreeningDateTime(ep.broadcastDate, ep.broadcastTime)
                                     return (
                                         <TableRow key={ep.vaerkId} className="bg-muted/20 dark:bg-muted/10">
                                             <TableCell className="pl-9 py-2">
                                                 <p className="text-xs text-muted-foreground">
-                                                    ↳ Visning {screeningDate}
+                                                    ↳ Visning {screeningDateTime}
                                                     {ep.duration ? ` · ${ep.duration} min` : ""}
                                                 </p>
                                             </TableCell>
@@ -3536,7 +3538,8 @@ export default function AftalelicensDetailPage() {
                 rawTitle: r.title ?? "",
                 normalizedTitle: r.normalized_title ?? undefined,
                 channel: r.channel ?? "",
-                broadcastDate: r.screening_date ?? undefined,
+                broadcastDate: parseScreeningDate(r.screening_date),
+                broadcastTime: r.broadcast_time ?? undefined,
                 duration: r.duration_minutes ?? undefined,
                 productionYear: r.production_year ?? undefined,
                 sortStatus: (r.sort_status ?? "pending") as AftalelicensVaerk["sortStatus"],
