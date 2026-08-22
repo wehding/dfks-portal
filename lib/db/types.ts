@@ -232,6 +232,13 @@ export interface DbContractReview {
     response_draft_subject: string | null
     response_draft: string | null
     response_draft_updated_at: string | null
+    response_draft_to: string | null
+    response_draft_cc: string[]
+    response_draft_thread_message_id: string | null
+    response_draft_version: number
+    gmail_response_draft_id: string | null
+    gmail_response_draft_message_id: string | null
+    gmail_response_draft_updated_at: string | null
     risk_level: "LAV" | "MELLEM" | "HØJ" | null
     should_escalate: boolean | null
     ai_status: "analyserer" | "klar" | "fejl"

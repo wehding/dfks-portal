@@ -9,6 +9,7 @@ import {
   GMAIL_MODIFY_SCOPE,
   type GmailDateRange,
   type GmailMessage,
+  type GmailThread,
 } from "@/lib/gmail-contract-import-core";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -136,6 +137,10 @@ export async function listMessagesForLabel(inputLabelId: string, range: GmailDat
 
 export function getGmailMessage(messageId: string): Promise<GmailMessage> {
   return gmailRequest<GmailMessage>(`/messages/${encodeURIComponent(messageId)}?format=full`);
+}
+
+export function getGmailThread(threadId: string): Promise<GmailThread> {
+  return gmailRequest<GmailThread>(`/threads/${encodeURIComponent(threadId)}?format=full`);
 }
 
 export async function getGmailAttachment(messageId: string, attachmentId: string): Promise<Buffer> {

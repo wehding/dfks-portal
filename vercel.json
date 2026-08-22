@@ -29,6 +29,10 @@
       "schedule": "0 3 * * *"
     },
     {
+      "path": "/api/admin/gmail/contracts/threads",
+      "schedule": "*/10 * * * *"
+    },
+    {
       "path": "/api/admin/statistics/cpi",
       "schedule": "30 4 11 * *"
     }
