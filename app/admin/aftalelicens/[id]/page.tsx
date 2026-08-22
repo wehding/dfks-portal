@@ -18,6 +18,7 @@ import {
 } from "@/app/actions/screenings"
 import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
+import { formatAftalelicensWorkTitle } from "@/lib/aftalelicens-work-title"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -1554,8 +1555,10 @@ interface VaerkMatch {
     rawTitle: string
     vaerkType?: VaerkType
     duration?: number
+    broadcastDate?: string
     season?: number
     episode?: number
+    episodeTitle?: string
     productionYear?: number
     matchedWorkId?: string   // Work.id fra DB
     matchedWorkTitle?: string
@@ -1628,7 +1631,8 @@ function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contract
     return vaerker
         .filter(v => v.sortStatus === "approved")
         .map(v => {
-            const key = normalizeTitle(v.rawTitle)
+            const workTitle = formatAftalelicensWorkTitle(v)
+            const key = normalizeTitle(workTitle)
             const contracts = contractIdx.get(key) ?? []
             const works = workIdx.get(key) ?? []
 
@@ -1640,7 +1644,7 @@ function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contract
                 sharePercent: equalShare,
             }))
 
-            const identifiers = { season: v.season, episode: v.episode, productionYear: v.productionYear }
+            const identifiers = { season: v.season, episode: v.episode, episodeTitle: v.episodeTitle, broadcastDate: v.broadcastDate, productionYear: v.productionYear }
 
             // Duplikate titler — kræver manuel valg af det rigtige værk
             if (works.length > 1) {
@@ -1679,7 +1683,7 @@ function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contract
             }
 
             // Ingen eksakt match — kør fuzzy
-            const fuzzyMatches = findFuzzyMatches(v.rawTitle, works)
+            const fuzzyMatches = findFuzzyMatches(workTitle, works)
             return {
                 vaerkId: v.id,
                 rawTitle: v.rawTitle,
@@ -1687,6 +1691,8 @@ function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contract
                 duration: v.duration,
                 season: v.season,
                 episode: v.episode,
+                episodeTitle: v.episodeTitle,
+                broadcastDate: v.broadcastDate,
                 productionYear: v.productionYear,
                 matchedWorkId: undefined,
                 matchedWorkTitle: undefined,
@@ -1732,13 +1738,18 @@ interface MatchGroup {
     hasDuplicates?: boolean
 }
 
+function getMatchGroupKey(match: VaerkMatch) {
+    const season = match.season ?? getSeasonFromTitle(match.rawTitle)
+    if (match.episode != null || match.episodeTitle) {
+        return `${normalizeTitle(stripSeriesId(match.rawTitle))}:s${season ?? ""}:e${match.episode ?? ""}:${normalizeTitle(match.episodeTitle ?? "")}`
+    }
+    return match.vaerkId
+}
+
 function buildGroups(matches: VaerkMatch[]): MatchGroup[] {
     const buckets = new Map<string, VaerkMatch[]>()
     for (const m of matches) {
-        const season = m.season ?? getSeasonFromTitle(m.rawTitle)
-        const key = season != null
-            ? `${normalizeTitle(stripSeriesId(m.rawTitle))}:s${season}`
-            : m.vaerkId
+        const key = getMatchGroupKey(m)
         if (!buckets.has(key)) buckets.set(key, [])
         buckets.get(key)!.push(m)
     }
@@ -1746,8 +1757,10 @@ function buildGroups(matches: VaerkMatch[]): MatchGroup[] {
     return Array.from(buckets.entries()).map(([key, episodes]) => {
         const first = episodes[0]
         const season = first.season ?? getSeasonFromTitle(first.rawTitle) ?? undefined
-        const isGrouped = episodes.length > 1 || season != null
-        const baseTitle = season != null ? (stripSeriesId(first.rawTitle) || first.rawTitle) : first.rawTitle
+        // Flere visninger af samme afsnit er stadig ét værk. Forskellige
+        // afsnit grupperes aldrig sammen, da hvert afsnit er et selvstændigt værk.
+        const isGrouped = episodes.length > 1
+        const baseTitle = formatAftalelicensWorkTitle(first)
 
         const allWorkId = first.matchedWorkId
         const allSameWork = episodes.every(e => e.matchedWorkId === allWorkId)
@@ -1884,10 +1897,7 @@ function ParringTab({ vaerker, onConfirmed }: {
         setExtraWorks(prev => [...prev, ...newWorks])
         setMatches(prev => prev.map(m => {
             // Find which group this match belongs to
-            const season = m.season ?? getSeasonFromTitle(m.rawTitle)
-            const groupKey = season != null
-                ? `${normalizeTitle(stripSeriesId(m.rawTitle))}:s${season}`
-                : m.vaerkId
+            const groupKey = getMatchGroupKey(m)
             const nw = newWorks.find(w => w.groupKey === groupKey)
             if (!nw) return m
             return { ...m, matchedWorkId: nw.id, matchedWorkTitle: nw.title, matchScore: "manual" as const, newWorkCreated: true, confirmed: true }
@@ -2100,15 +2110,14 @@ function ParringTab({ vaerker, onConfirmed }: {
                                                 <button
                                                     onClick={toggleExpand}
                                                     className="mt-0.5 text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                                                    title={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
+                                                    title={isExpanded ? "Skjul visninger" : "Vis visninger"}
                                                 >
                                                     <ChevronDown className={`h-4 w-4 transition-transform ${isExpanded ? "" : "-rotate-90"}`} />
                                                 </button>
                                                 <div>
                                                     <p className="text-sm font-medium">{g.baseTitle}</p>
                                                     <p className="text-xs text-muted-foreground">
-                                                        {g.season != null && `Sæson ${g.season} · `}
-                                                        {g.episodes.length} afsnit
+                                                        {g.episodes.length} visninger
                                                         {g.episodes[0]?.productionYear != null && ` · ${g.episodes[0].productionYear}`}
                                                     </p>
                                                 </div>
@@ -2224,7 +2233,7 @@ function ParringTab({ vaerker, onConfirmed }: {
                                                     className="h-7 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400"
                                                     onClick={() => {
                                                         setNewWorkDialog(g.key)
-                                                        setNewWorkTitle(g.baseTitle + (g.season != null ? ` Sæson ${g.season}` : ""))
+                                                        setNewWorkTitle(g.baseTitle)
                                                         setNewWorkType(g.vaerkType ?? "dokumentarfilm")
                                                     }}
                                                 >
@@ -2263,15 +2272,16 @@ function ParringTab({ vaerker, onConfirmed }: {
                                         </div>
                                     </TableCell>
                                 </TableRow>
-                                {/* Episode sub-rows for series groups */}
+                                {/* Flere visninger af det samme episodeværk */}
                                 {g.isGrouped && isExpanded && g.episodes.map(ep => {
-                                    const epLabel = ep.rawTitle.match(/[Ss]\d+[Ee]\d+/)?.[0]
-                                        ?? (ep.episode != null ? `E${ep.episode}` : ep.rawTitle)
+                                    const screeningDate = ep.broadcastDate
+                                        ? new Date(ep.broadcastDate).toLocaleDateString("da-DK")
+                                        : "Ukendt dato"
                                     return (
                                         <TableRow key={ep.vaerkId} className="bg-muted/20 dark:bg-muted/10">
                                             <TableCell className="pl-9 py-2">
                                                 <p className="text-xs text-muted-foreground">
-                                                    ↳ <span className="font-mono">{epLabel}</span>
+                                                    ↳ Visning {screeningDate}
                                                     {ep.duration ? ` · ${ep.duration} min` : ""}
                                                 </p>
                                             </TableCell>
@@ -2299,7 +2309,7 @@ function ParringTab({ vaerker, onConfirmed }: {
                         onClick={() => {
                             setBulkEditItems(noneGroups.map(g => ({
                                 vaerkId: g.key,
-                                title: g.baseTitle + (g.season != null ? ` Sæson ${g.season}` : ""),
+                                title: g.baseTitle,
                                 vaerkType: g.vaerkType ?? "dokumentarfilm",
                             })))
                             setBulkCreateDialog(true)
@@ -3536,6 +3546,7 @@ export default function AftalelicensDetailPage() {
                 viewCount: r.view_count ?? undefined,
                 season: r.season ?? undefined,
                 episode: r.episode ?? undefined,
+                episodeTitle: r.episode_title ?? undefined,
                 category: r.category ?? undefined,
                 genre: r.genre ?? undefined,
                 description: r.description ?? undefined,

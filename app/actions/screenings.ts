@@ -478,7 +478,7 @@ export async function fetchScreeningSourceRowsForBatch(batchKey: string) {
   const db = createServiceClient();
   const { data, error } = await db
     .from("screening_source_rows")
-    .select("id, title, normalized_title, channel, screening_date, duration_minutes, view_count, season, episode, production_year, category, genre, description, production_countries, directors, actors, sort_status, vaerk_type, sorted_by, sorted_at")
+    .select("id, title, normalized_title, channel, screening_date, duration_minutes, view_count, season, episode, episode_title, production_year, category, genre, description, production_countries, directors, actors, sort_status, vaerk_type, sorted_by, sorted_at")
     .eq("org_id", orgId)
     .eq("batch_key", batchKey)
     .order("screening_date")
