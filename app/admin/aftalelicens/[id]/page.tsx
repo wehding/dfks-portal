@@ -9,7 +9,13 @@ import {
     Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff, Pencil,
 } from "lucide-react"
 import { saveFeedback, getTrainingExamples } from "@/lib/ai-feedback"
-import { fetchAftalelicensBatch, fetchScreeningSourceRowsForBatch, fetchWorksAndContractsForMatching } from "@/app/actions/screenings"
+import {
+    fetchAftalelicensBatch,
+    fetchScreeningSourceRowsForBatch,
+    fetchWorksAndContractsForMatching,
+    updateScreeningSourceRowSortStates,
+    type ScreeningSourceRowSortUpdate,
+} from "@/app/actions/screenings"
 import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -55,17 +61,6 @@ import type {
 
 // ── Mock data ─────────────────────────────────────────────────
 
-const MOCK_BATCH: AftalelicensBatch = {
-    id: "batch1",
-    kilde: "copydan_verdenstv",
-    year: 2023,
-    uploadedAt: "2024-03-15T10:30:00",
-    uploadedBy: "Admin",
-    totalRows: 312450,
-    filteredRows: 8340,
-    status: "sorting",
-}
-
 const VAERK_TYPE_LABELS: Record<VaerkType, string> = {
     spillefilm:      "Spillefilm",
     tv_serie_lang:   "TV-serie lang",
@@ -78,6 +73,8 @@ const VAERK_TYPE_LABELS: Record<VaerkType, string> = {
     ikke_relevant:   "Ikke relevant",
 }
 
+// Beholdes midlertidigt til designreference, men bruges aldrig som datafallback.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function genMockVaerker(): AftalelicensVaerk[] {
     // Legitime filmværker — skal sorteres
     const filmTitles = [
@@ -3503,14 +3500,26 @@ export default function AftalelicensDetailPage() {
     const params = useParams()
     const id = params?.id as string
 
-    const [vaerker, setVaerker] = useState<AftalelicensVaerk[]>(genMockVaerker)
+    const [vaerker, setVaerker] = useState<AftalelicensVaerk[]>([])
+    const [rowsLoading, setRowsLoading] = useState(true)
+    const [batchLoading, setBatchLoading] = useState(true)
+    const [loadError, setLoadError] = useState<string | null>(null)
+    const [sortSaveState, setSortSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle")
+    const vaerkerRef = useRef<AftalelicensVaerk[]>([])
+    const pendingSortUpdatesRef = useRef<Map<string, ScreeningSourceRowSortUpdate>>(new Map())
+    const rollbackRowsRef = useRef<Map<string, AftalelicensVaerk>>(new Map())
+    const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const persistChainRef = useRef<Promise<void>>(Promise.resolve())
 
     // Hent vaerker fra DB
     useEffect(() => {
         if (!id) return
         fetchScreeningSourceRowsForBatch(id).then(res => {
-            const rows = res.rows
-            if (!rows || rows.length === 0) return
+            if (!res.success) {
+                setLoadError(res.error ?? "Kunne ikke hente de importerede rækker")
+                return
+            }
+            const rows = res.rows ?? []
             const mapped: AftalelicensVaerk[] = rows.map(r => ({
                 id: String(r.id),
                 batchId: id,
@@ -3520,7 +3529,10 @@ export default function AftalelicensDetailPage() {
                 broadcastDate: r.screening_date ?? undefined,
                 duration: r.duration_minutes ?? undefined,
                 productionYear: r.production_year ?? undefined,
-                sortStatus: "pending" as AftalelicensVaerk["sortStatus"],
+                sortStatus: (r.sort_status ?? "pending") as AftalelicensVaerk["sortStatus"],
+                vaerkType: (r.vaerk_type as VaerkType | null) ?? undefined,
+                sortedBy: r.sorted_by ?? undefined,
+                sortedAt: r.sorted_at ?? undefined,
                 viewCount: r.view_count ?? undefined,
                 season: r.season ?? undefined,
                 episode: r.episode ?? undefined,
@@ -3531,18 +3543,64 @@ export default function AftalelicensDetailPage() {
                 directors: r.directors ?? undefined,
                 actors: r.actors ?? undefined,
             }))
+            vaerkerRef.current = mapped
             setVaerker(mapped)
-        }).catch(() => { /* keep mock data */ })
+        }).catch(() => {
+            setLoadError("Kunne ikke hente de importerede rækker")
+        }).finally(() => setRowsLoading(false))
     }, [id])
+
+    const flushPendingSortUpdates = () => {
+        const updates = Array.from(pendingSortUpdatesRef.current.values())
+        if (updates.length === 0) return
+
+        const rollbackRows = new Map(rollbackRowsRef.current)
+        pendingSortUpdatesRef.current.clear()
+        rollbackRowsRef.current.clear()
+        setSortSaveState("saving")
+
+        const rollbackFailedUpdates = (failedIds: Set<string>, error: string) => {
+            const currentRows = vaerkerRef.current.map(row => {
+                if (!failedIds.has(row.id) || pendingSortUpdatesRef.current.has(row.id)) return row
+                return rollbackRows.get(row.id) ?? row
+            })
+            vaerkerRef.current = currentRows
+            setVaerker(currentRows)
+            setSortSaveState("error")
+            toast.error(error)
+        }
+
+        persistChainRef.current = persistChainRef.current.then(async () => {
+            const result = await updateScreeningSourceRowSortStates(updates)
+            if (result.success) {
+                setSortSaveState(pendingSortUpdatesRef.current.size > 0 ? "saving" : "saved")
+                return
+            }
+
+            const failedIds = new Set(result.failedIds.length > 0 ? result.failedIds : updates.map(update => update.id))
+            rollbackFailedUpdates(failedIds, result.error ?? "Sorteringsændringerne kunne ikke gemmes")
+        }).catch(error => {
+            console.error("Fejl ved gem af sorteringsændringer:", error)
+            rollbackFailedUpdates(new Set(updates.map(update => update.id)), "Sorteringsændringerne kunne ikke gemmes")
+        })
+    }
+
     const [confirmedMatches, setConfirmedMatches] = useState<VaerkMatch[]>([])
-    const [batch, setBatch] = useState<AftalelicensBatch>(MOCK_BATCH)
+    const [batch, setBatch] = useState<AftalelicensBatch | null>(null)
 
     // Hent den faktiske batch fra databasen ud fra ID'et i URL'en — MOCK_BATCH
     // var tidligere hardkodet uanset hvilken batch der blev åbnet.
     useEffect(() => {
         if (!id) return
         fetchAftalelicensBatch(id).then(res => {
-            if (!res.batch) return
+            if (!res.success) {
+                setLoadError(res.error ?? "Kunne ikke hente datasættet")
+                return
+            }
+            if (!res.batch) {
+                setLoadError("Datasættet findes ikke eller tilhører en anden organisation")
+                return
+            }
             const b = res.batch
             const mapped: AftalelicensBatch = {
                 id: b.id, kilde: b.kilde as AftalelicensKilde, year: b.year,
@@ -3551,13 +3609,31 @@ export default function AftalelicensDetailPage() {
                 status: b.status as AftalelicensBatch["status"], notes: b.notes ?? undefined,
             }
             setBatch(mapped)
-        }).catch(() => { /* keep mock data */ })
+        }).catch(() => {
+            setLoadError("Kunne ikke hente datasættet")
+        }).finally(() => setBatchLoading(false))
     }, [id])
 
     const updateVaerk = (vaerkId: string, patch: Partial<AftalelicensVaerk>) => {
-        setVaerker(prev => {
-            const current = prev.find(v => v.id === vaerkId)
-            if (current && patch.sortStatus && patch.sortStatus !== current.sortStatus) {
+        const current = vaerkerRef.current.find(v => v.id === vaerkId)
+        if (!current) return
+
+        const next = { ...current, ...patch }
+        const includesPersistentChange = patch.sortStatus !== undefined || patch.vaerkType !== undefined || patch.sortedBy !== undefined
+        if (includesPersistentChange) {
+            if (!rollbackRowsRef.current.has(vaerkId)) rollbackRowsRef.current.set(vaerkId, current)
+            pendingSortUpdatesRef.current.set(vaerkId, {
+                id: vaerkId,
+                sortStatus: next.sortStatus,
+                vaerkType: next.vaerkType ?? null,
+                sortedBy: next.sortedBy ?? null,
+            })
+            setSortSaveState("saving")
+            if (persistTimerRef.current) clearTimeout(persistTimerRef.current)
+            persistTimerRef.current = setTimeout(flushPendingSortUpdates, 0)
+        }
+
+        if (patch.sortStatus && patch.sortStatus !== current.sortStatus) {
                 // Gem AI-korrektioner som feedback (til few-shot eksempler)
                 if (
                     current.sortedBy === "ai" &&
@@ -3583,13 +3659,41 @@ export default function AftalelicensDetailPage() {
                         (patch.vaerkType ?? current.vaerkType) as string | undefined,
                     )
                 }
-            }
-            return prev.map(v => v.id === vaerkId ? { ...v, ...patch } : v)
-        })
+        }
+
+        const nextRows = vaerkerRef.current.map(v => v.id === vaerkId ? next : v)
+        vaerkerRef.current = nextRows
+        setVaerker(nextRows)
     }
 
     const sortingComplete = vaerker.every(v => v.sortStatus !== "pending")
     const pendingClaimsCount = MOCK_KRAV.filter(k => k.status === "pending").length
+
+    if (batchLoading || rowsLoading) {
+        return (
+            <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Henter datasæt…
+            </div>
+        )
+    }
+
+    if (loadError || !batch) {
+        return (
+            <div className="space-y-4 rounded-lg border border-destructive/30 bg-destructive/5 p-6">
+                <div className="flex items-start gap-3">
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+                    <div>
+                        <h1 className="font-semibold">Datasættet kunne ikke åbnes</h1>
+                        <p className="mt-1 text-sm text-muted-foreground">{loadError ?? "Ukendt fejl"}</p>
+                    </div>
+                </div>
+                <Button asChild variant="outline">
+                    <Link href="/admin/aftalelicens"><ArrowLeft className="mr-2 h-4 w-4" />Tilbage til oversigten</Link>
+                </Button>
+            </div>
+        )
+    }
 
     return (
         <div className="space-y-6">
@@ -3606,6 +3710,9 @@ export default function AftalelicensDetailPage() {
                         <span className="text-xs text-muted-foreground">
                             {batch.filteredRows.toLocaleString("da-DK")} rækker · importeret {new Date(batch.uploadedAt).toLocaleDateString("da-DK")}
                         </span>
+                        {sortSaveState === "saving" && <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Gemmer…</span>}
+                        {sortSaveState === "saved" && <span className="inline-flex items-center gap-1 text-xs text-green-600"><Check className="h-3 w-3" />Gemt</span>}
+                        {sortSaveState === "error" && <span className="inline-flex items-center gap-1 text-xs text-destructive"><AlertTriangle className="h-3 w-3" />Ikke gemt</span>}
                     </div>
                 </div>
             </div>
