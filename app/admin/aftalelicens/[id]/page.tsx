@@ -55,17 +55,6 @@ import type {
 
 // ── Mock data ─────────────────────────────────────────────────
 
-const MOCK_BATCH: AftalelicensBatch = {
-    id: "batch1",
-    kilde: "copydan_verdenstv",
-    year: 2023,
-    uploadedAt: "2024-03-15T10:30:00",
-    uploadedBy: "Admin",
-    totalRows: 312450,
-    filteredRows: 8340,
-    status: "sorting",
-}
-
 const VAERK_TYPE_LABELS: Record<VaerkType, string> = {
     spillefilm:      "Spillefilm",
     tv_serie_lang:   "TV-serie lang",
@@ -78,6 +67,8 @@ const VAERK_TYPE_LABELS: Record<VaerkType, string> = {
     ikke_relevant:   "Ikke relevant",
 }
 
+// Beholdes midlertidigt til designreference, men bruges aldrig som datafallback.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function genMockVaerker(): AftalelicensVaerk[] {
     // Legitime filmværker — skal sorteres
     const filmTitles = [
@@ -3503,14 +3494,20 @@ export default function AftalelicensDetailPage() {
     const params = useParams()
     const id = params?.id as string
 
-    const [vaerker, setVaerker] = useState<AftalelicensVaerk[]>(genMockVaerker)
+    const [vaerker, setVaerker] = useState<AftalelicensVaerk[]>([])
+    const [rowsLoading, setRowsLoading] = useState(true)
+    const [batchLoading, setBatchLoading] = useState(true)
+    const [loadError, setLoadError] = useState<string | null>(null)
 
     // Hent vaerker fra DB
     useEffect(() => {
         if (!id) return
         fetchScreeningSourceRowsForBatch(id).then(res => {
-            const rows = res.rows
-            if (!rows || rows.length === 0) return
+            if (!res.success) {
+                setLoadError(res.error ?? "Kunne ikke hente de importerede rækker")
+                return
+            }
+            const rows = res.rows ?? []
             const mapped: AftalelicensVaerk[] = rows.map(r => ({
                 id: String(r.id),
                 batchId: id,
@@ -3532,17 +3529,26 @@ export default function AftalelicensDetailPage() {
                 actors: r.actors ?? undefined,
             }))
             setVaerker(mapped)
-        }).catch(() => { /* keep mock data */ })
+        }).catch(() => {
+            setLoadError("Kunne ikke hente de importerede rækker")
+        }).finally(() => setRowsLoading(false))
     }, [id])
     const [confirmedMatches, setConfirmedMatches] = useState<VaerkMatch[]>([])
-    const [batch, setBatch] = useState<AftalelicensBatch>(MOCK_BATCH)
+    const [batch, setBatch] = useState<AftalelicensBatch | null>(null)
 
     // Hent den faktiske batch fra databasen ud fra ID'et i URL'en — MOCK_BATCH
     // var tidligere hardkodet uanset hvilken batch der blev åbnet.
     useEffect(() => {
         if (!id) return
         fetchAftalelicensBatch(id).then(res => {
-            if (!res.batch) return
+            if (!res.success) {
+                setLoadError(res.error ?? "Kunne ikke hente datasættet")
+                return
+            }
+            if (!res.batch) {
+                setLoadError("Datasættet findes ikke eller tilhører en anden organisation")
+                return
+            }
             const b = res.batch
             const mapped: AftalelicensBatch = {
                 id: b.id, kilde: b.kilde as AftalelicensKilde, year: b.year,
@@ -3551,7 +3557,9 @@ export default function AftalelicensDetailPage() {
                 status: b.status as AftalelicensBatch["status"], notes: b.notes ?? undefined,
             }
             setBatch(mapped)
-        }).catch(() => { /* keep mock data */ })
+        }).catch(() => {
+            setLoadError("Kunne ikke hente datasættet")
+        }).finally(() => setBatchLoading(false))
     }, [id])
 
     const updateVaerk = (vaerkId: string, patch: Partial<AftalelicensVaerk>) => {
@@ -3590,6 +3598,32 @@ export default function AftalelicensDetailPage() {
 
     const sortingComplete = vaerker.every(v => v.sortStatus !== "pending")
     const pendingClaimsCount = MOCK_KRAV.filter(k => k.status === "pending").length
+
+    if (batchLoading || rowsLoading) {
+        return (
+            <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Henter datasæt…
+            </div>
+        )
+    }
+
+    if (loadError || !batch) {
+        return (
+            <div className="space-y-4 rounded-lg border border-destructive/30 bg-destructive/5 p-6">
+                <div className="flex items-start gap-3">
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+                    <div>
+                        <h1 className="font-semibold">Datasættet kunne ikke åbnes</h1>
+                        <p className="mt-1 text-sm text-muted-foreground">{loadError ?? "Ukendt fejl"}</p>
+                    </div>
+                </div>
+                <Button asChild variant="outline">
+                    <Link href="/admin/aftalelicens"><ArrowLeft className="mr-2 h-4 w-4" />Tilbage til oversigten</Link>
+                </Button>
+            </div>
+        )
+    }
 
     return (
         <div className="space-y-6">
