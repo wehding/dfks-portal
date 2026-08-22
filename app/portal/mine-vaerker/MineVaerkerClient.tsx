@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMemberSeasonEditContext, fetchMemberSeasonEpisodes, fetchMemberWorkDetail, fetchMemberWorkOverview, linkApprovedCoEditorSuggestionsForRightsHolder, removeWorkAssignments } from "@/app/actions/member-works";
+import { fetchMemberSeasonEditContext, fetchMemberSeasonEpisodes, fetchMemberWorkDetail, fetchMemberWorkOverview, removeWorkAssignments } from "@/app/actions/member-works";
 import { markWorkRequestCommentsRead } from "@/app/actions/work-management";
 import { useI18n } from "@/lib/i18n";
 import type { ManualWorkFormSeed } from "@/lib/manual-work";
@@ -26,6 +26,7 @@ import type { MemberWorkReviewTask } from "@/lib/member-work-review";
 import { collaborationReviewIndicator } from "@/lib/work-collaboration-review";
 import { memberOverviewItemsToAssignments } from "@/lib/member-work-overview";
 import type { MemberOverviewItem } from "@/lib/member-work-overview";
+import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 
 const AddWorkModal = dynamic(() => import("./components/AddWorkModal").then(module => module.AddWorkModal), { ssr: false });
 const EditWorkModal = dynamic(() => import("./components/EditWorkModal").then(module => module.EditWorkModal), { ssr: false });
@@ -208,28 +209,24 @@ function isSeriesType(type: string | null | undefined) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, userName, contractedWorkIds, contracts, organisationShortName, defaultRoleLabel, coeditorWord,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName, defaultRoleLabel, coeditorWord, pageResult, initialQuery,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
   broadcasters: BroadcasterLogo[];
   rightsHolderId: string | null;
-  userName: string;
   dfiPersonId: number | null;
   contractedWorkIds: string[];
   contracts: Contract[];
   organisationShortName: string;
   defaultRoleLabel: string;
   coeditorWord: string;
+  pageResult: { page: number; pageSize: number; filteredCount: number; totalCount: number; hasNextPage: boolean };
+  initialQuery: { search: string; workType: string; status: string; sortKey: string; sortDir: "asc" | "desc" };
 }) {
   const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
   const [allAssignments, setAllAssignments] = useState(initialAllAssignments);
-
-  React.useEffect(() => {
-    if (!rightsHolderId) return;
-    void linkApprovedCoEditorSuggestionsForRightsHolder({ rightsHolderId, fullName: userName }).catch(() => null);
-  }, [rightsHolderId, userName]);
 
   const broadcasterLogoMap = React.useMemo(() => {
     const map: Record<string, string> = {};
@@ -259,14 +256,14 @@ export default function MineVaerkerClient({
     return map;
   }, [allAssignments, coeditorWord, defaultRoleLabel]);
 
-  const [search, setSearch]     = useState("");
-  const [catFilter, setCatFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [sortKey, setSortKey]   = useState<SortKey>("date");
-  const [sortDir, setSortDir]   = useState<"asc" | "desc">("desc");
+  const [search, setSearch]     = useState(initialQuery.search);
+  const [catFilter, setCatFilter] = useState(initialQuery.workType);
+  const [statusFilter, setStatusFilter] = useState(initialQuery.status);
+  const [sortKey, setSortKey]   = useState<SortKey>(initialQuery.sortKey as SortKey);
+  const [sortDir, setSortDir]   = useState<"asc" | "desc">(initialQuery.sortDir);
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg]           = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(pageResult.pageSize);
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
   const [expandedSeries, setExpandedSeries] = useState<Set<string>>(new Set());
   const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, Assignment[]>>({});
@@ -301,6 +298,24 @@ export default function MineVaerkerClient({
 
   const router   = useRouter();
   const searchParams = useSearchParams();
+
+  React.useEffect(() => setAssignments(initialAssignments), [initialAssignments]);
+  React.useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      const setOrDelete = (key: string, value: string, fallback: string) => value === fallback ? params.delete(key) : params.set(key, value);
+      setOrDelete("q", search.trim(), "");
+      setOrDelete("type", catFilter, "all");
+      setOrDelete("status", statusFilter, "all");
+      setOrDelete("sort", sortKey, "date");
+      setOrDelete("direction", sortDir, "desc");
+      setOrDelete("pageSize", String(pageSize), "20");
+      if (search !== initialQuery.search || catFilter !== initialQuery.workType || statusFilter !== initialQuery.status || sortKey !== initialQuery.sortKey || sortDir !== initialQuery.sortDir || pageSize !== pageResult.pageSize) params.delete("page");
+      const next = params.toString();
+      if (next !== (searchParams?.toString() ?? "")) router.replace(next ? `/portal/mine-vaerker?${next}` : "/portal/mine-vaerker", { scroll: false });
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [catFilter, initialQuery, pageResult.pageSize, pageSize, router, search, searchParams, sortDir, sortKey, statusFilter]);
 
   const loadCollaborationReviews = React.useCallback(async () => {
     if (!rightsHolderId) return;
@@ -446,7 +461,7 @@ export default function MineVaerkerClient({
       setCollaborationSaving(false);
     }
   };
-  const visibleAssignments = filtered.slice(0, pageSize);
+  const visibleAssignments = filtered;
   const selectionIdsFor = (assignment: Assignment) => assignment.works?.is_season_group
     ? assignment.works.child_assignment_ids ?? []
     : [assignment.id];
@@ -570,7 +585,16 @@ export default function MineVaerkerClient({
 
   const reloadAssignments = async () => {
     if (!rightsHolderId) return;
-    const overview = await fetchMemberWorkOverview({ rightsHolderId });
+    const overview = await fetchMemberWorkOverview({
+      rightsHolderId,
+      page: pageResult.page,
+      pageSize,
+      search,
+      workType: catFilter,
+      status: statusFilter,
+      sortKey,
+      sortDir,
+    });
     if (overview.success) {
       setAssignments(memberOverviewItemsToAssignments(overview.items as unknown as MemberOverviewItem[]));
       setSeriesEpisodes({});
@@ -843,6 +867,8 @@ export default function MineVaerkerClient({
 
   return (
     <div className="flex flex-col gap-6">
+      <ListReadinessMarker route="member-works" stage="primary" />
+      {assignments.length > 0 && <ListReadinessMarker route="member-works" stage="first-row" />}
 
       {/* Header */}
       <PortalPageHeader
@@ -964,7 +990,7 @@ export default function MineVaerkerClient({
 	          <label className="flex items-center gap-2 text-sm text-muted-foreground">
 	            Vis
 	            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground">
-	              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+		              {[20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
 	            </select>
 	          </label>
 	          {filtered.length > 0 && (
@@ -994,7 +1020,7 @@ export default function MineVaerkerClient({
             </Button>
           </div>
 
-          <ListResultSummary filteredCount={filtered.length} totalCount={assignments.length} selectedCount={selected.length} className="lg:col-span-full" />
+          <ListResultSummary filteredCount={pageResult.filteredCount} totalCount={pageResult.totalCount} selectedCount={selected.length} className="lg:col-span-full" />
         </div>
 
 		        {/* Kolonnehoveder */}
@@ -1252,8 +1278,20 @@ export default function MineVaerkerClient({
         })}
 
         {/* Footer */}
-        <div className="px-5 py-3 text-xs text-gray-400 border-t border-gray-100">
-          {Math.min(filtered.length, pageSize)} {t("works.of")} {filtered.length} {t("works.worksLower")}
+        <div className="flex items-center justify-between gap-3 border-t px-5 py-3 text-xs text-muted-foreground">
+          <span>Side {pageResult.page} af {Math.max(1, Math.ceil(pageResult.filteredCount / pageResult.pageSize))}</span>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={pageResult.page <= 1} onClick={() => {
+              const params = new URLSearchParams(searchParams?.toString() ?? "");
+              params.set("page", String(Math.max(1, pageResult.page - 1)));
+              router.replace(`/portal/mine-vaerker?${params.toString()}`, { scroll: false });
+            }}>Forrige</Button>
+            <Button type="button" variant="outline" size="sm" disabled={!pageResult.hasNextPage} onClick={() => {
+              const params = new URLSearchParams(searchParams?.toString() ?? "");
+              params.set("page", String(pageResult.page + 1));
+              router.replace(`/portal/mine-vaerker?${params.toString()}`, { scroll: false });
+            }}>Næste</Button>
+          </div>
         </div>
       </div>
 

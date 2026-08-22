@@ -1,8 +1,6 @@
 "use client"
 
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react"
-import { usePathname } from "next/navigation"
-import { getAccessContextCached } from "@/lib/access-context-client"
 
 export type Locale = "da" | "en"
 
@@ -1812,8 +1810,6 @@ function applyTerminology(text: string, coeditor: string): string {
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-    const pathname = usePathname()
-    const usesOrganisationTerminology = pathname.startsWith("/admin") || pathname.startsWith("/portal")
     const [locale, setLocale] = useState<Locale>("da")
     const [localeLoaded, setLocaleLoaded] = useState(false)
     // Foreningens fagord (fallback: DFKS/klipper). Kun dansk tokeniseres.
@@ -1832,17 +1828,13 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }, [locale, localeLoaded])
 
     useEffect(() => {
-        if (!usesOrganisationTerminology) return
-        let active = true
-        void (async () => {
-            const response = await getAccessContextCached<{ terminology?: { coeditor_word?: string } }>()
-            if (!response.ok || !response.data) return
-            const context = response.data
-            const word = context.terminology?.coeditor_word
-            if (active && word) setCoeditorWord(word)
-        })()
-        return () => { active = false }
-    }, [usesOrganisationTerminology])
+        const update = (event: Event) => {
+            const word = (event as CustomEvent<{ coeditorWord?: string }>).detail?.coeditorWord
+            if (word) setCoeditorWord(word)
+        }
+        window.addEventListener("dfks-terminology", update)
+        return () => window.removeEventListener("dfks-terminology", update)
+    }, [])
 
     const t = useCallback(
         (key: TranslationKey, params?: Record<string, string | number>): string => {

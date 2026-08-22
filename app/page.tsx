@@ -107,9 +107,10 @@ export default function LoginPage() {
                                 src="/logo.png"
                                 alt={brand.long_name}
                                 width={280}
-                                height={120}
-                                className="dark:invert"
-                                priority
+                                height={93}
+                                sizes="280px"
+                                className="h-[93px] w-[280px] object-contain dark:invert"
+                                preload
                             />
                         )}
                         <div className="text-center">

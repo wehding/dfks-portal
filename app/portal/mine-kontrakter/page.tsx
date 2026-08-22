@@ -8,18 +8,17 @@ import MineKontrakterClient from "./MineKontrakterClient";
 import type { Contract } from "./MineKontrakterClient";
 import { requireMemberContext } from "@/lib/org";
 import { createListLoadTimer } from "@/lib/server/list-load-timing";
+import { fetchMemberContractsPage, type MemberContractsPageParams } from "@/app/actions/member-contracts";
+import { normalizedPage, normalizedPageSize } from "@/lib/list-query";
 
 type WorkRelation = { id: string; title: string; year: number | null; type: string };
 type WorkAssignmentRow = { works: WorkRelation | WorkRelation[] | null };
-type ContractComment = { id: string; author_role: "member" | "admin"; message: string; created_at: string; member_read_at?: string | null; admin_read_at?: string | null };
 type RawContract = Omit<Contract, "works" | "employers"> & {
   works: Contract["works"] | Contract["works"][];
   employers: Contract["employers"] | Contract["employers"][];
   contract_attachments?: Contract["contract_attachments"] | null;
   contract_comments?: Contract["contract_comments"] | null;
 };
-
-const CONTRACT_LIST_SELECT = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, processed_pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, validated_at)";
 
 function getWorkRelation(row: WorkAssignmentRow) {
   return Array.isArray(row.works) ? row.works[0] ?? null : row.works;
@@ -33,19 +32,13 @@ function firstRelation<T>(value: T | T[] | null) {
   return Array.isArray(value) ? value[0] ?? null : value;
 }
 
-function isMissingAttachmentRelationError(error: { message?: string; code?: string } | null) {
-  return Boolean(
-    error &&
-    (
-      error.code === "PGRST200" ||
-      error.code === "42P01" ||
-      error.message?.includes("contract_attachments") ||
-      error.message?.includes("contract_comments")
-    )
-  );
+type PageSearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+function stringParam(value: string | string[] | undefined, fallback = "") {
+  return Array.isArray(value) ? value[0] ?? fallback : value ?? fallback;
 }
 
-export default async function MineKontrakterPage() {
+export default async function MineKontrakterPage({ searchParams }: { searchParams: PageSearchParams }) {
   const timer = createListLoadTimer("member-contracts");
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -57,17 +50,20 @@ export default async function MineKontrakterPage() {
   if (!memberContext?.rightsHolderId) redirect("/admin?notice=member-org-required");
   timer.mark("access");
 
-  let contracts: unknown[] = [];
-  let unreadCommentsByContract: Record<string, Contract["contract_comments"]> = {};
-  const confirmedEpisodeContractIds = new Set<string>();
-  const [listRes, myWorksResult] = await Promise.all([
-    db
-      .from("contracts")
-      .select(CONTRACT_LIST_SELECT)
-      .eq("org_id", memberContext.orgId)
-      .eq("rights_holder_id", memberContext.rightsHolderId)
-      .is("superseded_by_contract_id", null)
-      .order("created_at", { ascending: false }),
+  const query = await searchParams;
+  const pageParams: MemberContractsPageParams = {
+    page: normalizedPage(stringParam(query.page)),
+    pageSize: normalizedPageSize(stringParam(query.pageSize), 20, 100),
+    search: stringParam(query.q),
+    status: stringParam(query.status, "all"),
+    workType: stringParam(query.type, "all"),
+    sortKey: stringParam(query.sort, "date") as MemberContractsPageParams["sortKey"],
+    sortDir: stringParam(query.direction, "desc") === "asc" ? "asc" : "desc",
+  };
+  if (![20, 50, 100].includes(pageParams.pageSize ?? 20)) pageParams.pageSize = 20;
+
+  const [pageResult, myWorksResult] = await Promise.all([
+    fetchMemberContractsPage(pageParams),
     db
       .from("work_assignments")
       .select("works(id, title, year, type)")
@@ -76,32 +72,7 @@ export default async function MineKontrakterPage() {
   ]);
   timer.mark("lists");
 
-  if (listRes.error && !isMissingAttachmentRelationError(listRes.error)) {
-    console.error("Kunne ikke hente kontrakter:", listRes.error.message);
-  } else {
-    contracts = listRes.data ?? [];
-    const contractIds = contracts.map(row => (row as { id?: string }).id).filter((id): id is string => Boolean(id));
-    if (contractIds.length) {
-      const [{ data: unreadComments }, { data: episodeConfirmations }] = await Promise.all([
-        db.from("contract_comments")
-          .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
-          .in("contract_id", contractIds)
-          .eq("author_role", "admin")
-          .is("member_read_at", null)
-          .order("created_at", { ascending: true }),
-        db.from("contract_episode_confirmations")
-          .select("contract_id")
-          .in("contract_id", contractIds)
-          .is("invalidated_at", null),
-      ]);
-      for (const confirmation of episodeConfirmations ?? []) confirmedEpisodeContractIds.add(confirmation.contract_id);
-      unreadCommentsByContract = ((unreadComments ?? []) as Array<ContractComment & { contract_id: string }>).reduce<Record<string, Contract["contract_comments"]>>((acc, comment) => {
-        if (!acc[comment.contract_id]) acc[comment.contract_id] = [];
-        acc[comment.contract_id].push(comment);
-        return acc;
-      }, {});
-    }
-  }
+  if (!pageResult.success) throw new Error(pageResult.error);
 
   const uniqueWorks = Object.values(
     Object.fromEntries(
@@ -112,13 +83,13 @@ export default async function MineKontrakterPage() {
     )
   ) as { id: string; title: string; year: number | null; type: string }[];
 
-  const normalizedContracts: Contract[] = ((contracts ?? []) as RawContract[]).map(contract => ({
+  const normalizedContracts: Contract[] = (pageResult.result.rows as unknown as RawContract[]).map(contract => ({
     ...contract,
     works: firstRelation(contract.works),
     employers: firstRelation(contract.employers),
     contract_attachments: [],
-    contract_comments: unreadCommentsByContract[contract.id] ?? [],
-    episode_confirmed: confirmedEpisodeContractIds.has(contract.id),
+    contract_comments: contract.contract_comments ?? [],
+    episode_confirmed: contract.episode_confirmed,
   }));
   timer.mark("row-details");
   timer.finish({ rowCount: normalizedContracts.length, workOptionCount: uniqueWorks.length });
@@ -129,6 +100,20 @@ export default async function MineKontrakterPage() {
         initialContracts={normalizedContracts}
         myWorks={uniqueWorks}
         rightsHolderId={memberContext.rightsHolderId}
+        pageResult={{
+          page: pageResult.result.page,
+          pageSize: pageResult.result.pageSize,
+          filteredCount: pageResult.result.filteredCount,
+          totalCount: pageResult.result.totalCount,
+          hasNextPage: pageResult.result.hasNextPage,
+        }}
+        initialQuery={{
+          search: pageParams.search ?? "",
+          status: pageParams.status ?? "all",
+          workType: pageParams.workType ?? "all",
+          sortKey: pageParams.sortKey ?? "date",
+          sortDir: pageParams.sortDir ?? "desc",
+        }}
       />
     </Suspense>
   );

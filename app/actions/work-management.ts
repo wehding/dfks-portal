@@ -115,7 +115,7 @@ type WorkRequestPayload = Partial<WorkCorrectionData> & {
   targetSeasonNumber?: number;
 };
 
-type AdminWorksPageParams = {
+export type AdminWorksPageParams = {
   page?: number;
   pageSize?: number;
   search?: string;
@@ -866,21 +866,19 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
   const matchedIds = await matchingAdminWorkIds(db, orgId, params);
   timer.mark("matching");
   if (matchedIds && matchedIds.size === 0) {
-    const [{ count: totalAllCount }, { data: contractRows, error: contractError }, lookupResults] = await Promise.all([
+    const [{ count: totalAllCount }, statsResult, lookupResults] = await Promise.all([
       includeSummary
         ? db.from("works").select("id", { count: "exact", head: true }).eq("org_id", orgId)
         : Promise.resolve({ count: null }),
-      includeSummary
-        ? db.from("contracts").select("work_id").eq("org_id", orgId).not("work_id", "is", null).limit(5000)
-        : Promise.resolve({ data: [], error: null }),
+      includeSummary ? db.rpc("get_admin_work_archive_stats", { p_org_id: orgId }).maybeSingle() : Promise.resolve({ data: null, error: null }),
       lookupsPromise,
     ]);
-    if (contractError) throw new Error(contractError.message);
-    const contractedWorks = new Set((contractRows ?? []).map(row => row.work_id).filter(Boolean));
+    if (statsResult.error) throw new Error(statsResult.error.message);
     const allTotal = totalAllCount ?? 0;
     const lookups = normalizeAdminWorkLookups(lookupResults);
     const timing = timer.finish({ rowCount: 0, page, includeLookups, includeSummary });
-    return { success: true, works: [], totalCount: 0, totalAllCount: includeSummary ? allTotal : undefined, stats: includeSummary ? { total: allTotal, withContract: contractedWorks.size, missingContract: Math.max(allTotal - contractedWorks.size, 0) } : undefined, lookups, context: { orgId, role: admin.role }, timing };
+    const stats = statsResult.data as { total?: number | string; with_contract?: number | string; missing_contract?: number | string } | null;
+    return { success: true, works: [], totalCount: 0, totalAllCount: includeSummary ? allTotal : undefined, stats: includeSummary ? { total: Number(stats?.total ?? allTotal), withContract: Number(stats?.with_contract ?? 0), missingContract: Number(stats?.missing_contract ?? allTotal) } : undefined, lookups, context: { orgId, role: admin.role }, timing };
   }
 
   const workListFields = "id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, alternative_titles, production_companies, status, dfi_id, tmdb_id, imdb_id, description, poster_url, created_at";
@@ -922,9 +920,7 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
     includeSummary
       ? db.from("works").select("id", { count: "exact", head: true }).eq("org_id", orgId)
       : Promise.resolve({ count: null }),
-    includeSummary
-      ? db.from("contracts").select("work_id").eq("org_id", orgId).not("work_id", "is", null).limit(5000)
-      : Promise.resolve({ data: [], error: null }),
+    includeSummary ? db.rpc("get_admin_work_archive_stats", { p_org_id: orgId }).maybeSingle() : Promise.resolve({ data: null, error: null }),
     lookupsPromise,
   ]);
   if (countError) throw new Error(countError.message);
@@ -1112,8 +1108,8 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
     };
   });
   timer.mark("row-details");
-  const contractedWorks = new Set((contractStatsResult.data ?? []).map(row => row.work_id).filter(Boolean));
   const allTotal = totalAllCount ?? count ?? works.length;
+  const archiveStats = contractStatsResult.data as { total?: number | string; with_contract?: number | string; missing_contract?: number | string } | null;
   const timing = timer.finish({ rowCount: works.length, page, includeLookups, includeSummary });
   const lookups = normalizeAdminWorkLookups(lookupResults);
   return {
@@ -1122,9 +1118,9 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
     totalCount: count ?? works.length,
     totalAllCount: includeSummary ? allTotal : undefined,
     stats: includeSummary ? {
-      total: allTotal,
-      withContract: contractedWorks.size,
-      missingContract: Math.max(allTotal - contractedWorks.size, 0),
+      total: Number(archiveStats?.total ?? allTotal),
+      withContract: Number(archiveStats?.with_contract ?? 0),
+      missingContract: Number(archiveStats?.missing_contract ?? allTotal),
     } : undefined,
     lookups,
     context: { orgId, role: admin.role },
