@@ -23,7 +23,9 @@ import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { extractWordText } from "@/lib/word-text";
 
 import { requireMemberContext, requireOrgId } from "@/lib/org";
-import { getContractImportStates } from "@/app/actions/contract-imports";
+import { getContractImportStatesForOrg } from "@/lib/server/contract-import-state";
+import { createListLoadTimer } from "@/lib/server/list-load-timing";
+import type { ListPageResult } from "@/lib/list-query";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
 const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -88,7 +90,7 @@ async function contractValidationBlocker(
 
 type SeriesEpisodeWork = { id: string; title: string | null; season_number: number | null; episode_number: number | null; parent_work_id: string | null };
 
-type AdminContractsPageParams = {
+export type AdminContractsPageParams = {
   page?: number;
   pageSize?: number;
   search?: string;
@@ -97,6 +99,8 @@ type AdminContractsPageParams = {
   rightsHolderId?: string | null;
   sortKey?: "production" | "rightsHolder" | "employer" | "type" | "overenskomst" | "period" | "status";
   sortDir?: "asc" | "desc";
+  includeLookups?: boolean;
+  includeSummary?: boolean;
 };
 
 function clampPageSize(value: number | undefined) {
@@ -116,6 +120,20 @@ function intersectIds(base: Set<string> | null, next: Iterable<string>) {
   const nextSet = new Set(next);
   if (!base) return nextSet;
   return new Set([...base].filter(id => nextSet.has(id)));
+}
+
+function normalizeAdminContractLookups(results: any[] | null) {
+  if (!results) return undefined;
+  const [employersResult, rightsHoldersResult, worksResult] = results;
+  const rightsHolders = (rightsHoldersResult?.data ?? [])
+    .map((row: any) => Array.isArray(row.rettighedshavere) ? row.rettighedshavere[0] : row.rettighedshavere)
+    .filter((holder: any) => Boolean(holder?.id && holder?.full_name))
+    .sort((left: any, right: any) => left.full_name.localeCompare(right.full_name, "da-DK"));
+  return {
+    employers: employersResult?.data ?? [],
+    rightsHolders,
+    works: worksResult?.data ?? [],
+  };
 }
 
 // Henter alle afsnit-værker for en serie (selve serien + dens børneværker) i en org.
@@ -250,20 +268,39 @@ async function matchingAdminContractIds(
 }
 
 export async function fetchAdminContractsPage(params: AdminContractsPageParams = {}) {
+  const timer = createListLoadTimer("admin-contracts");
   const session = await createClient();
   const caller = await assertAdminRole(session, ADMIN_ROLES);
   if (!caller) return { success: false, error: "Ikke autoriseret", contracts: [], totalCount: 0, totalAllCount: 0 };
+  timer.mark("access");
 
   const db = createServiceClient();
   const orgId = caller.orgId;
+  const includeLookups = params.includeLookups === true;
+  const includeSummary = params.includeSummary !== false;
+  const lookupsPromise = includeLookups
+    ? Promise.all([
+        db.from("employers").select("id,name,parent_id,dfi_company_id").eq("org_id", orgId).order("name"),
+        db.from("org_affiliations").select("rettighedshavere(id,full_name)").eq("org_id", orgId),
+        db.from("works").select("id,title,year,poster_url").eq("org_id", orgId).order("title").limit(500),
+      ])
+    : Promise.resolve(null);
   const pageSize = clampPageSize(params.pageSize);
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   const matchedIds = await matchingAdminContractIds(db, orgId, params);
+  timer.mark("matching");
   if (matchedIds && matchedIds.size === 0) {
-    const { count: totalAllCount } = await db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null);
-    return { success: true, contracts: [], totalCount: 0, totalAllCount: totalAllCount ?? 0, stats: { total: totalAllCount ?? 0, validerede: 0 } };
+    const [{ count: totalAllCount }, lookupResults] = await Promise.all([
+      includeSummary
+        ? db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null)
+        : Promise.resolve({ count: null }),
+      lookupsPromise,
+    ]);
+    const lookups = normalizeAdminContractLookups(lookupResults);
+    const timing = timer.finish({ rowCount: 0, page, includeLookups, includeSummary });
+    return { success: true, contracts: [], totalCount: 0, totalAllCount: totalAllCount ?? undefined, stats: includeSummary ? { total: totalAllCount ?? 0, validerede: 0 } : undefined, lookups, context: { orgId, role: caller.role }, timing };
   }
 
   const selectFields = `
@@ -298,14 +335,20 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
   else if (params.sortKey === "period") listQuery = listQuery.order("start_date", { ascending, nullsFirst: false }).order("contract_date", { ascending, nullsFirst: false });
   else listQuery = listQuery.order("created_at", { ascending: false });
 
-  const [{ count, error: countError }, { data, error }, { count: totalAllCount }, { count: validatedCount }] = await Promise.all([
+  const [{ count, error: countError }, { data, error }, { count: totalAllCount }, { count: validatedCount }, lookupResults] = await Promise.all([
     countQuery,
     listQuery.range(from, to),
-    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null),
-    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null).eq("status", "valideret"),
+    includeSummary
+      ? db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null)
+      : Promise.resolve({ count: null }),
+    includeSummary
+      ? db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null).eq("status", "valideret")
+      : Promise.resolve({ count: null }),
+    lookupsPromise,
   ]);
   if (countError) return { success: false, error: countError.message, contracts: [], totalCount: 0, totalAllCount: 0 };
   if (error) return { success: false, error: error.message, contracts: [], totalCount: 0, totalAllCount: 0 };
+  timer.mark("list");
 
   const rawContracts = (data ?? []) as any[];
   const contractIds = rawContracts.map(row => row.id);
@@ -316,7 +359,7 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
     contractIds.length
       ? db.from("contract_ai_jobs").select("contract_id, status, error_message, created_at").in("contract_id", contractIds).is("attachment_id", null).order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
-    getContractImportStates(contractIds),
+    getContractImportStatesForOrg(db, orgId, contractIds),
   ]);
   if (commentsResult.error) return { success: false, error: commentsResult.error.message, contracts: [], totalCount: 0, totalAllCount: 0 };
   if (jobsResult.error) return { success: false, error: jobsResult.error.message, contracts: [], totalCount: 0, totalAllCount: 0 };
@@ -367,13 +410,19 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
       import_status: importStates.success ? importStates.states[row.id] ?? null : null,
     };
   });
+  timer.mark("row-details");
+  const timing = timer.finish({ rowCount: contracts.length, page, includeLookups, includeSummary });
+  const lookups = normalizeAdminContractLookups(lookupResults);
 
   return {
     success: true,
     contracts,
     totalCount: count ?? contracts.length,
-    totalAllCount: totalAllCount ?? count ?? contracts.length,
-    stats: { total: totalAllCount ?? count ?? contracts.length, validerede: validatedCount ?? 0 },
+    totalAllCount: includeSummary ? totalAllCount ?? count ?? contracts.length : undefined,
+    stats: includeSummary ? { total: totalAllCount ?? count ?? contracts.length, validerede: validatedCount ?? 0 } : undefined,
+    lookups,
+    context: { orgId, role: caller.role },
+    timing,
   };
 }
 
@@ -730,6 +779,222 @@ export async function fetchMemberContractsList() {
     metadata: { resultCount: data?.length ?? 0 },
   });
   return { success: true, contracts: data ?? [] };
+}
+
+export type MemberContractsPageParams = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: string;
+  workType?: string;
+  sortKey?: "title" | "employer" | "overenskomst" | "rights" | "status" | "date";
+  sortDir?: "asc" | "desc";
+};
+
+type MemberContractListRow = {
+  id: string;
+  type: string | null;
+  overenskomst: string | null;
+  status: string;
+  contract_date: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  pdf_url: string | null;
+  processed_pdf_url: string | null;
+  work_id: string | null;
+  working_title: string | null;
+  season_number: number | null;
+  episode_numbers: number[] | null;
+  created_at: string | null;
+  works: unknown;
+  employers: unknown;
+  contract_validations: unknown;
+  contract_attachments: never[];
+  contract_comments: Array<{
+    id: string;
+    author_role: "admin";
+    message: string;
+    created_at: string;
+    member_read_at: null;
+    admin_read_at: string | null;
+  }>;
+  episode_confirmed: boolean;
+};
+
+export async function fetchMemberContractsPage(
+  params: MemberContractsPageParams = {},
+): Promise<{ success: true; result: ListPageResult<MemberContractListRow> } | { success: false; error: string }> {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const db = createServiceClient();
+  const context = await requireMemberContext(db, user.id).catch(() => null);
+  if (!context?.rightsHolderId) return { success: false, error: "Ingen rettighedshaverprofil i den aktive organisation" };
+
+  const pageSize = [20, 50, 100].includes(Number(params.pageSize)) ? Number(params.pageSize) : 20;
+  const page = Math.max(1, Math.floor(Number(params.page) || 1));
+  const from = (page - 1) * pageSize;
+  const search = params.search?.trim() ?? "";
+  let matchedIds: Set<string> | null = null;
+  let hasEmptyMatch = false;
+
+  const narrowTo = (ids: Iterable<string>) => {
+    const next = new Set(ids);
+    matchedIds = matchedIds === null ? next : new Set([...matchedIds].filter(id => next.has(id)));
+    hasEmptyMatch = matchedIds.size === 0;
+  };
+
+  if (search) {
+    const like = `%${search.replace(/[,%()]/g, " ")}%`;
+    const [worksResult, employersResult, directResult] = await Promise.all([
+      db.from("works").select("id").ilike("title", like).limit(500),
+      db.from("employers").select("id").ilike("name", like).limit(500),
+      db.from("contracts")
+        .select("id")
+        .eq("org_id", context.orgId)
+        .eq("rights_holder_id", context.rightsHolderId)
+        .or(`working_title.ilike.${like},overenskomst.ilike.${like}`)
+        .limit(1000),
+    ]);
+    const error = worksResult.error ?? employersResult.error ?? directResult.error;
+    if (error) return { success: false, error: error.message };
+    const ids = new Set((directResult.data ?? []).map(row => row.id));
+    const workIds = (worksResult.data ?? []).map(row => row.id);
+    const employerIds = (employersResult.data ?? []).map(row => row.id);
+    const related = await Promise.all([
+      workIds.length
+        ? db.from("contracts").select("id").eq("org_id", context.orgId).eq("rights_holder_id", context.rightsHolderId).in("work_id", workIds).limit(1000)
+        : Promise.resolve({ data: [], error: null }),
+      employerIds.length
+        ? db.from("contracts").select("id").eq("org_id", context.orgId).eq("rights_holder_id", context.rightsHolderId).in("employer_id", employerIds).limit(1000)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    for (const result of related) {
+      if (result.error) return { success: false, error: result.error.message };
+      for (const row of result.data ?? []) ids.add(row.id);
+    }
+    narrowTo(ids);
+  }
+
+  if (params.workType && params.workType !== "all") {
+    const { data: works, error } = await db.from("works").select("id").eq("type", params.workType).limit(2000);
+    if (error) return { success: false, error: error.message };
+    const workIds = (works ?? []).map(row => row.id);
+    if (!workIds.length) narrowTo([]);
+    else {
+      const { data, error: contractError } = await db.from("contracts")
+        .select("id")
+        .eq("org_id", context.orgId)
+        .eq("rights_holder_id", context.rightsHolderId)
+        .in("work_id", workIds)
+        .limit(2000);
+      if (contractError) return { success: false, error: contractError.message };
+      narrowTo((data ?? []).map(row => row.id));
+    }
+  }
+
+  if (params.status === "messages") {
+    const { data, error } = await db.from("contract_comments")
+      .select("contract_id,contracts!inner(org_id,rights_holder_id)")
+      .eq("author_role", "admin")
+      .is("member_read_at", null)
+      .eq("contracts.org_id", context.orgId)
+      .eq("contracts.rights_holder_id", context.rightsHolderId)
+      .limit(2000);
+    if (error) return { success: false, error: error.message };
+    narrowTo((data ?? []).map(row => row.contract_id));
+  }
+
+  const base = () => db.from("contracts")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", context.orgId)
+    .eq("rights_holder_id", context.rightsHolderId)
+    .is("superseded_by_contract_id", null);
+  const apply = (query: any) => {
+    let next = query;
+    if (matchedIds !== null) next = next.in("id", [...matchedIds]);
+    if (params.status === "linked") next = next.not("work_id", "is", null);
+    else if (params.status === "missingWork") next = next.is("work_id", null);
+    else if (params.status === "missingDocument") next = next.is("pdf_url", null);
+    else if (params.status && !["all", "messages", "actionRequired"].includes(params.status)) next = next.eq("status", params.status);
+    return next;
+  };
+
+  if (hasEmptyMatch) {
+    const { count: totalCount } = await base();
+    return { success: true, result: { rows: [], page: 1, pageSize, filteredCount: 0, totalCount: totalCount ?? 0, hasNextPage: false } };
+  }
+
+  const countQuery = apply(base());
+  let listQuery = apply(db.from("contracts").select(`
+    id,type,overenskomst,status,contract_date,start_date,end_date,pdf_url,processed_pdf_url,
+    work_id,working_title,season_number,episode_numbers,created_at,
+    works(id,title,year,type),employers(id,name),
+    contract_validations(has_credit_clause,has_overenskomst_incorporation,validated_at)
+  `).eq("org_id", context.orgId).eq("rights_holder_id", context.rightsHolderId).is("superseded_by_contract_id", null));
+
+  const ascending = params.sortDir === "asc";
+  if (params.sortKey === "overenskomst") listQuery = listQuery.order("overenskomst", { ascending }).order("id", { ascending: true });
+  else if (params.sortKey === "status") listQuery = listQuery.order("status", { ascending }).order("id", { ascending: true });
+  else listQuery = listQuery.order("created_at", { ascending: params.sortKey === "date" ? ascending : false }).order("id", { ascending: true });
+
+  const [countResult, totalResult, listResult] = await Promise.all([
+    countQuery,
+    base(),
+    listQuery.range(from, from + pageSize - 1),
+  ]);
+  const queryError = countResult.error ?? totalResult.error ?? listResult.error;
+  if (queryError) return { success: false, error: queryError.message };
+
+  const rawRows = (listResult.data ?? []) as unknown as Array<Omit<MemberContractListRow, "contract_comments" | "contract_attachments" | "episode_confirmed">>;
+  const ids = rawRows.map(row => row.id);
+  const [commentsResult, confirmationsResult] = await Promise.all([
+    ids.length
+      ? db.from("contract_comments").select("id,contract_id,created_at,member_read_at,admin_read_at").in("contract_id", ids).eq("author_role", "admin").is("member_read_at", null).order("created_at")
+      : Promise.resolve({ data: [], error: null }),
+    ids.length
+      ? db.from("contract_episode_confirmations").select("contract_id").in("contract_id", ids).is("invalidated_at", null)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  const detailError = commentsResult.error ?? confirmationsResult.error;
+  if (detailError) return { success: false, error: detailError.message };
+  const confirmed = new Set((confirmationsResult.data ?? []).map(row => row.contract_id));
+  const comments = new Map<string, MemberContractListRow["contract_comments"]>();
+  for (const row of commentsResult.data ?? []) {
+    const values = comments.get(row.contract_id) ?? [];
+    values.push({ ...row, author_role: "admin", message: "", member_read_at: null });
+    comments.set(row.contract_id, values);
+  }
+  const rows = rawRows.map(row => ({
+    ...row,
+    contract_attachments: [] as never[],
+    contract_comments: comments.get(row.id) ?? [],
+    episode_confirmed: confirmed.has(row.id),
+  }));
+  const filteredCount = countResult.count ?? 0;
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: context.orgId, role: "member" }, "portal", "portal.contracts.list"),
+    action: "read",
+    entityType: "contracts",
+    entityLabel: "Mine kontrakter",
+    targetMemberUuid: context.rightsHolderId,
+    purposeCode: "member_self_service",
+    legalBasis: "GDPR Art. 6(1)(b)",
+    dataCategories: ["contract_data", "salary_data", "message_data"],
+    orgIds: [context.orgId],
+    metadata: { resultCount: rows.length, page, pageSize },
+  });
+  return {
+    success: true,
+    result: {
+      rows,
+      page,
+      pageSize,
+      filteredCount,
+      totalCount: totalResult.count ?? filteredCount,
+      hasNextPage: from + rows.length < filteredCount,
+    },
+  };
 }
 
 export async function linkContractToWork(

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import dynamic from "next/dynamic";
 import { Film, Plus, Search, X, Trash2, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,8 +13,6 @@ import { fetchMemberSeasonEditContext, fetchMemberSeasonEpisodes, fetchMemberWor
 import { markWorkRequestCommentsRead } from "@/app/actions/work-management";
 import { useI18n } from "@/lib/i18n";
 import type { ManualWorkFormSeed } from "@/lib/manual-work";
-import { AddWorkModal } from "./components/AddWorkModal";
-import { EditWorkModal } from "./components/EditWorkModal";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
 import { ExpandableListTrigger, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
@@ -21,10 +20,17 @@ import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { ListResultSummary } from "@/components/list-result-summary";
 import { fetchMemberShareTaskTarget } from "@/app/actions/work-share-cases";
 import { confirmNoCoeditors, fetchMemberCollaborationReviews, fetchMemberWorkReviewTasks } from "@/app/actions/work-collaboration-reviews";
-import MineKontrakterClient, { type Contract } from "../mine-kontrakter/MineKontrakterClient";
+import type { Contract } from "../mine-kontrakter/MineKontrakterClient";
 import { resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 import type { MemberWorkReviewTask } from "@/lib/member-work-review";
 import { collaborationReviewIndicator } from "@/lib/work-collaboration-review";
+import { memberOverviewItemsToAssignments } from "@/lib/member-work-overview";
+import type { MemberOverviewItem } from "@/lib/member-work-overview";
+import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
+
+const AddWorkModal = dynamic(() => import("./components/AddWorkModal").then(module => module.AddWorkModal), { ssr: false });
+const EditWorkModal = dynamic(() => import("./components/EditWorkModal").then(module => module.EditWorkModal), { ssr: false });
+const MineKontrakterClient = dynamic(() => import("../mine-kontrakter/MineKontrakterClient"), { ssr: false });
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -105,88 +111,6 @@ type CollaborationReview = {
   } | null;
 };
 
-type MemberOverviewItem =
-  | {
-      kind: "work";
-      work: Work & { assignment: Assignment; contract_count?: number; pending_count?: number; unread_count?: number };
-      contractCount: number;
-      pendingCount: number;
-      unreadCount: number;
-    }
-  | {
-      kind: "season";
-      key: string;
-      parentWorkId: string;
-      seasonNumber: number;
-      title: string;
-      type: string;
-      year: number | null;
-      posterUrl: string | null;
-      episodeCount: number;
-      workIds: string[];
-      assignmentIds: string[];
-      contractCount: number;
-      pendingCount: number;
-      unreadCount: number;
-      roleSummary: string | null;
-      createdAt: string | null;
-      episodeSelectionStatus?: "pending" | "confirmed";
-      episodeScopeId?: string | null;
-      coversWholeSeason?: boolean;
-    };
-
-export function memberOverviewItemsToAssignments(items: MemberOverviewItem[]): Assignment[] {
-  return items.map(item => {
-    if (item.kind === "work") {
-      return {
-        ...item.work.assignment,
-        works: item.work.assignment.works ? {
-          ...item.work.assignment.works,
-          overview_contract_count: item.contractCount,
-          overview_pending_count: item.pendingCount,
-          overview_unread_count: item.unreadCount,
-        } : null,
-      };
-    }
-    return {
-      id: item.key,
-      role: item.roleSummary,
-      contract_id: null,
-      episode_id: null,
-      created_at: item.createdAt,
-      episodes: null,
-      works: {
-        id: item.key,
-        title: item.title,
-        type: item.type,
-        year: item.year,
-        duration_minutes: null,
-        episode_count: item.episodeCount,
-        parent_work_id: item.parentWorkId,
-        season_number: item.seasonNumber,
-        episode_number: null,
-        genre: null,
-        director: null,
-        production_companies: null,
-        status: item.pendingCount > 0 ? "til_godkendelse" : "aktiv",
-        dfi_id: null,
-        tmdb_id: null,
-        poster_url: item.posterUrl,
-        description: null,
-        is_season_group: true,
-        group_key: item.key,
-        child_work_ids: item.workIds,
-        child_assignment_ids: item.assignmentIds,
-        overview_contract_count: item.contractCount,
-        overview_pending_count: item.pendingCount,
-        overview_unread_count: item.unreadCount,
-        episode_selection_status: item.episodeSelectionStatus,
-        episode_scope_id: item.episodeScopeId,
-        covers_whole_season: item.coversWholeSeason,
-      },
-    };
-  });
-}
 function typeLabel(t: string, locale: "da" | "en" = "da") {
   const key = t?.toLowerCase();
   const canonical: Record<string, "feature" | "series" | "documentary" | "docSeries" | "docudrama" | "short" | "animation"> = {
@@ -285,19 +209,20 @@ function isSeriesType(type: string | null | undefined) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName, defaultRoleLabel, coeditorWord,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName, defaultRoleLabel, coeditorWord, pageResult, initialQuery,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
   broadcasters: BroadcasterLogo[];
   rightsHolderId: string | null;
-  userName: string;
   dfiPersonId: number | null;
   contractedWorkIds: string[];
   contracts: Contract[];
   organisationShortName: string;
   defaultRoleLabel: string;
   coeditorWord: string;
+  pageResult: { page: number; pageSize: number; filteredCount: number; totalCount: number; hasNextPage: boolean };
+  initialQuery: { search: string; workType: string; status: string; sortKey: string; sortDir: "asc" | "desc" };
 }) {
   const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
@@ -331,14 +256,14 @@ export default function MineVaerkerClient({
     return map;
   }, [allAssignments, coeditorWord, defaultRoleLabel]);
 
-  const [search, setSearch]     = useState("");
-  const [catFilter, setCatFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [sortKey, setSortKey]   = useState<SortKey>("date");
-  const [sortDir, setSortDir]   = useState<"asc" | "desc">("desc");
+  const [search, setSearch]     = useState(initialQuery.search);
+  const [catFilter, setCatFilter] = useState(initialQuery.workType);
+  const [statusFilter, setStatusFilter] = useState(initialQuery.status);
+  const [sortKey, setSortKey]   = useState<SortKey>(initialQuery.sortKey as SortKey);
+  const [sortDir, setSortDir]   = useState<"asc" | "desc">(initialQuery.sortDir);
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg]           = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(pageResult.pageSize);
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
   const [expandedSeries, setExpandedSeries] = useState<Set<string>>(new Set());
   const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, Assignment[]>>({});
@@ -373,6 +298,24 @@ export default function MineVaerkerClient({
 
   const router   = useRouter();
   const searchParams = useSearchParams();
+
+  React.useEffect(() => setAssignments(initialAssignments), [initialAssignments]);
+  React.useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      const setOrDelete = (key: string, value: string, fallback: string) => value === fallback ? params.delete(key) : params.set(key, value);
+      setOrDelete("q", search.trim(), "");
+      setOrDelete("type", catFilter, "all");
+      setOrDelete("status", statusFilter, "all");
+      setOrDelete("sort", sortKey, "date");
+      setOrDelete("direction", sortDir, "desc");
+      setOrDelete("pageSize", String(pageSize), "20");
+      if (search !== initialQuery.search || catFilter !== initialQuery.workType || statusFilter !== initialQuery.status || sortKey !== initialQuery.sortKey || sortDir !== initialQuery.sortDir || pageSize !== pageResult.pageSize) params.delete("page");
+      const next = params.toString();
+      if (next !== (searchParams?.toString() ?? "")) router.replace(next ? `/portal/mine-vaerker?${next}` : "/portal/mine-vaerker", { scroll: false });
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [catFilter, initialQuery, pageResult.pageSize, pageSize, router, search, searchParams, sortDir, sortKey, statusFilter]);
 
   const loadCollaborationReviews = React.useCallback(async () => {
     if (!rightsHolderId) return;
@@ -518,7 +461,7 @@ export default function MineVaerkerClient({
       setCollaborationSaving(false);
     }
   };
-  const visibleAssignments = filtered.slice(0, pageSize);
+  const visibleAssignments = filtered;
   const selectionIdsFor = (assignment: Assignment) => assignment.works?.is_season_group
     ? assignment.works.child_assignment_ids ?? []
     : [assignment.id];
@@ -642,7 +585,16 @@ export default function MineVaerkerClient({
 
   const reloadAssignments = async () => {
     if (!rightsHolderId) return;
-    const overview = await fetchMemberWorkOverview({ rightsHolderId });
+    const overview = await fetchMemberWorkOverview({
+      rightsHolderId,
+      page: pageResult.page,
+      pageSize,
+      search,
+      workType: catFilter,
+      status: statusFilter,
+      sortKey,
+      sortDir,
+    });
     if (overview.success) {
       setAssignments(memberOverviewItemsToAssignments(overview.items as unknown as MemberOverviewItem[]));
       setSeriesEpisodes({});
@@ -915,6 +867,10 @@ export default function MineVaerkerClient({
 
   return (
     <div className="flex flex-col gap-6">
+      <ListReadinessMarker route="member-works" stage="primary" />
+      {assignments.length > 0 && <ListReadinessMarker route="member-works" stage="first-row" />}
+      <ListReadinessMarker route="member-works" stage="secondary" />
+      <ListReadinessMarker route="member-works" stage="complete" />
 
       {/* Header */}
       <PortalPageHeader
@@ -1036,7 +992,7 @@ export default function MineVaerkerClient({
 	          <label className="flex items-center gap-2 text-sm text-muted-foreground">
 	            Vis
 	            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground">
-	              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+		              {[20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
 	            </select>
 	          </label>
 	          {filtered.length > 0 && (
@@ -1066,7 +1022,7 @@ export default function MineVaerkerClient({
             </Button>
           </div>
 
-          <ListResultSummary filteredCount={filtered.length} totalCount={assignments.length} selectedCount={selected.length} className="lg:col-span-full" />
+          <ListResultSummary filteredCount={pageResult.filteredCount} totalCount={pageResult.totalCount} selectedCount={selected.length} className="lg:col-span-full" />
         </div>
 
 		        {/* Kolonnehoveder */}
@@ -1324,8 +1280,20 @@ export default function MineVaerkerClient({
         })}
 
         {/* Footer */}
-        <div className="px-5 py-3 text-xs text-gray-400 border-t border-gray-100">
-          {Math.min(filtered.length, pageSize)} {t("works.of")} {filtered.length} {t("works.worksLower")}
+        <div className="flex items-center justify-between gap-3 border-t px-5 py-3 text-xs text-muted-foreground">
+          <span>Side {pageResult.page} af {Math.max(1, Math.ceil(pageResult.filteredCount / pageResult.pageSize))}</span>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={pageResult.page <= 1} onClick={() => {
+              const params = new URLSearchParams(searchParams?.toString() ?? "");
+              params.set("page", String(Math.max(1, pageResult.page - 1)));
+              router.replace(`/portal/mine-vaerker?${params.toString()}`, { scroll: false });
+            }}>Forrige</Button>
+            <Button type="button" variant="outline" size="sm" disabled={!pageResult.hasNextPage} onClick={() => {
+              const params = new URLSearchParams(searchParams?.toString() ?? "");
+              params.set("page", String(pageResult.page + 1));
+              router.replace(`/portal/mine-vaerker?${params.toString()}`, { scroll: false });
+            }}>Næste</Button>
+          </div>
         </div>
       </div>
 
@@ -1436,16 +1404,18 @@ export default function MineVaerkerClient({
       )}
 
       {/* ── Tilføj-panel ──────────────────────────────────────────── */}
-      <AddWorkModal
-        isOpen={isAdding}
-        onClose={() => { setIsAdding(false); setInitialManualWork(null); }}
-        rightsHolderId={rightsHolderId}
-        onWorkAdded={(message, success) => setMsg({ type: success ? "success" : "error", text: message })}
-        reloadAssignments={reloadAssignments}
-        locale={locale}
-        initialQuery={initialAddQuery}
-        initialManualWork={initialManualWork}
-      />
+      {isAdding && (
+        <AddWorkModal
+          isOpen
+          onClose={() => { setIsAdding(false); setInitialManualWork(null); }}
+          rightsHolderId={rightsHolderId}
+          onWorkAdded={(message, success) => setMsg({ type: success ? "success" : "error", text: message })}
+          reloadAssignments={reloadAssignments}
+          locale={locale}
+          initialQuery={initialAddQuery}
+          initialManualWork={initialManualWork}
+        />
+      )}
 
       {/* ── Redigér-panel ──────────────────────────────────────────── */}
       {editAssignment && (

@@ -27,6 +27,7 @@ import { canLinkContractWork } from "@/lib/contract-link-access";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
+import { createListLoadTimer } from "@/lib/server/list-load-timing";
 
 import { requireOrgId } from "@/lib/org";
 import { resolveAppAccessContext } from "@/lib/app-access-context";
@@ -114,7 +115,7 @@ type WorkRequestPayload = Partial<WorkCorrectionData> & {
   targetSeasonNumber?: number;
 };
 
-type AdminWorksPageParams = {
+export type AdminWorksPageParams = {
   page?: number;
   pageSize?: number;
   search?: string;
@@ -125,6 +126,8 @@ type AdminWorksPageParams = {
   rightsHolderId?: string | null;
   sortKey?: "title" | "type" | "year" | "data" | "broadcaster" | "status";
   sortDir?: "asc" | "desc";
+  includeLookups?: boolean;
+  includeSummary?: boolean;
 };
 
 const BROADCAST_STREAM_NUMBER = "broadcast/stream";
@@ -220,6 +223,18 @@ function intersectIds(base: Set<string> | null, next: Iterable<string>) {
   const nextSet = new Set(next);
   if (!base) return nextSet;
   return new Set([...base].filter(id => nextSet.has(id)));
+}
+
+function normalizeAdminWorkLookups(results: any[] | null) {
+  if (!results) return undefined;
+  const [rightsHoldersResult, broadcastersResult] = results;
+  const rightsHolders = (rightsHoldersResult?.data ?? [])
+    .map((row: any) => Array.isArray(row.rettighedshavere) ? row.rettighedshavere[0] : row.rettighedshavere)
+    .filter((holder: any) => Boolean(holder?.id && holder?.full_name))
+    .sort((left: any, right: any) => left.full_name.localeCompare(right.full_name, "da-DK"));
+  const broadcasters = (broadcastersResult?.data ?? [])
+    .filter((row: any) => Boolean(row?.id && row?.name));
+  return { rightsHolders, broadcasters };
 }
 
 async function matchingAdminWorkIds(
@@ -828,26 +843,42 @@ export async function submitWorkDataCorrection(params: {
 }
 
 export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
+  const timer = createListLoadTimer("admin-works");
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase, ADMIN_ROLES);
+  const admin = await assertAdminRole(supabase, ADMIN_ROLES, user.id);
   if (!admin) throw new Error("Mangler adminrettigheder.");
+  timer.mark("access");
 
   const db = createServiceClient();
-  const orgId = await currentOrgId(db, user.id);
+  const orgId = admin.orgId;
+  const includeLookups = params.includeLookups === true;
+  const includeSummary = params.includeSummary !== false;
+  const lookupsPromise = includeLookups
+    ? Promise.all([
+        db.from("org_affiliations").select("rettighedshavere(id,full_name)").eq("org_id", orgId),
+        db.from("broadcasters").select("id,name,logo_path,content_type").order("name", { ascending: true }),
+      ])
+    : Promise.resolve(null);
   const pageSize = clampPageSize(params.pageSize);
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   const matchedIds = await matchingAdminWorkIds(db, orgId, params);
+  timer.mark("matching");
   if (matchedIds && matchedIds.size === 0) {
-    const [{ count: totalAllCount }, { data: contractRows, error: contractError }] = await Promise.all([
-      db.from("works").select("id", { count: "exact", head: true }).eq("org_id", orgId),
-      db.from("contracts").select("work_id").eq("org_id", orgId).not("work_id", "is", null).limit(5000),
+    const [{ count: totalAllCount }, statsResult, lookupResults] = await Promise.all([
+      includeSummary
+        ? db.from("works").select("id", { count: "exact", head: true }).eq("org_id", orgId)
+        : Promise.resolve({ count: null }),
+      includeSummary ? db.rpc("get_admin_work_archive_stats", { p_org_id: orgId }).maybeSingle() : Promise.resolve({ data: null, error: null }),
+      lookupsPromise,
     ]);
-    if (contractError) throw new Error(contractError.message);
-    const contractedWorks = new Set((contractRows ?? []).map(row => row.work_id).filter(Boolean));
+    if (statsResult.error) throw new Error(statsResult.error.message);
     const allTotal = totalAllCount ?? 0;
-    return { success: true, works: [], totalCount: 0, totalAllCount: allTotal, stats: { total: allTotal, withContract: contractedWorks.size, missingContract: Math.max(allTotal - contractedWorks.size, 0) } };
+    const lookups = normalizeAdminWorkLookups(lookupResults);
+    const timing = timer.finish({ rowCount: 0, page, includeLookups, includeSummary });
+    const stats = statsResult.data as { total?: number | string; with_contract?: number | string; missing_contract?: number | string } | null;
+    return { success: true, works: [], totalCount: 0, totalAllCount: includeSummary ? allTotal : undefined, stats: includeSummary ? { total: Number(stats?.total ?? allTotal), withContract: Number(stats?.with_contract ?? 0), missingContract: Number(stats?.missing_contract ?? allTotal) } : undefined, lookups, context: { orgId, role: admin.role }, timing };
   }
 
   const workListFields = "id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, alternative_titles, production_companies, status, dfi_id, tmdb_id, imdb_id, description, poster_url, created_at";
@@ -883,20 +914,26 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
   else if (params.sortKey === "status") workListQuery = workListQuery.order("status", { ascending }).order("created_at", { ascending: false });
   else workListQuery = workListQuery.order("title", { ascending });
 
-  const [{ count, error: countError }, workListResult, { count: totalAllCount }] = await Promise.all([
+  const [{ count, error: countError }, workListResult, { count: totalAllCount }, contractStatsResult, lookupResults] = await Promise.all([
     countQuery,
     workListQuery.range(from, to),
-    db.from("works").select("id", { count: "exact", head: true }).eq("org_id", orgId),
+    includeSummary
+      ? db.from("works").select("id", { count: "exact", head: true }).eq("org_id", orgId)
+      : Promise.resolve({ count: null }),
+    includeSummary ? db.rpc("get_admin_work_archive_stats", { p_org_id: orgId }).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    lookupsPromise,
   ]);
   if (countError) throw new Error(countError.message);
 
   const { data, error } = workListResult;
   if (error) throw new Error(error.message);
+  if (contractStatsResult.error) throw new Error(contractStatsResult.error.message);
+  timer.mark("list");
   const rows = data ?? [];
 
   const workIds = rows.map(work => work.id);
   const parentIds = uniqueIds(rows.map(work => (work as { parent_work_id?: string | null }).parent_work_id));
-  const [requestsResult, contractsResult, assignmentsResult, productionNumbersResult, distributionsResult, parentsResult, contractStatsResult] = await Promise.all([
+  const [requestsResult, contractsResult, assignmentsResult, productionNumbersResult, distributionsResult, parentsResult] = await Promise.all([
     workIds.length
       ? db.from("work_change_requests").select("id, work_id, status").eq("org_id", orgId).in("work_id", workIds)
       : Promise.resolve({ data: [], error: null }),
@@ -915,9 +952,8 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
     parentIds.length
       ? db.from("works").select(workListFields).eq("org_id", orgId).in("id", parentIds)
       : Promise.resolve({ data: [], error: null }),
-    db.from("contracts").select("work_id").eq("org_id", orgId).not("work_id", "is", null).limit(5000),
   ]);
-  for (const result of [requestsResult, contractsResult, assignmentsResult, productionNumbersResult, distributionsResult, parentsResult, contractStatsResult]) {
+  for (const result of [requestsResult, contractsResult, assignmentsResult, productionNumbersResult, distributionsResult, parentsResult]) {
     if (result.error) throw new Error(result.error.message);
   }
 
@@ -1071,18 +1107,24 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
       overview_assigned_user_count: group.assignedUserCount,
     };
   });
-  const contractedWorks = new Set((contractStatsResult.data ?? []).map(row => row.work_id).filter(Boolean));
+  timer.mark("row-details");
   const allTotal = totalAllCount ?? count ?? works.length;
+  const archiveStats = contractStatsResult.data as { total?: number | string; with_contract?: number | string; missing_contract?: number | string } | null;
+  const timing = timer.finish({ rowCount: works.length, page, includeLookups, includeSummary });
+  const lookups = normalizeAdminWorkLookups(lookupResults);
   return {
     success: true,
     works,
     totalCount: count ?? works.length,
-    totalAllCount: allTotal,
-    stats: {
-      total: allTotal,
-      withContract: contractedWorks.size,
-      missingContract: Math.max(allTotal - contractedWorks.size, 0),
-    },
+    totalAllCount: includeSummary ? allTotal : undefined,
+    stats: includeSummary ? {
+      total: Number(archiveStats?.total ?? allTotal),
+      withContract: Number(archiveStats?.with_contract ?? 0),
+      missingContract: Number(archiveStats?.missing_contract ?? allTotal),
+    } : undefined,
+    lookups,
+    context: { orgId, role: admin.role },
+    timing,
   };
 }
 
