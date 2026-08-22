@@ -20,6 +20,7 @@ import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { formatAftalelicensWorkTitle } from "@/lib/aftalelicens-work-title"
 import { applyAftalelicensRerunFactor, markAftalelicensReruns } from "@/lib/aftalelicens-reruns"
+import { resolveAftalelicensWorkType } from "@/lib/aftalelicens-work-type"
 import { formatScreeningDateTime, parseScreeningDate } from "@/lib/screening-date-time"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
@@ -674,16 +675,23 @@ function SortTable({ vaerker, onUpdate }: {
             if (works.length > 1) { unmatched.push(v); continue }
             const work = works[0]
             if (work) {
-                // vaerkType sættes bevidst ikke her — den fastlægges i den
-                // eksisterende, dedikerede sorterings-UI, ikke gættet ud fra
-                // et endnu ikke fuldt afklaret works.type-vokabular.
+                const vaerkType = resolveAftalelicensWorkType({
+                    storedType: v.vaerkType,
+                    matchedWorkType: work.type,
+                    sourceCategory: v.category,
+                    duration: v.duration,
+                    season: v.season,
+                    episode: v.episode,
+                })
                 onUpdate(v.id, {
                     sortStatus: "approved",
+                    vaerkType,
                     sortedAt: new Date().toISOString(),
                     sortedBy: "db",
                 })
                 allSuggestions.set(v.id, {
                     status: "godkend",
+                    type: vaerkType,
                     reason: "Match i værksdatabase",
                 })
                 dbMatch++
@@ -2828,7 +2836,9 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     confirmedMatches: VaerkMatch[]
     batchLabel: string
 }) {
-    const approved = vaerker.filter(v => v.sortStatus === "approved" && v.vaerkType)
+    const approvedRows = vaerker.filter(v => v.sortStatus === "approved")
+    const approved = approvedRows.filter(v => v.vaerkType)
+    const missingType = approvedRows.filter(v => !v.vaerkType)
     const [vaegte, setVaegte] = useState<Record<VaerkType, number>>(DEFAULT_VAEGTE)
     const [extra, setExtra] = useState<AftalelicensVaegtExtra>(DEFAULT_VAEGT_EXTRA)
 
@@ -2899,14 +2909,24 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
 
     if (approved.length === 0) {
         return (
-            <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-                Sorter og godkend værker med en værktype for at beregne point
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                {missingType.length > 0
+                    ? `${missingType.length} godkendt${missingType.length === 1 ? " værk mangler" : "e værker mangler"} værktype: ${missingType.map(v => v.rawTitle).join(", ")}. Gå tilbage til Sortering og vælg en type.`
+                    : "Sorter og godkend værker med en værktype for at beregne point."}
             </div>
         )
     }
 
     return (
         <div className="space-y-6">
+            {missingType.length > 0 && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                        {missingType.length} godkendt{missingType.length === 1 ? " værk mangler" : "e værker mangler"} værktype og kan ikke beregnes: {missingType.map(v => v.rawTitle).join(", ")}. Ret typen under Sortering.
+                    </span>
+                </div>
+            )}
             {/* Weighting */}
             <div className="flex items-center justify-between">
                 <div>
@@ -3520,7 +3540,13 @@ export default function AftalelicensDetailPage() {
                 duration: r.duration_minutes ?? undefined,
                 productionYear: r.production_year ?? undefined,
                 sortStatus: (r.sort_status ?? "pending") as AftalelicensVaerk["sortStatus"],
-                vaerkType: (r.vaerk_type as VaerkType | null) ?? undefined,
+                vaerkType: resolveAftalelicensWorkType({
+                    storedType: r.vaerk_type,
+                    sourceCategory: r.category,
+                    duration: r.duration_minutes ?? undefined,
+                    season: r.season ?? undefined,
+                    episode: r.episode ?? undefined,
+                }),
                 sortedBy: r.sorted_by ?? undefined,
                 sortedAt: r.sorted_at ?? undefined,
                 viewCount: r.view_count ?? undefined,
