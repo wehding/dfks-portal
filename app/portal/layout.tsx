@@ -23,6 +23,7 @@ import {
     BadgeCheck,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
+import { getAccessContextCached, invalidateAccessContextCache } from "@/lib/access-context-client"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { LanguageToggle } from "@/components/language-toggle"
@@ -134,7 +135,7 @@ export default function PortalLayout({
         const supabase = createClient()
 
         const fetchCount = async () => {
-            const contextResponse = await fetch("/api/access/context", { cache: "no-store" })
+            const contextResponse = await getAccessContextCached<AccessContextResponse>()
             if (!contextResponse.ok) {
                 if (contextResponse.status === 401) {
                     router.replace("/")
@@ -142,7 +143,7 @@ export default function PortalLayout({
                 }
                 return
             }
-            const context = await contextResponse.json() as AccessContextResponse
+            const context = contextResponse.data!
             if (!context.canUseMember || !context.rightsHolderId) {
                 router.replace(context.canUseAdmin ? "/admin" : "/")
                 return
@@ -322,12 +323,14 @@ export default function PortalLayout({
     }
 
     const handleOrganisationChange = async (orgId: string) => {
+        invalidateAccessContextCache()
         const response = await fetch("/api/access/context", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ orgId }),
         })
         if (!response.ok) return
+        invalidateAccessContextCache()
         const result = await response.json() as { canUseAdmin?: boolean; canUseMember?: boolean }
         setActiveOrgId(orgId)
         window.dispatchEvent(new Event("admin-context-updated"))

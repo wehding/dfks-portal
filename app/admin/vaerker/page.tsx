@@ -40,11 +40,9 @@ import {
   createAdminWork,
   deleteAdminWorkPermanently,
   deleteAdminWorksPermanently,
-  fetchAdminBroadcasters,
   fetchAdminWorkDetail,
   fetchAdminWorkRequestDetail,
   fetchAdminSeasonEpisodes,
-  fetchAdminRightsHolders,
   addAdminWorkRequestComment,
   fetchAdminWorksPage,
   markAdminWorkMessagesReadByWorkIds,
@@ -825,19 +823,25 @@ function VaerksadministrationContent() {
   const [activeTab, setActiveTab] = useState<"oversigt" | "beskeder">("oversigt");
   const [beskedCount, setBeskedCount] = useState<number>(0);
   const lookupsLoadedRef = useRef(false);
+  const summaryLoadedRef = useRef(false);
+  const loadRequestRef = useRef(0);
 
   useEffect(() => {
     async function fetchBeskedCount() {
       const result = await fetchAdminWorkInbox();
       if (result.success) setBeskedCount((result.threads ?? []).reduce((sum, thread) => sum + thread.unreadCount, 0));
     }
-    void fetchBeskedCount();
+    const timer = window.setTimeout(() => void fetchBeskedCount(), 1_000);
     const reload = () => void fetchBeskedCount();
     window.addEventListener("works-updated", reload);
-    return () => window.removeEventListener("works-updated", reload);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("works-updated", reload);
+    };
   }, []);
 
   const load = useCallback(async (page = currentPage) => {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
     try {
       const res = await fetchAdminWorksPage({
@@ -851,33 +855,29 @@ function VaerksadministrationContent() {
         rightsHolderId: activeRh?.id ?? null,
         sortKey,
         sortDir,
+        includeLookups: !lookupsLoadedRef.current,
+        includeSummary: !summaryLoadedRef.current,
       });
+      if (requestId !== loadRequestRef.current) return;
       if (res.success) {
         setWorks(res.works as unknown as WorkRow[]);
         setTotalCount(res.totalCount ?? 0);
-        setTotalAllCount(res.totalAllCount ?? res.totalCount ?? 0);
-        setServerStats(res.stats ?? { total: res.totalAllCount ?? res.totalCount ?? 0, withContract: 0, missingContract: 0 });
-      }
-
-      if (!lookupsLoadedRef.current) {
-        try {
-          const [rightsRes, broadcastersRes] = await Promise.all([
-            fetchAdminRightsHolders(),
-            fetchAdminBroadcasters(),
-          ]);
-          if (rightsRes.success) setRightsHolders(rightsRes.rightsHolders as RightsHolder[]);
-          if (broadcastersRes.success && broadcastersRes.broadcasters.length > 0) {
-            setBroadcasterOptions(broadcastersRes.broadcasters as BroadcasterOption[]);
-          }
-          lookupsLoadedRef.current = true;
-        } catch (lookupErr: unknown) {
-          setNotice(errorMessage(lookupErr, "Kunne ikke hente opslagslister, men værkerne er indlæst."));
+        if (typeof res.totalAllCount === "number") {
+          setTotalAllCount(res.totalAllCount);
+          summaryLoadedRef.current = true;
         }
+        if (res.stats) setServerStats(res.stats);
+        if (res.lookups) {
+          setRightsHolders(res.lookups.rightsHolders as RightsHolder[]);
+          if (res.lookups.broadcasters.length > 0) setBroadcasterOptions(res.lookups.broadcasters as BroadcasterOption[]);
+          lookupsLoadedRef.current = true;
+        }
+        if (res.timing) console.info("[list-performance] admin-works client", res.timing);
       }
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke hente værker."));
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
   }, [activeRh?.id, currentPage, filterConnection, filterMissingConnection, filterStatus, filterType, pageSize, search, sortDir, sortKey]);
 

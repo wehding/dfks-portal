@@ -11,6 +11,7 @@
     "audit:coverage": "node scripts/check-audit-coverage.mjs",
     "audit:coverage:write": "node scripts/check-audit-coverage.mjs --write",
     "test:manual-work": "tsx --test tests/manual-work-flow.test.ts",
+    "test:list-performance": "NODE_OPTIONS=--conditions=react-server tsx --test tests/list-load-performance.test.ts",
     "one-off:import-contract-archive": "NODE_OPTIONS=--conditions=react-server tsx scripts/one-off/import-dfks-contract-archive.ts",
     "seed:broadcaster-logos": "tsx scripts/seed-broadcaster-logos.ts",
     "lint": "eslint",

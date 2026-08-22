@@ -168,7 +168,7 @@ export async function fetchAdminShareCases() {
   if (!admin) throw new Error("Mangler adminrettigheder.");
   const db = createServiceClient();
   const { data, error } = await db.from("work_share_cases")
-    .select("id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,rettighedshavere(full_name))")
+    .select("id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name))")
     .eq("org_id", admin.orgId).neq("status", "resolved").order("created_at");
   if (error) throw new Error(error.message);
   return { success: true as const, cases: data ?? [] };

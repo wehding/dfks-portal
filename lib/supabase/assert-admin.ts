@@ -21,9 +21,10 @@ import { resolveAppAccessContext } from "@/lib/app-access-context"
  */
 export async function assertAdminRole(
     supabase: SupabaseClient,
-    roles: readonly string[] = ADMIN_ROLES
+    roles: readonly string[] = ADMIN_ROLES,
+    verifiedUserId?: string,
 ): Promise<{ userId: string; role: string; orgId: string } | null> {
-    const access = await resolveAppAccessContext(supabase, await readActiveOrgId())
+    const access = await resolveAppAccessContext(supabase, await readActiveOrgId(), verifiedUserId)
     if (!access?.canUseAdmin || !access.role || !roles.includes(access.role)) return null
     return { userId: access.userId, role: access.role, orgId: access.orgId }
 }

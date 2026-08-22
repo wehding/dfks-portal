@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
+import { getAccessContextCached, invalidateAccessContextCache } from "@/lib/access-context-client"
 import {
     Building2,
     Wallet,
@@ -171,7 +172,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         const loadContextAndCounts = async () => {
             setContextError(null)
-            const contextResponse = await fetch("/api/access/context", { cache: "no-store" })
+            const contextResponse = await getAccessContextCached<{
+                orgId: string
+                role: string | null
+                canUseAdmin: boolean
+                canUseMember: boolean
+                brand: { logo_url: string | null; short_name: string }
+                organisations: Array<{ id: string; name: string }>
+            }>()
             if (!contextResponse.ok) {
                 setUserRole(null)
                 if (contextResponse.status === 401) {
@@ -182,14 +190,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 setContextError("Menuen kunne ikke indlæses")
                 return
             }
-            const context = await contextResponse.json() as {
-                orgId: string
-                role: string | null
-                canUseAdmin: boolean
-                canUseMember: boolean
-                brand: { logo_url: string | null; short_name: string }
-                organisations: Array<{ id: string; name: string }>
-            }
+            const context = contextResponse.data!
             if (!context.canUseAdmin || !context.role) {
                 router.replace(context.canUseMember ? "/portal" : "/")
                 return
@@ -239,12 +240,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
 
     const handleOrganisationChange = async (orgId: string) => {
+        invalidateAccessContextCache()
         const response = await fetch("/api/access/context", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ orgId }),
         })
         if (!response.ok) return
+        invalidateAccessContextCache()
         const result = await response.json() as { canUseAdmin?: boolean; canUseMember?: boolean }
         setActiveOrgId(orgId)
         window.dispatchEvent(new Event("admin-context-updated"))

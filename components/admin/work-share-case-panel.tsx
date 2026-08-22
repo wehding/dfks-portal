@@ -65,7 +65,7 @@ export function WorkShareCasePanel() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void load().catch(error => setMessage(error instanceof Error ? error.message : "Fordelingssagerne kunne ikke hentes."));
-    }, 0);
+    }, 1_200);
     return () => window.clearTimeout(timer);
   }, [load]);
   if (!cases.length && !disputes.length) return null;

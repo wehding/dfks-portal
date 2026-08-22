@@ -670,23 +670,13 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
     // ── Load ──────────────────────────────────────────────────
 
     const lookupsLoadedRef = useRef(false)
+    const summaryLoadedRef = useRef(false)
+    const loadRequestRef = useRef(0)
 
     const load = useCallback(async (page = currentPage) => {
+        const requestId = ++loadRequestRef.current
         setLoading(true)
         try {
-            const contextResponse = await fetch("/api/admin/context", { cache: "no-store" })
-            const context = contextResponse.ok
-                ? await contextResponse.json() as { orgId?: string; role?: string }
-                : null
-            const resolvedOrgId = context?.orgId ?? null
-            if (!resolvedOrgId) {
-                toast.error("Din bruger er ikke knyttet til en organisation.")
-                setLoading(false)
-                return
-            }
-            setOrgId(resolvedOrgId)
-            setIsSuperadmin(context?.role === "superadmin")
-
             const contractsRes = await fetchAdminContractsPage({
                 page,
                 pageSize,
@@ -696,38 +686,35 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                 rightsHolderId: activeRh?.id ?? null,
                 sortKey,
                 sortDir,
+                includeLookups: !lookupsLoadedRef.current,
+                includeSummary: !summaryLoadedRef.current,
             })
             if (!contractsRes.success) throw new Error(contractsRes.error ?? "Kontrakter kunne ikke hentes")
+            if (requestId !== loadRequestRef.current) return
+
+            const resolvedOrgId = contractsRes.context?.orgId ?? null
+            if (!resolvedOrgId) throw new Error("Din bruger er ikke knyttet til en organisation.")
+            setOrgId(resolvedOrgId)
+            setIsSuperadmin(contractsRes.context?.role === "superadmin")
             setContracts(contractsRes.contracts as unknown as ContractRow[])
             setTotalCount(contractsRes.totalCount ?? 0)
-            setTotalAllCount(contractsRes.totalAllCount ?? contractsRes.totalCount ?? 0)
-            setServerStats(contractsRes.stats ?? { total: contractsRes.totalAllCount ?? contractsRes.totalCount ?? 0, validerede: 0 })
+            if (typeof contractsRes.totalAllCount === "number") {
+                setTotalAllCount(contractsRes.totalAllCount)
+                summaryLoadedRef.current = true
+            }
+            if (contractsRes.stats) setServerStats(contractsRes.stats)
 
-            if (!lookupsLoadedRef.current) {
-                const supabase = createClient()
-                const [employersRes, rhRes, worksRes] = await Promise.all([
-                    supabase.from("employers").select("id, name, parent_id, dfi_company_id").eq("org_id", resolvedOrgId).order("name"),
-                    supabase
-                        .from("rettighedshavere")
-                        .select("id, full_name, org_affiliations!inner(org_id)")
-                        .eq("org_affiliations.org_id", resolvedOrgId)
-                        .order("full_name"),
-                    supabase
-                        .from("works")
-                        .select("id, title, year, poster_url")
-                        .eq("org_id", resolvedOrgId)
-                        .order("title")
-                        .limit(500),
-                ])
-                if (employersRes.data) setEmployers(employersRes.data)
-                if (rhRes.data) setRightsHolders(rhRes.data.map((r: { id: string; full_name: string }) => ({ id: r.id, full_name: r.full_name })))
-                if (worksRes.data) setWorks(worksRes.data as WorkOption[])
+            if (contractsRes.lookups) {
+                setEmployers(contractsRes.lookups.employers)
+                setRightsHolders(contractsRes.lookups.rightsHolders)
+                setWorks(contractsRes.lookups.works as WorkOption[])
                 lookupsLoadedRef.current = true
             }
+            if (contractsRes.timing) console.info("[list-performance] admin-contracts client", contractsRes.timing)
         } catch (e) {
             console.error("Load fejl:", e)
         } finally {
-            setLoading(false)
+            if (requestId === loadRequestRef.current) setLoading(false)
         }
     }, [activeRh?.id, currentPage, filterStatus, filterType, pageSize, search, sortDir, sortKey])
 

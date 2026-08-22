@@ -7,6 +7,7 @@ import { Suspense } from "react";
 import MineKontrakterClient from "./MineKontrakterClient";
 import type { Contract } from "./MineKontrakterClient";
 import { requireMemberContext } from "@/lib/org";
+import { createListLoadTimer } from "@/lib/server/list-load-timing";
 
 type WorkRelation = { id: string; title: string; year: number | null; type: string };
 type WorkAssignmentRow = { works: WorkRelation | WorkRelation[] | null };
@@ -45,72 +46,66 @@ function isMissingAttachmentRelationError(error: { message?: string; code?: stri
 }
 
 export default async function MineKontrakterPage() {
+  const timer = createListLoadTimer("member-contracts");
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/")
+  timer.mark("auth");
 
   const db = createServiceClient();
   const memberContext = await requireMemberContext(db, user.id).catch(() => null);
   if (!memberContext?.rightsHolderId) redirect("/admin?notice=member-org-required");
-
-  const { data: rh } = await db
-    .from("rettighedshavere")
-    .select("id")
-    .eq("id", memberContext.rightsHolderId)
-    .maybeSingle();
+  timer.mark("access");
 
   let contracts: unknown[] = [];
   let unreadCommentsByContract: Record<string, Contract["contract_comments"]> = {};
   const confirmedEpisodeContractIds = new Set<string>();
-  if (rh) {
-    const listRes = await db
+  const [listRes, myWorksResult] = await Promise.all([
+    db
       .from("contracts")
       .select(CONTRACT_LIST_SELECT)
       .eq("org_id", memberContext.orgId)
-      .eq("rights_holder_id", rh.id)
+      .eq("rights_holder_id", memberContext.rightsHolderId)
       .is("superseded_by_contract_id", null)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false }),
+    db
+      .from("work_assignments")
+      .select("works(id, title, year, type)")
+      .eq("org_id", memberContext.orgId)
+      .eq("rights_holder_id", memberContext.rightsHolderId),
+  ]);
+  timer.mark("lists");
 
-    if (listRes.error && !isMissingAttachmentRelationError(listRes.error)) {
-      console.error("Kunne ikke hente kontrakter:", listRes.error.message);
-    } else {
-      contracts = listRes.data ?? [];
-      const contractIds = contracts.map(row => (row as { id?: string }).id).filter((id): id is string => Boolean(id));
-      if (contractIds.length) {
-        const [{ data: unreadComments }, { data: episodeConfirmations }] = await Promise.all([
-          db.from("contract_comments")
-            .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
-            .in("contract_id", contractIds)
-            .eq("author_role", "admin")
-            .is("member_read_at", null)
-            .order("created_at", { ascending: true }),
-          db.from("contract_episode_confirmations")
-            .select("contract_id")
-            .in("contract_id", contractIds)
-            .is("invalidated_at", null),
-        ]);
-        for (const confirmation of episodeConfirmations ?? []) confirmedEpisodeContractIds.add(confirmation.contract_id);
-        unreadCommentsByContract = ((unreadComments ?? []) as Array<ContractComment & { contract_id: string }>).reduce<Record<string, Contract["contract_comments"]>>((acc, comment) => {
-          if (!acc[comment.contract_id]) acc[comment.contract_id] = [];
-          acc[comment.contract_id].push(comment);
-          return acc;
-        }, {});
-      }
+  if (listRes.error && !isMissingAttachmentRelationError(listRes.error)) {
+    console.error("Kunne ikke hente kontrakter:", listRes.error.message);
+  } else {
+    contracts = listRes.data ?? [];
+    const contractIds = contracts.map(row => (row as { id?: string }).id).filter((id): id is string => Boolean(id));
+    if (contractIds.length) {
+      const [{ data: unreadComments }, { data: episodeConfirmations }] = await Promise.all([
+        db.from("contract_comments")
+          .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
+          .in("contract_id", contractIds)
+          .eq("author_role", "admin")
+          .is("member_read_at", null)
+          .order("created_at", { ascending: true }),
+        db.from("contract_episode_confirmations")
+          .select("contract_id")
+          .in("contract_id", contractIds)
+          .is("invalidated_at", null),
+      ]);
+      for (const confirmation of episodeConfirmations ?? []) confirmedEpisodeContractIds.add(confirmation.contract_id);
+      unreadCommentsByContract = ((unreadComments ?? []) as Array<ContractComment & { contract_id: string }>).reduce<Record<string, Contract["contract_comments"]>>((acc, comment) => {
+        if (!acc[comment.contract_id]) acc[comment.contract_id] = [];
+        acc[comment.contract_id].push(comment);
+        return acc;
+      }, {});
     }
   }
 
-  // Brugerens egne værker til work-kobling
-  const { data: myWorks } = rh
-    ? await db
-        .from("work_assignments")
-        .select("works(id, title, year, type)")
-        .eq("org_id", memberContext.orgId)
-        .eq("rights_holder_id", rh.id)
-    : { data: [] };
-
   const uniqueWorks = Object.values(
     Object.fromEntries(
-      ((myWorks ?? []) as WorkAssignmentRow[])
+      ((myWorksResult.data ?? []) as WorkAssignmentRow[])
         .map(getWorkRelation)
         .filter(isWorkRelation)
         .map(w => [w.id, w])
@@ -125,13 +120,15 @@ export default async function MineKontrakterPage() {
     contract_comments: unreadCommentsByContract[contract.id] ?? [],
     episode_confirmed: confirmedEpisodeContractIds.has(contract.id),
   }));
+  timer.mark("row-details");
+  timer.finish({ rowCount: normalizedContracts.length, workOptionCount: uniqueWorks.length });
 
   return (
     <Suspense>
       <MineKontrakterClient
         initialContracts={normalizedContracts}
         myWorks={uniqueWorks}
-        rightsHolderId={rh?.id ?? ""}
+        rightsHolderId={memberContext.rightsHolderId}
       />
     </Suspense>
   );

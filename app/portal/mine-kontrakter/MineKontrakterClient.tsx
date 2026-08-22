@@ -3,6 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { errorMessage } from "@/lib/error-message";
 import React, { useMemo, useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Sparkles, Link as LinkIcon, History, Plus } from "lucide-react";
 import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, fetchMemberContractsList, getContractDocumentPreview, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
 import { addManualWorkAndLinkContract, fetchMemberSeriesEpisodeOptions, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, submitContractCollaborationReview, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
@@ -12,8 +13,6 @@ import { confirmContractEpisodes } from "@/app/actions/contract-episode-confirma
 import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { toast } from "sonner";
 import { useSearchParams } from "next/navigation";
-import UploadDialog from "./UploadDialog";
-import AddAlongeDialog from "./AddAlongeDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +31,9 @@ import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWor
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 import { ListResultSummary } from "@/components/list-result-summary";
+
+const UploadDialog = dynamic(() => import("./UploadDialog"), { ssr: false });
+const AddAlongeDialog = dynamic(() => import("./AddAlongeDialog"), { ssr: false });
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 const COLLABORATION_ROLES = ["Klipper", "Film Editor", "Klippeassistent", "Dramaturg", "Klipper/Instruktør"];

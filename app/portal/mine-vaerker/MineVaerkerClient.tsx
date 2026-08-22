@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import dynamic from "next/dynamic";
 import { Film, Plus, Search, X, Trash2, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,12 +9,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMemberSeasonEditContext, fetchMemberSeasonEpisodes, fetchMemberWorkDetail, fetchMemberWorkOverview, removeWorkAssignments } from "@/app/actions/member-works";
+import { fetchMemberSeasonEditContext, fetchMemberSeasonEpisodes, fetchMemberWorkDetail, fetchMemberWorkOverview, linkApprovedCoEditorSuggestionsForRightsHolder, removeWorkAssignments } from "@/app/actions/member-works";
 import { markWorkRequestCommentsRead } from "@/app/actions/work-management";
 import { useI18n } from "@/lib/i18n";
 import type { ManualWorkFormSeed } from "@/lib/manual-work";
-import { AddWorkModal } from "./components/AddWorkModal";
-import { EditWorkModal } from "./components/EditWorkModal";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
 import { ExpandableListTrigger, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
@@ -21,10 +20,16 @@ import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { ListResultSummary } from "@/components/list-result-summary";
 import { fetchMemberShareTaskTarget } from "@/app/actions/work-share-cases";
 import { confirmNoCoeditors, fetchMemberCollaborationReviews, fetchMemberWorkReviewTasks } from "@/app/actions/work-collaboration-reviews";
-import MineKontrakterClient, { type Contract } from "../mine-kontrakter/MineKontrakterClient";
+import type { Contract } from "../mine-kontrakter/MineKontrakterClient";
 import { resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 import type { MemberWorkReviewTask } from "@/lib/member-work-review";
 import { collaborationReviewIndicator } from "@/lib/work-collaboration-review";
+import { memberOverviewItemsToAssignments } from "@/lib/member-work-overview";
+import type { MemberOverviewItem } from "@/lib/member-work-overview";
+
+const AddWorkModal = dynamic(() => import("./components/AddWorkModal").then(module => module.AddWorkModal), { ssr: false });
+const EditWorkModal = dynamic(() => import("./components/EditWorkModal").then(module => module.EditWorkModal), { ssr: false });
+const MineKontrakterClient = dynamic(() => import("../mine-kontrakter/MineKontrakterClient"), { ssr: false });
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -105,88 +110,6 @@ type CollaborationReview = {
   } | null;
 };
 
-type MemberOverviewItem =
-  | {
-      kind: "work";
-      work: Work & { assignment: Assignment; contract_count?: number; pending_count?: number; unread_count?: number };
-      contractCount: number;
-      pendingCount: number;
-      unreadCount: number;
-    }
-  | {
-      kind: "season";
-      key: string;
-      parentWorkId: string;
-      seasonNumber: number;
-      title: string;
-      type: string;
-      year: number | null;
-      posterUrl: string | null;
-      episodeCount: number;
-      workIds: string[];
-      assignmentIds: string[];
-      contractCount: number;
-      pendingCount: number;
-      unreadCount: number;
-      roleSummary: string | null;
-      createdAt: string | null;
-      episodeSelectionStatus?: "pending" | "confirmed";
-      episodeScopeId?: string | null;
-      coversWholeSeason?: boolean;
-    };
-
-export function memberOverviewItemsToAssignments(items: MemberOverviewItem[]): Assignment[] {
-  return items.map(item => {
-    if (item.kind === "work") {
-      return {
-        ...item.work.assignment,
-        works: item.work.assignment.works ? {
-          ...item.work.assignment.works,
-          overview_contract_count: item.contractCount,
-          overview_pending_count: item.pendingCount,
-          overview_unread_count: item.unreadCount,
-        } : null,
-      };
-    }
-    return {
-      id: item.key,
-      role: item.roleSummary,
-      contract_id: null,
-      episode_id: null,
-      created_at: item.createdAt,
-      episodes: null,
-      works: {
-        id: item.key,
-        title: item.title,
-        type: item.type,
-        year: item.year,
-        duration_minutes: null,
-        episode_count: item.episodeCount,
-        parent_work_id: item.parentWorkId,
-        season_number: item.seasonNumber,
-        episode_number: null,
-        genre: null,
-        director: null,
-        production_companies: null,
-        status: item.pendingCount > 0 ? "til_godkendelse" : "aktiv",
-        dfi_id: null,
-        tmdb_id: null,
-        poster_url: item.posterUrl,
-        description: null,
-        is_season_group: true,
-        group_key: item.key,
-        child_work_ids: item.workIds,
-        child_assignment_ids: item.assignmentIds,
-        overview_contract_count: item.contractCount,
-        overview_pending_count: item.pendingCount,
-        overview_unread_count: item.unreadCount,
-        episode_selection_status: item.episodeSelectionStatus,
-        episode_scope_id: item.episodeScopeId,
-        covers_whole_season: item.coversWholeSeason,
-      },
-    };
-  });
-}
 function typeLabel(t: string, locale: "da" | "en" = "da") {
   const key = t?.toLowerCase();
   const canonical: Record<string, "feature" | "series" | "documentary" | "docSeries" | "docudrama" | "short" | "animation"> = {
@@ -285,7 +208,7 @@ function isSeriesType(type: string | null | undefined) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName, defaultRoleLabel, coeditorWord,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, userName, contractedWorkIds, contracts, organisationShortName, defaultRoleLabel, coeditorWord,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
@@ -302,6 +225,11 @@ export default function MineVaerkerClient({
   const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
   const [allAssignments, setAllAssignments] = useState(initialAllAssignments);
+
+  React.useEffect(() => {
+    if (!rightsHolderId) return;
+    void linkApprovedCoEditorSuggestionsForRightsHolder({ rightsHolderId, fullName: userName }).catch(() => null);
+  }, [rightsHolderId, userName]);
 
   const broadcasterLogoMap = React.useMemo(() => {
     const map: Record<string, string> = {};
@@ -1436,16 +1364,18 @@ export default function MineVaerkerClient({
       )}
 
       {/* ── Tilføj-panel ──────────────────────────────────────────── */}
-      <AddWorkModal
-        isOpen={isAdding}
-        onClose={() => { setIsAdding(false); setInitialManualWork(null); }}
-        rightsHolderId={rightsHolderId}
-        onWorkAdded={(message, success) => setMsg({ type: success ? "success" : "error", text: message })}
-        reloadAssignments={reloadAssignments}
-        locale={locale}
-        initialQuery={initialAddQuery}
-        initialManualWork={initialManualWork}
-      />
+      {isAdding && (
+        <AddWorkModal
+          isOpen
+          onClose={() => { setIsAdding(false); setInitialManualWork(null); }}
+          rightsHolderId={rightsHolderId}
+          onWorkAdded={(message, success) => setMsg({ type: success ? "success" : "error", text: message })}
+          reloadAssignments={reloadAssignments}
+          locale={locale}
+          initialQuery={initialAddQuery}
+          initialManualWork={initialManualWork}
+        />
+      )}
 
       {/* ── Redigér-panel ──────────────────────────────────────────── */}
       {editAssignment && (

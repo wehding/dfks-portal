@@ -23,7 +23,8 @@ import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { extractWordText } from "@/lib/word-text";
 
 import { requireMemberContext, requireOrgId } from "@/lib/org";
-import { getContractImportStates } from "@/app/actions/contract-imports";
+import { getContractImportStatesForOrg } from "@/lib/server/contract-import-state";
+import { createListLoadTimer } from "@/lib/server/list-load-timing";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
 const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -97,6 +98,8 @@ type AdminContractsPageParams = {
   rightsHolderId?: string | null;
   sortKey?: "production" | "rightsHolder" | "employer" | "type" | "overenskomst" | "period" | "status";
   sortDir?: "asc" | "desc";
+  includeLookups?: boolean;
+  includeSummary?: boolean;
 };
 
 function clampPageSize(value: number | undefined) {
@@ -116,6 +119,20 @@ function intersectIds(base: Set<string> | null, next: Iterable<string>) {
   const nextSet = new Set(next);
   if (!base) return nextSet;
   return new Set([...base].filter(id => nextSet.has(id)));
+}
+
+function normalizeAdminContractLookups(results: any[] | null) {
+  if (!results) return undefined;
+  const [employersResult, rightsHoldersResult, worksResult] = results;
+  const rightsHolders = (rightsHoldersResult?.data ?? [])
+    .map((row: any) => Array.isArray(row.rettighedshavere) ? row.rettighedshavere[0] : row.rettighedshavere)
+    .filter((holder: any) => Boolean(holder?.id && holder?.full_name))
+    .sort((left: any, right: any) => left.full_name.localeCompare(right.full_name, "da-DK"));
+  return {
+    employers: employersResult?.data ?? [],
+    rightsHolders,
+    works: worksResult?.data ?? [],
+  };
 }
 
 // Henter alle afsnit-værker for en serie (selve serien + dens børneværker) i en org.
@@ -250,20 +267,39 @@ async function matchingAdminContractIds(
 }
 
 export async function fetchAdminContractsPage(params: AdminContractsPageParams = {}) {
+  const timer = createListLoadTimer("admin-contracts");
   const session = await createClient();
   const caller = await assertAdminRole(session, ADMIN_ROLES);
   if (!caller) return { success: false, error: "Ikke autoriseret", contracts: [], totalCount: 0, totalAllCount: 0 };
+  timer.mark("access");
 
   const db = createServiceClient();
   const orgId = caller.orgId;
+  const includeLookups = params.includeLookups === true;
+  const includeSummary = params.includeSummary !== false;
+  const lookupsPromise = includeLookups
+    ? Promise.all([
+        db.from("employers").select("id,name,parent_id,dfi_company_id").eq("org_id", orgId).order("name"),
+        db.from("org_affiliations").select("rettighedshavere(id,full_name)").eq("org_id", orgId),
+        db.from("works").select("id,title,year,poster_url").eq("org_id", orgId).order("title").limit(500),
+      ])
+    : Promise.resolve(null);
   const pageSize = clampPageSize(params.pageSize);
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   const matchedIds = await matchingAdminContractIds(db, orgId, params);
+  timer.mark("matching");
   if (matchedIds && matchedIds.size === 0) {
-    const { count: totalAllCount } = await db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null);
-    return { success: true, contracts: [], totalCount: 0, totalAllCount: totalAllCount ?? 0, stats: { total: totalAllCount ?? 0, validerede: 0 } };
+    const [{ count: totalAllCount }, lookupResults] = await Promise.all([
+      includeSummary
+        ? db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null)
+        : Promise.resolve({ count: null }),
+      lookupsPromise,
+    ]);
+    const lookups = normalizeAdminContractLookups(lookupResults);
+    const timing = timer.finish({ rowCount: 0, page, includeLookups, includeSummary });
+    return { success: true, contracts: [], totalCount: 0, totalAllCount: totalAllCount ?? undefined, stats: includeSummary ? { total: totalAllCount ?? 0, validerede: 0 } : undefined, lookups, context: { orgId, role: caller.role }, timing };
   }
 
   const selectFields = `
@@ -298,14 +334,20 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
   else if (params.sortKey === "period") listQuery = listQuery.order("start_date", { ascending, nullsFirst: false }).order("contract_date", { ascending, nullsFirst: false });
   else listQuery = listQuery.order("created_at", { ascending: false });
 
-  const [{ count, error: countError }, { data, error }, { count: totalAllCount }, { count: validatedCount }] = await Promise.all([
+  const [{ count, error: countError }, { data, error }, { count: totalAllCount }, { count: validatedCount }, lookupResults] = await Promise.all([
     countQuery,
     listQuery.range(from, to),
-    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null),
-    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null).eq("status", "valideret"),
+    includeSummary
+      ? db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null)
+      : Promise.resolve({ count: null }),
+    includeSummary
+      ? db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null).eq("status", "valideret")
+      : Promise.resolve({ count: null }),
+    lookupsPromise,
   ]);
   if (countError) return { success: false, error: countError.message, contracts: [], totalCount: 0, totalAllCount: 0 };
   if (error) return { success: false, error: error.message, contracts: [], totalCount: 0, totalAllCount: 0 };
+  timer.mark("list");
 
   const rawContracts = (data ?? []) as any[];
   const contractIds = rawContracts.map(row => row.id);
@@ -316,7 +358,7 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
     contractIds.length
       ? db.from("contract_ai_jobs").select("contract_id, status, error_message, created_at").in("contract_id", contractIds).is("attachment_id", null).order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
-    getContractImportStates(contractIds),
+    getContractImportStatesForOrg(db, orgId, contractIds),
   ]);
   if (commentsResult.error) return { success: false, error: commentsResult.error.message, contracts: [], totalCount: 0, totalAllCount: 0 };
   if (jobsResult.error) return { success: false, error: jobsResult.error.message, contracts: [], totalCount: 0, totalAllCount: 0 };
@@ -367,13 +409,19 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
       import_status: importStates.success ? importStates.states[row.id] ?? null : null,
     };
   });
+  timer.mark("row-details");
+  const timing = timer.finish({ rowCount: contracts.length, page, includeLookups, includeSummary });
+  const lookups = normalizeAdminContractLookups(lookupResults);
 
   return {
     success: true,
     contracts,
     totalCount: count ?? contracts.length,
-    totalAllCount: totalAllCount ?? count ?? contracts.length,
-    stats: { total: totalAllCount ?? count ?? contracts.length, validerede: validatedCount ?? 0 },
+    totalAllCount: includeSummary ? totalAllCount ?? count ?? contracts.length : undefined,
+    stats: includeSummary ? { total: totalAllCount ?? count ?? contracts.length, validerede: validatedCount ?? 0 } : undefined,
+    lookups,
+    context: { orgId, role: caller.role },
+    timing,
   };
 }
 

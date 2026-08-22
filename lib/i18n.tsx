@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react"
 import { usePathname } from "next/navigation"
+import { getAccessContextCached } from "@/lib/access-context-client"
 
 export type Locale = "da" | "en"
 
@@ -1834,9 +1835,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         if (!usesOrganisationTerminology) return
         let active = true
         void (async () => {
-            const response = await fetch("/api/access/context", { cache: "no-store" })
-            if (!response.ok) return
-            const context = await response.json() as { terminology?: { coeditor_word?: string } }
+            const response = await getAccessContextCached<{ terminology?: { coeditor_word?: string } }>()
+            if (!response.ok || !response.data) return
+            const context = response.data
             const word = context.terminology?.coeditor_word
             if (active && word) setCoeditorWord(word)
         })()
