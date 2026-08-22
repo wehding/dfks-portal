@@ -70,10 +70,10 @@ export async function fetchMemberShareTask(params: {
   const { data: ownParticipant } = await db.from("work_share_participants").select("id,relationship_status,response_scope,proposed_percent,responded_at")
     .eq("case_id", shareCase.id).eq("rights_holder_id", holder.id).maybeSingle();
   const { data: finalRows } = shareCase.status === "resolved"
-    ? await db.from("work_share_participants").select("role,final_percent,rettighedshavere(full_name)").eq("case_id", shareCase.id).not("final_percent", "is", null)
+    ? await db.from("work_share_participants").select("role,final_percent,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name)").eq("case_id", shareCase.id).not("final_percent", "is", null)
     : { data: [] };
   const { data: reportedDeclines } = await db.from("work_share_participants")
-    .select("proposed_name,rettighedshavere(full_name)")
+    .select("proposed_name,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name)")
     .eq("case_id", shareCase.id)
     .eq("invited_by_rights_holder_id", holder.id)
     .eq("relationship_status", "declined");
