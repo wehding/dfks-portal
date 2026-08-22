@@ -54,13 +54,11 @@ export async function loadMemberWorkReviewTasks(db: ServiceClient, params: {
   if (reviewError) throw new Error(reviewError.message);
 
   const reviewRows = (reviews ?? []) as unknown as ReviewRow[];
-  const reviewWorkIds = reviewRows.map(review => review.work_id);
-  const { data: assignments, error: assignmentError } = reviewWorkIds.length
+  const { data: assignments, error: assignmentError } = reviewRows.length
     ? await db.from("work_assignments")
         .select("id,work_id")
         .eq("org_id", params.orgId)
         .eq("rights_holder_id", params.rightsHolderId)
-        .in("work_id", reviewWorkIds)
     : { data: [], error: null };
   if (assignmentError) throw new Error(assignmentError.message);
   const assignmentByWork = new Map((assignments ?? []).map(row => [row.work_id, row.id]));

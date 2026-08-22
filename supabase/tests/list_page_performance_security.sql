@@ -1,6 +1,6 @@
 begin;
 
-select plan(12);
+select plan(16);
 
 select ok(
   has_function_privilege('service_role', 'public.get_navigation_badge_counts(uuid,uuid,uuid)', 'EXECUTE'),
@@ -55,6 +55,24 @@ select is(
   (select prosecdef from pg_proc where oid = 'public.get_admin_work_archive_stats(uuid)'::regprocedure),
   false,
   'work archive stats function is security invoker'
+);
+
+select ok(
+  has_function_privilege('service_role', 'public.list_admin_producer_summaries(uuid,text,text,text,text,uuid,text,text,integer,integer)', 'EXECUTE'),
+  'service_role can list paginated producer summaries'
+);
+select ok(
+  not has_function_privilege('anon', 'public.list_admin_producer_summaries(uuid,text,text,text,text,uuid,text,text,integer,integer)', 'EXECUTE'),
+  'anon cannot list producer summaries'
+);
+select ok(
+  not has_function_privilege('authenticated', 'public.list_admin_producer_summaries(uuid,text,text,text,text,uuid,text,text,integer,integer)', 'EXECUTE'),
+  'authenticated cannot list producer summaries directly'
+);
+select is(
+  (select prosecdef from pg_proc where oid = 'public.list_admin_producer_summaries(uuid,text,text,text,text,uuid,text,text,integer,integer)'::regprocedure),
+  false,
+  'producer summary function is security invoker'
 );
 
 select * from finish();

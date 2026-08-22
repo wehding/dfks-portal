@@ -9,6 +9,7 @@ const orgId = "10000000-0000-4000-8000-000000000001";
 const preferredHolderId = "10000000-0000-4000-8000-000000000002";
 const email = "performance@dfks.test";
 const password = "Performance-test-2026";
+const rowCount = Math.max(1, Math.min(Number.parseInt(process.env.PERFORMANCE_ROW_COUNT ?? "400") || 400, 10_000));
 
 const organisationResult = await db.from("organisations").upsert({
   id: orgId,
@@ -57,7 +58,17 @@ for (const statement of memberStatements) {
   if (error) throw error;
 }
 
-const workRows = Array.from({ length: 400 }, (_, index) => ({
+const producerRows = Array.from({ length: rowCount }, (_, index) => ({
+  id: `50000000-0000-4000-8${String(index % 1000).padStart(3, "0")}-${String(index + 1).padStart(12, "0")}`,
+  name: `Performanceproducent ${String(index + 1).padStart(5, "0")}`,
+  status: "active",
+}));
+for (let offset = 0; offset < producerRows.length; offset += 100) {
+  const result = await db.from("employers").upsert(producerRows.slice(offset, offset + 100));
+  if (result.error) throw result.error;
+}
+
+const workRows = Array.from({ length: rowCount }, (_, index) => ({
   id: `20000000-0000-4000-8${String(index).padStart(3, "0").slice(0, 3)}-${String(index + 1).padStart(12, "0")}`,
   org_id: orgId,
   title: `Performanceværk ${String(index + 1).padStart(4, "0")}`,
@@ -83,6 +94,7 @@ for (let offset = 0; offset < workRows.length; offset += 100) {
     org_id: orgId,
     rights_holder_id: holderId,
     work_id: work.id,
+    employer_id: producerRows[offset + index].id,
     type: "A-løn",
     status: "kladde",
     working_title: work.title,
@@ -90,4 +102,20 @@ for (let offset = 0; offset < workRows.length; offset += 100) {
   if (contractResult.error) throw contractResult.error;
 }
 
-console.info(JSON.stringify({ seeded: true, works: workRows.length, contracts: workRows.length }));
+const reviewRows = Array.from({ length: rowCount }, (_, index) => ({
+  id: `60000000-0000-4000-8${String(index % 1000).padStart(3, "0")}-${String(index + 1).padStart(12, "0")}`,
+  org_id: orgId,
+  member_name: `Performance medlem ${String(index + 1).padStart(5, "0")}`,
+  file_name: `performance-${String(index + 1).padStart(5, "0")}.pdf`,
+  production_type: index % 2 ? "spillefilm" : "dokumentar",
+  producer_name: producerRows[index].name,
+  status: index % 4 === 0 ? "behandling" : "afventer",
+  ai_status: "klar",
+  intake_status: "complete",
+}));
+for (let offset = 0; offset < reviewRows.length; offset += 100) {
+  const result = await db.from("contract_reviews").upsert(reviewRows.slice(offset, offset + 100));
+  if (result.error) throw result.error;
+}
+
+console.info(JSON.stringify({ seeded: true, works: workRows.length, contracts: workRows.length, producers: producerRows.length, reviews: reviewRows.length }));

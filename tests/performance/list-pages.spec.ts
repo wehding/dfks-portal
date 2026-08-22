@@ -6,6 +6,9 @@ const routes = [
   ["member-works", "/portal/mine-vaerker"],
   ["admin-contracts", "/admin/kontrakter"],
   ["admin-works", "/admin/vaerker"],
+  ["member-dashboard", "/portal"],
+  ["contract-reviews", "/admin/kontraktgennemgang"],
+  ["admin-producers", "/admin/producenter"],
 ] as const;
 
 async function login(page: Page) {

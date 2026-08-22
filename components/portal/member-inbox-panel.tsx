@@ -5,7 +5,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Loader2, MessageSquare, Send } from "lucide-react";
 import { toast } from "sonner";
-import { fetchMemberInbox, markInboxThreadRead, sendInboxReply } from "@/app/actions/member-inbox";
+import { fetchMemberInbox, fetchMemberInboxThread, markInboxThreadRead, sendInboxReply } from "@/app/actions/member-inbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,24 +30,40 @@ function MemberInboxContent() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reply, setReply] = useState("");
   const [loading, setLoading] = useState(true);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadMessages, setThreadMessages] = useState<Record<string, Message[]>>({});
   const [sending, setSending] = useState(false);
 
+  const loadThread = useCallback(async (threadId: string) => {
+    setThreadLoading(true);
+    const result = await fetchMemberInboxThread(threadId);
+    if (!result.success) toast.error(result.error);
+    else {
+      setThreadMessages(current => ({ ...current, [threadId]: result.messages as Message[] }));
+      await markInboxThreadRead(threadId);
+    }
+    setThreadLoading(false);
+  }, []);
   const load = useCallback(async () => {
     const result = await fetchMemberInbox();
     if (!result.success) toast.error(result.error);
     const next = (result.threads ?? []) as Thread[];
     setThreads(next);
     const requested = params.get("thread");
-    setSelectedId(current => requested && next.some(thread => thread.id === requested) ? requested : current ?? next[0]?.id ?? null);
+    const initialId = requested && next.some(thread => thread.id === requested) ? requested : next[0]?.id ?? null;
+    setSelectedId(initialId);
+    if (initialId) void loadThread(initialId);
     setLoading(false);
-  }, [params]);
+  }, [loadThread, params]);
 
   // State is intentionally synchronized when the external dialog, storage, or server source changes.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => {
-    if (selectedId) void markInboxThreadRead(selectedId);
-  }, [selectedId]);
+
+  const selectThread = useCallback((threadId: string) => {
+    setSelectedId(threadId);
+    if (!threadMessages[threadId]) void loadThread(threadId);
+  }, [loadThread, threadMessages]);
 
   const selected = useMemo(() => threads.find(thread => thread.id === selectedId) ?? null, [threads, selectedId]);
   const submitReply = async () => {
@@ -57,7 +73,8 @@ function MemberInboxContent() {
     setSending(false);
     if (!result.success) return toast.error(result.error);
     setReply("");
-    await load();
+    setThreadMessages(current => { const next = { ...current }; delete next[selected.id]; return next; });
+    await loadThread(selected.id);
   };
 
   if (loading) return <p className="text-sm text-muted-foreground">{t("inbox.loading")}</p>;
@@ -83,7 +100,7 @@ function MemberInboxContent() {
             <button
               type="button"
               key={thread.id}
-              onClick={() => setSelectedId(thread.id)}
+              onClick={() => selectThread(thread.id)}
               className={`w-full rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                 selectedId === thread.id ? "border-primary bg-primary/5" : "bg-card hover:bg-muted"
               }`}
@@ -118,7 +135,7 @@ function MemberInboxContent() {
           </CardHeader>
           <CardContent className="space-y-5">
             <div className="space-y-3">
-              {[...selected.member_messages].sort((a, b) => a.created_at.localeCompare(b.created_at)).map(message => (
+              {threadLoading && !threadMessages[selected.id] ? <p className="text-sm text-muted-foreground">{t("inbox.loading")}</p> : [...(threadMessages[selected.id] ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at)).map(message => (
                 <div
                   key={message.id}
                   className={`max-w-[85%] rounded-lg p-3 ${
