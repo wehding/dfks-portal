@@ -70,10 +70,10 @@ export async function fetchMemberShareTask(params: {
   const { data: ownParticipant } = await db.from("work_share_participants").select("id,relationship_status,response_scope,proposed_percent,responded_at")
     .eq("case_id", shareCase.id).eq("rights_holder_id", holder.id).maybeSingle();
   const { data: finalRows } = shareCase.status === "resolved"
-    ? await db.from("work_share_participants").select("role,final_percent,rettighedshavere(full_name)").eq("case_id", shareCase.id).not("final_percent", "is", null)
+    ? await db.from("work_share_participants").select("role,final_percent,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name)").eq("case_id", shareCase.id).not("final_percent", "is", null)
     : { data: [] };
   const { data: reportedDeclines } = await db.from("work_share_participants")
-    .select("proposed_name,rettighedshavere(full_name)")
+    .select("proposed_name,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name)")
     .eq("case_id", shareCase.id)
     .eq("invited_by_rights_holder_id", holder.id)
     .eq("relationship_status", "declined");
@@ -168,7 +168,7 @@ export async function fetchAdminShareCases() {
   if (!admin) throw new Error("Mangler adminrettigheder.");
   const db = createServiceClient();
   const { data, error } = await db.from("work_share_cases")
-    .select("id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,rettighedshavere(full_name))")
+    .select("id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name))")
     .eq("org_id", admin.orgId).neq("status", "resolved").order("created_at");
   if (error) throw new Error(error.message);
   return { success: true as const, cases: data ?? [] };
