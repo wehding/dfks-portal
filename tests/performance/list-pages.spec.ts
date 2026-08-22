@@ -37,7 +37,7 @@ test.beforeEach(async ({ page, context }, testInfo) => {
 for (const [routeName, path] of routes) {
   test(`${routeName} holder performancegrænser`, async ({ page }, testInfo) => {
     await page.goto(path);
-    await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="first-row"]`).waitFor({ state: "attached" });
+    await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="first-row"]`).first().waitFor({ state: "attached" });
 
     const samples: Array<{ firstRowMs: number; completeMs: number; requestCount: number; bytes: number }> = [];
     for (let index = 0; index < 3; index += 1) {
@@ -50,9 +50,9 @@ for (const [routeName, path] of routes) {
       page.on("response", responseHandler);
       const started = performance.now();
       await page.goto(`${path}${path.includes("?") ? "&" : "?"}perf=${index}`);
-      await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="first-row"]`).waitFor({ state: "attached" });
+      await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="first-row"]`).first().waitFor({ state: "attached" });
       const firstRowMs = performance.now() - started;
-      await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="complete"]`).waitFor({ state: "attached" });
+      await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="complete"]`).first().waitFor({ state: "attached" });
       samples.push({ firstRowMs, completeMs: performance.now() - started, requestCount, bytes });
       page.off("response", responseHandler);
     }
