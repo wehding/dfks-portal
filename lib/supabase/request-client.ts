@@ -1,10 +1,13 @@
 import "server-only";
 
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 import type { NextRequest, NextResponse } from "next/server";
 import { getRequiredEnv } from "@/lib/env";
-
-type PendingCookie = { name: string; value: string; options: CookieOptions };
+import {
+  applyAuthResponse,
+  PRIVATE_AUTH_RESPONSE_HEADERS,
+  type PendingAuthCookie,
+} from "@/lib/supabase/auth-response";
 
 /**
  * Supabase-klient bundet til en konkret route-request.
@@ -15,15 +18,17 @@ type PendingCookie = { name: string; value: string; options: CookieOptions };
  * sættes på det svar, route handleren returnerer.
  */
 export function createRequestClient(request: NextRequest) {
-  const pendingCookies: PendingCookie[] = [];
+  const pendingCookies: PendingAuthCookie[] = [];
+  let pendingHeaders: Record<string, string> = { ...PRIVATE_AUTH_RESPONSE_HEADERS };
   const supabase = createServerClient(
     getRequiredEnv("NEXT_PUBLIC_SUPABASE_URL"),
     getRequiredEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
     {
       cookies: {
         getAll: () => request.cookies.getAll(),
-        setAll: cookies => {
+        setAll: (cookies, headers) => {
           pendingCookies.push(...cookies);
+          pendingHeaders = { ...pendingHeaders, ...headers };
         },
       },
     },
@@ -31,11 +36,8 @@ export function createRequestClient(request: NextRequest) {
 
   return {
     supabase,
-    applyCookies<T extends NextResponse>(response: T): T {
-      for (const cookie of pendingCookies) {
-        response.cookies.set(cookie.name, cookie.value, cookie.options);
-      }
-      return response;
+    applyAuthResponse<T extends NextResponse>(response: T): T {
+      return applyAuthResponse(response, pendingCookies, pendingHeaders);
     },
   };
 }

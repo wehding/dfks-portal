@@ -1,6 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react"
+import { usePathname } from "next/navigation"
 
 export type Locale = "da" | "en"
 
@@ -1810,6 +1811,8 @@ function applyTerminology(text: string, coeditor: string): string {
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
+    const pathname = usePathname()
+    const usesOrganisationTerminology = pathname.startsWith("/admin") || pathname.startsWith("/portal")
     const [locale, setLocale] = useState<Locale>("da")
     const [localeLoaded, setLocaleLoaded] = useState(false)
     // Foreningens fagord (fallback: DFKS/klipper). Kun dansk tokeniseres.
@@ -1828,6 +1831,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }, [locale, localeLoaded])
 
     useEffect(() => {
+        if (!usesOrganisationTerminology) return
         let active = true
         void (async () => {
             const response = await fetch("/api/access/context", { cache: "no-store" })
@@ -1837,7 +1841,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
             if (active && word) setCoeditorWord(word)
         })()
         return () => { active = false }
-    }, [])
+    }, [usesOrganisationTerminology])
 
     const t = useCallback(
         (key: TranslationKey, params?: Record<string, string | number>): string => {

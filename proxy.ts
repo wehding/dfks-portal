@@ -5,6 +5,7 @@ import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onbo
 import { isPublicPath } from "@/lib/auth/public-paths"
 import { readActiveOrgIdFromRequest } from "@/lib/active-org-context"
 import { resolveAppAccessContext } from "@/lib/app-access-context"
+import { applyAuthResponse, PRIVATE_AUTH_RESPONSE_HEADERS, type PendingAuthCookie } from "@/lib/supabase/auth-response"
 
 export async function proxy(req: NextRequest) {
     const { pathname } = req.nextUrl
@@ -46,7 +47,11 @@ export async function proxy(req: NextRequest) {
         return NextResponse.next()
     }
 
-    let supabaseResponse = NextResponse.next({ request: req })
+    let pendingAuthCookies: PendingAuthCookie[] = []
+    let pendingAuthHeaders: Record<string, string> = { ...PRIVATE_AUTH_RESPONSE_HEADERS }
+    const withAuthState = <T extends NextResponse>(response: T): T =>
+        applyAuthResponse(response, pendingAuthCookies, pendingAuthHeaders)
+    let supabaseResponse = withAuthState(NextResponse.next({ request: req }))
 
     const supabase = createServerClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -54,12 +59,11 @@ export async function proxy(req: NextRequest) {
         {
             cookies: {
                 getAll() { return req.cookies.getAll() },
-                setAll(cookiesToSet) {
+                setAll(cookiesToSet, headers) {
                     cookiesToSet.forEach(({ name, value }) => req.cookies.set(name, value))
-                    supabaseResponse = NextResponse.next({ request: req })
-                    cookiesToSet.forEach(({ name, value, options }) =>
-                        supabaseResponse.cookies.set(name, value, options)
-                    )
+                    pendingAuthCookies = [...pendingAuthCookies, ...cookiesToSet]
+                    pendingAuthHeaders = { ...pendingAuthHeaders, ...headers }
+                    supabaseResponse = withAuthState(NextResponse.next({ request: req }))
                 },
             },
         }
@@ -78,7 +82,7 @@ export async function proxy(req: NextRequest) {
     if (isProtected && !user) {
         const url = req.nextUrl.clone()
         url.pathname = "/"
-        return NextResponse.redirect(url)
+        return withAuthState(NextResponse.redirect(url))
     }
 
     // Førstegangs-onboarding og et aktiveret gen-onboardingkrav har forrang
@@ -103,7 +107,7 @@ export async function proxy(req: NextRequest) {
                 const url = req.nextUrl.clone()
                 url.pathname = "/onboarding"
                 url.search = ""
-                return NextResponse.redirect(url)
+                return withAuthState(NextResponse.redirect(url))
             }
         }
     }
@@ -122,7 +126,7 @@ export async function proxy(req: NextRequest) {
             url.pathname = appContext?.canUseMember ? "/portal" : "/"
             url.search = ""
             if (appContext?.canUseMember) url.searchParams.set("notice", "admin-org-required")
-            return NextResponse.redirect(url)
+            return withAuthState(NextResponse.redirect(url))
         }
         const prototypePrefixes = [
             "/admin/indbetalinger",
@@ -138,7 +142,7 @@ export async function proxy(req: NextRequest) {
             url.pathname = "/admin"
             url.search = ""
             url.searchParams.set("notice", "module-not-ready")
-            return NextResponse.redirect(url)
+            return withAuthState(NextResponse.redirect(url))
         }
     }
 
@@ -147,7 +151,7 @@ export async function proxy(req: NextRequest) {
         url.pathname = appContext?.canUseAdmin ? "/admin" : "/onboarding"
         url.search = ""
         if (appContext?.canUseAdmin) url.searchParams.set("notice", "member-org-required")
-        return NextResponse.redirect(url)
+        return withAuthState(NextResponse.redirect(url))
     }
 
     // /superadmin/* kræver superadmin-rolle fra user_org_roles
@@ -163,7 +167,7 @@ export async function proxy(req: NextRequest) {
         if (!roleRow) {
             const url = req.nextUrl.clone()
             url.pathname = "/admin"
-            return NextResponse.redirect(url)
+            return withAuthState(NextResponse.redirect(url))
         }
     }
 
