@@ -1,6 +1,6 @@
 begin;
 
-select plan(16);
+select plan(20);
 
 select ok(
   has_function_privilege('service_role', 'public.get_navigation_badge_counts(uuid,uuid,uuid)', 'EXECUTE'),
@@ -73,6 +73,24 @@ select is(
   (select prosecdef from pg_proc where oid = 'public.list_admin_producer_summaries(uuid,text,text,text,text,uuid,text,text,integer,integer)'::regprocedure),
   false,
   'producer summary function is security invoker'
+);
+
+select ok(
+  has_function_privilege('service_role', 'public.get_contract_review_job_statuses(uuid,uuid[])', 'EXECUTE'),
+  'service_role can read current contract review job statuses'
+);
+select ok(
+  not has_function_privilege('anon', 'public.get_contract_review_job_statuses(uuid,uuid[])', 'EXECUTE'),
+  'anon cannot read contract review job statuses'
+);
+select ok(
+  not has_function_privilege('authenticated', 'public.get_contract_review_job_statuses(uuid,uuid[])', 'EXECUTE'),
+  'authenticated cannot read contract review job statuses directly'
+);
+select is(
+  (select prosecdef from pg_proc where oid = 'public.get_contract_review_job_statuses(uuid,uuid[])'::regprocedure),
+  false,
+  'contract review job status function is security invoker'
 );
 
 select * from finish();

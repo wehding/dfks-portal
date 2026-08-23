@@ -20,7 +20,7 @@ type ShareTaskRow = { id: string; case_id: string; works: { title: string | null
 export async function DashboardTasksSection({ orgId, rightsHolderId, userId }: { orgId: string; rightsHolderId: string; userId: string }) {
   const timer = createListLoadTimer("member-dashboard-tasks");
   const db = createServiceClient();
-  const [{ data: contracts }, { data: workRequests }, { data: screeningClaims }, { data: assignments }, { data: shareTasks }, reviewTasks] = await Promise.all([
+  const [contractsResult, workRequestsResult, screeningClaimsResult, assignmentsResult, shareTasksResult, reviewTasks] = await Promise.all([
     db.from("contracts").select("id,working_title,work_id,contract_comments(author_role,member_read_at)").eq("org_id", orgId).eq("rights_holder_id", rightsHolderId),
     db.from("work_change_requests").select("id,status,created_at").eq("org_id", orgId).eq("requested_by_rights_holder_id", rightsHolderId).eq("status", "pending"),
     db.from("screening_claims").select("id,title,status,created_at").eq("org_id", orgId).eq("profile_id", userId).eq("status", "pending"),
@@ -28,6 +28,13 @@ export async function DashboardTasksSection({ orgId, rightsHolderId, userId }: {
     db.from("work_share_participants").select("id,case_id,works:work_id(title)").eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).eq("relationship_status", "pending"),
     loadMemberWorkReviewTasks(db, { orgId, rightsHolderId }),
   ]);
+  const queryError = contractsResult.error ?? workRequestsResult.error ?? screeningClaimsResult.error ?? assignmentsResult.error ?? shareTasksResult.error;
+  if (queryError) return <DashboardSectionError title="Dine opgaver kunne ikke hentes" stage="first-row" />;
+  const contracts = contractsResult.data;
+  const workRequests = workRequestsResult.data;
+  const screeningClaims = screeningClaimsResult.data;
+  const assignments = assignmentsResult.data;
+  const shareTasks = shareTasksResult.data;
   timer.mark("queries");
   const contractRows = (contracts ?? []) as ContractRow[];
   const contractedWorkIds = new Set(contractRows.map(contract => contract.work_id).filter(Boolean));
@@ -62,33 +69,60 @@ export async function DashboardTasksSection({ orgId, rightsHolderId, userId }: {
 export async function DashboardSalarySection({ orgId, rightsHolderId, optedOut }: { orgId: string; rightsHolderId: string; optedOut: boolean }) {
   const timer = createListLoadTimer("member-dashboard-statistics");
   const db = createServiceClient();
-  const [{ data: orgContracts }, { data: participantRows }, { data: organisation }] = await Promise.all([
-    db.from("contracts").select("id,type,status,start_date,contract_date,rights_holder_id,rettighedshavere(professional_start_year)").eq("org_id", orgId),
-    db.from("org_affiliations").select("rights_holder_id,statistics_participation").eq("org_id", orgId).eq("statistics_participation", true),
-    db.from("organisations").select("statistics_minimum_group_size,statistics_contract_scope").eq("id", orgId).maybeSingle(),
+  const { data: organisation } = await db.from("organisations")
+    .select("statistics_minimum_group_size,statistics_contract_scope")
+    .eq("id", orgId)
+    .maybeSingle();
+  const includeDrafts = organisation?.statistics_contract_scope === "validated_and_drafts";
+  const [{ data: facts, error: factsError }, ownContractsResult] = await Promise.all([
+    db.rpc("get_statistics_facts", { target_org_id: orgId, include_drafts: includeDrafts }),
+    optedOut
+      ? db.from("contracts").select("id,type,status,start_date,contract_date,rights_holder_id,rettighedshavere(professional_start_year)").eq("org_id", orgId).eq("rights_holder_id", rightsHolderId)
+      : Promise.resolve({ data: [] as Array<{ id: string; type: string; status: string; start_date: string | null; contract_date: string | null; rights_holder_id: string | null; rettighedshavere: { professional_start_year: number | null } | Array<{ professional_start_year: number | null }> | null }> }),
   ]);
-  const participatingHolderIds = new Set((participantRows ?? []).map(row => row.rights_holder_id as string));
-  const contractIds = (orgContracts ?? []).map(contract => contract.id);
-  const { data: validations } = contractIds.length
-    ? await db.from("contract_validations").select("contract_id,extracted_data").in("contract_id", contractIds).order("created_at", { ascending: true })
+  if (factsError || "error" in ownContractsResult && ownContractsResult.error) {
+    return <DashboardSectionError title="Lønstatistikken kunne ikke hentes" stage="secondary" />;
+  }
+  const ownContracts = ownContractsResult.data ?? [];
+  const ownIds = ownContracts.map(contract => contract.id);
+  const { data: ownValidations } = ownIds.length
+    ? await db.from("contract_validations").select("contract_id,extracted_data").in("contract_id", ownIds).order("created_at", { ascending: true })
     : { data: [] as Array<{ contract_id: string; extracted_data: Record<string, unknown> | null }> };
   timer.mark("facts");
-  const extractedMap = new Map((validations ?? []).map(validation => [validation.contract_id, validation.extracted_data]));
   const salaryRows: Array<{ year: number; weekly: number; mine: boolean; contributes: boolean; holderId: string | null; professionalStartYear: number | null }> = [];
-  for (const contract of orgContracts ?? []) {
-    const includedStatus = contract.status === "valideret" || (organisation?.statistics_contract_scope === "validated_and_drafts" && contract.status === "kladde");
-    if (!includedStatus) continue;
-    const extracted = extractedMap.get(contract.id) as Record<string, unknown> | null | undefined;
-    if (!extracted?.salary || contract.type === "leverandør") continue;
-    const holderRow = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere;
-    const holderDetails = holderRow as { professional_start_year?: number | null } | null;
-    const contributes = Boolean(contract.rights_holder_id && participatingHolderIds.has(contract.rights_holder_id));
-    const mine = contract.rights_holder_id === rightsHolderId;
-    if (!contributes && !mine) continue;
-    const dateStr = (typeof extracted.startDate === "string" ? extracted.startDate : null) ?? contract.start_date ?? (typeof extracted.contractDate === "string" ? extracted.contractDate : null) ?? contract.contract_date ?? null;
-    const year = dateStr ? new Date(dateStr).getFullYear() : Number.NaN;
-    const weekly = salaryDataToWeekly(extracted);
-    if (Number.isFinite(weekly) && weekly > 0 && Number.isFinite(year)) salaryRows.push({ year, weekly, mine, contributes, holderId: contract.rights_holder_id ?? null, professionalStartYear: holderDetails?.professional_start_year ?? null });
+  for (const fact of facts ?? []) {
+    const data = fact.statistics_data as Record<string, unknown> | null;
+    if (!data?.salary || fact.contract_type === "leverandør") continue;
+    const weekly = salaryDataToWeekly(data);
+    const year = Number(fact.period_year);
+    if (Number.isFinite(weekly) && weekly > 0 && Number.isFinite(year)) salaryRows.push({
+      year,
+      weekly,
+      mine: fact.rights_holder_id === rightsHolderId,
+      contributes: true,
+      holderId: fact.rights_holder_id,
+      professionalStartYear: fact.professional_start_year == null ? null : Number(fact.professional_start_year),
+    });
+  }
+  if (optedOut) {
+    const extractedMap = new Map((ownValidations ?? []).map(validation => [validation.contract_id, validation.extracted_data]));
+    for (const contract of ownContracts) {
+      const includedStatus = contract.status === "valideret" || (includeDrafts && contract.status === "kladde");
+      const extracted = extractedMap.get(contract.id) as Record<string, unknown> | null | undefined;
+      if (!includedStatus || !extracted?.salary || contract.type === "leverandør") continue;
+      const dateValue = (typeof extracted.startDate === "string" ? extracted.startDate : null) ?? contract.start_date ?? (typeof extracted.contractDate === "string" ? extracted.contractDate : null) ?? contract.contract_date;
+      const year = dateValue ? new Date(dateValue).getFullYear() : Number.NaN;
+      const weekly = salaryDataToWeekly(extracted);
+      const holderRow = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere;
+      if (Number.isFinite(weekly) && weekly > 0 && Number.isFinite(year)) salaryRows.push({
+        year,
+        weekly,
+        mine: true,
+        contributes: false,
+        holderId: rightsHolderId,
+        professionalStartYear: holderRow?.professional_start_year ?? null,
+      });
+    }
   }
   const avg = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
   const minimum = normalizeStatisticsMinimumGroupSize(organisation?.statistics_minimum_group_size);
@@ -101,7 +135,7 @@ export async function DashboardSalarySection({ orgId, rightsHolderId, optedOut }
   if (!optedOut) benchmarkPointsByExperience = Object.fromEntries(EXPERIENCE_GROUPS.map(group => [group.value, points.map(point => ({ ...point, gennemsnit: benchmark(salaryRows.filter(row => row.year === point.year && experienceGroupAt(row.professionalStartYear, row.year) === group.value)) }))])) as Partial<Record<ExperienceGroup, SalaryStatPoint[]>>;
   else points = points.map(point => ({ ...point, gennemsnit: null }));
   const benchmarkAvailable = points.some(point => point.gennemsnit != null);
-  timer.finish({ contractCount: orgContracts?.length ?? 0, pointCount: points.length });
+  timer.finish({ factCount: facts?.length ?? 0, pointCount: points.length });
   return <><SalaryStatsCard points={points} benchmarkPointsByExperience={benchmarkPointsByExperience} optedOut={optedOut} benchmarkAvailable={benchmarkAvailable} /><ListReadinessMarker route="member-dashboard" stage="secondary" /></>;
 }
 
@@ -115,4 +149,12 @@ export async function DashboardInboxSection() {
 
 function DashboardCard({ title, count, icon: Icon, items, empty }: { title: string; count: number; icon: typeof AlertCircle; items: Array<{ key: string; href: string; icon: typeof AlertCircle; title: string; text: string }>; empty: string }) {
   return <Card><CardHeader><CardTitle className="flex items-center gap-2"><Icon className="h-5 w-5 text-amber-500" />{title}<span className="ml-auto text-sm text-muted-foreground">{count}</span></CardTitle></CardHeader><CardContent className="space-y-2">{items.length ? items.map(item => <Link key={item.key} href={item.href} className="flex gap-3 rounded-md border p-3 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><item.icon className="mt-0.5 h-4 w-4" /><span><span className="block font-medium">{item.title}</span><span className="text-sm text-muted-foreground">{item.text}</span></span></Link>) : <p className="text-sm text-muted-foreground">{empty}</p>}</CardContent></Card>;
+}
+
+function DashboardSectionError({ title, stage }: { title: string; stage: "first-row" | "secondary" | "complete" }) {
+  return <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+    <p className="font-medium">{title}</p>
+    <p className="mt-1 text-xs">Prøv at genindlæse siden. De øvrige dele af overblikket virker fortsat.</p>
+    <ListReadinessMarker route="member-dashboard" stage={stage} />
+  </div>;
 }
