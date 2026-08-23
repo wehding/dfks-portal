@@ -20,6 +20,7 @@ export function inviteEmailHtml(params: {
   bodyText?: string | null;
   variant?: "invite" | "reminder";
   accessType?: "invite" | "recovery";
+  bodyIncludesGreeting?: boolean;
 }): string {
   const { recipientName, inviteUrl, orgName } = params;
   const color = safeColor(params.primaryColor);
@@ -37,7 +38,7 @@ export function inviteEmailHtml(params: {
   return `
 <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 480px; margin: 0 auto; color: #111827;">
   <h2 style="color: ${color}; font-size: 20px;">Velkommen til ${safeOrgName}</h2>
-  <p>Hej ${safeName},</p>
+  ${params.bodyIncludesGreeting ? "" : `<p>Hej ${safeName},</p>`}
   <p>${bodyHtml}</p>
   <p style="margin: 24px 0;">
     <a href="${safeInviteUrl}" style="background: ${color}; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">${actionLabel}</a>

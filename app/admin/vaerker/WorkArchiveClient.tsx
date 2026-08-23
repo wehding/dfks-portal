@@ -70,7 +70,8 @@ import { WORK_TYPES, workTypeLabel } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import { normalizeCompanyName, type ExternalProductionCompany, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
-import { WorkShareCasePanel } from "@/components/admin/work-share-case-panel";
+import { WorkShareReconciliationWizard } from "@/components/admin/work-share-reconciliation-wizard";
+import { countAdminShareTasks } from "@/app/actions/work-share-cases";
 import { normalizeWorkEditorRole, resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 
@@ -760,6 +761,8 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
   const [totalCount, setTotalCount] = useState(initialResult?.success ? initialResult.totalCount ?? 0 : 0);
   const [totalAllCount, setTotalAllCount] = useState(initialResult?.success ? initialResult.totalAllCount ?? 0 : 0);
   const [serverStats, setServerStats] = useState(initialResult?.success ? initialResult.stats ?? { total: 0, withContract: 0, missingContract: 0 } : { total: 0, withContract: 0, missingContract: 0 });
+  const [shareTaskCount, setShareTaskCount] = useState(0);
+  const [shareTasksOpen, setShareTasksOpen] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>((initialQuery?.sortKey as SortKey) ?? "status");
   const [sortDir, setSortDir] = useState<SortDir>(initialQuery?.sortDir ?? "asc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -841,6 +844,13 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
       window.clearTimeout(timer);
       window.removeEventListener("works-updated", reload);
     };
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => void countAdminShareTasks().then(result => setShareTaskCount(result.count)).catch(() => setShareTaskCount(0));
+    refresh();
+    window.addEventListener("works-updated", refresh);
+    return () => window.removeEventListener("works-updated", refresh);
   }, []);
 
   const load = useCallback(async (page = currentPage) => {
@@ -2003,8 +2013,6 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
         }
       />
 
-      <WorkShareCasePanel />
-
       {/* Tab-navigation */}
       <div className="flex gap-0 border-b">
         <button
@@ -2051,7 +2059,18 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
         <SummaryCard label="Total værker" value={stats.total} />
         <SummaryCard label="Med kontrakt" value={stats.withContract} />
         <SummaryCard label="Mangler kontrakt" value={stats.missingContract} />
+        <button type="button" onClick={() => setShareTasksOpen(true)} className={`min-w-0 rounded-lg border px-3 py-3 text-left transition-colors sm:flex sm:min-w-56 sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-2.5 ${shareTaskCount ? "border-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/20" : "bg-card hover:bg-muted/40"}`}>
+          <span className="line-clamp-2 min-h-8 text-[11px] font-medium leading-4 text-muted-foreground sm:min-h-0 sm:text-sm">Afstem arbejdsandele</span>
+          <span className="mt-1 block text-xl font-bold tabular-nums sm:mt-0">{shareTaskCount}</span>
+        </button>
       </SummaryGrid>
+
+      <Dialog open={shareTasksOpen} onOpenChange={setShareTasksOpen}>
+        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+          <DialogHeader><DialogTitle>Afstem arbejdsandele</DialogTitle></DialogHeader>
+          <WorkShareReconciliationWizard onCountChange={setShareTaskCount} />
+        </DialogContent>
+      </Dialog>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
         <div className="relative w-full lg:w-auto">
