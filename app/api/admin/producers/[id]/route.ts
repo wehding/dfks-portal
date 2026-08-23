@@ -10,10 +10,50 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!auth.ok) return auth.response;
   const { id } = await params;
   const type = new URL(req.url).searchParams.get("type");
-  if (type !== "works" && type !== "contracts" && type !== "legal_entities") return NextResponse.json({ error: "Ugyldig detaljetype" }, { status: 400 });
+  if (type !== "works" && type !== "contracts" && type !== "legal_entities" && type !== "editor") return NextResponse.json({ error: "Ugyldig detaljetype" }, { status: 400 });
   const db = createServiceClient();
   const { data: producer } = await db.from("employers").select("id").eq("id", id).maybeSingle();
   if (!producer) return NextResponse.json({ error: "Producent ikke fundet" }, { status: 404 });
+  if (type === "editor") {
+    const [producerResult, broadcasterResult, producerTypeResult] = await Promise.all([
+      db.from("employers")
+        .select("id,name,dfi_company_id,broadcaster_id,employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at),producer_type_relations:employer_producer_types(id,membership_type,source,source_name,source_url,source_metadata,is_active,verified_on,last_seen_at,producer_types(id,code,name,origin))")
+        .eq("id", id).is("merged_into_id", null).single(),
+      db.from("broadcasters").select("id,name,logo_path,content_type").order("name"),
+      db.from("organisation_producer_types").select("display_order,producer_types(id,code,name,origin)").eq("org_id", auth.orgId).order("display_order"),
+    ]);
+    if (producerResult.error) return NextResponse.json({ error: "Producenten kunne ikke hentes" }, { status: 500 });
+    const row = producerResult.data;
+    const relations = row.producer_type_relations ?? [];
+    const producerTypes = relations.filter(relation => relation.is_active).map(relation => {
+      const item = Array.isArray(relation.producer_types) ? relation.producer_types[0] : relation.producer_types;
+      return { relation_id: relation.id, id: item?.id, code: item?.code, name: item?.name, origin: item?.origin, source: relation.source, membership_type: relation.membership_type };
+    }).filter(item => item.id);
+    const associationMemberships = relations.filter(relation => relation.is_active && relation.source === "producentforeningen").map(relation => {
+      const item = Array.isArray(relation.producer_types) ? relation.producer_types[0] : relation.producer_types;
+      const metadata = (relation.source_metadata ?? {}) as Record<string, unknown>;
+      return {
+        id: relation.id,
+        group_code: item?.code,
+        group_label: item?.name,
+        membership_type: relation.membership_type === "member" ? "ordinary" : relation.membership_type ?? "unknown",
+        owner_ceo_text: typeof metadata.owner_ceo_text === "string" ? metadata.owner_ceo_text : null,
+        website: typeof metadata.website === "string" ? metadata.website : null,
+        verified_on: relation.verified_on,
+      };
+    });
+    const availableProducerTypes = (producerTypeResult.data ?? []).map(option => Array.isArray(option.producer_types) ? option.producer_types[0] : option.producer_types).filter(Boolean);
+    return NextResponse.json({
+      data: {
+        ...row,
+        legal_entities: (row.employer_legal_entities ?? []).filter(entity => !entity.archived_at),
+        producer_types: producerTypes,
+        association_memberships: associationMemberships,
+      },
+      broadcasters: broadcasterResult.data ?? [],
+      producerTypes: availableProducerTypes,
+    });
+  }
   if (type === "legal_entities") {
     const result = await db.from("employer_legal_entities").select("id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at").eq("employer_id", id).is("archived_at", null).order("is_primary", { ascending: false }).order("legal_name");
     if (result.error) return NextResponse.json({ error: "Juridiske enheder kunne ikke hentes" }, { status: 500 });

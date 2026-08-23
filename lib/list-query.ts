@@ -17,6 +17,10 @@ export type ListResult<T> = {
   pageSize: number;
 };
 
+export type ListPageResult<T> = ListResult<T> & {
+  hasNextPage: boolean;
+};
+
 export function normalizedPage(value: unknown, fallback = 1) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;

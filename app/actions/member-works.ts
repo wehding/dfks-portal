@@ -267,14 +267,54 @@ type MemberOverviewAssignmentRow = {
   } | null;
 };
 
-export async function fetchMemberWorkOverview(params: { rightsHolderId: string }) {
+export async function fetchMemberWorkOverview(params: {
+  rightsHolderId: string;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  workType?: string;
+  status?: string;
+  sortKey?: string;
+  sortDir?: "asc" | "desc";
+}) {
   const db = createServiceClient();
   const { rightsHolder, context } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const pageSize = [20, 50, 100].includes(params.pageSize ?? 20) ? params.pageSize ?? 20 : 20;
+  const { data: pageKeys, error: pageError } = await db.rpc("list_member_work_page", {
+    p_org_id: context.orgId,
+    p_rights_holder_id: rightsHolder.id,
+    p_search: params.search?.trim() ?? "",
+    p_work_type: params.workType ?? "all",
+    p_status: params.status ?? "all",
+    p_sort: params.sortKey ?? "date",
+    p_direction: params.sortDir ?? "desc",
+    p_page: page,
+    p_page_size: pageSize,
+  });
+  if (pageError) return { success: false, error: pageError.message, items: [] };
+  const keyRows = (pageKeys ?? []) as Array<{
+    logical_key: string | null;
+    work_ids: string[] | null;
+    assignment_ids: string[] | null;
+    scope_ids: string[] | null;
+    filtered_count: number | string;
+    total_count: number | string;
+  }>;
+  const filteredCount = Number(keyRows[0]?.filtered_count ?? 0);
+  const totalCount = Number(keyRows[0]?.total_count ?? 0);
+  const logicalKeys = new Set(keyRows.map(row => row.logical_key).filter((value): value is string => Boolean(value)));
+  const assignmentIds = [...new Set(keyRows.flatMap(row => row.assignment_ids ?? []))];
+  const scopeIds = [...new Set(keyRows.flatMap(row => row.scope_ids ?? []))];
+  if (!logicalKeys.size) {
+    return { success: true, items: [], page, pageSize, filteredCount, totalCount, hasNextPage: false };
+  }
   const { data, error } = await db
     .from("work_assignments")
     .select("id, role, contract_id, episode_id, created_at, works!inner(id, title, type, year, duration_minutes, episode_count, parent_work_id, season_number, episode_number, status, poster_url, description)")
     .eq("org_id", context.orgId)
     .eq("rights_holder_id", rightsHolder.id)
+    .in("id", assignmentIds)
     .order("created_at", { ascending: false });
   if (error) return { success: false, error: error.message, items: [] };
 
@@ -283,7 +323,8 @@ export async function fetchMemberWorkOverview(params: { rightsHolderId: string }
     .from("member_series_episode_scopes")
     .select("id,org_id,rights_holder_id,series_work_id,season_number,status,episode_numbers,covers_whole_season,source,confirmed_at")
     .eq("org_id", context.orgId)
-    .eq("rights_holder_id", rightsHolder.id);
+    .eq("rights_holder_id", rightsHolder.id)
+    .in("id", scopeIds.length ? scopeIds : ["00000000-0000-0000-0000-000000000000"]);
   if (scopesError) return { success: false, error: scopesError.message, items: [] };
   const scopes = episodeScopes ?? [];
   const workIds = assignments.map(item => item.works?.id).filter((id): id is string => Boolean(id));
@@ -395,8 +436,14 @@ export async function fetchMemberWorkOverview(params: { rightsHolderId: string }
       coversWholeSeason: scope.covers_whole_season,
     }];
   });
-  const items = [...groupedItems, ...pendingSeasonItems];
-  return { success: true, items };
+  const items = [...groupedItems, ...pendingSeasonItems]
+    .filter(item => logicalKeys.has(item.kind === "season" ? item.key : `work:${item.work.id}`))
+    .sort((left, right) => {
+      const leftKey = left.kind === "season" ? left.key : `work:${left.work.id}`;
+      const rightKey = right.kind === "season" ? right.key : `work:${right.work.id}`;
+      return [...logicalKeys].indexOf(leftKey) - [...logicalKeys].indexOf(rightKey);
+    });
+  return { success: true, items, page, pageSize, filteredCount, totalCount, hasNextPage: (page - 1) * pageSize + items.length < filteredCount };
 }
 
 export async function fetchMemberSeasonEpisodes(params: { rightsHolderId: string; parentWorkId: string; seasonNumber: number }) {

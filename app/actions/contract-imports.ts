@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { matchRightsHolder } from "@/lib/server/contract-import-matching";
+import { getContractImportStatesForOrg } from "@/lib/server/contract-import-state";
 
 export async function findOwnersForContracts(contractIds: string[]) {
   const session = await createClient();
@@ -67,28 +68,7 @@ export async function getContractValidationData(contractId: string) {
 export async function getContractImportStates(contractIds: string[]) {
   const session = await createClient();
   const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin", "jurist"]);
-  if (!caller) return { success: false, error: "Ikke autoriseret", states: {} as Record<string, string>, withAiData: [] as string[] };
-  const ids = [...new Set(contractIds.filter(Boolean))].slice(0, 500);
-  if (!ids.length) return { success: true, states: {} as Record<string, string>, withAiData: [] as string[] };
+  if (!caller) return { success: false, error: "Ikke autoriseret", states: {} as Record<string, string>, withAiData: [] as string[], needsManualSalaryReview: [] as string[] };
   const db = createServiceClient();
-  const [importRes, validationRes] = await Promise.all([
-    db.from("contract_import_items")
-      .select("contract_id,status,created_at")
-      .eq("org_id", caller.orgId)
-      .in("contract_id", ids)
-      .order("created_at", { ascending: false }),
-    db.from("contract_validations")
-      .select("contract_id,extracted_data")
-      .in("contract_id", ids)
-      .not("extracted_data", "is", null)
-      .neq("extracted_data", "{}"),
-  ]);
-  if (importRes.error) return { success: false, error: "Importstatus kunne ikke hentes", states: {} as Record<string, string>, withAiData: [] as string[], needsManualSalaryReview: [] as string[] };
-  const states: Record<string, string> = {};
-  for (const item of importRes.data ?? []) if (item.contract_id && !states[item.contract_id]) states[item.contract_id] = item.status;
-  const withAiData = (validationRes.data ?? []).map(v => v.contract_id as string);
-  const needsManualSalaryReview = (validationRes.data ?? [])
-    .filter(v => (v.extracted_data as Record<string, unknown>)?.needsManualSalaryReview === true)
-    .map(v => v.contract_id as string);
-  return { success: true, states, withAiData, needsManualSalaryReview };
+  return getContractImportStatesForOrg(db, caller.orgId, contractIds);
 }

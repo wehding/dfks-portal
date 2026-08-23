@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["canvas"],
+  turbopack: process.env.NEXT_TURBOPACK_ROOT
+    ? { root: process.env.NEXT_TURBOPACK_ROOT }
+    : undefined,
   allowedDevOrigins: ["100.112.99.59"],
   async headers() {
     return [{

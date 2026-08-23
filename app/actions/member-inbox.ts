@@ -174,7 +174,7 @@ export async function fetchMemberInbox() {
 
   // 1. Direkte beskeder
   const { data: directThreads, error } = await db.from("member_message_threads")
-    .select("id,subject,updated_at,created_at,member_messages(id,author_user_id,author_role,body,created_at),member_message_participants(user_id,last_read_at)")
+    .select("id,subject,updated_at,created_at,member_messages(id,author_user_id,author_role,created_at),member_message_participants(user_id,last_read_at)")
     .eq("org_id", orgId).eq("rights_holder_id", holder.id).order("updated_at", { ascending: false });
   if (error) return { success: false, error: error.message, threads: [] };
 
@@ -187,7 +187,7 @@ export async function fetchMemberInbox() {
 
   // 2. Kontraktkommentarer
   const { data: memberContracts } = await db.from("contracts")
-    .select("id,working_title,work_id,works(title),contract_comments(id,author_user_id,author_role,message,created_at,member_read_at)")
+    .select("id,working_title,work_id,works(title),contract_comments(id,author_user_id,author_role,created_at,member_read_at)")
     .eq("org_id", orgId).eq("rights_holder_id", holder.id);
   
   (memberContracts ?? []).forEach(c => {
@@ -210,7 +210,6 @@ export async function fetchMemberInbox() {
         id: m.id,
         author_user_id: m.author_user_id,
         author_role: m.author_role,
-        body: m.message,
         created_at: m.created_at,
       })),
       member_message_participants: [{ user_id: user.id, last_read_at: unread ? null : new Date().toISOString() }],
@@ -219,7 +218,7 @@ export async function fetchMemberInbox() {
 
   // 3. Visningsindberetninger
   const { data: claims } = await db.from("screening_claims")
-    .select("id,title,channel,screening_date,screening_claim_comments(id,author_user_id,author_role,message,created_at,member_read_at)")
+    .select("id,title,channel,screening_date,screening_claim_comments(id,author_user_id,author_role,created_at,member_read_at)")
     .eq("profile_id", user.id);
 
   (claims ?? []).forEach(sc => {
@@ -240,7 +239,6 @@ export async function fetchMemberInbox() {
         id: m.id,
         author_user_id: m.author_user_id,
         author_role: m.author_role,
-        body: m.message,
         created_at: m.created_at,
       })),
       member_message_participants: [{ user_id: user.id, last_read_at: unread ? null : new Date().toISOString() }],
@@ -249,6 +247,38 @@ export async function fetchMemberInbox() {
 
   unifiedThreads.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
   return { success: true, threads: unifiedThreads };
+}
+
+export async function fetchMemberInboxThread(threadId: string) {
+  const { user } = await signedInUser();
+  if (!user) return { success: false, error: "Ikke logget ind", messages: [] };
+  const db = createServiceClient();
+  const { data: holder } = await db.from("rettighedshavere").select("id,org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
+  const orgId = (Array.isArray(holder?.org_affiliations) ? holder.org_affiliations[0] : holder?.org_affiliations)?.org_id;
+  if (!holder || !orgId) return { success: false, error: "Medlemsprofilen findes ikke", messages: [] };
+  const ref = parseInboxThreadId(threadId);
+  if (ref.kind === "direct") {
+    const { data: thread, error } = await db.from("member_message_threads")
+      .select("member_messages(id,author_role,body,created_at)")
+      .eq("id", ref.id).eq("org_id", orgId).eq("rights_holder_id", holder.id).maybeSingle();
+    if (error || !thread) return { success: false, error: "Beskedtråden blev ikke fundet", messages: [] };
+    return { success: true, messages: thread.member_messages ?? [] };
+  }
+  if (ref.kind === "contract") {
+    const { data: contract } = await db.from("contracts")
+      .select("contract_comments(id,author_role,message,created_at)")
+      .eq("id", ref.id).eq("org_id", orgId).eq("rights_holder_id", holder.id).maybeSingle();
+    if (!contract) return { success: false, error: "Kontrakttråden blev ikke fundet", messages: [] };
+    return { success: true, messages: (contract.contract_comments ?? []).map(message => ({ id: message.id, author_role: message.author_role, body: message.message, created_at: message.created_at })) };
+  }
+  if (ref.kind === "screening") {
+    const { data: claim } = await db.from("screening_claims")
+      .select("screening_claim_comments(id,author_role,message,created_at)")
+      .eq("id", ref.id).eq("profile_id", user.id).maybeSingle();
+    if (!claim) return { success: false, error: "Visningstråden blev ikke fundet", messages: [] };
+    return { success: true, messages: (claim.screening_claim_comments ?? []).map(message => ({ id: message.id, author_role: message.author_role, body: message.message, created_at: message.created_at })) };
+  }
+  return { success: false, error: "Beskedtypen understøttes ikke", messages: [] };
 }
 
 export async function fetchAdminInbox() {

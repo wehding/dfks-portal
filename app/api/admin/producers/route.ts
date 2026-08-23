@@ -3,6 +3,7 @@ import { requireAdminApi, requireStaffModuleApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveProducerStatus, type ProducerStatus } from "@/lib/admin-producers";
 import { normalizeCompanyName, validateRegistrationNumber } from "@/lib/production-companies";
+import { createListLoadTimer } from "@/lib/server/list-load-timing";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -62,16 +63,55 @@ async function getDeletionPreview(db: ReturnType<typeof createServiceClient>, id
 }
 
 export async function GET(req: NextRequest) {
+  const timer = createListLoadTimer("admin-producers");
   const auth = await requireStaffModuleApi("producers", "read");
   if (!auth.ok) return auth.response;
+  timer.mark("access");
   const db = createServiceClient();
   const { searchParams } = new URL(req.url);
   const query = (searchParams.get("query") ?? "").trim().toLocaleLowerCase("da");
   const status = searchParams.get("status") as ProducerStatus | null;
   const associationGroup = searchParams.get("associationGroup");
+  const producerType = searchParams.get("producerType");
   const rightsHolderId = searchParams.get("rightsHolderId");
   const sort = searchParams.get("sort") ?? "name";
   const direction = searchParams.get("direction") === "desc" ? -1 : 1;
+  const page = Math.max(1, Number.parseInt(searchParams.get("page") ?? "1") || 1);
+  const requestedPageSize = Number.parseInt(searchParams.get("pageSize") ?? "20") || 20;
+  const pageSize = [20, 50, 100].includes(requestedPageSize) ? requestedPageSize : 20;
+
+  // The normal list uses a narrow, paginated database function. The legacy
+  // payload remains temporarily available only while the editor is opened.
+  if (searchParams.get("view") !== "editor-options") {
+    const result = await db.rpc("list_admin_producer_summaries", {
+      target_org_id: auth.orgId,
+      search_text: query || null,
+      status_filter: status && ["attention", "active", "inactive"].includes(status) ? status : null,
+      association_filter: associationGroup && associationGroup !== "all" ? associationGroup : null,
+      producer_type_filter: producerType && producerType !== "all" ? producerType : null,
+      rights_holder_filter: rightsHolderId && UUID_PATTERN.test(rightsHolderId) ? rightsHolderId : null,
+      sort_field: ["name", "parent", "status", "works", "contracts", "latest"].includes(sort) ? sort : "name",
+      sort_direction: direction === -1 ? "desc" : "asc",
+      page_number: page,
+      page_size: pageSize,
+    });
+    if (result.error) {
+      console.error("[admin-producers] summary list failed", result.error.code);
+      return NextResponse.json({ error: "Producenter kunne ikke hentes" }, { status: 500 });
+    }
+    timer.mark("list");
+    const payload = (result.data ?? {}) as { rows?: unknown[]; filteredCount?: number; totalCount?: number; page?: number; pageSize?: number };
+    timer.finish({ route: "/api/admin/producers", rows: payload.rows?.length ?? 0 });
+    return NextResponse.json({
+      data: payload.rows ?? [],
+      filteredCount: Number(payload.filteredCount ?? 0),
+      totalCount: Number(payload.totalCount ?? 0),
+      page: Number(payload.page ?? page),
+      pageSize: Number(payload.pageSize ?? pageSize),
+      canMerge: auth.role === "superadmin",
+      canDelete: auth.role === "superadmin",
+    }, { headers: { "cache-control": "no-store" } });
+  }
 
   const [{ data: employers, error }, { data: contracts }, { data: legacyWorks }, { data: assignments }, { data: holders }, workOrgResult, contractRelationsResult, broadcasterResult, producerTypeResult] = await Promise.all([
     db.from("employers").select("id,name,parent_id,dfi_company_id,broadcaster_id,associeret,created_at,cvr,status,is_verified,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at),producer_type_relations:employer_producer_types(id,membership_type,source,source_name,source_url,source_metadata,is_active,verified_on,last_seen_at,producer_types(id,code,name,origin)),broadcasters(name,logo_path,content_type)").is("merged_into_id", null).is("archived_at", null),
