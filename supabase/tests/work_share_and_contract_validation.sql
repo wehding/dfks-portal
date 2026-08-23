@@ -1,5 +1,5 @@
 begin;
-select plan(12);
+select plan(17);
 
 create temporary table share_contract_fixture (org_id uuid, actor_id uuid, contract_id uuid, holder_id uuid, work_id uuid);
 
@@ -32,6 +32,11 @@ select has_table('public','work_share_cases', 'fordelingssager findes');
 select has_table('public','work_share_participants', 'fordelingsdeltagere findes');
 select ok(not has_table_privilege('authenticated','public.work_share_cases','SELECT'), 'medlemmer kan ikke læse sagens øvrige data');
 select ok(has_table_privilege('authenticated','public.work_share_participants','SELECT'), 'medlemmer kan læse deltagere gennem RLS');
+select has_table('public','work_credit_evidence', 'eksterne klipperkilder gemmes i en serverbeskyttet tabel');
+select ok(not has_table_privilege('authenticated','public.work_credit_evidence','SELECT'), 'browserrollen kan ikke læse eksterne klipperkilder');
+select ok(not has_function_privilege('authenticated','public.resolve_work_share_case(uuid,uuid,uuid,numeric,jsonb,boolean)','EXECUTE'), 'browserrollen kan ikke godkende arbejdsandele');
+select ok(has_function_privilege('service_role','public.resolve_work_share_case(uuid,uuid,uuid,numeric,jsonb,boolean)','EXECUTE'), 'kun serverrollen kan godkende arbejdsandele atomisk');
+select has_column('public','organisations','member_work_invite_text', 'organisationen har en redigerbar medlemsskabelon');
 select ok(not has_function_privilege('authenticated','public.validate_contracts_explicitly(uuid,uuid,uuid[])','EXECUTE'), 'browserrollen kan ikke validere kontrakter');
 select has_table('public','member_work_collaboration_reviews', 'medklippergennemgange findes');
 select ok(has_table_privilege('authenticated','public.member_work_collaboration_reviews','SELECT'), 'medlemmer kan læse egne gennemgange gennem RLS');

@@ -70,7 +70,7 @@ import { WORK_TYPES, workTypeLabel } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import { normalizeCompanyName, type ExternalProductionCompany, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
-import { WorkShareCasePanel } from "@/components/admin/work-share-case-panel";
+import { WorkShareReconciliationWizard } from "@/components/admin/work-share-reconciliation-wizard";
 import { countAdminShareTasks } from "@/app/actions/work-share-cases";
 import { normalizeWorkEditorRole, resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
@@ -844,6 +844,10 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
     } catch {
       setShareTaskCount(0);
     }
+  }, []);
+  const handleShareTaskCountChange = useCallback((count: number) => {
+    setShareTaskCount(count);
+    window.dispatchEvent(new Event("works-updated"));
   }, []);
 
   useEffect(() => {
@@ -2074,9 +2078,24 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
       )}
 
       {activeTab === "oversigt" && <><SummaryGrid>
-        <SummaryCard label="Total værker" value={stats.total} />
-        <SummaryCard label="Med kontrakt" value={stats.withContract} />
-        <SummaryCard label="Mangler kontrakt" value={stats.missingContract} />
+        <SummaryCard
+          label="Total værker"
+          value={stats.total}
+          active={!search && filterStatus === "all" && filterType === "all" && filterConnection === "all" && filterMissingConnection === "none" && !activeRh}
+          onClick={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterConnection("all"); setFilterMissingConnection("none"); setActiveRh(null); setCurrentPage(1); }}
+        />
+        <SummaryCard
+          label="Med kontrakt"
+          value={stats.withContract}
+          active={!search && filterStatus === "all" && filterType === "all" && filterConnection === "withContract" && filterMissingConnection === "none" && !activeRh}
+          onClick={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterConnection("withContract"); setFilterMissingConnection("none"); setActiveRh(null); setCurrentPage(1); }}
+        />
+        <SummaryCard
+          label="Mangler kontrakt"
+          value={stats.missingContract}
+          active={!search && filterStatus === "all" && filterType === "all" && filterConnection === "missingContract" && filterMissingConnection === "none" && !activeRh}
+          onClick={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterConnection("missingContract"); setFilterMissingConnection("none"); setActiveRh(null); setCurrentPage(1); }}
+        />
         <button
           type="button"
           onClick={() => setShareTasksOpen(true)}
@@ -2093,6 +2112,13 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
           <span className="mt-1 block text-xl font-bold tabular-nums text-foreground sm:mt-0">{shareTaskCount}</span>
         </button>
       </SummaryGrid>
+
+      <Dialog open={shareTasksOpen} onOpenChange={setShareTasksOpen}>
+        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+          <DialogHeader><DialogTitle>Afstem arbejdsandele</DialogTitle></DialogHeader>
+          <WorkShareReconciliationWizard onCountChange={handleShareTaskCountChange} />
+        </DialogContent>
+      </Dialog>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
         <div className="relative w-full lg:w-auto">
@@ -2130,6 +2156,8 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
           <SelectTrigger className="w-full lg:w-[170px]"><SelectValue placeholder="Kobling" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Alle koblinger</SelectItem>
+            <SelectItem value="withContract">Med kontrakt</SelectItem>
+            <SelectItem value="missingContract">Mangler kontrakt</SelectItem>
             <SelectItem value="dfi">DFI</SelectItem>
             <SelectItem value="tmdb">TMDB</SelectItem>
             <SelectItem value="imdb">IMDb</SelectItem>
@@ -2925,15 +2953,6 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
               );
             })()
           )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={shareTasksOpen} onOpenChange={setShareTasksOpen}>
-        <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Afstem arbejdsandele</DialogTitle>
-          </DialogHeader>
-          <WorkShareCasePanel onCountChange={setShareTaskCount} />
         </DialogContent>
       </Dialog>
 

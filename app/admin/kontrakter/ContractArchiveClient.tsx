@@ -375,7 +375,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     const [currentPage, setCurrentPage] = useState(initialQuery?.page ?? 1)
     const [totalCount, setTotalCount] = useState(initialResult?.success ? initialResult.totalCount ?? 0 : 0)
     const [totalAllCount, setTotalAllCount] = useState(initialResult?.success ? initialResult.totalAllCount ?? 0 : 0)
-    const [serverStats, setServerStats] = useState(initialResult?.success ? initialResult.stats ?? { total: 0, validerede: 0 } : { total: 0, validerede: 0 })
+    const [serverStats, setServerStats] = useState(initialResult?.success ? initialResult.stats ?? { total: 0, validerede: 0, kladder: 0 } : { total: 0, validerede: 0, kladder: 0 })
     const [sortKey, setSortKey] = useState<SortKey>((initialQuery?.sortKey as SortKey) ?? "status")
     const [sortDir, setSortDir] = useState<SortDir>(initialQuery?.sortDir ?? "asc")
     const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -1758,6 +1758,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     const stats = {
         total: serverStats.total,
         validerede: serverStats.validerede,
+        kladder: serverStats.kladder,
     }
 
     return (
@@ -1767,9 +1768,25 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             {!loading && <ListReadinessMarker route="admin-contracts" stage="secondary" />}
             {!loading && <ListReadinessMarker route="admin-contracts" stage="complete" />}
             {view === "archive" && <SummaryGrid>
-                <SummaryCard label="Kontrakter i alt" value={stats.total} />
+                <SummaryCard
+                    label="Kontrakter i alt"
+                    value={stats.total}
+                    active={!search && filterStatus === "all" && filterType === "all" && !activeRh}
+                    onClick={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setCurrentPage(1) }}
+                />
                 <YearCountCard contracts={contracts} availableYears={availableYears} currentYear={currentYear} />
-                <SummaryCard label="Validerede" value={stats.validerede} />
+                <SummaryCard
+                    label="Validerede"
+                    value={stats.validerede}
+                    active={!search && filterStatus === "valideret" && filterType === "all" && !activeRh}
+                    onClick={() => { setSearch(""); setFilterStatus("valideret"); setFilterType("all"); setActiveRh(null); setCurrentPage(1) }}
+                />
+                <SummaryCard
+                    label="Kladder"
+                    value={stats.kladder}
+                    active={!search && filterStatus === "kladde" && filterType === "all" && !activeRh}
+                    onClick={() => { setSearch(""); setFilterStatus("kladde"); setFilterType("all"); setActiveRh(null); setCurrentPage(1) }}
+                />
             </SummaryGrid>}
 
             {view === "upload" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">

@@ -300,7 +300,7 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
     ]);
     const lookups = normalizeAdminContractLookups(lookupResults);
     const timing = timer.finish({ rowCount: 0, page, includeLookups, includeSummary });
-    return { success: true, contracts: [], totalCount: 0, totalAllCount: totalAllCount ?? undefined, stats: includeSummary ? { total: totalAllCount ?? 0, validerede: 0 } : undefined, lookups, context: { orgId, role: caller.role }, timing };
+    return { success: true, contracts: [], totalCount: 0, totalAllCount: totalAllCount ?? undefined, stats: includeSummary ? { total: totalAllCount ?? 0, validerede: 0, kladder: 0 } : undefined, lookups, context: { orgId, role: caller.role }, timing };
   }
 
   const selectFields = `
@@ -335,7 +335,7 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
   else if (params.sortKey === "period") listQuery = listQuery.order("start_date", { ascending, nullsFirst: false }).order("contract_date", { ascending, nullsFirst: false });
   else listQuery = listQuery.order("created_at", { ascending: false });
 
-  const [{ count, error: countError }, { data, error }, { count: totalAllCount }, { count: validatedCount }, lookupResults] = await Promise.all([
+  const [{ count, error: countError }, { data, error }, { count: totalAllCount }, { count: validatedCount }, { count: draftCount }, lookupResults] = await Promise.all([
     countQuery,
     listQuery.range(from, to),
     includeSummary
@@ -343,6 +343,9 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
       : Promise.resolve({ count: null }),
     includeSummary
       ? db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null).eq("status", "valideret")
+      : Promise.resolve({ count: null }),
+    includeSummary
+      ? db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null).eq("status", "kladde")
       : Promise.resolve({ count: null }),
     lookupsPromise,
   ]);
@@ -419,7 +422,7 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
     contracts,
     totalCount: count ?? contracts.length,
     totalAllCount: includeSummary ? totalAllCount ?? count ?? contracts.length : undefined,
-    stats: includeSummary ? { total: totalAllCount ?? count ?? contracts.length, validerede: validatedCount ?? 0 } : undefined,
+    stats: includeSummary ? { total: totalAllCount ?? count ?? contracts.length, validerede: validatedCount ?? 0, kladder: draftCount ?? 0 } : undefined,
     lookups,
     context: { orgId, role: caller.role },
     timing,

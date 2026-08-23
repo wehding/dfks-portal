@@ -1213,9 +1213,24 @@ export default function MineVaerkerClient({
 
       {/* Statistik */}
       <SummaryGrid>
-        <SummaryCard label={t("works.totalWorks")} value={totalWorks} />
-        <SummaryCard label={t("works.withContract")} value={withContract} />
-        <SummaryCard label={t("works.missingContract")} value={missingContract} />
+        <SummaryCard
+          label={t("works.totalWorks")}
+          value={totalWorks}
+          active={!search && catFilter === "all" && statusFilter === "all"}
+          onClick={() => { setSearch(""); setCatFilter("all"); setStatusFilter("all"); }}
+        />
+        <SummaryCard
+          label={t("works.withContract")}
+          value={withContract}
+          active={!search && catFilter === "all" && statusFilter === "hasContract"}
+          onClick={() => { setSearch(""); setCatFilter("all"); setStatusFilter("hasContract"); }}
+        />
+        <SummaryCard
+          label={t("works.missingContract")}
+          value={missingContract}
+          active={!search && catFilter === "all" && statusFilter === "missingContract"}
+          onClick={() => { setSearch(""); setCatFilter("all"); setStatusFilter("missingContract"); }}
+        />
       </SummaryGrid>
 
       {/* Toast */}

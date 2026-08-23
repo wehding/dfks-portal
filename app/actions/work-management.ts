@@ -320,6 +320,22 @@ async function matchingAdminWorkIds(
     ids = intersectIds(ids, (data ?? []).map(row => row.work_id));
   }
 
+  if (params.connection === "withContract" || params.connection === "missingContract") {
+    const [{ data: contractRows, error: contractError }, { data: allWorks, error: worksError }] = await Promise.all([
+      db.from("contracts").select("work_id").eq("org_id", orgId).is("superseded_by_contract_id", null).not("work_id", "is", null).limit(10000),
+      params.connection === "missingContract"
+        ? db.from("works").select("id").eq("org_id", orgId).limit(10000)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (contractError) throw new Error(contractError.message);
+    if (worksError) throw new Error(worksError.message);
+    const contractedIds = new Set(uniqueIds((contractRows ?? []).map(row => row.work_id)));
+    const matchingIds = params.connection === "withContract"
+      ? contractedIds
+      : (allWorks ?? []).map(row => row.id).filter(id => !contractedIds.has(id));
+    ids = intersectIds(ids, matchingIds);
+  }
+
   if (params.status === "beskeder") {
     const { data: requests, error: requestError } = await db
       .from("work_change_requests")
