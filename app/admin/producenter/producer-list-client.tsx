@@ -28,7 +28,9 @@ type ProducerTypeOption = { id: string; code: string; name: string; origin: "sys
 type ProducerTypeRelation = ProducerTypeOption & { relation_id: string; source: "manual" | "producentforeningen" | "broadcaster" | "migration"; membership_type: "member" | "associate" | "unknown" | null };
 type AssociationMembership = { id: string; group_code: string; group_label: string; membership_type: "ordinary" | "associate" | "unknown"; source_name?: string; owner_ceo_text?: string | null; website?: string | null; address?: string | null; postal_city?: string | null; source_url?: string; is_active?: boolean; verified_on?: string | null; last_seen_at?: string };
 type Producer = { id: string; name: string; dfi_company_id: number | null; broadcaster_id: string | null; broadcasters: { name: string; logo_path: string | null; content_type: string | null } | Array<{ name: string; logo_path: string | null; content_type: string | null }> | null; parent_name: string | null; status: "attention" | "active" | "inactive"; work_count: number; contract_count: number; latest_activity: string | null; legal_entities?: LegalEntitySummary[]; aliases?: string[]; producer_types: ProducerTypeRelation[]; association_memberships: AssociationMembership[] };
-export type ProducerListInitialData = { data: Producer[]; filteredCount: number; totalCount: number; canMerge: boolean; canDelete: boolean };
+type ProducerSummary = { active_count: number; attention_count: number; ordinary_count: number; associate_count: number; unknown_count: number; work_count: number; contract_count: number };
+const emptyProducerSummary: ProducerSummary = { active_count: 0, attention_count: 0, ordinary_count: 0, associate_count: 0, unknown_count: 0, work_count: 0, contract_count: 0 };
+export type ProducerListInitialData = { data: Producer[]; filteredCount: number; totalCount: number; summary?: ProducerSummary; canMerge: boolean; canDelete: boolean };
 type RightsHolder = { id: string; full_name: string };
 type WorkDetail = { id: string; title: string; type: string; year: number | null; status: string };
 type ContractDetail = { id: string; working_title: string | null; type: string; status: string; contract_date: string | null; created_at: string; rettighedshavere: { full_name: string | null } | Array<{ full_name: string | null }> | null };
@@ -60,6 +62,7 @@ export default function ProducerListClient({ initialData }: { initialData?: Prod
   const searchParams = useSearchParams();
   const [producers, setProducers] = useState<Producer[]>(initialData?.data ?? []);
   const [producerCounts, setProducerCounts] = useState({ filtered: initialData?.filteredCount ?? 0, total: initialData?.totalCount ?? 0 });
+  const [producerSummary, setProducerSummary] = useState<ProducerSummary>(initialData?.summary ?? emptyProducerSummary);
   const rightsHolders: RightsHolder[] = [];
   const [broadcasters, setBroadcasters] = useState<BroadcasterOption[]>([]);
   const [producerTypes, setProducerTypes] = useState<ProducerTypeOption[]>([]);
@@ -68,6 +71,7 @@ export default function ProducerListClient({ initialData }: { initialData?: Prod
   const [debouncedQuery, setDebouncedQuery] = useState(query);
   const [status, setStatus] = useState(() => searchParams.get("status") ?? "all");
   const [associationGroup, setAssociationGroup] = useState(() => searchParams.get("associationGroup") ?? "all");
+  const [producerType, setProducerType] = useState(() => searchParams.get("producerType") ?? "all");
   const [rightsHolderId, setRightsHolderId] = useState(() => searchParams.get("rightsHolderId") ?? "all");
   const [sort, setSort] = useState(() => searchParams.get("sort") ?? "name");
   const [direction, setDirection] = useState<"asc" | "desc">(() => searchParams.get("direction") === "desc" ? "desc" : "asc");
@@ -117,20 +121,21 @@ export default function ProducerListClient({ initialData }: { initialData?: Prod
     return () => window.clearTimeout(timer);
   }, [query]);
 
-  useEffect(() => { setPage(1); }, [status, associationGroup, sort, direction]);
+  useEffect(() => { setPage(1); }, [status, associationGroup, producerType, sort, direction]);
 
   useEffect(() => {
     const params = new URLSearchParams();
     if (debouncedQuery) params.set("query", debouncedQuery);
     if (status !== "all") params.set("status", status);
     if (associationGroup !== "all") params.set("associationGroup", associationGroup);
+    if (producerType !== "all") params.set("producerType", producerType);
     if (rightsHolderId !== "all") params.set("rightsHolderId", rightsHolderId);
     if (sort !== "name") params.set("sort", sort);
     if (direction !== "asc") params.set("direction", direction);
     if (page > 1) params.set("page", String(page));
     if (pageSize !== 20) params.set("pageSize", String(pageSize));
     router.replace(`/admin/producenter${params.size ? `?${params}` : ""}`, { scroll: false });
-  }, [associationGroup, debouncedQuery, direction, page, pageSize, rightsHolderId, router, sort, status]);
+  }, [associationGroup, debouncedQuery, direction, page, pageSize, producerType, rightsHolderId, router, sort, status]);
 
   useEffect(() => {
     if (skipInitialRequest.current) { skipInitialRequest.current = false; return; }
@@ -141,18 +146,19 @@ export default function ProducerListClient({ initialData }: { initialData?: Prod
       if (debouncedQuery) params.set("query", debouncedQuery);
       if (status !== "all") params.set("status", status);
       if (associationGroup !== "all") params.set("associationGroup", associationGroup);
+      if (producerType !== "all") params.set("producerType", producerType);
       if (rightsHolderId !== "all") params.set("rightsHolderId", rightsHolderId);
       try {
         const response = await fetch(`/api/admin/producers?${params}`, { signal: controller.signal });
         const json = await response.json();
         if (!response.ok) throw new Error(json.error);
-        setProducers(json.data ?? []); setProducerCounts({ filtered: Number(json.filteredCount ?? json.data?.length ?? 0), total: Number(json.totalCount ?? json.data?.length ?? 0) }); setCanMerge(Boolean(json.canMerge)); setCanDelete(Boolean(json.canDelete));
+        setProducers(json.data ?? []); setProducerCounts({ filtered: Number(json.filteredCount ?? json.data?.length ?? 0), total: Number(json.totalCount ?? json.data?.length ?? 0) }); setProducerSummary(json.summary ?? emptyProducerSummary); setCanMerge(Boolean(json.canMerge)); setCanDelete(Boolean(json.canDelete));
       } catch (error) {
         if ((error as Error).name !== "AbortError") setProducers([]);
       } finally { if (!controller.signal.aborted) setLoading(false); }
     })();
     return () => controller.abort();
-  }, [debouncedQuery, status, associationGroup, rightsHolderId, sort, direction, page, pageSize, refreshKey]);
+  }, [debouncedQuery, status, associationGroup, producerType, rightsHolderId, sort, direction, page, pageSize, refreshKey]);
 
   const loadEditorOptions = async () => {
     if (broadcasters.length || producerTypes.length) return;
@@ -363,15 +369,11 @@ export default function ProducerListClient({ initialData }: { initialData?: Prod
   };
 
   const allSelected = producers.length > 0 && producers.every(producer => selected.includes(producer.id));
-  const activeCount = producers.filter(producer => producer.status === "active").length;
-  const attentionCount = producers.filter(producer => producer.status === "attention").length;
-  const totalWorks = producers.reduce((sum, producer) => sum + producer.work_count, 0);
-  const totalContracts = producers.reduce((sum, producer) => sum + producer.contract_count, 0);
-  const associationCounts = producers.reduce((counts, producer) => {
-    const associationStatus = resolveProducerAssociationStatus(producer.association_memberships.map(membership => membership.membership_type));
-    if (associationStatus !== "none") counts[associationStatus] += 1;
-    return counts;
-  }, { ordinary: 0, associate: 0, unknown: 0 });
+  const activeCount = producerSummary.active_count;
+  const attentionCount = producerSummary.attention_count;
+  const totalWorks = producerSummary.work_count;
+  const totalContracts = producerSummary.contract_count;
+  const associationCounts = { ordinary: producerSummary.ordinary_count, associate: producerSummary.associate_count, unknown: producerSummary.unknown_count };
   const statusLabel = (value: Producer["status"]) => t(`admin.producers.status.${value}` as Parameters<typeof t>[0]);
   const detailKey = (id: string, type: DetailType) => `${id}:${type}`;
   const loadDetails = async (id: string, type: DetailType, force = false) => {
@@ -503,7 +505,8 @@ export default function ProducerListClient({ initialData }: { initialData?: Prod
     <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap">
       <div className="relative flex-1 lg:max-w-sm"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={event => setQuery(event.target.value)} className="pl-9 pr-9" placeholder={t("admin.producers.search")} />{query && <button type="button" aria-label={t("common.clearSearch")} onClick={() => setQuery("")} className="absolute right-3 top-2.5"><X className="h-4 w-4" /></button>}</div>
       <Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full lg:w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t("admin.producers.allStatuses")}</SelectItem><SelectItem value="attention">{statusLabel("attention")}</SelectItem><SelectItem value="active">{statusLabel("active")}</SelectItem><SelectItem value="inactive">{statusLabel("inactive")}</SelectItem></SelectContent></Select>
-      <Select value={associationGroup} onValueChange={setAssociationGroup}><SelectTrigger className="w-full lg:w-60"><SelectValue placeholder="Producenttype" /></SelectTrigger><SelectContent><SelectItem value="all">Alle producenttyper</SelectItem><SelectItem value="ordinary">Medlem af Producentforeningen</SelectItem><SelectItem value="associate">Tilknyttet medlem</SelectItem><SelectItem value="none">Ikke medlem</SelectItem><SelectItem value="unknown">Uklassificeret medlemsstatus</SelectItem><SelectItem value="documentary">Dokumentarfilm</SelectItem><SelectItem value="feature_fiction">Spillefilm / fiktion</SelectItem><SelectItem value="tv">TV</SelectItem><SelectItem value="advertising">Reklamefilm</SelectItem><SelectItem value="dubbing">Dubbing</SelectItem><SelectItem value="animation">Animation</SelectItem><SelectItem value="streamer">Streamer</SelectItem><SelectItem value="broadcaster">Broadcaster</SelectItem></SelectContent></Select>
+      <Select value={associationGroup} onValueChange={setAssociationGroup}><SelectTrigger className="w-full lg:w-60"><SelectValue placeholder="Medlemsstatus" /></SelectTrigger><SelectContent><SelectItem value="all">Alle medlemsstatusser</SelectItem><SelectItem value="ordinary">Medlem af Producentforeningen</SelectItem><SelectItem value="associate">Tilknyttet medlem</SelectItem><SelectItem value="none">Ikke medlem</SelectItem><SelectItem value="unknown">Uklassificeret medlemsstatus</SelectItem></SelectContent></Select>
+      <Select value={producerType} onValueChange={setProducerType}><SelectTrigger className="w-full lg:w-60"><SelectValue placeholder="Producenttype" /></SelectTrigger><SelectContent><SelectItem value="all">Alle producenttyper</SelectItem><SelectItem value="documentary">Dokumentarfilm</SelectItem><SelectItem value="feature_fiction">Spillefilm / fiktion</SelectItem><SelectItem value="tv">TV</SelectItem><SelectItem value="advertising">Reklamefilm</SelectItem><SelectItem value="dubbing">Dubbing</SelectItem><SelectItem value="animation">Animation</SelectItem><SelectItem value="streamer">Streamer</SelectItem><SelectItem value="broadcaster">Broadcaster</SelectItem></SelectContent></Select>
       <div className="w-full lg:w-72"><RightsHolderAutocomplete options={rightsHolders} searchEndpoint="/api/admin/rettighedshavere-search?scope=all" value={rightsHolderId === "all" ? "" : rightsHolderId} onChange={id => { setRightsHolderId(id || "all"); setPage(1); }} placeholder={t("admin.producers.allRightsHolders")} /></div>
       <Select value={sort} onValueChange={setSort}><SelectTrigger className="w-full lg:hidden"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="name">{t("admin.producers.producer")}</SelectItem><SelectItem value="works">{t("admin.producers.works")}</SelectItem><SelectItem value="contracts">{t("admin.producers.contracts")}</SelectItem><SelectItem value="latest">{t("admin.producers.latest")}</SelectItem></SelectContent></Select>
       <Button variant="outline" onClick={() => setDirection(value => value === "asc" ? "desc" : "asc")}>{direction === "asc" ? "A–Z" : "Z–A"}</Button>

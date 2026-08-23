@@ -31,14 +31,19 @@ export default function LoginPage() {
     })
 
     useEffect(() => {
-        const orgId = new URLSearchParams(window.location.search).get("org")
+        const params = new URLSearchParams(window.location.search)
+        if (params.get("notice") === "session-expired") {
+            setNotice(t("auth.sessionExpired"))
+            window.history.replaceState(null, "", window.location.pathname)
+        }
+        const orgId = params.get("org")
         if (!orgId) return
         void fetch(`/api/public/branding?org=${encodeURIComponent(orgId)}`)
             .then(response => response.ok ? response.json() : null)
             .then(nextBrand => {
                 if (nextBrand) setBrand(nextBrand)
             })
-    }, [])
+    }, [t])
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault()
