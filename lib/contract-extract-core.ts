@@ -339,6 +339,9 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
         extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>, knownIds)
     }
     const credit = resolveContractCredit(extracted, maskedText)
+    extracted.contractCredits = credit.contractCredits
+    extracted.creditClauseStatus = credit.creditClauseStatus
+    extracted.hasCreditClause = !["absent", "role_only"].includes(credit.creditClauseStatus)
     if (credit.creditedRoles || credit.sourceText) {
         extracted.creditedRoles = credit.creditedRoles
         extracted._sources = {

@@ -91,6 +91,8 @@ const properties: Record<string, JsonSchema> = {
   royalty: boolean,
   royaltyPercent: number,
   creditedRoles: text,
+  creditClauseStatus: enumText(["precise", "vague", "role_only", "conditional", "absent", "unclear"]),
+  contractCredits: nullable({ type: "array", items: { type: "object", required: ["title"], properties: { title: { type: "string" }, sourceText: { anyOf: [{ type: "string" }, { type: "null" }] } } } }),
   aiDataMiningClause: boolean,
   futureRightsReservation: boolean,
   rightsOverview: {
@@ -268,7 +270,7 @@ export function normalizeContractExtraction(value: unknown) {
         .map(item => [item, typeof overview[item] === "string" ? overview[item].trim() : null]));
       continue;
     }
-    if ((key === "otherSupplements" || key === "workPhases") && Array.isArray(raw[key])) {
+    if ((key === "otherSupplements" || key === "workPhases" || key === "contractCredits") && Array.isArray(raw[key])) {
       result[key] = raw[key].filter(item => item && typeof item === "object" && !Array.isArray(item));
       continue;
     }
@@ -303,7 +305,7 @@ export function mergeContractExtractionChunks(chunks: Record<string, unknown>[])
           .map(item => Math.round(item)))).sort((left, right) => left - right);
         continue;
       }
-      if ((key === "otherSupplements" || key === "workPhases") && Array.isArray(value)) {
+      if ((key === "otherSupplements" || key === "workPhases" || key === "contractCredits") && Array.isArray(value)) {
         // Array-felt — samme faldgrube som episodeNumbers ville have haft uden
         // særlig behandling: den generelle "første ikke-tomme værdi vinder"-regel
         // nedenfor ville ellers lade et tidligt chunks TOMME array låse feltet,

@@ -171,6 +171,8 @@ export interface ContractWorkPhase {
     clauseId: string | null
 }
 
+export interface ContractCreditClause { title: string; sourceText: string | null; clauseId: string | null }
+
 export interface ExtractedContractData {
     productionType?: string
     salary?: number
@@ -197,6 +199,8 @@ export interface ExtractedContractData {
     personalSupplement?: number
     otherSupplements?: OtherSupplement[] | null
     workPhases?: ContractWorkPhase[] | null
+    contractCredits?: ContractCreditClause[] | null
+    creditClauseStatus?: "precise" | "vague" | "role_only" | "conditional" | "absent" | "unclear"
     signatureStatus?: "yes" | "no" | "unknown"
     signatureMethod?: "handwritten" | "digital" | "none" | "unknown"
     signatureDate?: string

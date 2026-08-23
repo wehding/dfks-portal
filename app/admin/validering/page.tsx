@@ -30,6 +30,7 @@ import { SourceBtn } from "@/components/source-btn"
 import { resolveOtherSupplements } from "@/lib/contract-supplements"
 import { resolvePensionSupplement } from "@/lib/contract-pension"
 import { resolveContractSalary } from "@/lib/contract-salary"
+import { resolveContractCredit } from "@/lib/contract-credit"
 
 const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
     overtidstillaeg: "Overtidstillæg",
@@ -63,6 +64,7 @@ const WORK_PHASE_PAYMENT_LABELS: Record<string, string> = {
     unpaid: "Ikke betalt",
     unclear: "Uklart",
 }
+const CREDIT_STATUS_LABELS: Record<string, string> = { precise: "Præcis klausul", vague: "Upræcis klausul", role_only: "Kun arbejdsfunktion", conditional: "Betinget kreditering", absent: "Ingen klausul", unclear: "Uklar" }
 
 const ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
 const BUCKET = "kontrakter"
@@ -431,12 +433,15 @@ function AdminValideringPageInner() {
             const impliedByRoyalty = !!ed.royalty
             const normalizedSalary = resolveContractSalary(ed)
             const pensionSupplement = resolvePensionSupplement(normalizedSalary)
+            const contractCredit = resolveContractCredit(ed)
 
             setFormData({
                 producerName: ed.producerName ?? ed.employerName ?? "",
                 rightsHolderName: ed.rightsHolderName ?? "",
                 workTitle: ed.workTitle ?? "",
-                creditedRoles: Array.isArray(ed.creditedRoles) ? ed.creditedRoles.join(", ") : (ed.creditedRoles ?? ""),
+                creditedRoles: contractCredit.creditedRoles ?? "",
+                contractCredits: contractCredit.contractCredits,
+                creditClauseStatus: contractCredit.creditClauseStatus,
                 productionType: ed.productionType ?? "",
                 contractType: ed.collectiveAgreementByReference
                     ? "leverandør-ref"
@@ -535,6 +540,9 @@ function AdminValideringPageInner() {
                 rightsHolderName: formData.rightsHolderName || undefined,
                 workTitle: formData.workTitle || undefined,
                 creditedRoles: formData.creditedRoles || undefined,
+                contractCredits: Array.isArray(formData.contractCredits) ? formData.contractCredits : undefined,
+                creditClauseStatus: formData.creditClauseStatus || "unclear",
+                hasCreditClause: !["absent", "role_only"].includes(String(formData.creditClauseStatus ?? "unclear")),
                 productionType: formData.productionType || undefined,
                 salary: formData.salary ? Number(formData.salary) : undefined,
                 lumpSumAmount: formData.lumpSumAmount ? Number(formData.lumpSumAmount) : undefined,
@@ -578,7 +586,7 @@ function AdminValideringPageInner() {
                 holiday_pay_rate:               extractedData.holidayPayRate ?? null,
                 beta_rate:                      extractedData.betaRate ?? null,
                 has_overenskomst_incorporation: !!extractedData.collectiveAgreement,
-                has_credit_clause:              !!(extractedData.creditedRoles),
+                has_credit_clause:              !!extractedData.hasCreditClause,
                 notes:                          extractedData.specialNotes ?? null,
                 // Udvidede kolonner (migration 20260612)
                 extracted_data:                 extractedData,
@@ -693,6 +701,7 @@ function AdminValideringPageInner() {
 
         const normalizedSalary = resolveContractSalary(ed)
         const pensionSupplement = resolvePensionSupplement(normalizedSalary)
+        const contractCredit = resolveContractCredit(ed)
 
         return {
             producerName: (() => {
@@ -704,7 +713,9 @@ function AdminValideringPageInner() {
             })(),
             rightsHolderName:              ed.rightsHolderName ?? "",
             workTitle:                     ed.workTitle ?? "",
-            creditedRoles:                 Array.isArray(ed.creditedRoles) ? ed.creditedRoles.join(", ") : (ed.creditedRoles ?? ""),
+            creditedRoles:                 contractCredit.creditedRoles ?? "",
+            contractCredits:               contractCredit.contractCredits,
+            creditClauseStatus:             contractCredit.creditClauseStatus,
             productionType:                ed.productionType ?? "",
             contractType:                  ed.collectiveAgreementByReference
                                                ? "leverandør-ref"
@@ -1053,11 +1064,14 @@ setActiveField(fieldId)
         }
         const otherSuppMatch = activeField?.match(/^otherSupplements_(\d+)$/)
         const workPhaseMatch = activeField?.match(/^workPhases_(\d+)$/)
+        const contractCreditMatch = activeField?.match(/^contractCredits_(\d+)$/)
         const activeClauseId = activeField
             ? otherSuppMatch
                 ? ((Array.isArray(formData.otherSupplements) ? formData.otherSupplements[Number(otherSuppMatch[1])] : null) as Record<string, unknown> | null)?.clauseId as string | null ?? null
                 : workPhaseMatch
                     ? ((Array.isArray(formData.workPhases) ? formData.workPhases[Number(workPhaseMatch[1])] : null) as Record<string, unknown> | null)?.clauseId as string | null ?? null
+                : contractCreditMatch
+                    ? ((Array.isArray(formData.contractCredits) ? formData.contractCredits[Number(contractCreditMatch[1])] : null) as Record<string, unknown> | null)?.clauseId as string | null ?? null
                 : (FIELD_TO_CLAUSE_ID[activeField] ?? null)
             : null
         if (activeField) console.log(`[LAG5-B] activeField=${activeField} → activeClauseId=${activeClauseId ?? "null"}, layout=${contractLayout ? contractLayout.clauses.length + " klausuler" : "NULL"}`)
@@ -1353,10 +1367,7 @@ setActiveField(fieldId)
                                             )}
                                         </F>
                                     )}
-                                    <F src={fieldSrc("creditedRoles")} label={<>Kreditering{creditHl && <SourceBtn quote={creditHl} active={activeField === "creditedRoles"} onClick={() => activateSource("creditedRoles", creditHl)} />}</>}>
-                                        <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor..." />
-                                    </F>
-                                </div>
+                                    </div>
 
                                 <Separator />
 
@@ -1715,6 +1726,12 @@ setActiveField(fieldId)
                                 <div>
                                     <Label className="text-xs mb-3 block font-semibold uppercase tracking-wide text-muted-foreground">Kontraktbeskyttelse</Label>
                                     <RightRow label={t("admin.validation.aiClause")} desc={t("admin.validation.aiClauseDesc")} checked={formData.aiDataMiningClause ?? false} onChange={(v) => setField("aiDataMiningClause", v)} />
+                                </div>
+                                <Separator />
+                                <div className={`rounded-md border p-3 space-y-2 ${SOURCE_STYLES[Array.isArray(formData.contractCredits) && formData.contractCredits.some((credit: Record<string, unknown>) => credit.sourceText || credit.clauseId) ? "ai" : "manuel"]}`}>
+                                    <div className="flex items-center justify-between gap-3"><Label className="text-xs">Kreditering i kontrakten</Label><Select value={String(formData.creditClauseStatus ?? "unclear")} onValueChange={(value) => setField("creditClauseStatus", value)}><SelectTrigger className="h-7 w-[180px] text-xs"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(CREDIT_STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+                                    {Array.isArray(formData.contractCredits) && formData.contractCredits.length > 0 ? <div className="space-y-1.5">{formData.contractCredits.map((credit: Record<string, unknown>, i: number) => { const source = typeof credit.sourceText === "string" ? credit.sourceText : null; const field = `contractCredits_${i}`; return <div key={i} className="flex items-center gap-2"><Input className="h-8" value={String(credit.title ?? "")} onChange={(event) => { const credits = [...(formData.contractCredits as Record<string, unknown>[])]; credits[i] = { ...credits[i], title: event.target.value }; setField("contractCredits", credits); setField("creditedRoles", credits.map(item => String(item.title ?? "")).filter(Boolean).join(", ")) }} /><SourceBtn quote={source ?? undefined} active={activeField === field} onClick={() => activateSource(field, source)} /><button type="button" title="Fjern kreditering" className="rounded p-1 text-muted-foreground hover:text-destructive" onClick={() => { const credits = [...(formData.contractCredits as Record<string, unknown>[])]; credits.splice(i, 1); setField("contractCredits", credits); setField("creditedRoles", credits.map(item => String(item.title ?? "")).filter(Boolean).join(", ")) }}><Trash2 className="h-3.5 w-3.5" /></button></div> })}</div> : <p className="text-xs text-muted-foreground">Ingen konkret krediteringstitel fundet.</p>}
+                                    <button type="button" className="text-xs text-muted-foreground underline underline-offset-2" onClick={() => { const credits = Array.isArray(formData.contractCredits) ? [...formData.contractCredits] : []; credits.push({ title: "", sourceText: null, clauseId: null }); setField("contractCredits", credits) }}>+ Tilføj kreditering manuelt</button>
                                 </div>
                             </TabsContent>
 

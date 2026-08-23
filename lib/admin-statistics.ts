@@ -473,6 +473,14 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     ...sampleMeta(items, disclosure(cell)),
   })).sort((left, right) => left.year - right.year);
 
+  const creditClauses = protectGroups(groupRows(rows, row => row.year), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([year, items, cell]) => {
+    const status = (row: ContractRow) => String(row.data.creditClauseStatus ?? (row.data.hasCreditClause ? "unclear" : "absent"));
+    return { year: Number(year), precise: visibleNumber(items.filter(row => status(row) === "precise").length, cell), vague: visibleNumber(items.filter(row => status(row) === "vague").length, cell), conditional: visibleNumber(items.filter(row => status(row) === "conditional").length, cell), roleOnly: visibleNumber(items.filter(row => status(row) === "role_only").length, cell), absent: visibleNumber(items.filter(row => status(row) === "absent").length, cell), unclear: visibleNumber(items.filter(row => status(row) === "unclear").length, cell), precisePercent: visibleNumber(items.length ? Math.round(items.filter(row => status(row) === "precise").length / items.length * 100) : 0, cell), ...sampleMeta(items, disclosure(cell)) };
+  }).sort((left, right) => left.year - right.year);
+
+  const creditTitleKeys = [...new Set(rows.flatMap(row => Array.isArray(row.data.contractCredits) ? (row.data.contractCredits as Array<Record<string, unknown>>).map(credit => String(credit.title ?? "").trim()).filter(Boolean) : []))];
+  const creditTitles = protectGroups(creditTitleKeys.map(title => [title, rows.filter(row => Array.isArray(row.data.contractCredits) && (row.data.contractCredits as Array<Record<string, unknown>>).some(credit => String(credit.title ?? "").trim() === title))]), minimumGroupSize, dominanceLimit, { hasPublishedTotal: true }).map(([title, items, cell]) => ({ title: String(title), count: visibleNumber(items.length, cell), ...sampleMeta(items, disclosure(cell)) })).sort((left, right) => (right.count ?? -1) - (left.count ?? -1) || left.title.localeCompare(right.title, "da"));
+
   const contributionRows = salaryRows.filter(row => (statisticsNumber(row.data.salary) ?? 0) > 0);
   const contributions = protectGroups(
     groupRows(contributionRows, row => row.year),
@@ -501,7 +509,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
 
   const privacySummary = suppressionSummary([
     ...salary, ...salaryByCategory, ...pension, ...workingWeeks, ...contractCounts,
-    ...rights, ...rightsByYear, ...gender, ...aiClauses, ...contributions,
+    ...rights, ...rightsByYear, ...gender, ...aiClauses, ...creditClauses, ...creditTitles, ...contributions,
   ]);
 
   return {
@@ -524,6 +532,8 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     rightsByYear,
     gender,
     aiClauses,
+    creditClauses,
+    creditTitles,
     contributions,
   };
 }
