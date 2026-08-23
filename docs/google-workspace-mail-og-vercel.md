@@ -115,6 +115,7 @@ De samme Google-værdier kan sættes i den lokale `.env.local`:
 GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL=servicekonto@projekt-id.iam.gserviceaccount.com
 GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 GOOGLE_GMAIL_SENDER=bestyrelsen@danskfilmklipperselskab.dk
+GOOGLE_GMAIL_CONTRACT_REVIEW_FROM=kontrakt@danskfilmklipperselskab.dk
 CONTRACT_REVIEW_JOB_SECRET=<en unik tilfældig værdi>
 ```
 
@@ -125,7 +126,7 @@ CONTRACT_REVIEW_JOB_SECRET=<en unik tilfældig værdi>
 Importen overvåger kun den primære postkasse `bestyrelsen@danskfilmklipperselskab.dk`. Adressen `kontrakt@danskfilmklipperselskab.dk` er et alias; systemet forsøger derfor ikke at identificere aliaset i mailens headers.
 
 1. Opret et Gmail-filter i Google Workspace, som sætter labelen `kontrakter` på de mails, der skal importeres.
-2. Giv servicekontoens domænedækkende delegation Gmail-scope `https://www.googleapis.com/auth/gmail.modify`. Dette scope bruges til at læse de labelmærkede mails og tilføje outputlabelen. Systemet fjerner aldrig labels, arkiverer ikke og markerer ikke mails som læst.
+2. Giv servicekontoens domænedækkende delegation Gmail-scopene `https://www.googleapis.com/auth/gmail.modify` og `https://www.googleapis.com/auth/gmail.compose`. `gmail.modify` bruges af importklienten til at læse de labelmærkede mails og tilføje outputlabelen. Den separate compose-klient kan kun oprette og opdatere kladder; den sender aldrig mailen. Systemet fjerner aldrig labels, arkiverer ikke og markerer ikke mails som læst.
 3. Genbrug Google Cloud Pub/Sub-topic'et `projects/dfks-portal/topics/dfks-gmail-contracts`. Principal `gmail-api-push@system.gserviceaccount.com` har rollen **Pub/Sub Publisher** på topic'et.
 4. Genbrug den autentificerede subscription `dfks-gmail-contracts-vercel`. Den anvender servicekontoen `dfks-gmail-push@dfks-portal.iam.gserviceaccount.com` og kalder:
 
@@ -138,10 +139,13 @@ Importen overvåger kun den primære postkasse `bestyrelsen@danskfilmklippersels
    GOOGLE_GMAIL_CONTRACT_TOPIC=projects/dfks-portal/topics/dfks-gmail-contracts
    GOOGLE_PUBSUB_PUSH_AUDIENCE=https://dfks-portal-hazel.vercel.app/api/integrations/gmail/contracts/push
    GOOGLE_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL=dfks-gmail-push@dfks-portal.iam.gserviceaccount.com
+   GOOGLE_GMAIL_CONTRACT_REVIEW_FROM=kontrakt@danskfilmklipperselskab.dk
    ```
 
 6. Kør watch-ruten én gang som superadmin eller via Vercels beskyttede cron. Den fornyes derefter dagligt. Inputlabelen `kontrakter` skal allerede findes; outputlabelen `kontrakt gennemgang` oprettes automatisk, hvis den mangler.
 
 Watch-ruten genkontrollerer også de seneste syv dage. Det fanger mails, der lå i postkassen før førstegangsopsætningen, eller hvor en Pub/Sub-meddelelse blev forsinket. Et udløbet Gmail history-id må aldrig starte en ubegrænset import af hele mailarkivet. Dubletkontrollen bruger Gmail-message-id og PDF-filens SHA-256-hash, fordi Gmail kan returnere et nyt attachment-id for det samme uændrede bilag.
 
-En mail får først outputlabelen `kontrakt gennemgang`, når alle understøttede bilag (`.pdf`, `.doc`, `.docx`) er oprettet som sager. Mailtekst og spørgsmål gemmes som reference. AI laver kun et lokalt svarudkast, som en jurist skal kontrollere. Portalen opretter ikke Gmail-kladder og sender aldrig svaret automatisk.
+En mail får først outputlabelen `kontrakt gennemgang`, når alle understøttede bilag (`.pdf`, `.doc`, `.docx`) er oprettet som sager. Mailtekst og spørgsmål gemmes som reference. Vercels beskyttede cron `/api/admin/gmail/contracts/threads` opdaterer åbne mailtråde hvert 10. minut. Deploymenten må ikke gennemføres på et Vercel-abonnement, der afviser dette interval.
+
+AI laver et lokalt svarudkast, som en jurist skal kontrollere. Knappen **Opret kladde i Gmail** gemmer en rigtig kladde i `bestyrelsen@…`-postkassen med `kontrakt@…` som send-as-alias og de korrekte svarheadere. Aliaset skal derfor være verificeret som send-as-adresse i Gmail. Portalen bruger ikke Gmail-send-endpointet og sender aldrig svaret automatisk.
