@@ -1479,24 +1479,25 @@ setActiveField(fieldId)
                                         <div className={`rounded border p-2 space-y-1.5 ${SOURCE_STYLES[fieldSrc("personalSupplement") ?? "manuel"]}`}>
                                             <div className="flex items-center gap-2">
                                                 <Badge variant="outline" className="text-[11px] shrink-0">Personligt tillæg</Badge>
-                                                <span className="text-sm font-medium">{String(formData.personalSupplement)} kr.</span>
                                                 <SourceBtn quote={personalSupplementNavigation} active={activeField === "supplements"} onClick={() => activateSource("supplements", personalSupplementNavigation)} />
-                                                <button type="button" aria-label="Fjern personligt tillæg" className="ml-auto text-muted-foreground hover:text-destructive transition-colors" onClick={() => {
+                                                <button type="button" title="Fjern tillæg" aria-label="Fjern personligt tillæg" className="ml-auto rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" onClick={() => {
                                                     setField("personalSupplement", "")
                                                     setFormData(prev => ({ ...prev, personalSupplementConflict: false }))
-                                                }}><X className="h-3.5 w-3.5" /></button>
+                                                }}><Trash2 className="h-3.5 w-3.5" /></button>
                                             </div>
                                             {formData.personalSupplementConflict && (
                                                 <p className="text-[11px] text-amber-700 dark:text-amber-300">AI-felterne personalSupplement og loentillaeg er forskellige. Kontrollér beløbet mod kontrakten.</p>
                                             )}
-                                            <Input type="number" value={String(formData.personalSupplement)} placeholder="Beløb" className="h-7 text-xs" onChange={(e) => {
-                                                setField("personalSupplement", e.target.value)
-                                                setFormData(prev => ({ ...prev, personalSupplementConflict: false }))
-                                            }} />
+                                            <div className="relative">
+                                                <Input type="number" value={String(formData.personalSupplement)} placeholder="Beløb" className="h-7 pr-10 text-xs" onChange={(e) => {
+                                                    setField("personalSupplement", e.target.value)
+                                                    setFormData(prev => ({ ...prev, personalSupplementConflict: false }))
+                                                }} />
+                                                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">kr.</span>
+                                            </div>
                                         </div>
                                     )}
                                     {(Array.isArray(formData.otherSupplements) ? formData.otherSupplements : []).map((s: Record<string, unknown>, i: number) => {
-                                        const sUnit = s.unit != null ? String(s.unit) : null
                                         const sNote = s.note != null ? String(s.note) : null
                                         const sSrc = s.sourceText != null ? String(s.sourceText) : null
                                         const sClauseId = s.clauseId != null ? String(s.clauseId) : null
@@ -1504,36 +1505,36 @@ setActiveField(fieldId)
                                         return (
                                         <div key={i} className={`rounded border p-2 space-y-1.5 ${SOURCE_STYLES[fieldSrc("otherSupplements") ?? "manuel"]}`}>
                                             <div className="flex items-center gap-2">
-                                                <Badge variant="outline" className="text-[11px] shrink-0">{OTHER_SUPPLEMENT_LABELS[s.category as string] ?? String(s.category)}</Badge>
-                                                {s.amount != null && <span className="text-sm font-medium">{String(s.amount)} kr.</span>}
-                                                {sUnit && <span className="text-xs text-muted-foreground">{sUnit}</span>}
-                                                <SourceBtn quote={sNavigationSource} active={activeField === `otherSupplements_${i}`} onClick={() => activateSource(`otherSupplements_${i}`, sNavigationSource)} />
-                                                <button type="button" className="ml-auto text-muted-foreground hover:text-destructive transition-colors" onClick={() => {
-                                                    const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
-                                                    arr.splice(i, 1)
-                                                    setField("otherSupplements", arr)
-                                                }}><X className="h-3.5 w-3.5" /></button>
-                                            </div>
-                                            {sNote && <p className="text-[11px] text-muted-foreground pl-1">{sNote}</p>}
-                                            <div className="grid grid-cols-[1fr_auto_1fr] gap-1.5 items-center">
-                                                <Input type="number" value={s.amount != null ? String(s.amount) : ""} placeholder="Beløb" className="h-7 text-xs" onChange={(e) => {
-                                                    const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
-                                                    arr[i] = { ...arr[i], amount: e.target.value ? Number(e.target.value) : null }
-                                                    setField("otherSupplements", arr)
-                                                }} />
-                                                <Input value={s.unit ? String(s.unit) : ""} placeholder="Enhed" className="h-7 text-xs" onChange={(e) => {
-                                                    const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
-                                                    arr[i] = { ...arr[i], unit: e.target.value || null }
-                                                    setField("otherSupplements", arr)
-                                                }} />
                                                 <Select value={String(s.category)} onValueChange={(v) => {
                                                     const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
                                                     arr[i] = { ...arr[i], category: v }
                                                     setField("otherSupplements", arr)
                                                 }}>
-                                                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                    <SelectTrigger className="h-7 w-[180px] text-xs"><SelectValue /></SelectTrigger>
                                                     <SelectContent>{OTHER_SUPPLEMENT_CATEGORIES.map(c => <SelectItem key={c} value={c} className="text-xs">{OTHER_SUPPLEMENT_LABELS[c]}</SelectItem>)}</SelectContent>
                                                 </Select>
+                                                <SourceBtn quote={sNavigationSource} active={activeField === `otherSupplements_${i}`} onClick={() => activateSource(`otherSupplements_${i}`, sNavigationSource)} />
+                                                <button type="button" title="Fjern tillæg" aria-label={`Fjern ${OTHER_SUPPLEMENT_LABELS[s.category as string] ?? "tillæg"}`} className="ml-auto rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" onClick={() => {
+                                                    const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
+                                                    arr.splice(i, 1)
+                                                    setField("otherSupplements", arr)
+                                                }}><Trash2 className="h-3.5 w-3.5" /></button>
+                                            </div>
+                                            {sNote && <p className="text-[11px] text-muted-foreground pl-1">{sNote}</p>}
+                                            <div className="grid grid-cols-2 gap-1.5 items-center">
+                                                <div className="relative">
+                                                    <Input type="number" value={s.amount != null ? String(s.amount) : ""} placeholder="Beløb" className="h-7 pr-10 text-xs" onChange={(e) => {
+                                                        const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
+                                                        arr[i] = { ...arr[i], amount: e.target.value ? Number(e.target.value) : null }
+                                                        setField("otherSupplements", arr)
+                                                    }} />
+                                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">kr.</span>
+                                                </div>
+                                                <Input value={s.unit ? String(s.unit) : ""} placeholder="Enhed" className="h-7 text-xs" onChange={(e) => {
+                                                    const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
+                                                    arr[i] = { ...arr[i], unit: e.target.value || null }
+                                                    setField("otherSupplements", arr)
+                                                }} />
                                             </div>
                                         </div>
                                         )
