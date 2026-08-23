@@ -82,7 +82,7 @@ const emptyForm: FormState = {
   statistics_contract_scope: "validated_only",
   statistics_minimum_group_size: 5,
   statistics_dominance_limit: 0.8,
-  statistics_profile_config: { professional_start_year: true, primary_profession_type: false, secondary_profession_types: false, usual_work_mode: false, primary_work_region: false },
+  statistics_profile_config: { professional_start_year: true, primary_profession_type: false, secondary_profession_types: false, usual_work_mode: true, primary_work_region: false },
   statistics_work_regions: [],
   onboarding_keywords: ["klip", "edit"],
   contract_review_retention_months: 24,
@@ -325,6 +325,9 @@ export default function OrganisationSettingsPage() {
             Opsætning
           </div>
           <h1 className="text-2xl font-semibold">Opsætning</h1>
+          <p className="mt-1 text-base font-medium text-foreground">
+            {form.long_name || form.short_name || "Organisation"}
+          </p>
           <p className="mt-1 text-sm text-muted-foreground">
             Tilpas navn, logo, afsender-mail og de fagord organisationens brugere ser i portalen.
           </p>
@@ -498,12 +501,11 @@ export default function OrganisationSettingsPage() {
           {([
             ["professional_start_year", "Professionelt startår"],
             ["primary_profession_type", "Primær faggruppe"],
-            ["secondary_profession_types", "Yderligere faggrupper"],
             ["usual_work_mode", "Typisk arbejdsform"],
             ["primary_work_region", "Primært arbejdsområde"],
           ] as const).map(([key, label]) => <div key={key} className="flex items-center justify-between gap-4 rounded-md border px-3 py-2">
             <Label htmlFor={`statistics-profile-${key}`}>{label}</Label>
-            <Switch id={`statistics-profile-${key}`} checked={form.statistics_profile_config[key]} disabled={key === "secondary_profession_types" && !form.statistics_profile_config.primary_profession_type} onCheckedChange={checked => setForm(current => ({ ...current, statistics_profile_config: { ...current.statistics_profile_config, [key]: checked } }))} />
+            <Switch id={`statistics-profile-${key}`} checked={form.statistics_profile_config[key]} onCheckedChange={checked => setForm(current => ({ ...current, statistics_profile_config: { ...current.statistics_profile_config, [key]: checked } }))} />
           </div>)}
           {form.statistics_profile_config.primary_work_region && <div className="space-y-2 rounded-md border p-3">
             <Label>Valgbare arbejdsområder</Label>

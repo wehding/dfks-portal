@@ -106,7 +106,6 @@ export default function OnboardingClient({
         : null,
   );
   const [legalAccepted, setLegalAccepted] = useState(false);
-  const [secondaryProfessionTypeIds, setSecondaryProfessionTypeIds] = useState<string[]>(statisticsProfile.secondaryProfessionTypeIds);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<OnboardingField, string>>>({});
 
   // DFI & TMDB-tilstand
@@ -291,7 +290,7 @@ export default function OnboardingClient({
     payload.set("opt_out_statistics", String(shareStatistics !== true));
     payload.set("statistics_participation_choice", shareStatistics === null ? "" : String(shareStatistics));
     payload.set("accepted_legal_document_ids", JSON.stringify(legalDocuments.map(document => document.id).filter(Boolean)));
-    payload.set("secondary_profession_type_ids", JSON.stringify(secondaryProfessionTypeIds));
+    payload.set("secondary_profession_type_ids", "[]");
 
     const result = await completeOnboarding(payload);
     if (result.success && result.destination) {
@@ -1043,13 +1042,9 @@ export default function OnboardingClient({
                   <select value={formData.primary_profession_type_id} onChange={event => handleField("primary_profession_type_id", event.target.value)} style={{ marginTop: "12px", width: "100%", maxWidth: "360px", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}><option value="">Vælg faggruppe</option>{statisticsProfile.professionTypes.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select>
                 </div>}
 
-                {statisticsProfile.config.secondary_profession_types && statisticsProfile.professionTypes.length > 0 && <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
-                  <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)" }}>Yderligere faggrupper (valgfrit)</div>
-                  <div style={{ display: "grid", gap: "8px", marginTop: "12px" }}>{statisticsProfile.professionTypes.filter(option => option.id !== formData.primary_profession_type_id).map(option => <label key={option.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px" }}><input type="checkbox" checked={secondaryProfessionTypeIds.includes(option.id)} onChange={event => setSecondaryProfessionTypeIds(current => event.target.checked ? [...new Set([...current, option.id])] : current.filter(id => id !== option.id))} />{option.name}</label>)}</div>
-                </div>}
-
                 {statisticsProfile.config.usual_work_mode && <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
                   <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)" }}>Typisk arbejdsform (valgfrit)</div>
+                  <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: "4px 0 0" }}>Bruges kun i samlet statistik og kan springes over.</p>
                   <select value={formData.usual_work_mode} onChange={event => handleField("usual_work_mode", event.target.value)} style={{ marginTop: "12px", width: "100%", maxWidth: "360px", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}><option value="">Vælg arbejdsform</option><option value="employee">A-lønmodtager</option><option value="company">Gennem eget selskab</option><option value="both">Begge dele</option><option value="other">Andet</option><option value="prefer_not_to_say">Vil ikke oplyse</option></select>
                 </div>}
 

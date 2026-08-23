@@ -24,7 +24,7 @@ export type LegalDocumentRecord = {
 
 export const LEGAL_DOCUMENT_TYPE_LABELS: Record<LegalDocumentType, string> = {
   privacy_notice: "Privatliv og data",
-  terms_of_service: "Brugervilkaar",
+  terms_of_service: "Brugervilkår",
   ai_transparency_notice: "AI-transparens",
   contract_analysis_notice: "Kontraktanalyse",
 };
@@ -33,6 +33,49 @@ export const LEGAL_DOCUMENT_AUDIENCE_LABELS: Record<LegalDocumentAudience, strin
   member: "Medlemmer",
   non_member: "Ikke-medlemmer",
 };
+
+const DANISH_LEGAL_SPELLING: ReadonlyArray<readonly [string, string]> = [
+  ["Brugervilkaar", "Brugervilkår"],
+  ["raadgivningsafgoerelser", "rådgivningsafgørelser"],
+  ["raadgivende", "rådgivende"],
+  ["raadgivning", "rådgivning"],
+  ["raadgiver", "rådgiver"],
+  ["loenoplysninger", "lønoplysninger"],
+  ["arbejdsvilkaar", "arbejdsvilkår"],
+  ["vaerktoejer", "værktøjer"],
+  ["ansaettelses", "ansættelses"],
+  ["traeningsklausuler", "træningsklausuler"],
+  ["diskretionsgraenser", "diskretionsgrænser"],
+  ["understoetter", "understøtter"],
+  ["beslutningsstoettende", "beslutningsstøttende"],
+  ["gennemsoger", "gennemsøger"],
+  ["fremhaeves", "fremhæves"],
+  ["gennemgaa", "gennemgå"],
+  ["udtraekker", "udtrækker"],
+  ["udtraek", "udtræk"],
+  ["stoette", "støtte"],
+  ["afgoerelser", "afgørelser"],
+  ["hjaelpe", "hjælpe"],
+  ["laeser", "læser"],
+  ["traene", "træne"],
+  ["vaelge", "vælge"],
+  ["indgaa", "indgå"],
+  ["vilkaar", "vilkår"],
+  ["foerst", "først"],
+  ["foer", "før"],
+  ["Naar", "Når"],
+  ["Laes", "Læs"],
+  ["loen", "løn"],
+  [" saa ", " så "],
+  [" maa ", " må "],
+];
+
+export function normalizeDanishLegalText(value: string) {
+  return DANISH_LEGAL_SPELLING.reduce(
+    (text, [source, replacement]) => text.replaceAll(source, replacement),
+    value,
+  );
+}
 
 export function isLegalDocumentType(value: unknown): value is LegalDocumentType {
   return LEGAL_DOCUMENT_TYPES.includes(value as LegalDocumentType);
@@ -45,66 +88,66 @@ export function isLegalDocumentAudience(value: unknown): value is LegalDocumentA
 export const DEFAULT_LEGAL_DOCUMENT_COPY: Record<LegalDocumentAudience, Record<LegalDocumentType, { title: string; body: string }>> = {
   member: {
     privacy_notice: {
-      title: "Velkommen til DFKS portalen - Din data, dine rettigheder",
-      body: `For at give dig den skarpeste raadgivning om din loen og dine rettigheder bruger vi AI til at scanne din kontrakt. Din sikkerhed kommer foerst.
+      title: "Velkommen til DFKS-portalen – dine data, dine rettigheder",
+      body: `For at give dig den skarpeste rådgivning om din løn og dine rettigheder bruger vi AI til at gennemgå din kontrakt. Din sikkerhed kommer først.
 
-Inden systemet laeser dokumentet, maskerer vi automatisk CPR-nummer og bankoplysninger. Kontrakten behandles i et lukket system, som ikke bruges til at traene offentlige AI-modeller.
+Inden systemet læser dokumentet, maskerer vi automatisk CPR-nummer og bankoplysninger. Kontrakten behandles i et lukket system, som ikke bruges til at træne offentlige AI-modeller.
 
-Som medlem er du oplyst om, at foreningen bruger overordnede kontrakt- og loenoplysninger til anonymiseret statistikarbejde. Statistikken bruges kun samlet og under faste diskretionsgraenser.
+Som medlem er du oplyst om, at foreningen bruger overordnede kontrakt- og lønoplysninger til anonymiseret statistikarbejde. Statistikken bruges kun samlet og under faste diskretionsgrænser.
 
-Laes den fulde privatlivspolitik: ${PRIVACY_POLICY_URL}`,
+Læs den fulde privatlivspolitik: ${PRIVACY_POLICY_URL}`,
     },
     terms_of_service: {
-      title: "Brugervilkaar for Portalen",
-      body: `Portalen leverer digital softwareinfrastruktur, der understoetter organisationens sagsbehandling og raadgivning. Platformen, herunder AI-baserede kontraktanalyse- og statistikvaerktoejer, leverer alene raadgivende og beslutningsstoettende analyser.
+      title: "Brugervilkår for portalen",
+      body: `Portalen leverer digital softwareinfrastruktur, der understøtter organisationens sagsbehandling og rådgivning. Platformen, herunder AI-baserede kontraktanalyse- og statistikværktøjer, leverer alene rådgivende og beslutningsstøttende analyser.
 
-Portalen er ikke aftalepartner i dine ansaettelses-, freelance- eller ophavsretskontrakter. Alle raadgivningsafgoerelser, overenskomstvurderinger og juridiske skridt foretages og godkendes af organisationens sagsbehandlere.
+Portalen er ikke aftalepartner i dine ansættelses-, freelance- eller ophavsretskontrakter. Alle rådgivningsafgørelser, overenskomstvurderinger og juridiske skridt foretages og godkendes af organisationens sagsbehandlere.
 
-AI-genererede udtraek er vejledende og skal altid verificeres mod det originale kildedokument foer endelig sagsafslutning eller underskrift.`,
+AI-genererede udtræk er vejledende og skal altid verificeres mod det originale kildedokument før endelig sagsafslutning eller underskrift.`,
     },
     ai_transparency_notice: {
       title: "EU AI Act transparensdeklaration",
-      body: `Kontraktanalysen er udarbejdet med stoette fra kunstig intelligens i form af en sprogmodel. AI-systemet gennemsoger teksten for specifikke klausuler, for eksempel loen, pension, buyout, AI-forbehold og overenskomstafvigelser.
+      body: `Kontraktanalysen er udarbejdet med støtte fra kunstig intelligens i form af en sprogmodel. AI-systemet gennemsøger teksten for specifikke klausuler, for eksempel løn, pension, buyout, AI-forbehold og overenskomstafvigelser.
 
-Systemet foretager ingen automatiske afgoerelser. Fundne passager fremhaeves, saa du eller din faglige konsulent aktivt kan gennemgaa, verificere og godkende analysen.`,
+Systemet foretager ingen automatiske afgørelser. Fundne passager fremhæves, så du eller din faglige konsulent aktivt kan gennemgå, verificere og godkende analysen.`,
     },
     contract_analysis_notice: {
       title: "Kontraktanalyse og maskering",
-      body: `Naar du uploader en kontrakt, udtraekker systemet tekst og maskerer CPR-nummer, bankoplysninger og andre oplagte personlige kontaktoplysninger, foer teksten sendes til AI-analyse.
+      body: `Når du uploader en kontrakt, udtrækker systemet tekst og maskerer CPR-nummer, bankoplysninger og andre oplagte personlige kontaktoplysninger, før teksten sendes til AI-analyse.
 
-Analysen bruges til at finde relevante kontraktpunkter og mulige risici. En faglig raadgiver eller administrator skal kunne verificere fundene, foer de bruges som grundlag for raadgivning.`,
+Analysen bruges til at finde relevante kontraktpunkter og mulige risici. En faglig rådgiver eller administrator skal kunne verificere fundene, før de bruges som grundlag for rådgivning.`,
     },
   },
   non_member: {
     privacy_notice: {
       title: "Tjek din kontrakt og sikr dine rettigheder",
-      body: `Vi scanner din kontrakt i vores lukkede system for at hjaelpe dig med at opdage skjulte faldgruber, for eksempel urimelige AI-traeningsklausuler eller manglende streaming-kreditering.
+      body: `Vi gennemgår din kontrakt i vores lukkede system for at hjælpe dig med at opdage skjulte faldgruber, for eksempel urimelige AI-træningsklausuler eller manglende streamingkreditering.
 
-Da du ikke er medlem, opbevarer vi din kontrakt sikkert som juridisk dokumentation, saa vi kan varetage dine ophavsrettigheder og sikre udbetaling af dine Copydan- og streamingmidler.
+Da du ikke er medlem, opbevarer vi din kontrakt sikkert som juridisk dokumentation, så vi kan varetage dine ophavsrettigheder og sikre udbetaling af dine Copydan- og streamingmidler.
 
-Dit CPR-nummer og dine bankoplysninger maskeres automatisk, inden systemet analyserer dokumentet. Din kontrakt behandles i et lukket system og benyttes aldrig til at traene offentlige AI-modeller.
+Dit CPR-nummer og dine bankoplysninger maskeres automatisk, inden systemet analyserer dokumentet. Din kontrakt behandles i et lukket system og benyttes aldrig til at træne offentlige AI-modeller.
 
-Laes den fulde privatlivspolitik for rettighedshavere: ${PRIVACY_POLICY_URL}`,
+Læs den fulde privatlivspolitik for rettighedshavere: ${PRIVACY_POLICY_URL}`,
     },
     terms_of_service: {
-      title: "Brugervilkaar for Portalen",
-      body: `Portalen leverer digital softwareinfrastruktur, der understoetter organisationens rettighedsarbejde og raadgivning. Platformen, herunder AI-baserede kontraktanalyse- og statistikvaerktoejer, leverer alene raadgivende og beslutningsstoettende analyser.
+      title: "Brugervilkår for portalen",
+      body: `Portalen leverer digital softwareinfrastruktur, der understøtter organisationens rettighedsarbejde og rådgivning. Platformen, herunder AI-baserede kontraktanalyse- og statistikværktøjer, leverer alene rådgivende og beslutningsstøttende analyser.
 
-Portalen er ikke aftalepartner i dine ansaettelses-, freelance- eller ophavsretskontrakter. Alle raadgivningsafgoerelser, overenskomstvurderinger og juridiske skridt foretages og godkendes af organisationens sagsbehandlere.
+Portalen er ikke aftalepartner i dine ansættelses-, freelance- eller ophavsretskontrakter. Alle rådgivningsafgørelser, overenskomstvurderinger og juridiske skridt foretages og godkendes af organisationens sagsbehandlere.
 
-AI-genererede udtraek er vejledende og skal altid verificeres mod det originale kildedokument foer endelig sagsafslutning eller underskrift.`,
+AI-genererede udtræk er vejledende og skal altid verificeres mod det originale kildedokument før endelig sagsafslutning eller underskrift.`,
     },
     ai_transparency_notice: {
       title: "EU AI Act transparensdeklaration",
-      body: `Kontraktanalysen er udarbejdet med stoette fra kunstig intelligens i form af en sprogmodel. AI-systemet gennemsoger teksten for specifikke klausuler, for eksempel loen, pension, buyout, AI-forbehold og overenskomstafvigelser.
+      body: `Kontraktanalysen er udarbejdet med støtte fra kunstig intelligens i form af en sprogmodel. AI-systemet gennemsøger teksten for specifikke klausuler, for eksempel løn, pension, buyout, AI-forbehold og overenskomstafvigelser.
 
-Systemet foretager ingen automatiske afgoerelser. Fundne passager fremhaeves, saa du eller en faglig konsulent aktivt kan gennemgaa, verificere og godkende analysen.`,
+Systemet foretager ingen automatiske afgørelser. Fundne passager fremhæves, så du eller en faglig konsulent aktivt kan gennemgå, verificere og godkende analysen.`,
     },
     contract_analysis_notice: {
       title: "Kontraktanalyse og anonym markedsstatistik",
-      body: `Naar du uploader en kontrakt, udtraekker systemet tekst og maskerer CPR-nummer, bankoplysninger og andre oplagte personlige kontaktoplysninger, foer teksten sendes til AI-analyse.
+      body: `Når du uploader en kontrakt, udtrækker systemet tekst og maskerer CPR-nummer, bankoplysninger og andre oplagte personlige kontaktoplysninger, før teksten sendes til AI-analyse.
 
-Du kan frivilligt vaelge, om dine overordnede loen- og arbejdsvilkaar maa indgaa i anonymiseret markedsstatistik. Hvis du vaelger nej, bruges kontrakten kun som dokumentation for dine rettigheder og udbetalinger.`,
+Du kan frivilligt vælge, om dine overordnede løn- og arbejdsvilkår må indgå i anonymiseret markedsstatistik. Hvis du vælger nej, bruges kontrakten kun som dokumentation for dine rettigheder og udbetalinger.`,
     },
   },
 };

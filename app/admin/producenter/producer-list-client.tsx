@@ -483,24 +483,42 @@ export default function ProducerListClient({ initialData }: { initialData?: Prod
   };
 
   const editingProducer = editor?.id ? editorProducer : null;
+  const resetProducerFilters = () => {
+    setQuery("");
+    setStatus("all");
+    setAssociationGroup("all");
+    setProducerType("all");
+    setRightsHolderId("all");
+    setSort("name");
+    setDirection("asc");
+    setPage(1);
+  };
+
+  const producerFactCards = [
+    { label: "Producenter i alt", value: producerCounts.total, active: !query && status === "all" && associationGroup === "all" && producerType === "all" && rightsHolderId === "all" && sort === "name", onClick: resetProducerFilters },
+    { label: "Aktive", value: activeCount, active: !query && status === "active" && associationGroup === "all", onClick: () => { resetProducerFilters(); setStatus("active"); } },
+    { label: "Kræver opmærksomhed", value: attentionCount, active: !query && status === "attention" && associationGroup === "all", onClick: () => { resetProducerFilters(); setStatus("attention"); } },
+    { label: "Medlem af Producentforeningen", value: associationCounts.ordinary, active: !query && status === "all" && associationGroup === "ordinary", onClick: () => { resetProducerFilters(); setAssociationGroup("ordinary"); } },
+    { label: "Associeret medlem", value: associationCounts.associate, active: !query && status === "all" && associationGroup === "associate", onClick: () => { resetProducerFilters(); setAssociationGroup("associate"); } },
+    { label: "Uklassificeret medlemsstatus", value: associationCounts.unknown, active: !query && status === "all" && associationGroup === "unknown", onClick: () => { resetProducerFilters(); setAssociationGroup("unknown"); } },
+    { label: "Tilknyttede værker", value: totalWorks, active: sort === "works" && direction === "desc", onClick: () => { resetProducerFilters(); setSort("works"); setDirection("desc"); } },
+    { label: "Tilknyttede kontrakter", value: totalContracts, active: sort === "contracts" && direction === "desc", onClick: () => { resetProducerFilters(); setSort("contracts"); setDirection("desc"); } },
+  ];
 
   return <div className="space-y-6">
     <PageHeader title={t("admin.producers.title")} subtitle={t("admin.producers.subtitle")} actions={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void previewAssociationSync()}><RefreshCw className="mr-2 h-4 w-4" />Hent fra Producentforeningen</Button><Button disabled={editorLoading} onClick={() => void openCreate()}>{editorLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}Tilføj producent</Button></div>} />
     {lastSync && <p className="-mt-4 text-xs text-muted-foreground">Producentforeningen: seneste {lastSync.status === "applied" ? "gennemførte" : "forsøgte"} synkronisering {new Date(lastSync.applied_at ?? lastSync.created_at).toLocaleString("da-DK")}</p>}
     {!loading && <div className="grid grid-cols-3 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-4 xl:grid-cols-8">
-      {[
-        { label: "Viste producenter", value: producers.length },
-        { label: "Aktive", value: activeCount },
-        { label: "Kræver opmærksomhed", value: attentionCount },
-        { label: "Medlem af Producentforeningen", value: associationCounts.ordinary },
-        { label: "Associeret medlem", value: associationCounts.associate },
-        { label: "Uklassificeret medlemsstatus", value: associationCounts.unknown },
-        { label: "Tilknyttede værker", value: totalWorks },
-        { label: "Tilknyttede kontrakter", value: totalContracts },
-      ].map(item => <div key={item.label} className="min-w-0 rounded-lg border bg-card px-2.5 py-2 text-card-foreground sm:px-5 sm:py-4">
+      {producerFactCards.map(item => <button
+        type="button"
+        key={item.label}
+        onClick={item.onClick}
+        aria-pressed={item.active}
+        className={`min-w-0 rounded-lg border bg-card px-2.5 py-2 text-left text-card-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-5 sm:py-4 ${item.active ? "border-primary bg-primary/5" : ""}`}
+      >
         <p className="line-clamp-2 min-h-8 text-[11px] font-medium leading-4 text-muted-foreground sm:mb-1 sm:min-h-0 sm:text-sm">{item.label}</p>
         <p className="text-lg font-bold tabular-nums text-foreground sm:text-2xl">{item.value}</p>
-      </div>)}
+      </button>)}
     </div>}
     <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap">
       <div className="relative flex-1 lg:max-w-sm"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={event => setQuery(event.target.value)} className="pl-9 pr-9" placeholder={t("admin.producers.search")} />{query && <button type="button" aria-label={t("common.clearSearch")} onClick={() => setQuery("")} className="absolute right-3 top-2.5"><X className="h-4 w-4" /></button>}</div>

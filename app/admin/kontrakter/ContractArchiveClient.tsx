@@ -375,7 +375,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     const [currentPage, setCurrentPage] = useState(initialQuery?.page ?? 1)
     const [totalCount, setTotalCount] = useState(initialResult?.success ? initialResult.totalCount ?? 0 : 0)
     const [totalAllCount, setTotalAllCount] = useState(initialResult?.success ? initialResult.totalAllCount ?? 0 : 0)
-    const [serverStats, setServerStats] = useState(initialResult?.success ? initialResult.stats ?? { total: 0, validerede: 0 } : { total: 0, validerede: 0 })
+    const [serverStats, setServerStats] = useState(initialResult?.success ? initialResult.stats ?? { total: 0, validerede: 0, kladder: 0 } : { total: 0, validerede: 0, kladder: 0 })
     const [sortKey, setSortKey] = useState<SortKey>((initialQuery?.sortKey as SortKey) ?? "status")
     const [sortDir, setSortDir] = useState<SortDir>(initialQuery?.sortDir ?? "asc")
     const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -1758,6 +1758,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     const stats = {
         total: serverStats.total,
         validerede: serverStats.validerede,
+        kladder: serverStats.kladder,
     }
 
     return (
@@ -1767,9 +1768,25 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             {!loading && <ListReadinessMarker route="admin-contracts" stage="secondary" />}
             {!loading && <ListReadinessMarker route="admin-contracts" stage="complete" />}
             {view === "archive" && <SummaryGrid>
-                <SummaryCard label="Kontrakter i alt" value={stats.total} />
+                <SummaryCard
+                    label="Kontrakter i alt"
+                    value={stats.total}
+                    active={!search && filterStatus === "all" && filterType === "all" && !activeRh}
+                    onClick={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setCurrentPage(1) }}
+                />
                 <YearCountCard contracts={contracts} availableYears={availableYears} currentYear={currentYear} />
-                <SummaryCard label="Validerede" value={stats.validerede} />
+                <SummaryCard
+                    label="Validerede"
+                    value={stats.validerede}
+                    active={!search && filterStatus === "valideret" && filterType === "all" && !activeRh}
+                    onClick={() => { setSearch(""); setFilterStatus("valideret"); setFilterType("all"); setActiveRh(null); setCurrentPage(1) }}
+                />
+                <SummaryCard
+                    label="Kladder"
+                    value={stats.kladder}
+                    active={!search && filterStatus === "kladde" && filterType === "all" && !activeRh}
+                    onClick={() => { setSearch(""); setFilterStatus("kladde"); setFilterType("all"); setActiveRh(null); setCurrentPage(1) }}
+                />
             </SummaryGrid>}
 
             {view === "upload" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
@@ -1902,17 +1919,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             </div>
 
             <ListResultSummary filteredCount={totalCount} totalCount={totalAllCount} selectedCount={selectedIds.length} loading={loading} />
-            {totalCount > pageSize && (
-                <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-muted-foreground">
-                    <span>Side {currentPage} af {Math.max(1, Math.ceil(totalCount / pageSize))}</span>
-                    <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1 || loading} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}>
-                        Forrige
-                    </Button>
-                    <Button type="button" variant="outline" size="sm" disabled={currentPage >= Math.ceil(totalCount / pageSize) || loading} onClick={() => setCurrentPage(page => page + 1)}>
-                        Næste
-                    </Button>
-                </div>
-            )}
 
             {selectedIds.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
@@ -2119,6 +2125,18 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                     </TableBody>
                 </Table>
             </ResponsiveTableFrame>
+
+            {totalCount > pageSize && (
+                <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-muted-foreground">
+                    <span>Side {currentPage} af {Math.max(1, Math.ceil(totalCount / pageSize))}</span>
+                    <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1 || loading} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}>
+                        Forrige
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" disabled={currentPage >= Math.ceil(totalCount / pageSize) || loading} onClick={() => setCurrentPage(page => page + 1)}>
+                        Næste
+                    </Button>
+                </div>
+            )}
             </>}
 
             {/* PDF Viewer */}

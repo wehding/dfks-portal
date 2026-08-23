@@ -5,6 +5,7 @@ import {
   LEGAL_DOCUMENT_AUDIENCES,
   LEGAL_DOCUMENT_TYPES,
   PRIVACY_POLICY_URL,
+  normalizeDanishLegalText,
 } from "../lib/legal-documents";
 
 test("alle juridiske dokumenttyper findes for medlemmer og ikke-medlemmer", () => {
@@ -19,7 +20,7 @@ test("alle juridiske dokumenttyper findes for medlemmer og ikke-medlemmer", () =
   }
 });
 
-test("ikke-medlemstekster naevner ikke KODA", () => {
+test("ikke-medlemstekster nævner ikke KODA", () => {
   const combined = LEGAL_DOCUMENT_TYPES
     .map(documentType => DEFAULT_LEGAL_DOCUMENT_COPY.non_member[documentType].body)
     .join("\n");
@@ -33,5 +34,22 @@ test("privatlivstekster linker til fuld privatlivspolitik", () => {
 
 test("statistikvalg er oplysning for medlemmer og aktivt valg for ikke-medlemmer", () => {
   assert.match(DEFAULT_LEGAL_DOCUMENT_COPY.member.privacy_notice.body, /Som medlem er du oplyst/i);
-  assert.match(DEFAULT_LEGAL_DOCUMENT_COPY.non_member.contract_analysis_notice.body, /frivilligt vaelge/i);
+  assert.match(DEFAULT_LEGAL_DOCUMENT_COPY.non_member.contract_analysis_notice.body, /frivilligt vælge/i);
+});
+
+test("danske juridiske standardtekster bruger æ, ø og å", () => {
+  const combined = LEGAL_DOCUMENT_AUDIENCES.flatMap(audience =>
+    LEGAL_DOCUMENT_TYPES.flatMap(documentType => {
+      const copy = DEFAULT_LEGAL_DOCUMENT_COPY[audience][documentType];
+      return [copy.title, copy.body];
+    }),
+  ).join("\n");
+  assert.doesNotMatch(combined, /\b(?:raadgiv|loen|foer|stoette|gennemsoeg|afgoer|fremhaev|udtraek|vaerktoej|vilkaar|ansaett|traen|vaelg)\w*/i);
+});
+
+test("ældre publicerede tekster vises med dansk stavning uden at ændre versionen", () => {
+  assert.equal(
+    normalizeDanishLegalText("Brugervilkaar: Laes om loen og raadgivning, foer du vaelger."),
+    "Brugervilkår: Læs om løn og rådgivning, før du vælger.",
+  );
 });

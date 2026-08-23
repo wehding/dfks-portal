@@ -151,8 +151,8 @@ export async function getOrganisationSettings() {
     statistics_profile_config: {
       professional_start_year: (data.statistics_profile_config as Record<string, unknown> | null)?.professional_start_year !== false,
       primary_profession_type: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.primary_profession_type),
-      secondary_profession_types: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.secondary_profession_types),
-      usual_work_mode: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.usual_work_mode),
+      secondary_profession_types: false,
+      usual_work_mode: (data.statistics_profile_config as Record<string, unknown> | null)?.usual_work_mode !== false,
       primary_work_region: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.primary_work_region),
     },
     statistics_work_regions: (workRegionRows ?? []).map(row => row.name_da as string),
@@ -193,7 +193,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const statisticsProfileConfig = {
     professional_start_year: Boolean(payload.statistics_profile_config?.professional_start_year),
     primary_profession_type: Boolean(payload.statistics_profile_config?.primary_profession_type),
-    secondary_profession_types: Boolean(payload.statistics_profile_config?.primary_profession_type && payload.statistics_profile_config?.secondary_profession_types),
+    secondary_profession_types: false,
     usual_work_mode: Boolean(payload.statistics_profile_config?.usual_work_mode),
     primary_work_region: Boolean(payload.statistics_profile_config?.primary_work_region),
   };

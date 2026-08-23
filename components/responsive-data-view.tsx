@@ -88,11 +88,33 @@ export function SummaryGrid({ children, className }: { children: React.ReactNode
     return <div className={cn("grid min-w-0 max-w-full grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:gap-3", className)}>{children}</div>
 }
 
-export function SummaryCard({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
-    return <div className={cn("min-w-0 rounded-lg border bg-card px-3 py-3 text-card-foreground sm:flex sm:min-w-44 sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-2.5", className)}>
+export function SummaryCard({
+    label,
+    value,
+    className,
+    onClick,
+    active = false,
+}: {
+    label: string;
+    value: React.ReactNode;
+    className?: string;
+    onClick?: () => void;
+    active?: boolean;
+}) {
+    const content = <>
         <p className="line-clamp-2 min-h-8 text-[11px] font-medium leading-4 text-muted-foreground sm:min-h-0 sm:line-clamp-1 sm:text-sm">{label}</p>
         <p className="mt-1 text-xl font-bold tabular-nums text-foreground sm:mt-0 sm:text-xl">{value}</p>
-    </div>
+    </>;
+    const classes = cn(
+        "min-w-0 rounded-lg border bg-card px-3 py-3 text-left text-card-foreground sm:flex sm:min-w-44 sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-2.5",
+        onClick && "transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        active && "border-primary bg-primary/5",
+        className,
+    );
+    if (onClick) {
+        return <button type="button" onClick={onClick} aria-pressed={active} className={classes}>{content}</button>;
+    }
+    return <div className={classes}>{content}</div>;
 }
 
 export function ListFilterBar({ children, className }: { children: React.ReactNode; className?: string }) {

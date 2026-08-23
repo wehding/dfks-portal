@@ -6,7 +6,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOrgId } from "@/lib/org";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
-import { ensureWorkShareCase } from "@/lib/server/work-share-cases";
+import { ensureWorkShareCase, saveKnownShareParticipant } from "@/lib/server/work-share-cases";
 import { isCompleteShareResolution, normalizeSharePercent } from "@/lib/work-share-distribution";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { sendMemberNotification } from "@/lib/member-notifications";
@@ -14,6 +14,7 @@ import { markCollaborationReviewsCoeditorsReported } from "@/lib/server/work-col
 import { buildReconciledWorkCredits, refreshWorkCreditEvidence } from "@/lib/server/work-credit-evidence";
 import { normalizeCreditName, proposeWorkShareCompromise } from "@/lib/work-share-reconciliation";
 import { normalizeSingleEmail } from "@/lib/email/mime";
+import { countUniqueWorkShareTasks } from "@/lib/work-share-task-count";
 
 async function shareAdminContext() {
   const session = await createClient();
@@ -70,11 +71,15 @@ export async function fetchMemberShareTask(params: {
       orgId, workId, seasonNumber, episodeNumber: params.episodeNumber,
       episodeNumbers: targetWorks.map(row => row.episode_number).filter((number): number is number => number != null),
     });
-    await db.from("work_share_participants").upsert(knownHolderIds.map(rightsHolderId => ({
-      case_id: shareCase.id, org_id: orgId, work_id: workId, rights_holder_id: rightsHolderId,
+    await Promise.all(knownHolderIds.map(rightsHolderId => saveKnownShareParticipant(db, {
+      case_id: shareCase.id,
+      org_id: orgId,
+      work_id: workId,
+      rights_holder_id: rightsHolderId,
       role: knownAssignments?.find(row => row.rights_holder_id === rightsHolderId)?.role ?? "Klipper",
-      relationship_status: rightsHolderId === holder.id ? "pending" : "pending",
-    })), { onConflict: "case_id,rights_holder_id" });
+      relationship_status: "pending",
+      updated_at: new Date().toISOString(),
+    })));
   }
   if (!shareCase) return { success: true as const, task: null, knownRightsHolderCount: knownHolderIds.length };
 
@@ -192,13 +197,16 @@ export async function countAdminShareTasks() {
     db.from("member_work_collaboration_reviews").select("id,work_id,works(season_number,episode_number)").eq("org_id", admin.orgId).eq("status", "disputed"),
   ]);
   if (caseError || disputeError) throw new Error(caseError?.message ?? disputeError?.message ?? "Opgaverne kunne ikke tælles.");
-  const keys = new Set<string>();
-  for (const row of cases ?? []) keys.add(`${row.work_id}:${row.season_number ?? 0}:${row.episode_number ?? 0}`);
+  const references = (cases ?? []).map(row => ({
+    work_id: row.work_id,
+    season_number: row.season_number,
+    episode_number: row.episode_number,
+  }));
   for (const row of disputes ?? []) {
     const work = row.works as unknown as { season_number?: number | null; episode_number?: number | null } | null;
-    keys.add(`${row.work_id}:${work?.season_number ?? 0}:${work?.episode_number ?? 0}`);
+    references.push({ work_id: row.work_id, season_number: work?.season_number, episode_number: work?.episode_number });
   }
-  return { success: true as const, count: keys.size, shareCaseCount: cases?.length ?? 0, disputeCount: disputes?.length ?? 0 };
+  return { success: true as const, count: countUniqueWorkShareTasks(references), shareCaseCount: cases?.length ?? 0, disputeCount: disputes?.length ?? 0 };
 }
 
 export async function refreshAdminShareCaseCredits(caseId: string) {

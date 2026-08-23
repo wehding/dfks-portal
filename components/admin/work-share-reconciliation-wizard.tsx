@@ -38,23 +38,36 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
   const [createDraft, setCreateDraft] = useState<Record<string, { name: string; email: string; phone: string }>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [caseResult, holderResult, disputeResult, countResult] = await Promise.all([
-      fetchAdminShareCases(),
-      fetchAdminRightsHolders(),
-      fetchAdminCollaborationDisputes(),
-      countAdminShareTasks(),
-    ]);
-    const next = caseResult.cases as unknown as ShareCase[];
-    setCases(next);
-    setHolders(holderResult.rightsHolders);
-    setDisputes(disputeResult.disputes as unknown as CollaborationDispute[]);
-    setIndex(current => Math.min(current, Math.max(0, next.length - 1)));
-    onCountChange?.(countResult.count);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [caseResult, holderResult, disputeResult, countResult] = await Promise.all([
+        fetchAdminShareCases(),
+        fetchAdminRightsHolders(),
+        fetchAdminCollaborationDisputes(),
+        countAdminShareTasks(),
+      ]);
+      const next = caseResult.cases as unknown as ShareCase[];
+      const nextDisputes = disputeResult.disputes as unknown as CollaborationDispute[];
+      setCases(next);
+      setHolders(holderResult.rightsHolders);
+      setDisputes(nextDisputes);
+      setIndex(current => Math.min(current, Math.max(0, next.length - 1)));
+      onCountChange?.(countResult.count);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "Opgaverne kunne ikke hentes.";
+      setLoadError(text);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
   }, [onCountChange]);
 
-  useEffect(() => { void load().catch(error => setMessage(error instanceof Error ? error.message : "Opgaverne kunne ikke hentes.")); }, [load]);
+  useEffect(() => { void load().catch(() => undefined); }, [load]);
   const active = cases[index] ?? null;
   const participants = useMemo(() => active?.work_share_participants.filter(row => !row.excluded_at) ?? [], [active]);
   const unresolved = participants.filter(row => !row.rights_holder_id);
@@ -103,6 +116,8 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     }, "Invitationen er sendt.");
   }
 
+  if (loading && !active && !disputes.length) return <p className="rounded-md border p-4 text-sm text-muted-foreground">Henter arbejdsandele…</p>;
+  if (loadError && !active && !disputes.length) return <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/5 p-4"><p className="text-sm font-medium text-destructive">Arbejdsandelene kunne ikke hentes.</p><p className="text-sm text-muted-foreground">{loadError}</p><Button size="sm" variant="outline" onClick={() => void load().catch(() => undefined)}>Prøv igen</Button></div>;
   if (!active && !disputes.length) return <p className="rounded-md border p-4 text-sm text-muted-foreground">Der er ingen arbejdsandele, der venter på afstemning.</p>;
 
   return <div className="space-y-4">

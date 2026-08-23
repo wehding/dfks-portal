@@ -701,7 +701,7 @@ export default function RettighedshavereAdminPage() {
                 portrait_url: profile.portrait_url ?? "",
                 professional_start_year: profile.professional_start_year ? String(profile.professional_start_year) : "",
                 primary_profession_type_id: profile.primary_profession_type_id ?? "",
-                secondary_profession_type_ids: profile.secondary_profession_type_ids,
+                secondary_profession_type_ids: [],
                 usual_work_mode: profile.usual_work_mode ?? "",
                 primary_work_region_code: profile.primary_work_region_code ?? "",
                 external_dfi: profile.external_identities.dfi.join("\n"),
@@ -735,7 +735,7 @@ export default function RettighedshavereAdminPage() {
             portrait_url: editForm.portrait_url || null,
             professional_start_year: editForm.professional_start_year ? Number(editForm.professional_start_year) : null,
             primary_profession_type_id: editForm.primary_profession_type_id || null,
-            secondary_profession_type_ids: editForm.secondary_profession_type_ids,
+            secondary_profession_type_ids: [],
             usual_work_mode: editForm.usual_work_mode || null,
             primary_work_region_code: editForm.primary_work_region_code || null,
             external_identities: {
@@ -1334,16 +1334,12 @@ export default function RettighedshavereAdminPage() {
                                 </div>
                                 <div className="space-y-1">
                                     <Label>Primær faggruppe</Label>
-                                    <Select value={editForm.primary_profession_type_id || "__none__"} onValueChange={value => setEditForm(form => ({ ...form, primary_profession_type_id: value === "__none__" ? "" : value, secondary_profession_type_ids: form.secondary_profession_type_ids.filter(id => id !== value) }))}>
+                                    <Select value={editForm.primary_profession_type_id || "__none__"} onValueChange={value => setEditForm(form => ({ ...form, primary_profession_type_id: value === "__none__" ? "" : value, secondary_profession_type_ids: [] }))}>
                                         <SelectTrigger className="w-full"><SelectValue placeholder="Ikke angivet" /></SelectTrigger>
                                         <SelectContent><SelectItem value="__none__">Ikke angivet</SelectItem>{editProfessionTypes.map(option => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}</SelectContent>
                                     </Select>
                                 </div>
                             </div>
-                            {editProfessionTypes.length > 0 && <div className="space-y-2">
-                                <Label>Yderligere faggrupper</Label>
-                                <div className="grid gap-2 sm:grid-cols-2">{editProfessionTypes.filter(option => option.id !== editForm.primary_profession_type_id).map(option => <label key={option.id} className="flex min-w-0 items-center gap-2 rounded-md border px-3 py-2 text-sm"><input type="checkbox" checked={editForm.secondary_profession_type_ids.includes(option.id)} onChange={event => setEditForm(form => ({ ...form, secondary_profession_type_ids: event.target.checked ? [...new Set([...form.secondary_profession_type_ids, option.id])] : form.secondary_profession_type_ids.filter(id => id !== option.id) }))} /><span className="min-w-0 break-words">{option.name}</span></label>)}</div>
-                            </div>}
                             <div className="grid gap-3 sm:grid-cols-2">
                                 <div className="space-y-1">
                                     <Label>Typisk arbejdsform</Label>
