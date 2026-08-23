@@ -52,6 +52,17 @@ const SUPPLEMENT_UNITS = [
     { value: "pr. time", label: "Time" },
     { value: "engangsbeløb", label: "Engangsbeløb" },
 ] as const
+const WORK_PHASE_LABELS: Record<string, string> = {
+    preproduction: "Præproduktion",
+    editing: "Klip",
+    post_edit_finishing: "Færdiggørelse efter klip",
+}
+const WORK_PHASE_PAYMENT_LABELS: Record<string, string> = {
+    included_in_salary: "Inkluderet i honoraret",
+    separate_supplement: "Særskilt tillæg",
+    unpaid: "Ikke betalt",
+    unclear: "Uklart",
+}
 
 const ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
 const BUCKET = "kontrakter"
@@ -447,6 +458,7 @@ function AdminValideringPageInner() {
                 pensionSupplement: pensionSupplement ?? "",
                 personalSupplement: ed.personalSupplement ?? "",
                 otherSupplements: resolveOtherSupplements(ed),
+                workPhases: Array.isArray(ed.workPhases) ? ed.workPhases : [],
                 workingWeeks: ed.workingWeeks ?? "",
                 prolongationWeeks: ed.prolongationWeeks ?? "",
                 prolongationNote: ed.prolongationNote ?? "",
@@ -537,6 +549,7 @@ function AdminValideringPageInner() {
                 pensionSupplement: formData.pensionSupplement ? Number(formData.pensionSupplement) : undefined,
                 personalSupplement: formData.personalSupplement ? Number(formData.personalSupplement) : undefined,
                 otherSupplements: Array.isArray(formData.otherSupplements) && formData.otherSupplements.length > 0 ? formData.otherSupplements : undefined,
+                workPhases: Array.isArray(formData.workPhases) && formData.workPhases.length > 0 ? formData.workPhases : undefined,
                 workingWeeks: formData.workingWeeks ? Number(formData.workingWeeks) : undefined,
                 prolongationWeeks: formData.prolongationWeeks ? Number(formData.prolongationWeeks) : undefined,
                 prolongationNote: formData.prolongationNote || undefined,
@@ -711,6 +724,7 @@ function AdminValideringPageInner() {
             pensionSupplement:             pensionSupplement ?? "",
             personalSupplement:            ed.personalSupplement ?? "",
             otherSupplements:              resolveOtherSupplements(ed),
+            workPhases:                    Array.isArray(ed.workPhases) ? ed.workPhases : [],
             workingWeeks:                  ed.workingWeeks ?? "",
             prolongationWeeks:             ed.prolongationWeeks ?? "",
             prolongationNote:              ed.prolongationNote ?? "",
@@ -1038,9 +1052,12 @@ setActiveField(fieldId)
             creditedRoles: sources.creditedRoles_clause_id,
         }
         const otherSuppMatch = activeField?.match(/^otherSupplements_(\d+)$/)
+        const workPhaseMatch = activeField?.match(/^workPhases_(\d+)$/)
         const activeClauseId = activeField
             ? otherSuppMatch
                 ? ((Array.isArray(formData.otherSupplements) ? formData.otherSupplements[Number(otherSuppMatch[1])] : null) as Record<string, unknown> | null)?.clauseId as string | null ?? null
+                : workPhaseMatch
+                    ? ((Array.isArray(formData.workPhases) ? formData.workPhases[Number(workPhaseMatch[1])] : null) as Record<string, unknown> | null)?.clauseId as string | null ?? null
                 : (FIELD_TO_CLAUSE_ID[activeField] ?? null)
             : null
         if (activeField) console.log(`[LAG5-B] activeField=${activeField} → activeClauseId=${activeClauseId ?? "null"}, layout=${contractLayout ? contractLayout.clauses.length + " klausuler" : "NULL"}`)
@@ -1061,6 +1078,10 @@ setActiveField(fieldId)
             hasCoord(sources.dates_clause_id)           ? null : datesHl,
             hasCoord(sources.workingWeeks_clause_id)    ? null : weeksHl,
             hasCoord(sources.prolongation_clause_id)    ? null : prolongHl,
+            ...(Array.isArray(formData.workPhases) ? formData.workPhases.map((phase: Record<string, unknown>) => {
+                const clauseId = typeof phase.clauseId === "string" ? phase.clauseId : null
+                return hasCoord(clauseId) ? null : typeof phase.sourceText === "string" ? phase.sourceText : null
+            }) : []),
         ].filter(Boolean) as string[]
 
 
@@ -1457,6 +1478,37 @@ setActiveField(fieldId)
                                 <F src={fieldSrc("workingWeeks")} label={<>{t("admin.validation.workingWeeks")}<SourceBtn quote={weeksHl} active={activeField === "workingWeeks"} onClick={() => activateSource("workingWeeks", weeksHl)} /></>}>
                                     <Input type="number" value={String(formData.workingWeeks ?? "")} onChange={(e) => setField("workingWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
                                 </F>
+                                {Array.isArray(formData.workPhases) && formData.workPhases.length > 0 && (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <Label className="text-xs">Arbejdsfordeling</Label>
+                                            <span className="text-[10px] text-muted-foreground">Kun faser nævnt i kontrakten</span>
+                                        </div>
+                                        {formData.workPhases.map((phase: Record<string, unknown>, i: number) => {
+                                            const phaseSource = typeof phase.sourceText === "string" ? phase.sourceText : null
+                                            const phaseClauseId = typeof phase.clauseId === "string" ? phase.clauseId : null
+                                            const phaseNote = typeof phase.note === "string" ? phase.note : ""
+                                            const phaseField = `workPhases_${i}`
+                                            return <div key={i} className={`rounded-md border px-3 py-2 ${SOURCE_STYLES[phaseSource || phaseClauseId ? "ai" : "manuel"]}`}>
+                                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                                    <span className="min-w-[155px] text-sm font-medium">{WORK_PHASE_LABELS[String(phase.phase)] ?? "Arbejdsfase"}</span>
+                                                    <span className="text-sm">{phase.weeks != null ? `${phase.weeks} ${Number(phase.weeks) === 1 ? "uge" : "uger"}` : "Periode ukendt"}</span>
+                                                    <span className="text-xs text-muted-foreground">{WORK_PHASE_PAYMENT_LABELS[String(phase.paymentType)] ?? "Betaling ukendt"}</span>
+                                                    <SourceBtn quote={phaseSource ?? undefined} active={activeField === phaseField} onClick={() => activateSource(phaseField, phaseSource)} />
+                                                    <button type="button" title="Fjern arbejdsfase" aria-label="Fjern arbejdsfase" className="ml-auto rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" onClick={() => {
+                                                        const phases = [...(formData.workPhases as Record<string, unknown>[])]
+                                                        phases.splice(i, 1)
+                                                        setField("workPhases", phases)
+                                                    }}><Trash2 className="h-3.5 w-3.5" /></button>
+                                                </div>
+                                                {(phase.amount != null || phaseNote) && <p className="mt-1 text-[11px] text-muted-foreground">
+                                                    {phase.amount != null ? `${Number(phase.amount).toLocaleString("da-DK")} kr. ${phase.amountType === "calculated" ? "(beregnet)" : ""}` : ""}
+                                                    {phase.amount != null && phaseNote ? " · " : ""}{phaseNote}
+                                                </p>}
+                                            </div>
+                                        })}
+                                    </div>
+                                )}
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <F src={fieldSrc("prolongationWeeks")} label={<>Prolongationsuger{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
                                         <Input type="number" value={String(formData.prolongationWeeks ?? "")} onChange={(e) => setField("prolongationWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
