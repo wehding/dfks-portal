@@ -2084,7 +2084,7 @@ const SOURCE_STYLES: Record<NonNullable<DataSource>, string> = {
     ai:           "rounded-md bg-blue-50 dark:bg-blue-950/25 px-2.5 py-2 -mx-2.5",
     overenskomst: "rounded-md bg-amber-50 dark:bg-amber-950/25 px-2.5 py-2 -mx-2.5",
     klipper:      "rounded-md bg-emerald-50 dark:bg-emerald-950/25 px-2.5 py-2 -mx-2.5",
-    manuel:       "rounded-md bg-muted/40 px-2.5 py-2 -mx-2.5",
+    manuel:       "rounded-md border border-input bg-background px-2.5 py-2 -mx-2.5",
 }
 
 function F({ label, action, locked, src, children }: {
@@ -2094,7 +2094,6 @@ function F({ label, action, locked, src, children }: {
     src?: DataSource
     children: React.ReactNode
 }) {
-    const wrapperClass = src ? SOURCE_STYLES[src] : "space-y-1.5"
     return (
         <div className={src ? `${SOURCE_STYLES[src]} space-y-1.5` : "space-y-1.5"}>
             <div className="flex items-center gap-2">
