@@ -51,6 +51,8 @@ export function applyPercentageRule(
     outputPrefix: string;
     /** Menneskelig betegnelse til tags og logs */
     label: string;
+    /** Kun lønmodtagerregler; en leverandørs rettighedsreference er ikke nok. */
+    requiresEmployeeCoverage?: boolean;
   },
 ): PercentageRuleResolution {
   const { contractField, outputPrefix, label } = opts;
@@ -67,6 +69,13 @@ export function applyPercentageRule(
         [`${outputPrefix}Tag`]: `${label} ${explicitPercent.toLocaleString("da-DK")}% · kontraktvilkår`,
       },
     };
+  }
+
+  const supplierContract = input.contractType === "leverandør"
+    || input.agreementEmploymentForm === "leverandør"
+    || input.isFreelanceContract === true;
+  if (opts.requiresEmployeeCoverage && supplierContract) {
+    return { applied: false, reason: "supplier_rights_reference_only", data: input };
   }
 
   // _resolvedAgreementCode injiceres af server-wrapperen

@@ -82,6 +82,7 @@ async function applyRule(
   contractField: string,
   outputPrefix: string,
   label: string,
+  requiresEmployeeCoverage = false,
 ): Promise<PercentageRuleResolution> {
   const shortCode = classifyToShortCode(data);
   const contractDate = dateOnly(data.startDate) ?? dateOnly(data.contractDate);
@@ -101,16 +102,16 @@ async function applyRule(
   return applyPercentageRule(
     resolvedCode ? { ...data, _resolvedAgreementCode: resolvedCode } : data,
     rules,
-    { labelKey, contractField, outputPrefix, label },
+    { labelKey, contractField, outputPrefix, label, requiresEmployeeCoverage },
   );
 }
 
 export function applyApprovedHolidayPay(data: Record<string, unknown>) {
-  return applyRule(data, "helligdagsbetaling", "holidayPayRate", "holidayPay", "Helligdagsbetaling");
+  return applyRule(data, "helligdagsbetaling", "holidayPayRate", "holidayPay", "Helligdagsbetaling", true);
 }
 
 export function applyApprovedBetaContribution(data: Record<string, unknown>) {
-  return applyRule(data, "beta_pulje", "betaRate", "beta", "BETA-fond");
+  return applyRule(data, "beta_pulje", "betaRate", "beta", "BETA-fond", true);
 }
 
 export function applyApprovedSvod(data: Record<string, unknown>) {
