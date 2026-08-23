@@ -64,7 +64,7 @@ const WORK_PHASE_PAYMENT_LABELS: Record<string, string> = {
     unpaid: "Ikke betalt",
     unclear: "Uklart",
 }
-const CREDIT_STATUS_LABELS: Record<string, string> = { precise: "Præcis klausul", vague: "Upræcis klausul", role_only: "Kun arbejdsfunktion", conditional: "Betinget kreditering", absent: "Ingen klausul", unclear: "Uklar" }
+const CREDIT_STATUS_LABELS: Record<string, string> = { precise: "Præcis klausul", vague: "Upræcis klausul", role_only: "Kun arbejdsfunktion", conditional: "Betinget kreditering", absent: "Ingen klausul", unclear: "Kræver manuel kontrol" }
 
 const ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
 const BUCKET = "kontrakter"
