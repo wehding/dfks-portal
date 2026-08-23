@@ -6,6 +6,13 @@ function parseDanishAmount(value: string): number | null {
   return Number.isFinite(amount) ? amount : null
 }
 
+function resolveSupplementUnit(data: Record<string, unknown>, sourceText: unknown): string | null {
+  const evidence = typeof sourceText === "string" ? sourceText : ""
+  if (/\b(?:pr\.?|per)\s+uge\b/i.test(evidence)) return "pr. uge"
+
+  return data.salaryUnit === "weekly" ? "pr. uge" : null
+}
+
 /**
  * Backfills the structured supplement when an older/partial AI result found the
  * source clause but omitted otherSupplements[]. The narrow phrase match avoids
@@ -18,9 +25,13 @@ export function resolveOtherSupplements(data: Record<string, unknown>): Contract
       .map(item => {
         const supplement = item as ContractSupplement
         const evidence = `${supplement.note ?? ""} ${supplement.sourceText ?? ""}`
-        return /fast\s+tillæg\s+for\s+over-?\s*og\s+forskudttid/i.test(evidence)
+        const normalized = /fast\s+tillæg\s+for\s+over-?\s*og\s+forskudttid/i.test(evidence)
           ? { ...supplement, category: "overtidstillaeg" }
           : supplement
+        const inferredUnit = normalized.unit == null
+          ? resolveSupplementUnit(data, normalized.sourceText)
+          : null
+        return inferredUnit ? { ...normalized, unit: inferredUnit } : normalized
       })
   }
 
@@ -35,7 +46,7 @@ export function resolveOtherSupplements(data: Record<string, unknown>): Contract
   return [{
     category: "overtidstillaeg",
     amount,
-    unit: null,
+    unit: resolveSupplementUnit(data, sourceText),
     note: "Fast tillæg for over- og forskudttid",
     sourceText,
     clauseId: typeof sources.otherSupplements_clause_id === "string" ? sources.otherSupplements_clause_id : null,

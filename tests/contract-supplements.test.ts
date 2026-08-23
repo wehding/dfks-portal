@@ -7,6 +7,20 @@ test("bevarer strukturerede tillæg", () => {
   assert.deepEqual(resolveOtherSupplements({ otherSupplements: supplements }), supplements)
 })
 
+test("udfylder manglende tillægsenhed fra kontraktens ugeløn", () => {
+  assert.deepEqual(resolveOtherSupplements({
+    salaryUnit: "weekly",
+    otherSupplements: [{ category: "rejsetillaeg", amount: 500, unit: null }],
+  }), [{ category: "rejsetillaeg", amount: 500, unit: "pr. uge" }])
+})
+
+test("bevarer en eksplicit enhed på et tillæg", () => {
+  assert.deepEqual(resolveOtherSupplements({
+    salaryUnit: "weekly",
+    otherSupplements: [{ category: "rejsetillaeg", amount: 500, unit: "engangsbeløb" }],
+  }), [{ category: "rejsetillaeg", amount: 500, unit: "engangsbeløb" }])
+})
+
 test("retter ældre kategorisering af fast over- og forskudttidstillæg", () => {
   assert.deepEqual(resolveOtherSupplements({
     otherSupplements: [{
@@ -20,6 +34,7 @@ test("retter ældre kategorisering af fast over- og forskudttidstillæg", () => 
 
 test("gendanner fast tillæg for over- og forskudttid fra AI-kilden", () => {
   assert.deepEqual(resolveOtherSupplements({
+    salaryUnit: "weekly",
     _sources: {
       otherSupplements: "Fast tillæg for over- og forskudttid kr. 3.000",
       otherSupplements_clause_id: "s1_c7",
@@ -27,11 +42,19 @@ test("gendanner fast tillæg for over- og forskudttid fra AI-kilden", () => {
   }), [{
     category: "overtidstillaeg",
     amount: 3000,
-    unit: null,
+    unit: "pr. uge",
     note: "Fast tillæg for over- og forskudttid",
     sourceText: "Fast tillæg for over- og forskudttid kr. 3.000",
     clauseId: "s1_c7",
   }])
+})
+
+test("udleder enheden direkte fra tillæggets kildetekst", () => {
+  assert.equal(resolveOtherSupplements({
+    _sources: {
+      otherSupplements: "Fast tillæg for over- og forskudttid pr. uge kr. 3.000",
+    },
+  })[0]?.unit, "pr. uge")
 })
 
 test("opfinder ikke et tillæg fra en ukendt kildeformulering", () => {
