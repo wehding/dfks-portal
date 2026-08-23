@@ -296,6 +296,7 @@ export interface FilterRule {
     value: string           // Nøgleord, regex eller kanalnavn
     active: boolean
     createdAt: string
+    scope?: "global" | "local" // Global fra Stamdata eller lokal for én batch
 }
 
 // Vægt-konfiguration per værktype — point pr. værk

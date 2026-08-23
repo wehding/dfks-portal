@@ -13,14 +13,17 @@ import {
     fetchAftalelicensBatch,
     fetchScreeningSourceRowsForBatch,
     fetchWorksAndContractsForMatching,
+    getAftalelicensBatchFilterConfig,
     updateScreeningSourceRowSortStates,
+    updateAftalelicensBatchFilterConfig,
     type ScreeningSourceRowSortUpdate,
 } from "@/app/actions/screenings"
-import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
+import { getAftalelicensFilterRules, getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { formatAftalelicensWorkTitle } from "@/lib/aftalelicens-work-title"
 import { applyAftalelicensRerunFactor, markAftalelicensReruns } from "@/lib/aftalelicens-reruns"
 import { resolveAftalelicensWorkType } from "@/lib/aftalelicens-work-type"
+import { buildAftalelicensBatchFilterConfig, combineAftalelicensFilterRules } from "@/lib/aftalelicens-filter-rules"
 import { formatScreeningDateTime, parseScreeningDate } from "@/lib/screening-date-time"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
@@ -301,26 +304,10 @@ function QuickFilterButton({ vaerk, onAddRule }: {
 
 // ── Filter rules (shared with stamdata) ──────────────────────
 
-const DEFAULT_FILTER_RULES: FilterRule[] = [
-    { id: "fr1", name: "Sport", type: "title_keyword", value: "sport", active: true, createdAt: "2024-01-01" },
-    { id: "fr2", name: "Nyheder", type: "title_keyword", value: "nyhed", active: true, createdAt: "2024-01-01" },
-    { id: "fr3", name: "TV Avisen", type: "title_keyword", value: "tv avisen", active: true, createdAt: "2024-01-01" },
-    { id: "fr4", name: "Sporten", type: "title_keyword", value: "sporten", active: true, createdAt: "2024-01-01" },
-    { id: "fr5", name: "Vejret", type: "title_keyword", value: "vejret", active: true, createdAt: "2024-01-01" },
-]
-
 const FILTER_RULE_TYPE_LABELS: Record<FilterRule["type"], string> = {
     title_keyword: "Nøgleord i titel",
     title_regex: "Regex-mønster",
     channel: "Kanalnavn",
-}
-
-function loadFilterRulesLocal(): FilterRule[] {
-    if (typeof window === "undefined") return DEFAULT_FILTER_RULES
-    try {
-        const stored = localStorage.getItem("dfks_filter_rules")
-        return stored ? JSON.parse(stored) : DEFAULT_FILTER_RULES
-    } catch { return DEFAULT_FILTER_RULES }
 }
 
 function matchesAnyRule(title: string, channel: string | undefined, rules: FilterRule[]): boolean {
@@ -334,73 +321,90 @@ function matchesAnyRule(title: string, channel: string | undefined, rules: Filte
     })
 }
 
-function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rules: FilterRule[]) => void; onAddRuleRef?: React.MutableRefObject<((rule: Omit<FilterRule, "id" | "createdAt">) => void) | null> }) {
+function FilterRulesPanel({ batchId, onRulesChange, onAddRuleRef }: { batchId: string; onRulesChange: (rules: FilterRule[]) => void; onAddRuleRef?: React.MutableRefObject<((rule: Omit<FilterRule, "id" | "createdAt">) => void) | null> }) {
     const [open, setOpen] = useState(false)
-    const [rules, setRules] = useState<FilterRule[]>(DEFAULT_FILTER_RULES)
+    const [rules, setRules] = useState<FilterRule[]>([])
+    const rulesRef = useRef<FilterRule[]>([])
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
     const [ruleSearch, setRuleSearch] = useState("")
     const [newName, setNewName] = useState("")
     const [newType, setNewType] = useState<FilterRule["type"]>("title_keyword")
     const [newValue, setNewValue] = useState("")
     const [adding, setAdding] = useState(false)
 
-    const applyRules = (next: FilterRule[]) => {
-        localStorage.setItem("dfks_filter_rules", JSON.stringify(next))
+    const setEffectiveRules = (next: FilterRule[]) => {
+        rulesRef.current = next
+        setRules(next)
         onRulesChange(next)
     }
 
-    // Hydrate from localStorage after mount to avoid SSR/client mismatch
     useEffect(() => {
-        const stored = loadFilterRulesLocal()
-        setRules(stored)
-        onRulesChange(stored)
+        Promise.all([getAftalelicensFilterRules(), getAftalelicensBatchFilterConfig(batchId)])
+            .then(([globalResult, batchResult]) => {
+                if (!batchResult.success) throw new Error(batchResult.error)
+                const effective = combineAftalelicensFilterRules(globalResult.rules, batchResult.config)
+                setEffectiveRules(effective)
+            })
+            .catch(error => toast.error(error instanceof Error ? error.message : "Kunne ikke hente filtreringsregler"))
+            .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [batchId])
+
+    const persistRules = async (next: FilterRule[]) => {
+        const previous = rulesRef.current
+        setEffectiveRules(next)
+        setSaving(true)
+        const config = buildAftalelicensBatchFilterConfig(next)
+        try {
+            const result = await updateAftalelicensBatchFilterConfig(batchId, config)
+            if (!result.success) throw new Error(result.error)
+            return true
+        } catch (error) {
+            setEffectiveRules(previous)
+            toast.error(error instanceof Error ? error.message : "Kunne ikke gemme filtreringsregler")
+            return false
+        } finally {
+            setSaving(false)
+        }
+    }
 
     useEffect(() => {
         if (onAddRuleRef) {
             onAddRuleRef.current = (rule: Omit<FilterRule, "id" | "createdAt">) => {
-                setRules(prev => {
-                    const next = [...prev, { ...rule, id: `fr_${Date.now()}`, createdAt: new Date().toISOString() }]
-                    applyRules(next)
-                    return next
-                })
+                const next = [...rulesRef.current, { ...rule, id: crypto.randomUUID(), createdAt: new Date().toISOString(), scope: "local" as const }]
+                void persistRules(next)
                 toast.success(`Filterregel tilføjet: "${rule.value}"`)
             }
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [onAddRuleRef])
 
-    const toggleActive = (id: string) => {
-        setRules(prev => {
-            const next = prev.map(r => r.id === id ? { ...r, active: !r.active } : r)
-            applyRules(next)
-            return next
-        })
+    const toggleActive = async (id: string) => {
+        await persistRules(rulesRef.current.map(r => r.id === id ? { ...r, active: !r.active } : r))
     }
 
-    const handleDelete = (id: string) => {
-        setRules(prev => {
-            const next = prev.filter(r => r.id !== id)
-            applyRules(next)
-            return next
-        })
-        toast.success("Regel slettet")
+    const handleDelete = async (rule: FilterRule) => {
+        const next = rule.scope === "global"
+            ? rulesRef.current.map(item => item.id === rule.id ? { ...item, active: false } : item)
+            : rulesRef.current.filter(item => item.id !== rule.id)
+        const saved = await persistRules(next)
+        if (saved) toast.success(rule.scope === "global" ? "Stamdataregel slået fra for dette datasæt" : "Lokal regel slettet")
     }
 
-    const handleAdd = () => {
+    const handleAdd = async () => {
         if (!newName.trim() || !newValue.trim()) return
-        setRules(prev => {
-            const next = [...prev, {
-                id: `fr_${Date.now()}`,
+        const next = [...rulesRef.current, {
+                id: crypto.randomUUID(),
                 name: newName.trim(),
                 type: newType,
                 value: newValue.trim(),
                 active: true,
                 createdAt: new Date().toISOString(),
+                scope: "local" as const,
             }]
-            applyRules(next)
-            return next
-        })
+        const saved = await persistRules(next)
+        if (!saved) return
         setNewName("")
         setNewValue("")
         setNewType("title_keyword")
@@ -434,7 +438,7 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
             {open && (
                 <div className="border-t px-4 pb-4 pt-3 space-y-3">
                     <div className="flex items-center gap-3">
-                        <p className="text-xs text-muted-foreground flex-1">Titler der matcher aktive regler fjernes automatisk. Ændringer gælder globalt (deles med stamdata).</p>
+                        <p className="text-xs text-muted-foreground flex-1">Stamdataregler gælder automatisk. Her kan de slås fra for dette datasæt, og lokale regler kan tilføjes.</p>
                         <div className="relative w-52 shrink-0">
                             <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
                             <Input
@@ -459,6 +463,7 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
                                 <TableHead>Navn</TableHead>
                                 <TableHead>Type</TableHead>
                                 <TableHead>Værdi</TableHead>
+                                <TableHead className="w-[90px]">Omfang</TableHead>
                                 <TableHead className="w-[80px]">Aktiv</TableHead>
                                 <TableHead className="w-[48px]" />
                             </TableRow>
@@ -472,10 +477,15 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
                                     </TableCell>
                                     <TableCell className="font-mono text-xs text-muted-foreground">{rule.value}</TableCell>
                                     <TableCell>
-                                        <Switch checked={rule.active} onCheckedChange={() => toggleActive(rule.id)} />
+                                        <Badge variant={rule.scope === "local" ? "secondary" : "outline"} className="text-xs font-normal">
+                                            {rule.scope === "local" ? "Dette datasæt" : "Stamdata"}
+                                        </Badge>
                                     </TableCell>
                                     <TableCell>
-                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(rule.id)}>
+                                        <Switch checked={rule.active} disabled={saving} onCheckedChange={() => void toggleActive(rule.id)} />
+                                    </TableCell>
+                                    <TableCell>
+                                        <Button variant="ghost" size="icon" disabled={saving} title={rule.scope === "global" ? "Slå fra for dette datasæt" : "Slet lokal regel"} className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => void handleDelete(rule)}>
                                             <Trash2 className="h-3.5 w-3.5" />
                                         </Button>
                                     </TableCell>
@@ -483,8 +493,8 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
                             ))}
                             {visibleRules.length === 0 && (
                                 <TableRow>
-                                    <TableCell colSpan={5} className="text-center text-xs text-muted-foreground py-4">
-                                        {ruleSearch ? `Ingen regler matcher "${ruleSearch}"` : "Ingen filtre defineret"}
+                                    <TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-4">
+                                        {loading ? "Henter filtre…" : ruleSearch ? `Ingen regler matcher "${ruleSearch}"` : "Ingen filtre defineret"}
                                     </TableCell>
                                 </TableRow>
                             )}
@@ -511,13 +521,13 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
                                 <Label className="text-xs">Værdi</Label>
                                 <Input value={newValue} onChange={e => setNewValue(e.target.value)} placeholder="f.eks. reklame" className="h-8 text-sm" />
                             </div>
-                            <Button size="sm" onClick={handleAdd} className="h-8">Tilføj</Button>
+                            <Button size="sm" disabled={saving} onClick={() => void handleAdd()} className="h-8">Tilføj lokalt filter</Button>
                             <Button size="sm" variant="ghost" className="h-8" onClick={() => { setAdding(false); setNewName(""); setNewValue("") }}>Annuller</Button>
                         </div>
                     ) : (
                         <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setAdding(true)}>
                             <Plus className="h-3.5 w-3.5" />
-                            Tilføj regel
+                            Tilføj lokalt filter
                         </Button>
                     )}
 
@@ -527,13 +537,14 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
     )
 }
 
-function SortTable({ vaerker, onUpdate }: {
+function SortTable({ batchId, vaerker, onUpdate }: {
+    batchId: string
     vaerker: AftalelicensVaerk[]
     onUpdate: (id: string, patch: Partial<AftalelicensVaerk>) => void
 }) {
     const addRuleRef = useRef<((rule: Omit<FilterRule, "id" | "createdAt">) => void) | null>(null)
-    const autoRejectedRef = useRef<Set<string>>(new Set())
-    const currentRulesRef = useRef<FilterRule[]>(loadFilterRulesLocal())
+    const autoRejectedRef = useRef<Set<string>>(new Set(vaerker.filter(v => v.sortedBy === "filter").map(v => v.id)))
+    const currentRulesRef = useRef<FilterRule[]>([])
     const [dbWorks, setDbWorks] = useState<MatchingWork[]>([])
 
     // Hent egne, registrerede værker til DB-match-trinnet nedenfor — erstatter
@@ -574,7 +585,7 @@ function SortTable({ vaerker, onUpdate }: {
 
     useEffect(() => {
         if (vaerker.length > 0 && currentRulesRef.current.some(r => r.active)) {
-            autoRejectedRef.current = new Set()
+            autoRejectedRef.current = new Set(vaerker.filter(v => v.sortedBy === "filter").map(v => v.id))
             handleRulesChange(currentRulesRef.current)
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -982,7 +993,7 @@ function SortTable({ vaerker, onUpdate }: {
     return (
         <div className="space-y-4">
             {/* Filter rules panel */}
-            <FilterRulesPanel onRulesChange={handleRulesChange} onAddRuleRef={addRuleRef} />
+            <FilterRulesPanel batchId={batchId} onRulesChange={handleRulesChange} onAddRuleRef={addRuleRef} />
 
             {/* Progress */}
             <div className="rounded-lg border p-4 space-y-3">
@@ -3777,7 +3788,7 @@ export default function AftalelicensDetailPage() {
                 </TabsList>
 
                 <TabsContent value="sortering" className="mt-4">
-                    <SortTable vaerker={vaerker} onUpdate={updateVaerk} />
+                    <SortTable batchId={id} vaerker={vaerker} onUpdate={updateVaerk} />
                 </TabsContent>
 
                 <TabsContent value="parring" className="mt-4">

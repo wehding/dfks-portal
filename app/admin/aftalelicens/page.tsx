@@ -35,6 +35,7 @@ import Link from "next/link"
 import { toast } from "sonner"
 import type { AftalelicensBatch, AftalelicensKilde, AftalelicensVaerk, FilterRule, SortStatus } from "@/lib/streaming-types"
 import { addScreeningClaimComment, createAftalelicensBatch, fetchAdminScreeningClaims, fetchAftalelicensBatches, importScreeningSourceRows, markScreeningClaimCommentsRead, updateScreeningClaimStatus } from "@/app/actions/screenings"
+import { getAftalelicensFilterRules } from "@/app/actions/organisation-settings"
 import { MessageThread } from "@/components/messages/message-thread"
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
 import { WORK_TYPES } from "@/lib/work-types"
@@ -99,14 +100,6 @@ const STATUS_CONFIG = {
     sorting:   { label: "Sorteres",           variant: "secondary" as const, icon: Clock },
     weighted:  { label: "Klar til beregning", variant: "default"   as const, icon: CheckCircle2 },
     completed: { label: "Afsluttet",          variant: "outline"   as const, icon: CheckCircle2 },
-}
-
-function loadFilterRules(): FilterRule[] {
-    if (typeof window === "undefined") return []
-    try {
-        const stored = localStorage.getItem("dfks_filter_rules")
-        return stored ? JSON.parse(stored) : []
-    } catch { return [] }
 }
 
 // saveBatches/loadBatches (localStorage) er fjernet — batch-historik hentes/gemmes
@@ -367,7 +360,8 @@ function ImportDialog({ open, onOpenChange, onImport }: {
             setPreviewRows(prev)
 
             // Beregn filter-preview (kun informativt — intet fjernes ved import)
-            const rules = loadFilterRules().filter(r => r.active)
+            const filterResult = await getAftalelicensFilterRules()
+            const rules = filterResult.rules.filter(r => r.active)
             const ruleCounts = new Map<string, number>(rules.map(r => [r.id, 0]))
             let removedCount = 0
             for (const row of parsed) {

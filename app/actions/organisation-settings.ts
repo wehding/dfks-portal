@@ -9,6 +9,7 @@ import { resolveDefaultRoleLabel } from "@/lib/branding";
 import { normalizeSingleEmail } from "@/lib/email/mime";
 import { getForeningLetIntegration, testForeningLetCredentials, upsertForeningLetIntegration } from "@/lib/org-integrations";
 import { recordAuditEvent } from "@/lib/audit-log-server";
+import type { FilterRule } from "@/lib/streaming-types";
 import {
   DEFAULT_STATISTICS_DOMINANCE_LIMIT,
   MAX_STATISTICS_DOMINANCE_LIMIT,
@@ -457,4 +458,54 @@ export async function updateAftalelicensWeightConfig(config: AftalelicensWeightC
 
   revalidatePath("/admin/aftalelicens");
   return { success: true };
+}
+
+const FILTER_RULE_TYPES = new Set<FilterRule["type"]>(["title_keyword", "title_regex", "channel"]);
+
+function normalizeFilterRules(value: unknown, scope: FilterRule["scope"]): FilterRule[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((row): FilterRule[] => {
+    if (!row || typeof row !== "object") return [];
+    const raw = row as Record<string, unknown>;
+    const type = typeof raw.type === "string" ? raw.type as FilterRule["type"] : null;
+    const id = cleanString(raw.id);
+    const name = cleanString(raw.name);
+    const ruleValue = cleanString(raw.value);
+    if (!id || !name || !ruleValue || !type || !FILTER_RULE_TYPES.has(type)) return [];
+    return [{
+      id,
+      name,
+      type,
+      value: ruleValue,
+      active: raw.active !== false,
+      createdAt: cleanString(raw.createdAt) || new Date().toISOString(),
+      scope,
+    }];
+  }).slice(0, 500);
+}
+
+export async function getAftalelicensFilterRules() {
+  const orgId = await currentAdminOrg();
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("organisations")
+    .select("aftalelicens_filter_rules")
+    .eq("id", orgId)
+    .single();
+  if (error) throw new Error(error.message);
+  return { success: true, rules: normalizeFilterRules(data?.aftalelicens_filter_rules, "global") };
+}
+
+export async function updateAftalelicensFilterRules(rules: FilterRule[]) {
+  const orgId = await currentAdminOrg();
+  const normalized = normalizeFilterRules(rules, "global");
+  const db = createServiceClient();
+  const { error } = await db
+    .from("organisations")
+    .update({ aftalelicens_filter_rules: normalized, updated_at: new Date().toISOString() })
+    .eq("id", orgId);
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/stamdata");
+  revalidatePath("/admin/aftalelicens");
+  return { success: true, rules: normalized };
 }
