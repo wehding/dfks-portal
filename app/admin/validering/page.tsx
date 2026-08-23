@@ -1240,16 +1240,18 @@ setActiveField(fieldId)
 
                                 <Separator />
 
-                                <F
-                                    src={fieldSrc("producerName")}
-                                    label={t("admin.validation.producer")}
-                                    action={
-                                        <button type="button" className="text-[11px] text-primary underline underline-offset-2"
-                                            onClick={() => { setNewEmpName(formData.producerName?.trim() ?? ""); setNewEmpCvr(""); setNewEmpDfiId(null); setNewEmpRelation(null); setNewEmpDfiResults([]); setNewEmpDbMatches([]); setShowNewEmployer(true) }}>
-                                            + Opret ny
-                                        </button>
-                                    }
-                                >
+                                <div className="grid items-start gap-3 sm:grid-cols-2">
+                                    <div className="space-y-3">
+                                        <F
+                                            src={fieldSrc("producerName")}
+                                            label={t("admin.validation.producer")}
+                                            action={
+                                                <button type="button" className="text-[11px] text-primary underline underline-offset-2"
+                                                    onClick={() => { setNewEmpName(formData.producerName?.trim() ?? ""); setNewEmpCvr(""); setNewEmpDfiId(null); setNewEmpRelation(null); setNewEmpDfiResults([]); setNewEmpDbMatches([]); setShowNewEmployer(true) }}>
+                                                    + Opret ny
+                                                </button>
+                                            }
+                                        >
                                     <Input
                                         value={String(formData.producerName ?? "")}
                                         onChange={(e) => { setField("producerName", e.target.value); setSelectedEmployerId(null) }}
@@ -1290,9 +1292,9 @@ setActiveField(fieldId)
                                             )}
                                         </div>
                                     )}
-                                </F>
+                                        </F>
 
-                                <F label="Moderselskab (valgfrit)">
+                                        <F label="Moderselskab (valgfrit)">
                                     {parentExplicitNone ? (
                                         <div className="flex items-center gap-2 rounded border px-3 py-1.5 text-xs text-muted-foreground bg-muted/30">
                                             <span className="flex-1">Ingen moderselskab</span>
@@ -1336,9 +1338,9 @@ setActiveField(fieldId)
                                             Sæt til ingen moderselskab
                                         </button>
                                     )}
-                                </F>
+                                        </F>
+                                    </div>
 
-                                <div className="grid gap-3 sm:grid-cols-2">
                                     {formData.rightsHolderName !== undefined && (
                                         <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
                                             <Input
@@ -1367,7 +1369,7 @@ setActiveField(fieldId)
                                             )}
                                         </F>
                                     )}
-                                    </div>
+                                </div>
 
                                 <Separator />
 
