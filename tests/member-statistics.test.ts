@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { memberSalaryBenchmark } from "../lib/member-statistics";
+import { medianWeeklySalary, memberSalaryBenchmark, salaryProductionGroup } from "../lib/member-statistics";
 
 const row = (holderId: string, weekly: number, contributes = true) => ({ holderId, weekly, contributes });
 
@@ -28,4 +28,20 @@ test("fravalgte og ugyldige rækker indgår ikke", () => {
     row("excluded", 100_000, false), row("invalid", Number.NaN),
   ];
   assert.equal(memberSalaryBenchmark(rows, 5), 8_450);
+});
+
+test("median pr. uge beregnes korrekt for lige og ulige antal kontrakter", () => {
+  assert.equal(medianWeeklySalary([7_000, 9_000, 8_000]), 8_000);
+  assert.equal(medianWeeklySalary([7_000, 9_000, 8_000, 10_000]), 8_500);
+  assert.equal(medianWeeklySalary([Number.NaN, 0]), null);
+});
+
+test("produktionstyper samles som fiktion og dokumentar", () => {
+  assert.equal(salaryProductionGroup("feature"), "fiction");
+  assert.equal(salaryProductionGroup("tvSeries"), "fiction");
+  assert.equal(salaryProductionGroup("fiktion"), "fiction");
+  assert.equal(salaryProductionGroup("documentary"), "documentary");
+  assert.equal(salaryProductionGroup("docSeries"), "documentary");
+  assert.equal(salaryProductionGroup("Dokumentarfilm"), "documentary");
+  assert.equal(salaryProductionGroup("reality"), null);
 });
