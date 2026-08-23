@@ -60,7 +60,7 @@ export async function refreshWorkCreditEvidence(db: ServiceClient, params: {
   workId: string;
 }) {
   const { data: work, error } = await db.from("works")
-    .select("id,title,original_title,year,type,dfi_id,tmdb_id,dfi_metadata")
+    .select("id,title,dfi_original_title,year,type,dfi_id,tmdb_id,dfi_metadata")
     .eq("id", params.workId)
     .maybeSingle();
   if (error || !work) throw new Error(error?.message ?? "Værket findes ikke.");
@@ -79,7 +79,7 @@ export async function refreshWorkCreditEvidence(db: ServiceClient, params: {
     const result = await searchDFIFilms(work.title).catch(() => null);
     const matches = result?.success ? (result.results ?? []).filter(candidate => {
       const row = candidate as unknown as Record<string, unknown>;
-      return titleMatches([cleanDfiTitle(candidate.Title ?? candidate.DanishTitle), String(row.OriginalTitle ?? "")], [work.title, work.original_title])
+      return titleMatches([cleanDfiTitle(candidate.Title ?? candidate.DanishTitle), String(row.OriginalTitle ?? "")], [work.title, work.dfi_original_title])
         && extractDfiPremiereYear(candidate) === work.year
         && workTypeMatches(work.type, mapDfiWorkType(candidate.Category, candidate.Type));
     }) : [];
@@ -104,7 +104,7 @@ export async function refreshWorkCreditEvidence(db: ServiceClient, params: {
     const matches = result.filter(candidate => {
       const row = candidate as unknown as Record<string, unknown>;
       const date = String(row.release_date ?? row.first_air_date ?? "");
-      return titleMatches([String(row.title ?? ""), String(row.name ?? ""), String(row.original_title ?? ""), String(row.original_name ?? "")], [work.title, work.original_title])
+      return titleMatches([String(row.title ?? ""), String(row.name ?? ""), String(row.original_title ?? ""), String(row.original_name ?? "")], [work.title, work.dfi_original_title])
         && Number(date.slice(0, 4)) === work.year
         && workTypeMatches(work.type, String(row.media_type ?? ""));
     });
