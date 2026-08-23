@@ -11,6 +11,7 @@ import { normaliseSources, extractClauseIdFromCitation, stripClauseIdPrefix } fr
 import { resolveOtherSupplements } from "@/lib/contract-supplements"
 import { resolvePensionSupplement } from "@/lib/contract-pension"
 import { resolveContractCredit } from "@/lib/contract-credit"
+import { resolveContractSalary } from "@/lib/contract-salary"
 import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
@@ -346,6 +347,7 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             creditedRoles_clause_id: credit.clauseId,
         }
     }
+    extracted = resolveContractSalary(extracted)
     extracted.pensionSupplement = resolvePensionSupplement(extracted)
     extracted.otherSupplements = resolveOtherSupplements(extracted)
     // Strip [sX_cY]-tag fra otherSupplements[].sourceText og gem clauseId pr. post

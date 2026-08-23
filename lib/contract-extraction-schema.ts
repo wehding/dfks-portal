@@ -43,6 +43,7 @@ const properties: Record<string, JsonSchema> = {
   prolongationWeeks: number,
   prolongationNote: text,
   salary: number,
+  lumpSumAmount: number,
   salaryUnit: enumText(["weekly", "monthly", "daily", "total"]),
   salarySourceType: enumText(["weekly", "daily_converted", "hourly_converted", "lump_calculated", "invoice_line", "unknown"]),
   salaryConfidence: enumText(["high", "medium", "low"]),

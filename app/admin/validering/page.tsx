@@ -29,6 +29,7 @@ import { resolveAnker } from "@/lib/resolveAnker"
 import { SourceBtn } from "@/components/source-btn"
 import { resolveOtherSupplements } from "@/lib/contract-supplements"
 import { resolvePensionSupplement } from "@/lib/contract-pension"
+import { resolveContractSalary } from "@/lib/contract-salary"
 
 const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
     overtidstillaeg: "Overtidstillæg",
@@ -417,7 +418,8 @@ function AdminValideringPageInner() {
             // Copydan og royalty: kun fra AI-udtræk — ingen hardcoded overenskomst-lister
             const impliedByCopydan = !!ed.copydan
             const impliedByRoyalty = !!ed.royalty
-            const pensionSupplement = resolvePensionSupplement(ed)
+            const normalizedSalary = resolveContractSalary(ed)
+            const pensionSupplement = resolvePensionSupplement(normalizedSalary)
 
             setFormData({
                 producerName: ed.producerName ?? ed.employerName ?? "",
@@ -431,12 +433,13 @@ function AdminValideringPageInner() {
                         ? "leverandør"
                         : "a-løn",
                 overenskomst: ed.overenskomst ?? "ingen",
-                salary: ed.salary ?? "",
-                salaryUnit: ed.salaryUnit ?? "monthly",
-                salaryConfidence: ed.salaryConfidence ?? null,
-                salaryNote: ed.salaryNote ?? null,
-                salarySourceType: ed.salarySourceType ?? null,
-                needsManualSalaryReview: !!ed.needsManualSalaryReview,
+                salary: normalizedSalary.salary ?? "",
+                lumpSumAmount: normalizedSalary.lumpSumAmount ?? null,
+                salaryUnit: normalizedSalary.salaryUnit ?? "monthly",
+                salaryConfidence: normalizedSalary.salaryConfidence ?? null,
+                salaryNote: normalizedSalary.salaryNote ?? null,
+                salarySourceType: normalizedSalary.salarySourceType ?? null,
+                needsManualSalaryReview: !!normalizedSalary.needsManualSalaryReview,
                 agreementReferenceStatus: ed.agreementReferenceStatus ?? null,
                 startDate: ed.startDate ?? "",
                 endDate: ed.endDate ?? "",
@@ -522,7 +525,12 @@ function AdminValideringPageInner() {
                 creditedRoles: formData.creditedRoles || undefined,
                 productionType: formData.productionType || undefined,
                 salary: formData.salary ? Number(formData.salary) : undefined,
+                lumpSumAmount: formData.lumpSumAmount ? Number(formData.lumpSumAmount) : undefined,
                 salaryUnit: formData.salaryUnit || "monthly",
+                salaryConfidence: formData.salaryConfidence || undefined,
+                salarySourceType: formData.salarySourceType || undefined,
+                salaryNote: formData.salaryNote || undefined,
+                needsManualSalaryReview: !!formData.needsManualSalaryReview,
                 startDate: formData.startDate || undefined,
                 endDate: formData.endDate || undefined,
                 pensionPercent: formData.pensionPercent ? Number(formData.pensionPercent) : undefined,
@@ -670,7 +678,8 @@ function AdminValideringPageInner() {
         // Ingen overenskomst (kun funktionærloven): ingen helligdag/BETA
         const ingenOverenskomst = !overenskomst || overenskomst === "ingen"
 
-        const pensionSupplement = resolvePensionSupplement(ed)
+        const normalizedSalary = resolveContractSalary(ed)
+        const pensionSupplement = resolvePensionSupplement(normalizedSalary)
 
         return {
             producerName: (() => {
@@ -688,12 +697,13 @@ function AdminValideringPageInner() {
                                                ? "leverandør-ref"
                                                : isLeverandoer ? "leverandør" : "a-løn",
             overenskomst,
-            salary:                        ed.salary ?? "",
-            salaryUnit:                    ed.salaryUnit ?? "monthly",
-            salaryConfidence:              ed.salaryConfidence ?? null,
-            salaryNote:                    ed.salaryNote ?? null,
-            salarySourceType:              ed.salarySourceType ?? null,
-            needsManualSalaryReview:       !!ed.needsManualSalaryReview,
+            salary:                        normalizedSalary.salary ?? "",
+            lumpSumAmount:                 normalizedSalary.lumpSumAmount ?? null,
+            salaryUnit:                    normalizedSalary.salaryUnit ?? "monthly",
+            salaryConfidence:              normalizedSalary.salaryConfidence ?? null,
+            salaryNote:                    normalizedSalary.salaryNote ?? null,
+            salarySourceType:              normalizedSalary.salarySourceType ?? null,
+            needsManualSalaryReview:       !!normalizedSalary.needsManualSalaryReview,
             agreementReferenceStatus:      ed.agreementReferenceStatus ?? null,
             startDate:                     ed.startDate ?? "",
             endDate:                       ed.endDate ?? "",
