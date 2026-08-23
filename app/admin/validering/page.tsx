@@ -1240,7 +1240,7 @@ setActiveField(fieldId)
 
                                 <Separator />
 
-                                <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="grid gap-y-3 sm:grid-cols-2 sm:gap-x-6">
                                     <div className="order-2 grid grid-rows-[auto_1fr] gap-3">
                                         <F
                                             src={fieldSrc("producerName")}
