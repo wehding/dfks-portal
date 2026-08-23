@@ -1478,11 +1478,13 @@ setActiveField(fieldId)
                                                     setField("personalSupplement", "")
                                                 }}><Trash2 className="h-3.5 w-3.5" /></button>
                                             </div>
-                                            <div className="relative">
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <div className="relative">
                                                 <Input type="number" value={String(formData.personalSupplement)} placeholder="Beløb" className="h-7 pr-10 text-xs" onChange={(e) => {
                                                     setField("personalSupplement", e.target.value)
                                                 }} />
                                                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">kr.</span>
+                                                </div>
                                             </div>
                                         </div>
                                     )}
@@ -1510,7 +1512,7 @@ setActiveField(fieldId)
                                                 }}><Trash2 className="h-3.5 w-3.5" /></button>
                                             </div>
                                             {sNote && <p className="text-[11px] text-muted-foreground pl-1">{sNote}</p>}
-                                            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(150px,0.55fr)]">
+                                            <div className="grid gap-3 sm:grid-cols-2">
                                                 <div className="space-y-1.5">
                                                     <Label className="text-xs">Beløb</Label>
                                                     <div className="relative">
