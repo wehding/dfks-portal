@@ -1371,7 +1371,7 @@ setActiveField(fieldId)
                                             </F>
                                         )}
                                         <div className="h-full [&>div]:h-full">
-                                            <F src={fieldSrc("gender")} label={t("admin.validation.gender")}>
+                                            <F src={fieldSrc("gender")} outlined label={t("admin.validation.gender")}>
                                                 <Select value={formData.gender ?? ""} onValueChange={(v) => setField("gender", v)}>
                                                     <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                                                     <SelectContent>
@@ -2087,15 +2087,17 @@ const SOURCE_STYLES: Record<NonNullable<DataSource>, string> = {
     manuel:       "rounded-md border border-input bg-background px-2.5 py-2 -mx-2.5",
 }
 
-function F({ label, action, locked, src, children }: {
+function F({ label, action, locked, src, outlined = false, children }: {
     label: React.ReactNode
     action?: React.ReactNode
     locked?: boolean
     src?: DataSource
+    outlined?: boolean
     children: React.ReactNode
 }) {
+    const wrapperStyle = src ? SOURCE_STYLES[src] : outlined ? SOURCE_STYLES.manuel : ""
     return (
-        <div className={src ? `${SOURCE_STYLES[src]} space-y-1.5` : "space-y-1.5"}>
+        <div className={wrapperStyle ? `${wrapperStyle} space-y-1.5` : "space-y-1.5"}>
             <div className="flex items-center gap-2">
                 <Label className="text-xs">{label}</Label>
                 {locked && (
