@@ -27,6 +27,7 @@ import { getContractValidationData } from "@/app/actions/contract-imports"
 import { normaliseSources } from "@/lib/ai-sources"
 import { resolveAnker } from "@/lib/resolveAnker"
 import { SourceBtn } from "@/components/source-btn"
+import { resolveOtherSupplements } from "@/lib/contract-supplements"
 
 const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
     overtidstillaeg: "Overtidstillæg",
@@ -447,7 +448,7 @@ function AdminValideringPageInner() {
                 pensionSupplement: ed.pensionSupplement ?? "",
                 personalSupplement: personalSupplement.value,
                 personalSupplementConflict: personalSupplement.conflict,
-                otherSupplements: Array.isArray(ed.otherSupplements) ? ed.otherSupplements : [],
+                otherSupplements: resolveOtherSupplements(ed),
                 workingWeeks: ed.workingWeeks ?? "",
                 prolongationWeeks: ed.prolongationWeeks ?? "",
                 prolongationNote: ed.prolongationNote ?? "",
@@ -705,7 +706,7 @@ function AdminValideringPageInner() {
             pensionSupplement:             ed.pensionSupplement ?? "",
             personalSupplement:            personalSupplement.value,
             personalSupplementConflict:    personalSupplement.conflict,
-            otherSupplements:              Array.isArray(ed.otherSupplements) ? ed.otherSupplements : [],
+            otherSupplements:              resolveOtherSupplements(ed),
             workingWeeks:                  ed.workingWeeks ?? "",
             prolongationWeeks:             ed.prolongationWeeks ?? "",
             prolongationNote:              ed.prolongationNote ?? "",
@@ -1445,7 +1446,7 @@ setActiveField(fieldId)
                                 <div className="space-y-2">
                                     <Label className="text-xs">Tillæg i kontrakten</Label>
                                     {formData.personalSupplement !== "" && formData.personalSupplement !== null && formData.personalSupplement !== undefined && (
-                                        <div className="rounded border bg-muted/30 p-2 space-y-1.5">
+                                        <div className={`rounded border p-2 space-y-1.5 ${SOURCE_STYLES[fieldSrc("personalSupplement") ?? "manuel"]}`}>
                                             <div className="flex items-center gap-2">
                                                 <Badge variant="outline" className="text-[11px] shrink-0">Personligt tillæg</Badge>
                                                 <span className="text-sm font-medium">{String(formData.personalSupplement)} kr.</span>
@@ -1471,7 +1472,7 @@ setActiveField(fieldId)
                                         const sClauseId = s.clauseId != null ? String(s.clauseId) : null
                                         const sNavigationSource = sSrc ?? (sClauseId ? sources.otherSupplements : null)
                                         return (
-                                        <div key={i} className="rounded border bg-muted/30 p-2 space-y-1.5">
+                                        <div key={i} className={`rounded border p-2 space-y-1.5 ${SOURCE_STYLES[fieldSrc("otherSupplements") ?? "manuel"]}`}>
                                             <div className="flex items-center gap-2">
                                                 <Badge variant="outline" className="text-[11px] shrink-0">{OTHER_SUPPLEMENT_LABELS[s.category as string] ?? String(s.category)}</Badge>
                                                 {s.amount != null && <span className="text-sm font-medium">{String(s.amount)} kr.</span>}
