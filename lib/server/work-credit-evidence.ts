@@ -4,7 +4,7 @@ import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
 import { getTMDBWorkDetails, searchTMDBWithStatus } from "@/app/actions/tmdb";
 import { cleanDfiTitle, extractDfiPremiereYear, mapDfiWorkType } from "@/lib/dfi-metadata";
 import type { createServiceClient } from "@/lib/supabase/service";
-import { normalizeCreditName, reconcileWorkCredits, resolveRightsHolderCreditMatch, type WorkCreditCandidate } from "@/lib/work-share-reconciliation";
+import { isMissingWorkCreditCacheSchemaError, normalizeCreditName, reconcileWorkCredits, resolveRightsHolderCreditMatch, type WorkCreditCandidate } from "@/lib/work-share-reconciliation";
 import type { ReconciledWorkCredit } from "@/lib/work-share-reconciliation";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 
@@ -70,7 +70,14 @@ export async function getWorkCreditSourceStates(db: ServiceClient, params: { org
   const { data, error } = await db.from("work_credit_source_syncs")
     .select("work_id,source,status,last_success_at,last_attempt_at,last_error_code,lease_expires_at")
     .eq("org_id", params.orgId).in("work_id", params.workIds);
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (isMissingWorkCreditCacheSchemaError(error)) {
+      return new Map(params.workIds.map(workId => [workId, (["dfi", "tmdb"] as const).map(source => ({
+        source, status: "missing" as const, lastSuccessAt: null, lastAttemptAt: null, errorCode: null,
+      }))]));
+    }
+    throw new Error(error.message);
+  }
   const byWork = new Map<string, WorkCreditSourceState[]>();
   for (const workId of params.workIds) byWork.set(workId, []);
   for (const row of data ?? []) {
@@ -200,7 +207,12 @@ export async function refreshWorkCreditEvidence(db: ServiceClient, params: {
     const { data: claimed, error: claimError } = await db.rpc("claim_work_credit_source_refresh", {
       p_org_id: params.orgId, p_work_id: params.workId, p_source: source, p_force: params.force === true,
     });
-    if (claimError) throw new Error(claimError.message);
+    if (claimError) {
+      if (isMissingWorkCreditCacheSchemaError(claimError)) {
+        return { source, outcome: "migration_pending" as const, count: 0 };
+      }
+      throw new Error(claimError.message);
+    }
     if (!claimed) return { source, outcome: "cached" as const, count: 0 };
     const sourceStartedAt = performance.now();
     try {

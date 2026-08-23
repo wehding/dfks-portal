@@ -24,6 +24,19 @@ export type RightsHolderCreditMatch = {
   matchType: "existing" | "external_id" | "exact_name" | "unmatched" | "conflict";
 };
 
+export function isMissingWorkCreditCacheSchemaError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const row = error as { code?: unknown; message?: unknown };
+  const code = typeof row.code === "string" ? row.code : "";
+  const message = typeof row.message === "string" ? row.message.toLocaleLowerCase("da-DK") : "";
+  if (["42P01", "42883", "PGRST202", "PGRST205"].includes(code)) {
+    return message.includes("work_credit_source_syncs")
+      || message.includes("claim_work_credit_source_refresh")
+      || message.includes("replace_work_credit_evidence");
+  }
+  return false;
+}
+
 export function resolveRightsHolderCreditMatch(input: {
   existingRightsHolderId?: string | null;
   externalRightsHolderIds?: Iterable<string>;
