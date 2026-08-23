@@ -55,9 +55,9 @@ test("overenskomsthenvisning anbefaler med advarsel uden underskrift", () => {
   assert.deepEqual(contractReadinessDetails(contract).warnings, ["signature_missing"]);
 });
 
-test("ugelønsresume tæller aldrig to navne for samme personlige tillæg", () => {
+test("ugelønsresume bruger kun personalSupplement og ignorerer legacy-feltet", () => {
   assert.equal(weeklySalaryWithPersonalSupplement({ salary: 15000, personalSupplement: 1000, loentillaeg: 2000, otherSupplements: [{ category: "efterarbejde", amount: 500 }] }), 16500);
-  assert.equal(weeklySalaryWithPersonalSupplement({ salary: 15000, loentillaeg: 2000 }), 17000);
+  assert.equal(weeklySalaryWithPersonalSupplement({ salary: 15000, loentillaeg: 2000 }), 15000);
   assert.equal(weeklySalaryWithPersonalSupplement({ personalSupplement: 1000 }), null);
 });
 

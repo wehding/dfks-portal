@@ -1417,7 +1417,7 @@ const CONTRACT_VALIDATION_SECTION_FIELDS: Record<ContractValidationSectionKey, r
   dates: ["contractDate", "startDate", "endDate", "_sources", "_lockedFields"],
   salary: [
     "salary", "salaryUnit", "salarySourceType", "salaryConfidence", "salaryNote",
-    "needsManualSalaryReview", "workingDays", "workingWeeks", "loentillaeg",
+    "needsManualSalaryReview", "workingDays", "workingWeeks",
     "contractType", "isFreelanceContract", "agreementEmploymentForm",
     "pensionPercent", "pensionSupplement", "pensionStatus", "pensionEmployerPercent",
     "pensionEmployeePercent", "pensionTotalPercent", "pensionBasis", "pensionBasisAmount",

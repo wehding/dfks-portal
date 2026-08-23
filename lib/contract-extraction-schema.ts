@@ -51,7 +51,6 @@ const properties: Record<string, JsonSchema> = {
   pensionBasisAmount: number,
   pensionSupplement: number,
   personalSupplement: number,
-  loentillaeg: number,
   otherSupplements: nullable({
     type: "array",
     items: {

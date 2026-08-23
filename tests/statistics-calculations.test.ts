@@ -47,6 +47,14 @@ test("does not interpret legacy free-text supplements automatically", () => {
   }), 12_000);
 });
 
+test("ignores the removed loentillaeg legacy field", () => {
+  assert.equal(salaryDataToWeekly({
+    salary: 10_000,
+    salaryUnit: "weekly",
+    loentillaeg: 2_000,
+  }), 10_000);
+});
+
 test("aggregates actual producer contributions per year", () => {
   const rows = aggregateContributionsByYear([
     { id: "a", type: "a-løn", premiereYear: 2025, extractedData: { salary: 10_000, salaryUnit: "weekly", workingWeeks: 10, holidayPayRate: 1, betaRate: 0.5 } },

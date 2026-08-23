@@ -45,18 +45,6 @@ const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
 }
 const OTHER_SUPPLEMENT_CATEGORIES = Object.keys(OTHER_SUPPLEMENT_LABELS)
 
-function resolvePersonalSupplement(data: Record<string, unknown>) {
-    const personalSupplement = data.personalSupplement
-    const legacySupplement = data.loentillaeg
-    const hasPersonalSupplement = personalSupplement !== null && personalSupplement !== undefined && personalSupplement !== ""
-    const hasLegacySupplement = legacySupplement !== null && legacySupplement !== undefined && legacySupplement !== ""
-
-    return {
-        value: hasPersonalSupplement ? personalSupplement : hasLegacySupplement ? legacySupplement : "",
-        conflict: hasPersonalSupplement && hasLegacySupplement && Number(personalSupplement) !== Number(legacySupplement),
-    }
-}
-
 const ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
 const BUCKET = "kontrakter"
 
@@ -422,7 +410,6 @@ function AdminValideringPageInner() {
             // Copydan og royalty: kun fra AI-udtræk — ingen hardcoded overenskomst-lister
             const impliedByCopydan = !!ed.copydan
             const impliedByRoyalty = !!ed.royalty
-            const personalSupplement = resolvePersonalSupplement(ed)
             const pensionSupplement = resolvePensionSupplement(ed)
 
             setFormData({
@@ -448,8 +435,7 @@ function AdminValideringPageInner() {
                 endDate: ed.endDate ?? "",
                 pensionPercent: ed.pensionPercent ?? "",
                 pensionSupplement: pensionSupplement ?? "",
-                personalSupplement: personalSupplement.value,
-                personalSupplementConflict: personalSupplement.conflict,
+                personalSupplement: ed.personalSupplement ?? "",
                 otherSupplements: resolveOtherSupplements(ed),
                 workingWeeks: ed.workingWeeks ?? "",
                 prolongationWeeks: ed.prolongationWeeks ?? "",
@@ -677,7 +663,6 @@ function AdminValideringPageInner() {
         // Ingen overenskomst (kun funktionærloven): ingen helligdag/BETA
         const ingenOverenskomst = !overenskomst || overenskomst === "ingen"
 
-        const personalSupplement = resolvePersonalSupplement(ed)
         const pensionSupplement = resolvePensionSupplement(ed)
 
         return {
@@ -707,8 +692,7 @@ function AdminValideringPageInner() {
             endDate:                       ed.endDate ?? "",
             pensionPercent:                ed.pensionPercent ?? (impliedDe4 ? 9.5 : ""),
             pensionSupplement:             pensionSupplement ?? "",
-            personalSupplement:            personalSupplement.value,
-            personalSupplementConflict:    personalSupplement.conflict,
+            personalSupplement:            ed.personalSupplement ?? "",
             otherSupplements:              resolveOtherSupplements(ed),
             workingWeeks:                  ed.workingWeeks ?? "",
             prolongationWeeks:             ed.prolongationWeeks ?? "",
@@ -1485,16 +1469,11 @@ setActiveField(fieldId)
                                                 <SourceBtn quote={personalSupplementNavigation} active={activeField === "supplements"} onClick={() => activateSource("supplements", personalSupplementNavigation)} />
                                                 <button type="button" title="Fjern tillæg" aria-label="Fjern personligt tillæg" className="ml-auto rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" onClick={() => {
                                                     setField("personalSupplement", "")
-                                                    setFormData(prev => ({ ...prev, personalSupplementConflict: false }))
                                                 }}><Trash2 className="h-3.5 w-3.5" /></button>
                                             </div>
-                                            {formData.personalSupplementConflict && (
-                                                <p className="text-[11px] text-amber-700 dark:text-amber-300">AI-felterne personalSupplement og loentillaeg er forskellige. Kontrollér beløbet mod kontrakten.</p>
-                                            )}
                                             <div className="relative">
                                                 <Input type="number" value={String(formData.personalSupplement)} placeholder="Beløb" className="h-7 pr-10 text-xs" onChange={(e) => {
                                                     setField("personalSupplement", e.target.value)
-                                                    setFormData(prev => ({ ...prev, personalSupplementConflict: false }))
                                                 }} />
                                                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">kr.</span>
                                             </div>
