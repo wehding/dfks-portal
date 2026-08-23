@@ -1370,6 +1370,18 @@ setActiveField(fieldId)
                                             )}
                                             </F>
                                         )}
+                                        <div className="mt-3">
+                                            <F src={fieldSrc("gender")} label={t("admin.validation.gender")}>
+                                                <Select value={formData.gender ?? ""} onValueChange={(v) => setField("gender", v)}>
+                                                    <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="male">{t("admin.stats.male")}</SelectItem>
+                                                        <SelectItem value="female">{t("admin.stats.female")}</SelectItem>
+                                                        <SelectItem value="other">Andet</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </F>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -1431,16 +1443,6 @@ setActiveField(fieldId)
                                             <SelectItem value="yes">Ja — direkte navngiven overenskomst</SelectItem>
                                             <SelectItem value="no">Nej — eksplicit afvist</SelectItem>
                                             <SelectItem value="unknown">Ukendt / ikke afklaret</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </F>
-                                <F src={fieldSrc("gender")} label={t("admin.validation.gender")}>
-                                    <Select value={formData.gender ?? ""} onValueChange={(v) => setField("gender", v)}>
-                                        <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="male">{t("admin.stats.male")}</SelectItem>
-                                            <SelectItem value="female">{t("admin.stats.female")}</SelectItem>
-                                            <SelectItem value="other">Andet</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </F>
