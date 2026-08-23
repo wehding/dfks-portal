@@ -361,6 +361,16 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             })),
         }
     }
+    if (Array.isArray(extracted.workPhases)) {
+        extracted = {
+            ...extracted,
+            workPhases: (extracted.workPhases as Array<Record<string, unknown>>).map(phase => ({
+                ...phase,
+                clauseId: extractClauseIdFromCitation(phase.sourceText as string | null) ?? phase.clauseId ?? null,
+                sourceText: stripClauseIdPrefix(phase.sourceText as string | null),
+            })),
+        }
+    }
 
     try {
         const pension = await applyApprovedAgreementPension(extracted)

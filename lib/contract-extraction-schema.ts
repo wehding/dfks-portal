@@ -68,6 +68,22 @@ const properties: Record<string, JsonSchema> = {
       },
     },
   }),
+  workPhases: nullable({
+    type: "array",
+    items: {
+      type: "object",
+      required: ["phase", "paymentType", "note"],
+      properties: {
+        phase: { type: "string", enum: ["preproduction", "editing", "post_edit_finishing"] },
+        weeks: { anyOf: [{ type: "number" }, { type: "null" }] },
+        paymentType: { type: "string", enum: ["included_in_salary", "separate_supplement", "unpaid", "unclear"] },
+        amount: { anyOf: [{ type: "number" }, { type: "null" }] },
+        amountType: { anyOf: [{ type: "string", enum: ["explicit", "calculated"] }, { type: "null" }] },
+        note: { type: "string" },
+        sourceText: { anyOf: [{ type: "string" }, { type: "null" }] },
+      },
+    },
+  }),
   holidayPayRate: number,
   betaRate: number,
   svod: boolean,
@@ -252,6 +268,10 @@ export function normalizeContractExtraction(value: unknown) {
         .map(item => [item, typeof overview[item] === "string" ? overview[item].trim() : null]));
       continue;
     }
+    if ((key === "otherSupplements" || key === "workPhases") && Array.isArray(raw[key])) {
+      result[key] = raw[key].filter(item => item && typeof item === "object" && !Array.isArray(item));
+      continue;
+    }
     result[key] = normalizeValue(key, raw[key]);
   }
   return result;
@@ -283,14 +303,14 @@ export function mergeContractExtractionChunks(chunks: Record<string, unknown>[])
           .map(item => Math.round(item)))).sort((left, right) => left - right);
         continue;
       }
-      if (key === "otherSupplements" && Array.isArray(value)) {
+      if ((key === "otherSupplements" || key === "workPhases") && Array.isArray(value)) {
         // Array-felt — samme faldgrube som episodeNumbers ville have haft uden
         // særlig behandling: den generelle "første ikke-tomme værdi vinder"-regel
         // nedenfor ville ellers lade et tidligt chunks TOMME array låse feltet,
         // så et SENERE chunk, der rent faktisk finder et tillæg (fx i lønafsnittet),
         // aldrig ville blive flettet ind. Sammenlægger derfor alle chunks' poster.
-        const previous = Array.isArray(merged.otherSupplements) ? merged.otherSupplements as unknown[] : [];
-        merged.otherSupplements = [...previous, ...value];
+        const previous = Array.isArray(merged[key]) ? merged[key] as unknown[] : [];
+        merged[key] = [...previous, ...value];
         continue;
       }
       if (key === "_sources" || key === "rightsOverview") {

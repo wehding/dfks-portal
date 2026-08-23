@@ -146,6 +146,22 @@ test("normalisering bevarer krediteringskilden og klausul-id'et", () => {
   assert.equal((normalized._sources as Record<string, unknown>).creditedRoles_clause_id, "s1_c10");
 });
 
+test("normalisering bevarer strukturerede arbejdsfaser og tillæg", () => {
+  const workPhase = { phase: "post_edit_finishing", weeks: 1, paymentType: "included_in_salary", amount: 9200, amountType: "calculated", note: "Lydmix", sourceText: "[s2_c7] deltagelse i lydmix" };
+  const supplement = { category: "efterarbejde", amount: 2000, unit: "engangsbeløb", note: "Lydmix", sourceText: "[s2_c8] tillæg 2.000 kr." };
+  const normalized = normalizeContractExtraction({ workPhases: [workPhase], otherSupplements: [supplement] });
+  assert.deepEqual(normalized.workPhases, [workPhase]);
+  assert.deepEqual(normalized.otherSupplements, [supplement]);
+});
+
+test("arbejdsfaser sammenlægges på tværs af kontraktdele", () => {
+  const merged = mergeContractExtractionChunks([
+    { workPhases: [{ phase: "preproduction", weeks: 1 }] },
+    { workPhases: [{ phase: "post_edit_finishing", weeks: 1 }] },
+  ]);
+  assert.equal((merged.workPhases as unknown[]).length, 2);
+});
+
 test("Anthropic bruger JSON-prompten når det fulde schema overskrider providergrænserne", () => {
   assert.equal(contractExtractionResponseSchema("anthropic"), undefined);
   assert.equal(contractExtractionResponseSchema("google"), CONTRACT_EXTRACTION_JSON_SCHEMA);
