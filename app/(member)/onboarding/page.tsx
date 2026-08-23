@@ -42,19 +42,22 @@ export default async function OnboardingPage() {
   } : null;
   const orgId = affiliation?.org_id as string | undefined;
   const audience = affiliation?.is_member ? "member" : "non_member";
-  const [{ data: organisation }, { data: professionRows }, { data: regionRows }, { data: secondaryRows }, legalDocuments] = await Promise.all([
+  const [{ data: organisation }, { data: professionRows }, { data: regionRows }, legalDocuments] = await Promise.all([
     orgId ? service.from("organisations").select("terminology,statistics_profile_config").eq("id", orgId).maybeSingle() : Promise.resolve({ data: null }),
     orgId ? service.from("organisation_profession_types").select("profession_type_id,display_order,profession_types(name)").eq("org_id", orgId).order("display_order") : Promise.resolve({ data: [] }),
     orgId ? service.from("organisation_work_regions").select("code,name_da,name_en").eq("org_id", orgId).eq("active", true).order("display_order") : Promise.resolve({ data: [] }),
-    rh?.id ? service.from("rights_holder_profession_types").select("profession_type_id").eq("rights_holder_id", rh.id) : Promise.resolve({ data: [] }),
     orgId ? listCurrentLegalDocuments(service, orgId, audience) : Promise.resolve([]),
   ]);
   const statisticsProfile = {
-    config: (organisation?.statistics_profile_config ?? {}) as Record<string, boolean>,
+    config: {
+      ...((organisation?.statistics_profile_config ?? {}) as Record<string, boolean>),
+      secondary_profession_types: false,
+      usual_work_mode: (organisation?.statistics_profile_config as Record<string, boolean> | null)?.usual_work_mode !== false,
+    },
     professionLabel: resolveDefaultRole(organisation ? { terminology: organisation.terminology } : null),
     professionTypes: (professionRows ?? []).map(row => ({ id: row.profession_type_id as string, name: (row.profession_types as unknown as { name?: string } | null)?.name ?? "" })).filter(row => row.name),
     workRegions: (regionRows ?? []).map(row => ({ code: row.code as string, nameDa: row.name_da as string, nameEn: row.name_en as string })),
-    secondaryProfessionTypeIds: (secondaryRows ?? []).map(row => row.profession_type_id as string),
+    secondaryProfessionTypeIds: [],
   };
   const legalDocumentsReady = legalDocuments.length > 0 && legalDocuments.every(document => Boolean(document.id));
 

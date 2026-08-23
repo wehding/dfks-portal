@@ -1902,17 +1902,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             </div>
 
             <ListResultSummary filteredCount={totalCount} totalCount={totalAllCount} selectedCount={selectedIds.length} loading={loading} />
-            {totalCount > pageSize && (
-                <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-muted-foreground">
-                    <span>Side {currentPage} af {Math.max(1, Math.ceil(totalCount / pageSize))}</span>
-                    <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1 || loading} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}>
-                        Forrige
-                    </Button>
-                    <Button type="button" variant="outline" size="sm" disabled={currentPage >= Math.ceil(totalCount / pageSize) || loading} onClick={() => setCurrentPage(page => page + 1)}>
-                        Næste
-                    </Button>
-                </div>
-            )}
 
             {selectedIds.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
@@ -2119,6 +2108,18 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                     </TableBody>
                 </Table>
             </ResponsiveTableFrame>
+
+            {totalCount > pageSize && (
+                <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-muted-foreground">
+                    <span>Side {currentPage} af {Math.max(1, Math.ceil(totalCount / pageSize))}</span>
+                    <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1 || loading} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}>
+                        Forrige
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" disabled={currentPage >= Math.ceil(totalCount / pageSize) || loading} onClick={() => setCurrentPage(page => page + 1)}>
+                        Næste
+                    </Button>
+                </div>
+            )}
             </>}
 
             {/* PDF Viewer */}

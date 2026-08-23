@@ -465,7 +465,7 @@ export default function MineKontrakterClient({
         return;
       }
       if (coEditors.length && parsePercentInput(row.selfSharePercent) === null) {
-        toast.error(`Angiv din egen foreløbige procent for ${row.title}.`);
+        toast.error(`Angiv din egen vurderede arbejdsandel for ${row.title}.`);
         return;
       }
     }
@@ -1832,7 +1832,7 @@ export default function MineKontrakterClient({
 
                             {entry.coEditors.length > 0 && (
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-medium text-muted-foreground">Din foreløbige arbejdsandel (%)</Label>
+                                <Label className="text-xs font-medium text-muted-foreground">Din vurderede arbejdsandel (%)</Label>
                                 <Input
                                   type="text"
                                   inputMode="decimal"

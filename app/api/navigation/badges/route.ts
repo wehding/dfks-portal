@@ -27,5 +27,15 @@ export async function GET(request: NextRequest) {
     return applyAuthResponse(NextResponse.json({ error: "Navigationstællere kunne ikke hentes" }, { status: 500 }));
   }
   const row = Array.isArray(data) ? data[0] : data;
-  return applyAuthResponse(NextResponse.json(normalizeNavigationBadgeCounts(row as Record<string, unknown> | null)));
+  const [shareCases, collaborationDisputes] = context.canUseAdmin
+    ? await Promise.all([
+        db.from("work_share_cases").select("id", { count: "exact", head: true }).eq("org_id", context.orgId).neq("status", "resolved"),
+        db.from("member_work_collaboration_reviews").select("id", { count: "exact", head: true }).eq("org_id", context.orgId).eq("status", "disputed"),
+      ])
+    : [{ count: 0 }, { count: 0 }];
+  const badgeRow = {
+    ...((row as Record<string, unknown> | null) ?? {}),
+    admin_work_share_tasks: (shareCases.count ?? 0) + (collaborationDisputes.count ?? 0),
+  };
+  return applyAuthResponse(NextResponse.json(normalizeNavigationBadgeCounts(badgeRow)));
 }

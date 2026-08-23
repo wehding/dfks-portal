@@ -14,6 +14,49 @@ export type ShareSuggestion = {
   rightsHolderId?: string | null;
 };
 
+type KnownShareParticipantInput = {
+  case_id: string;
+  org_id: string;
+  work_id: string;
+  rights_holder_id: string;
+  proposed_name?: string | null;
+  role: string;
+  relationship_status: "pending" | "confirmed";
+  invited_by_rights_holder_id?: string | null;
+  response_scope?: ShareScope | null;
+  proposed_percent?: number | null;
+  responded_at?: string | null;
+  updated_at: string;
+};
+
+export async function saveKnownShareParticipant(db: ServiceClient, input: KnownShareParticipantInput) {
+  const { data: existing, error: findError } = await db.from("work_share_participants")
+    .select("id")
+    .eq("case_id", input.case_id)
+    .eq("rights_holder_id", input.rights_holder_id)
+    .maybeSingle();
+  if (findError) throw new Error(findError.message);
+  if (existing) {
+    const result = await db.from("work_share_participants").update(input).eq("id", existing.id).select("id").single();
+    if (result.error || !result.data) throw new Error(result.error?.message ?? "Medklipperopgaven kunne ikke gemmes.");
+    return result.data;
+  }
+  const inserted = await db.from("work_share_participants").insert(input).select("id").single();
+  if (!inserted.error && inserted.data) return inserted.data;
+  if (inserted.error?.code === "23505") {
+    const { data: concurrent, error: concurrentError } = await db.from("work_share_participants")
+      .select("id")
+      .eq("case_id", input.case_id)
+      .eq("rights_holder_id", input.rights_holder_id)
+      .single();
+    if (concurrentError || !concurrent) throw new Error(concurrentError?.message ?? "Medklipperopgaven kunne ikke genfindes.");
+    const updated = await db.from("work_share_participants").update(input).eq("id", concurrent.id).select("id").single();
+    if (updated.error || !updated.data) throw new Error(updated.error?.message ?? "Medklipperopgaven kunne ikke gemmes.");
+    return updated.data;
+  }
+  throw new Error(inserted.error?.message ?? "Medklipperopgaven kunne ikke gemmes.");
+}
+
 function nullableScopeQuery<T>(query: T, column: "season_number" | "episode_number", value?: number | null) {
   const scoped = query as T & { eq: (column: string, value: number) => T; is: (column: string, value: null) => T };
   return value ? scoped.eq(column, value) : scoped.is(column, null);
@@ -93,7 +136,7 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
     }).eq("id", shareCase.id);
   }
 
-  const { error: actorError } = await db.from("work_share_participants").upsert({
+  await saveKnownShareParticipant(db, {
     case_id: shareCase.id,
     org_id: params.orgId,
     work_id: params.workId,
@@ -104,14 +147,13 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
     proposed_percent: actorPercent,
     responded_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }, { onConflict: "case_id,rights_holder_id" });
-  if (actorError) throw new Error(actorError.message);
+  });
 
   for (const suggestion of params.suggestions) {
     const name = suggestion.name.trim();
     if (!name) continue;
     if (suggestion.rightsHolderId) {
-      const { data: participant, error } = await db.from("work_share_participants").upsert({
+      await saveKnownShareParticipant(db, {
         case_id: shareCase.id,
         org_id: params.orgId,
         work_id: params.workId,
@@ -121,8 +163,7 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
         relationship_status: "pending",
         invited_by_rights_holder_id: params.actorRightsHolderId,
         updated_at: new Date().toISOString(),
-      }, { onConflict: "case_id,rights_holder_id" }).select("id").single();
-      if (error || !participant) throw new Error(error?.message ?? "Medklipperopgaven kunne ikke oprettes.");
+      });
       await sendMemberNotification({
         eventKey: `work-share-request:${shareCase.id}:${suggestion.rightsHolderId}`,
         eventType: "work_share_request",

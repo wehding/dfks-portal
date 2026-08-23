@@ -13,8 +13,6 @@ import type { DfiMetadata } from "@/lib/dfi-metadata";
 import { groupWorksBySeason, type SeasonGroupingRow } from "@/lib/work-season-groups";
 import { contractCoversEpisode } from "@/lib/contract-work-scope";
 import { sendMemberNotification } from "@/lib/member-notifications";
-import { registerShareSuggestions } from "@/lib/server/work-share-cases";
-import { normalizeSharePercent } from "@/lib/work-share-distribution";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncWorkProducerRelations } from "@/lib/server/production-company-relations";
 import { recordAuditEvent } from "@/lib/audit-log-server";
@@ -686,15 +684,10 @@ export async function submitWorkDataCorrection(params: {
   workId: string;
   data: WorkCorrectionData;
   comment: string;
-  coEditors?: ProposedCoEditor[];
-  myEpisodes?: number[];
-  memberRole?: string;
   editScope?: "work" | "season" | "episode";
   seasonNumber?: number;
-  selfSharePercent?: number | null;
 }) {
   const comment = params.comment.trim();
-  if (!comment) throw new Error("Skriv en bemærkning til admin.");
 
   const proposed = normalizeData(params.data);
   if (!proposed.title) throw new Error("Titel må ikke være tom.");
@@ -731,26 +724,16 @@ export async function submitWorkDataCorrection(params: {
   if (workError || !work) throw new Error("Værket findes ikke.");
 
   const proposedChanges = changedFields(work, proposed);
-  const coEditors = params.coEditors ?? [];
-  const addedCoEditors = coEditors.filter(editor => editor.action !== "remove");
-  const selfSharePercent = normalizeSharePercent(params.selfSharePercent);
-  if (addedCoEditors.length > 0 && selfSharePercent === null) {
-    throw new Error("Når du angiver medklippere, skal du også angive din egen arbejdsandel.");
-  }
-  const memberRole = cleanText(params.memberRole);
-  const roleChanged = Boolean(memberRole && memberRole !== assignment.role);
-  const hasChanges = Object.keys(proposedChanges).length > 0 || coEditors.length > 0 || (params.myEpisodes ?? []).length > 0 || roleChanged;
-  if (!hasChanges) throw new Error("Der er ingen ændringer at sende til admin.");
+  const hasWorkDataChanges = Object.keys(proposedChanges).length > 0;
+  if (!hasWorkDataChanges) throw new Error("Der er ingen værksdatarettelser at sende til admin.");
+  if (!comment) throw new Error("Skriv en bemærkning til admin.");
 
   const orgId = await currentOrgId(db, user.id);
   const proposedData = {
     kind: "correction" as const,
     ...proposedChanges,
-    coEditors,
-    myEpisodes: params.myEpisodes || [],
     editScope: params.editScope ?? "work",
     ...(params.seasonNumber ? { targetSeasonNumber: params.seasonNumber } : {}),
-    ...((seasonScope && memberRole) || roleChanged ? { memberRole } : {}),
   };
 
   // Returnér den eksisterende anmodning ved dobbeltklik/genindsendelse. Databasens
@@ -813,25 +796,6 @@ export async function submitWorkDataCorrection(params: {
     member_read_at: new Date().toISOString(),
   });
   if (commentError) throw new Error(commentError.message);
-
-  if (addedCoEditors.length > 0 && selfSharePercent !== null) {
-    await registerShareSuggestions(db, {
-      orgId: work.org_id ?? orgId,
-      workId: work.id,
-      seasonNumber: seasonScope ? params.seasonNumber ?? null : work.season_number,
-      episodeNumber: params.editScope === "episode" ? work.episode_number : null,
-      episodeNumbers: seasonScope ? params.myEpisodes ?? [] : work.episode_number ? [work.episode_number] : [],
-      actorUserId: user.id,
-      actorRightsHolderId: rightsHolder.id,
-      actorRole: normalizeWorkEditorRole(memberRole ?? assignment.role ?? "Klipper"),
-      actorPercent: selfSharePercent,
-      suggestions: addedCoEditors.map(editor => ({
-        name: editor.name,
-        role: normalizeWorkEditorRole(editor.role),
-        rightsHolderId: editor.rightsHolderId,
-      })),
-    });
-  }
 
   // Værket forbliver "godkendt" — kun selve ændringsanmodningen er pending.
   // Admin ser stadig "Til godkendelse" via hasPendingRequest(), så en enkelt
