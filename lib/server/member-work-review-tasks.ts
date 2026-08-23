@@ -6,6 +6,8 @@ import { memberWorkReviewGroupKey, type MemberWorkReviewCoEditor, type MemberWor
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
 
+const WORK_ASSIGNMENT_QUERY_CHUNK_SIZE = 75;
+
 type ScopeRow = {
   id: string;
   series_work_id: string;
@@ -44,6 +46,14 @@ function one<T>(value: T | T[] | null) {
   return Array.isArray(value) ? value[0] ?? null : value;
 }
 
+function chunksOf<T>(values: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
 export async function loadMemberWorkReviewTasks(db: ServiceClient, params: {
   orgId: string;
   rightsHolderId: string;
@@ -65,15 +75,16 @@ export async function loadMemberWorkReviewTasks(db: ServiceClient, params: {
   if (reviewError) throw new Error(reviewError.message);
 
   const reviewRows = (reviews ?? []) as unknown as ReviewRow[];
-  const reviewWorkIds = reviewRows.map(review => review.work_id);
-  const { data: assignments, error: assignmentError } = reviewRows.length
-    ? await db.from("work_assignments")
-        .select("id,work_id,rights_holder_id,role,share_percent,rettighedshavere(full_name)")
-        .eq("org_id", params.orgId)
-        .in("work_id", reviewWorkIds)
-    : { data: [], error: null };
+  const reviewWorkIds = [...new Set(reviewRows.map(review => review.work_id))];
+  const assignmentResults = await Promise.all(
+    chunksOf(reviewWorkIds, WORK_ASSIGNMENT_QUERY_CHUNK_SIZE).map(workIds => db.from("work_assignments")
+      .select("id,work_id,rights_holder_id,role,share_percent,rettighedshavere(full_name)")
+      .eq("org_id", params.orgId)
+      .in("work_id", workIds)),
+  );
+  const assignmentError = assignmentResults.find(result => result.error)?.error;
   if (assignmentError) throw new Error(assignmentError.message);
-  const assignmentRows = (assignments ?? []) as unknown as AssignmentRow[];
+  const assignmentRows = assignmentResults.flatMap(result => result.data ?? []) as unknown as AssignmentRow[];
   const ownAssignmentByWork = new Map(
     assignmentRows
       .filter(row => row.rights_holder_id === params.rightsHolderId)
