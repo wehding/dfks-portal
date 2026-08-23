@@ -9,6 +9,7 @@ import { getSupabaseServiceKey } from "@/lib/env"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { normaliseSources, extractClauseIdFromCitation, stripClauseIdPrefix } from "@/lib/ai-sources"
 import { resolveOtherSupplements } from "@/lib/contract-supplements"
+import { resolvePensionSupplement } from "@/lib/contract-pension"
 import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
@@ -335,6 +336,7 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             : undefined
         extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>, knownIds)
     }
+    extracted.pensionSupplement = resolvePensionSupplement(extracted)
     extracted.otherSupplements = resolveOtherSupplements(extracted)
     // Strip [sX_cY]-tag fra otherSupplements[].sourceText og gem clauseId pr. post
     if (Array.isArray(extracted.otherSupplements)) {

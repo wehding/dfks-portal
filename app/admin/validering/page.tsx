@@ -28,6 +28,7 @@ import { normaliseSources } from "@/lib/ai-sources"
 import { resolveAnker } from "@/lib/resolveAnker"
 import { SourceBtn } from "@/components/source-btn"
 import { resolveOtherSupplements } from "@/lib/contract-supplements"
+import { resolvePensionSupplement } from "@/lib/contract-pension"
 
 const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
     overtidstillaeg: "Overtidstillæg",
@@ -422,6 +423,7 @@ function AdminValideringPageInner() {
             const impliedByCopydan = !!ed.copydan
             const impliedByRoyalty = !!ed.royalty
             const personalSupplement = resolvePersonalSupplement(ed)
+            const pensionSupplement = resolvePensionSupplement(ed)
 
             setFormData({
                 producerName: ed.producerName ?? ed.employerName ?? "",
@@ -445,7 +447,7 @@ function AdminValideringPageInner() {
                 startDate: ed.startDate ?? "",
                 endDate: ed.endDate ?? "",
                 pensionPercent: ed.pensionPercent ?? "",
-                pensionSupplement: ed.pensionSupplement ?? "",
+                pensionSupplement: pensionSupplement ?? "",
                 personalSupplement: personalSupplement.value,
                 personalSupplementConflict: personalSupplement.conflict,
                 otherSupplements: resolveOtherSupplements(ed),
@@ -676,6 +678,7 @@ function AdminValideringPageInner() {
         const ingenOverenskomst = !overenskomst || overenskomst === "ingen"
 
         const personalSupplement = resolvePersonalSupplement(ed)
+        const pensionSupplement = resolvePensionSupplement(ed)
 
         return {
             producerName: (() => {
@@ -703,7 +706,7 @@ function AdminValideringPageInner() {
             startDate:                     ed.startDate ?? "",
             endDate:                       ed.endDate ?? "",
             pensionPercent:                ed.pensionPercent ?? (impliedDe4 ? 9.5 : ""),
-            pensionSupplement:             ed.pensionSupplement ?? "",
+            pensionSupplement:             pensionSupplement ?? "",
             personalSupplement:            personalSupplement.value,
             personalSupplementConflict:    personalSupplement.conflict,
             otherSupplements:              resolveOtherSupplements(ed),
