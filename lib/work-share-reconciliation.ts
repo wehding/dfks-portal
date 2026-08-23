@@ -19,6 +19,28 @@ export type ReconciledWorkCredit = {
   proposedPercent: number | null;
 };
 
+export type RightsHolderCreditMatch = {
+  rightsHolderId: string | null;
+  matchType: "existing" | "external_id" | "exact_name" | "unmatched" | "conflict";
+};
+
+export function resolveRightsHolderCreditMatch(input: {
+  existingRightsHolderId?: string | null;
+  externalRightsHolderIds?: Iterable<string>;
+  exactNameRightsHolderIds?: Iterable<string>;
+}): RightsHolderCreditMatch {
+  if (input.existingRightsHolderId) return { rightsHolderId: input.existingRightsHolderId, matchType: "existing" };
+  const external = [...new Set(input.externalRightsHolderIds ?? [])];
+  if (external.length > 1) return { rightsHolderId: null, matchType: "conflict" };
+  const externalId = external[0] ?? null;
+  const exactNames = [...new Set(input.exactNameRightsHolderIds ?? [])];
+  if (externalId && exactNames.length === 1 && externalId !== exactNames[0]) return { rightsHolderId: null, matchType: "conflict" };
+  if (externalId) return { rightsHolderId: externalId, matchType: "external_id" };
+  if (exactNames.length > 1) return { rightsHolderId: null, matchType: "conflict" };
+  if (exactNames[0]) return { rightsHolderId: exactNames[0], matchType: "exact_name" };
+  return { rightsHolderId: null, matchType: "unmatched" };
+}
+
 export function normalizeCreditName(value: string) {
   return value
     .normalize("NFKD")
@@ -125,4 +147,3 @@ export function renderInvitationTemplate(template: string, values: {
     .replaceAll("{værker}", values.worksText)
     .replaceAll("{værk}", values.primaryWork);
 }
-

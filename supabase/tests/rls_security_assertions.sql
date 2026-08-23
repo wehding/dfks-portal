@@ -442,6 +442,61 @@ begin
   end if;
 end $$;
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_class relation
+    join pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relname = 'work_credit_source_syncs'
+      and relation.relrowsecurity
+  ) then
+    raise exception 'RLS failure: public.work_credit_source_syncs is missing or RLS is disabled';
+  end if;
+  if has_table_privilege('anon', 'public.work_credit_source_syncs', 'SELECT')
+    or has_table_privilege('authenticated', 'public.work_credit_source_syncs', 'SELECT') then
+    raise exception 'RLS failure: browser roles can read credit source sync state';
+  end if;
+  if has_function_privilege('anon', 'public.claim_work_credit_source_refresh(uuid,uuid,text,boolean)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.claim_work_credit_source_refresh(uuid,uuid,text,boolean)', 'EXECUTE') then
+    raise exception 'RLS failure: browser roles can claim external credit refreshes';
+  end if;
+  if not has_function_privilege('service_role', 'public.claim_work_credit_source_refresh(uuid,uuid,text,boolean)', 'EXECUTE') then
+    raise exception 'RLS failure: service_role cannot claim external credit refreshes';
+  end if;
+  if has_function_privilege('anon', 'public.replace_work_credit_evidence(uuid,uuid,text,jsonb)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.replace_work_credit_evidence(uuid,uuid,text,jsonb)', 'EXECUTE') then
+    raise exception 'RLS failure: browser roles can replace work credit evidence';
+  end if;
+end $$;
+
+do $$
+declare
+  test_org uuid;
+  test_work uuid;
+begin
+  insert into public.organisations (name) values ('Credit refresh claim fixture') returning id into test_org;
+  insert into public.works (org_id, title, type) values (test_org, 'Credit refresh fixture', 'spillefilm') returning id into test_work;
+
+  if not public.claim_work_credit_source_refresh(test_org, test_work, 'dfi', false) then
+    raise exception 'Queue failure: first credit refresh claim was rejected';
+  end if;
+  if public.claim_work_credit_source_refresh(test_org, test_work, 'dfi', false) then
+    raise exception 'Queue failure: concurrent credit refresh was claimed twice';
+  end if;
+
+  update public.work_credit_source_syncs
+  set status = 'ready', last_success_at = now(), lease_expires_at = null
+  where org_id = test_org and work_id = test_work and source = 'dfi';
+
+  if public.claim_work_credit_source_refresh(test_org, test_work, 'dfi', false) then
+    raise exception 'Cache failure: fresh credit source was refreshed automatically';
+  end if;
+  if not public.claim_work_credit_source_refresh(test_org, test_work, 'dfi', true) then
+    raise exception 'Cache failure: forced credit source refresh was rejected';
+  end if;
+end $$;
+
 -- Ordinary organisation membership is not staff authorization.
 do $$
 declare

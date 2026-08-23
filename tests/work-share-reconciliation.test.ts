@@ -4,6 +4,7 @@ import {
   normalizeCreditName,
   proposeWorkShareCompromise,
   reconcileWorkCredits,
+  resolveRightsHolderCreditMatch,
   renderInvitationTemplate,
 } from "../lib/work-share-reconciliation";
 import {
@@ -31,6 +32,30 @@ test("en portalprofil opsuger et sikkert navnematch", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].rightsHolderId, "holder-1");
   assert.deepEqual(rows[0].sources.sort(), ["dfi", "local"]);
+});
+
+test("entydigt navn eller eksternt id forbindes automatisk", () => {
+  assert.deepEqual(resolveRightsHolderCreditMatch({ exactNameRightsHolderIds: ["camilla"] }), {
+    rightsHolderId: "camilla", matchType: "exact_name",
+  });
+  assert.deepEqual(resolveRightsHolderCreditMatch({ externalRightsHolderIds: ["simon"] }), {
+    rightsHolderId: "simon", matchType: "external_id",
+  });
+});
+
+test("uenige eller flere identiteter giver konflikt", () => {
+  assert.deepEqual(resolveRightsHolderCreditMatch({ externalRightsHolderIds: ["a", "b"], exactNameRightsHolderIds: ["a"] }), {
+    rightsHolderId: null, matchType: "conflict",
+  });
+  assert.deepEqual(resolveRightsHolderCreditMatch({ externalRightsHolderIds: ["a"], exactNameRightsHolderIds: ["b"] }), {
+    rightsHolderId: null, matchType: "conflict",
+  });
+  assert.deepEqual(resolveRightsHolderCreditMatch({ exactNameRightsHolderIds: ["a", "b"] }), {
+    rightsHolderId: null, matchType: "conflict",
+  });
+  assert.deepEqual(resolveRightsHolderCreditMatch({ externalRightsHolderIds: ["a"], exactNameRightsHolderIds: ["a", "b"] }), {
+    rightsHolderId: "a", matchType: "external_id",
+  });
 });
 
 test("kompromisforslaget summerer præcist til 100 minus reserve", () => {

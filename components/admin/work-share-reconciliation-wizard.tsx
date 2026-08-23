@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  countAdminShareTasks,
   createRightsHolderFromShareParticipant,
   excludeShareParticipant,
   fetchAdminShareCases,
@@ -13,8 +12,7 @@ import {
   remindShareParticipant,
   resolveAdminShareCase,
 } from "@/app/actions/work-share-cases";
-import { fetchAdminCollaborationDisputes, resolveCollaborationDispute } from "@/app/actions/work-collaboration-reviews";
-import { fetchAdminRightsHolders } from "@/app/actions/work-management";
+import { resolveCollaborationDispute } from "@/app/actions/work-collaboration-reviews";
 import { RightsHolderAutocomplete } from "@/components/admin/rights-holder-autocomplete";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,13 +21,13 @@ import { Label } from "@/components/ui/label";
 
 type Holder = { full_name: string; email: string | null; user_id: string | null; invite_sent_at: string | null };
 type Participant = { id: string; rights_holder_id: string | null; proposed_name: string | null; role: string; relationship_status: string; proposed_percent: number | null; admin_seed_percent: number | null; final_percent: number | null; source_tags: string[]; source_details: { roles?: string[] } | null; excluded_at: string | null; last_reminder_sent_at: string | null; rettighedshavere: Holder | null };
-type ShareCase = { id: string; work_id: string; season_number: number | null; episode_number: number | null; status: string; reserve_percent: number; works: { title: string } | null; work_share_participants: Participant[] };
+type CreditSourceState = { source: "dfi" | "tmdb"; status: "missing" | "fresh" | "stale" | "refreshing" | "error"; lastSuccessAt: string | null; lastAttemptAt: string | null; errorCode: string | null };
+type ShareCase = { id: string; work_id: string; season_number: number | null; episode_number: number | null; status: string; reserve_percent: number; works: { title: string } | null; work_share_participants: Participant[]; credit_source_states: CreditSourceState[] };
 type CollaborationDispute = { id: string; works: { title: string; season_number: number | null; episode_number: number | null } | null; rettighedshavere: { full_name: string } | null };
 const SOURCE_LABELS: Record<string, string> = { local: "Portal", member: "Indtastet", dfi: "DFI", tmdb: "TMDb" };
 
 export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange?: (count: number) => void }) {
   const [cases, setCases] = useState<ShareCase[]>([]);
-  const [holders, setHolders] = useState<Array<{ id: string; full_name: string }>>([]);
   const [disputes, setDisputes] = useState<CollaborationDispute[]>([]);
   const [index, setIndex] = useState(0);
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -45,19 +43,13 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     setLoading(true);
     setLoadError(null);
     try {
-      const [caseResult, holderResult, disputeResult, countResult] = await Promise.all([
-        fetchAdminShareCases(),
-        fetchAdminRightsHolders(),
-        fetchAdminCollaborationDisputes(),
-        countAdminShareTasks(),
-      ]);
+      const caseResult = await fetchAdminShareCases();
       const next = caseResult.cases as unknown as ShareCase[];
-      const nextDisputes = disputeResult.disputes as unknown as CollaborationDispute[];
+      const nextDisputes = caseResult.disputes as unknown as CollaborationDispute[];
       setCases(next);
-      setHolders(holderResult.rightsHolders);
       setDisputes(nextDisputes);
       setIndex(current => Math.min(current, Math.max(0, next.length - 1)));
-      onCountChange?.(countResult.count);
+      onCountChange?.(caseResult.count);
     } catch (error) {
       const text = error instanceof Error ? error.message : "Opgaverne kunne ikke hentes.";
       setLoadError(text);
@@ -79,11 +71,30 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     setReserve(String(active.reserve_percent ?? 0));
     setStep(1);
     setBusy(`credits:${active.id}`);
-    void refreshAdminShareCaseCredits(active.id).then(load).catch(error => setMessage(error instanceof Error ? error.message : "Kilderne kunne ikke opdateres.")).finally(() => setBusy(null));
-    // The refresh itself reloads the same case; depending on `load` would
-    // restart the external lookup after every response.
+    void refreshAdminShareCaseCredits(active.id).then(result => {
+      const refreshed = result.case as unknown as ShareCase;
+      setCases(current => current.map(row => row.id === refreshed.id ? refreshed : row));
+    }).catch(error => setMessage(error instanceof Error ? error.message : "Kilderne kunne ikke opdateres.")).finally(() => setBusy(null));
+    // Kun et nyt sags-id må starte et kildeopslag; opdatering af den samme sag
+    // erstatter objektet i listen og må ikke starte opslaget igen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id]);
+
+  async function refreshSources(force: boolean) {
+    if (!active) return;
+    setBusy(`credits:${active.id}`);
+    setMessage(null);
+    try {
+      const result = await refreshAdminShareCaseCredits(active.id, force);
+      const refreshed = result.case as unknown as ShareCase;
+      setCases(current => current.map(row => row.id === refreshed.id ? refreshed : row));
+      if (force) setMessage("Kilderne er opdateret.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Kilderne kunne ikke opdateres.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function run(key: string, operation: () => Promise<unknown>, success: string) {
     setBusy(key); setMessage(null);
@@ -141,15 +152,14 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     <div className="grid grid-cols-3 gap-2 text-center text-xs">{["Bekræft klippere", "Afstem procentandele", "Kontrollér og godkend"].map((label, itemIndex) => <button key={label} type="button" onClick={() => setStep((itemIndex + 1) as 1 | 2 | 3)} className={`rounded-md border p-2 ${step === itemIndex + 1 ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}>{itemIndex + 1}. {label}</button>)}</div>
 
     {step === 1 && <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">Portalens oplysninger samles med krediteringer fra DFI og TMDb. Kilderne er vejledende og fastsætter aldrig procentandele.</p>
-      {busy === `credits:${active.id}` && <p className="text-sm">Henter krediteringer…</p>}
+      <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm text-muted-foreground">Portalens oplysninger samles med krediteringer fra DFI og TMDb. Kilderne er vejledende og fastsætter aldrig procentandele.</p><p className="mt-1 text-xs text-muted-foreground">{busy === `credits:${active.id}` ? "Opdaterer kilder…" : active.credit_source_states?.some(state => state.status === "error") ? "En kilde kunne ikke opdateres. Gemte krediteringer vises fortsat." : active.credit_source_states?.every(state => state.status === "fresh") ? "Gemte kilder · opdateret inden for 7 dage" : "Gemte kilder vises, mens manglende data opdateres."}</p></div><Button size="sm" variant="outline" disabled={busy === `credits:${active.id}`} onClick={() => void refreshSources(true)}>Opdatér kilder</Button></div>
       {participants.map(participant => {
         const holder = participant.rettighedshavere;
         const create = createDraft[participant.id] ?? { name: participant.proposed_name ?? "", email: "", phone: "" };
         return <div key={participant.id} className="space-y-3 rounded-md border p-3">
           <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-medium">{holder?.full_name ?? participant.proposed_name ?? "Ukendt"}</p><p className="text-xs text-muted-foreground">{[...new Set(participant.source_details?.roles?.length ? participant.source_details.roles : [participant.role])].join(" · ")}</p><div className="mt-1 flex gap-1">{[...new Set(participant.source_tags ?? [])].map(source => <Badge key={source} variant="outline">{SOURCE_LABELS[source] ?? source}</Badge>)}</div></div><Badge variant={participant.rights_holder_id ? "secondary" : "outline"}>{participant.rights_holder_id ? holder?.invite_sent_at ? "Inviteret" : "Ikke inviteret" : "Ikke i systemet"}</Badge></div>
           {!participant.rights_holder_id && <>
-            <RightsHolderAutocomplete options={holders} onChange={rightsHolderId => rightsHolderId && void run(`match:${participant.id}`, () => matchShareParticipant({ participantId: participant.id, rightsHolderId }), "Personen er forbundet.")} placeholder="Forbind med eksisterende rettighedshaver" />
+            <RightsHolderAutocomplete options={[]} searchEndpoint="/api/admin/rettighedshavere-search?scope=all" onChange={rightsHolderId => rightsHolderId && void run(`match:${participant.id}`, () => matchShareParticipant({ participantId: participant.id, rightsHolderId }), "Personen er forbundet.")} placeholder="Forbind med eksisterende rettighedshaver" />
             <details><summary className="cursor-pointer text-sm font-medium">Opret ny rettighedshaver</summary><div className="mt-2 grid gap-2 sm:grid-cols-3"><Input aria-label="Navn" value={create.name} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, name: event.target.value } }))} /><Input aria-label="E-mail" type="email" placeholder="E-mail (valgfri)" value={create.email} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, email: event.target.value } }))} /><Input aria-label="Telefon" placeholder="Telefon (valgfri)" value={create.phone} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, phone: event.target.value } }))} /></div><Button className="mt-2" size="sm" onClick={() => void run(`create:${participant.id}`, () => createRightsHolderFromShareParticipant({ participantId: participant.id, ...create }), "Rettighedshaveren er oprettet uden invitation.")}>Opret uden at invitere</Button></details>
             <Button size="sm" variant="ghost" onClick={() => void run(`exclude:${participant.id}`, () => excludeShareParticipant(participant.id), "Krediteringen er markeret som ikke relevant.")}>Markér som ikke relevant</Button>
           </>}
