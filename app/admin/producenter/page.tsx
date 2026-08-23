@@ -1,6 +1,6 @@
-import { NextRequest } from "next/server";
 import ProducerListClient, { type ProducerListInitialData } from "./producer-list-client";
-import { GET as getProducers } from "@/app/api/admin/producers/route";
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
+import { loadAdminProducerList } from "@/lib/server/admin-producer-list";
 
 type PageProps = { searchParams: Promise<Record<string, string | string[] | undefined>> };
 
@@ -11,7 +11,9 @@ export default async function ProducersPage({ searchParams }: PageProps) {
     const value = values[key];
     if (typeof value === "string") query.set(key, value);
   }
-  const response = await getProducers(new NextRequest(`http://internal/api/admin/producers?${query}`));
-  const initialData = response.ok ? await response.json() as ProducerListInitialData : undefined;
+  const access = await getRequestAppAccessContext();
+  const initialData = access?.canUseAdmin && access.role && access.modules?.producers.read
+    ? await loadAdminProducerList({ orgId: access.orgId, role: access.role }, query).catch(() => undefined) as ProducerListInitialData | undefined
+    : undefined;
   return <ProducerListClient initialData={initialData} />;
 }

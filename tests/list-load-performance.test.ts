@@ -67,31 +67,41 @@ test("Mit overblik streamer opgaver før statistik og indbakke", async () => {
   assert.match(page, /DashboardInboxSection/);
   assert.match(sections, /member-dashboard-tasks/);
   assert.match(sections, /member-dashboard-statistics/);
+  assert.match(sections, /get_statistics_facts/);
+  assert.doesNotMatch(sections, /db\.from\("contracts"\)[\s\S]{0,180}\.eq\("org_id", orgId\)(?![\s\S]{0,120}rights_holder_id)/);
   assert.doesNotMatch(page, /contract_validations/);
 });
 
 test("Kontraktgennemgang bruger smal side og målrettede medarbejderopslag", async () => {
   const route = await source("app/api/admin/contracts/route.ts");
+  const loader = await source("lib/server/contract-review-list.ts");
   const page = await source("app/admin/kontraktgennemgang/page.tsx");
   const client = await source("app/admin/kontraktgennemgang/review-page-client.tsx");
   const queue = await source("app/admin/kontraktgennemgang/review-queue.tsx");
   assert.doesNotMatch(route, /select\("\*"/);
   assert.doesNotMatch(route, /listUsers/);
-  assert.match(route, /getAuthUserLabels/);
+  assert.match(loader, /getAuthUserLabels/);
+  assert.match(loader, /get_contract_review_job_statuses/);
+  assert.doesNotMatch(page, /NextRequest|api\/admin\/contracts\/route/);
   assert.match(queue, /pageSize/);
   assert.match(queue, /filter: `org_id=eq\.\$\{orgId\}`/);
   assert.match(queue, /scheduleRefresh/);
   assert.match(client, /dynamic\([\s\S]*manual-contract-review/);
-  assert.match(page, /getContractReviews/);
+  assert.match(page, /loadContractReviewList/);
+  assert.match(queue, /api\/admin\/contracts\/status/);
 });
 
 test("Producentlisten bruger pagineret RPC uden skjulte rettighedshaver-id'er", async () => {
   const route = await source("app/api/admin/producers/route.ts");
+  const loader = await source("lib/server/admin-producer-list.ts");
+  const page = await source("app/admin/producenter/page.tsx");
   const client = await source("app/admin/producenter/producer-list-client.tsx");
   const migration = await source("supabase/migrations/20260823020711_fix_producer_summary_filters_and_counts.sql");
-  assert.match(route, /list_admin_producer_summaries/);
-  assert.match(route, /association_filter:[^\n]*associationGroup/);
-  assert.match(route, /producer_type_filter:[^\n]*producerType/);
+  assert.match(route, /loadAdminProducerList/);
+  assert.match(loader, /list_admin_producer_summaries/);
+  assert.match(loader, /association_filter:[^\n]*associationGroup/);
+  assert.match(loader, /producer_type_filter:[^\n]*producerType/);
+  assert.doesNotMatch(page, /NextRequest|api\/admin\/producers\/route/);
   assert.match(client, /params\.set\("associationGroup", associationGroup\)/);
   assert.match(client, /params\.set\("producerType", producerType\)/);
   assert.match(migration, /revoke all on function public\.list_admin_producer_summaries/);

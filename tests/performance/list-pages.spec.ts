@@ -39,6 +39,8 @@ test.beforeEach(async ({ page, context }, testInfo) => {
 
 for (const [routeName, path] of routes) {
   test(`${routeName} holder performancegrænser`, async ({ page }, testInfo) => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Network.enable");
     await page.goto(path);
     await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="first-row"]`).first().waitFor({ state: "attached" });
 
@@ -46,11 +48,14 @@ for (const [routeName, path] of routes) {
     for (let index = 0; index < 3; index += 1) {
       let requestCount = 0;
       let bytes = 0;
-      const responseHandler = (response: { headers(): Record<string, string> }) => {
+      const responseHandler = () => {
         requestCount += 1;
-        bytes += Number(response.headers()["content-length"] ?? 0);
+      };
+      const loadingFinishedHandler = (event: { encodedDataLength: number }) => {
+        bytes += event.encodedDataLength;
       };
       page.on("response", responseHandler);
+      cdp.on("Network.loadingFinished", loadingFinishedHandler);
       const started = performance.now();
       await page.goto(`${path}${path.includes("?") ? "&" : "?"}perf=${index}`);
       await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="first-row"]`).first().waitFor({ state: "attached" });
@@ -58,6 +63,7 @@ for (const [routeName, path] of routes) {
       await page.locator(`[data-performance-route="${routeName}"][data-performance-ready="complete"]`).first().waitFor({ state: "attached" });
       samples.push({ firstRowMs, completeMs: performance.now() - started, requestCount, bytes });
       page.off("response", responseHandler);
+      cdp.off("Network.loadingFinished", loadingFinishedHandler);
     }
     samples.sort((left, right) => left.firstRowMs - right.firstRowMs);
     const median = samples[1];

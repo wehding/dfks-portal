@@ -6,7 +6,7 @@ import { CheckCircle2, FileText, RotateCcw, Search, Trash2, User } from "lucide-
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import type { DbContractReview } from "@/lib/db/types";
-import { isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus } from "@/lib/contract-review-job-status";
+import { isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus, type ContractReviewJobState } from "@/lib/contract-review-job-status";
 import { useI18n } from "@/lib/i18n";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 import { ListResultSummary } from "@/components/list-result-summary";
@@ -60,6 +60,8 @@ export function ContractReviewQueue({ initialData }: { initialData?: ContractRev
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [status, setStatus] = useState(searchParams.get("status") ?? "all");
   const [productionType, setProductionType] = useState(searchParams.get("productionType") ?? "all");
+  const [sort, setSort] = useState(searchParams.get("sort") ?? "reviewed_at");
+  const [direction, setDirection] = useState(searchParams.get("direction") === "asc" ? "asc" : "desc");
   const [page, setPage] = useState(Math.max(1, Number(searchParams.get("page")) || 1));
   const [pageSize, setPageSize] = useState([20, 50, 100].includes(Number(searchParams.get("limit"))) ? Number(searchParams.get("limit")) : 20);
   const [reviews, setReviews] = useState<DbContractReview[]>(initialData?.data ?? []);
@@ -85,6 +87,8 @@ export function ContractReviewQueue({ initialData }: { initialData?: ContractRev
     if (debouncedSearch) params.set("search", debouncedSearch);
     if (status !== "all") params.set("status", status);
     if (productionType !== "all") params.set("productionType", productionType);
+    params.set("sort", sort);
+    params.set("direction", direction);
     try {
       const response = await fetch(`/api/admin/contracts?${params}`, { cache: "no-store" });
       const result = await response.json();
@@ -98,7 +102,7 @@ export function ContractReviewQueue({ initialData }: { initialData?: ContractRev
     } finally {
       if (showLoading && id === requestId.current) setLoading(false);
     }
-  }, [debouncedSearch, page, pageSize, productionType, queue, status]);
+  }, [debouncedSearch, direction, page, pageSize, productionType, queue, sort, status]);
 
   useEffect(() => {
     if (skipInitialRequest.current) { skipInitialRequest.current = false; return; }
@@ -106,6 +110,41 @@ export function ContractReviewQueue({ initialData }: { initialData?: ContractRev
     queueMicrotask(() => { if (!cancelled) void load(); });
     return () => { cancelled = true; };
   }, [load]);
+  const pollAnalysisStatuses = useCallback(async (ids: string[]) => {
+    if (!ids.length) return;
+    const response = await fetch(`/api/admin/contracts/status?ids=${encodeURIComponent(ids.join(","))}`, { cache: "no-store" }).catch(() => null);
+    if (!response?.ok) return;
+    const result = await response.json() as { data?: Array<{ review_id: string; status: string; attempts: number; next_attempt_at: string | null; has_error: boolean; ai_status: string | null; intake_status: string | null }> };
+    const allowedStatuses: ContractReviewJobState[] = ["queued", "processing", "error", "dead", "done"];
+    const statusByReview = new Map((result.data ?? [])
+      .filter((row): row is typeof row & { status: ContractReviewJobState } => allowedStatuses.includes(row.status as ContractReviewJobState))
+      .map(row => [row.review_id, row]));
+    setReviews(current => current.map(review => {
+      const row = statusByReview.get(review.id);
+      if (!row) return review;
+      const aiStatus = (["analyserer", "klar", "fejl"] as const).includes(row.ai_status as "analyserer" | "klar" | "fejl")
+        ? row.ai_status as "analyserer" | "klar" | "fejl"
+        : review.ai_status;
+      const intakeStatus = row.intake_status ?? review.intake_status;
+      const job = {
+        status: row.status,
+        attempts: row.attempts,
+        next_attempt_at: row.next_attempt_at,
+        error: row.has_error ? "Kontraktanalysen kunne ikke gennemføres." : null,
+      };
+      return {
+        ...review,
+        ai_status: aiStatus,
+        intake_status: intakeStatus,
+        analysis_job: job,
+        analysis_status: normalizeContractReviewAnalysisStatus({
+          aiStatus,
+          intakeStatus,
+          job: { ...job, error_message: job.error },
+        }),
+      };
+    }));
+  }, []);
   useEffect(() => {
     const params = new URLSearchParams();
     if (queue === "mine") params.set("queue", "mine");
@@ -114,13 +153,16 @@ export function ContractReviewQueue({ initialData }: { initialData?: ContractRev
     if (productionType !== "all") params.set("productionType", productionType);
     if (page > 1) params.set("page", String(page));
     if (pageSize !== 20) params.set("limit", String(pageSize));
+    if (sort !== "reviewed_at") params.set("sort", sort);
+    if (direction !== "desc") params.set("direction", direction);
     router.replace(`/admin/kontraktgennemgang${params.size ? `?${params}` : ""}`, { scroll: false });
-  }, [debouncedSearch, page, pageSize, productionType, queue, router, status]);
+  }, [debouncedSearch, direction, page, pageSize, productionType, queue, router, sort, status]);
   useEffect(() => {
-    if (!reviews.some(review => isActiveContractReviewAnalysis(analysisState(review)))) return;
-    const timer = window.setInterval(() => void load(false), 5_000);
+    const activeIds = reviews.filter(review => isActiveContractReviewAnalysis(analysisState(review))).map(review => review.id);
+    if (!activeIds.length) return;
+    const timer = window.setInterval(() => void pollAnalysisStatuses(activeIds), 5_000);
     return () => window.clearInterval(timer);
-  }, [load, reviews]);
+  }, [pollAnalysisStatuses, reviews]);
 
   const scheduleRefresh = useCallback(() => {
     if (refreshTimer.current !== null) return;
@@ -190,6 +232,8 @@ export function ContractReviewQueue({ initialData }: { initialData?: ContractRev
       <div className="relative flex-1 sm:max-w-xs"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={search} onChange={event => setSearch(event.target.value)} className="pl-9" placeholder={t("admin.reviewQueue.search")} /></div>
       <Select value={status} onValueChange={value => { setStatus(value); setPage(1); }}><SelectTrigger className="sm:w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle statusser</SelectItem><SelectItem value="afventer">Ikke tildelt</SelectItem><SelectItem value="behandling">Under behandling</SelectItem><SelectItem value="afsluttet">Afsluttet</SelectItem></SelectContent></Select>
       <Select value={productionType} onValueChange={value => { setProductionType(value); setPage(1); }}><SelectTrigger className="sm:w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle produktionstyper</SelectItem><SelectItem value="dokumentar">Dokumentarfilm</SelectItem><SelectItem value="spillefilm">Spillefilm</SelectItem><SelectItem value="tvserie">TV-serie</SelectItem><SelectItem value="kortfilm">Kortfilm</SelectItem><SelectItem value="reklame">Reklame</SelectItem></SelectContent></Select>
+      <Select value={sort} onValueChange={value => { setSort(value); setPage(1); }}><SelectTrigger className="sm:w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="reviewed_at">Modtaget</SelectItem><SelectItem value="member_name">Rettighedshaver</SelectItem><SelectItem value="status">Status</SelectItem><SelectItem value="production_type">Produktionstype</SelectItem></SelectContent></Select>
+      <Button type="button" variant="outline" onClick={() => { setDirection(value => value === "asc" ? "desc" : "asc"); setPage(1); }}>{direction === "asc" ? "Stigende" : "Faldende"}</Button>
     </div>
     <Button type="button" variant="outline" className="w-full md:hidden" onClick={toggleAll} disabled={!reviews.length}>{allSelected ? "Fravælg alle viste" : "Vælg alle viste"}</Button>
     <ListResultSummary filteredCount={count} totalCount={count} selectedCount={selected.size} loading={loading} />

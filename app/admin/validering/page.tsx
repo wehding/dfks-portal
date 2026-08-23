@@ -484,7 +484,7 @@ function AdminValideringPageInner() {
             })
             .catch(e => console.error("[validering] DOCX hentning fejlede:", e))
             .finally(() => setStoredDocxLoading(false))
-    }, [reviewingContract?.id])
+    }, [reviewingContract?.id, reviewingContract?.pdf_url, reviewingContract?.signedPdfUrl])
 
     const leaveReview = () => {
         if (cameFromQueue) {
@@ -2208,7 +2208,7 @@ function TextViewer({ text, loading = false, highlights, sectionHighlights = [],
         }
         result += escapeHtml(text.slice(cursor))
         return result
-    }, [text, highlights, activeHighlight])
+    }, [text, highlights, activeHighlight, sectionEndMarkers, sectionHighlights])
 
     useEffect(() => {
         if (!containerRef.current || !activeHighlight) return

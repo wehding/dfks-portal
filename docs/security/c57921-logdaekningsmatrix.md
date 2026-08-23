@@ -29,4 +29,5 @@ Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-08-2
 
 | Endpoint | Begrundelse | Test | Ejer |
 |---|---|---|---|
+| app/api/admin/contracts/status/route.ts | Returnerer kun teknisk jobstatus for allerede synlige, organisationsafgrænsede review-id'er. Den smalle polling må ikke oprette gentagne læseaudit-events. | tests/list-load-performance.test.ts | Portalteam |
 | app/api/admin/statistics/cpi/route.ts | Synkroniserer kun offentligt Danmarks Statistik-prisindeks og behandler ingen medlemsdata. | tests/statistics-cpi.test.ts | Statistikteam |
