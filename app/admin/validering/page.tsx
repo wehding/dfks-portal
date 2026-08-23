@@ -962,6 +962,33 @@ setActiveField(fieldId)
         const datesHl = resolve(sources.dates)
         const weeksHl = resolve(sources.workingWeeks)
         const supplementsHl = resolve(sources.supplements) ?? safeNumberFallback(formData.personalSupplement)
+        const formattedPersonalSupplement = formData.personalSupplement !== undefined && formData.personalSupplement !== null && formData.personalSupplement !== ""
+            ? Number(formData.personalSupplement).toLocaleString("da-DK")
+            : null
+        // Ældre udtræk kan have mistet supplements-kildeteksten, fordi "kr. 1.251"
+        // tidligere blev afvist af kildevalideringen. Brug feltlabel + begge
+        // talformater som robuste kandidater, så linket stadig finder og markerer passagen.
+        const personalSupplementNavigation = [
+            supplementsHl,
+            sources.supplements,
+            "Personligt tillæg",
+            "personlige tillæg",
+            formattedPersonalSupplement,
+            formData.personalSupplement != null ? String(formData.personalSupplement) : null,
+        ].filter(Boolean).join("||")
+        const formattedPensionSupplement = formData.pensionSupplement !== undefined && formData.pensionSupplement !== null && formData.pensionSupplement !== ""
+            ? Number(formData.pensionSupplement).toLocaleString("da-DK")
+            : null
+        const pensionNavigation = (sources.pension || sources.pension_clause_id) ? [
+            resolve(sources.pension),
+            formData.pensionPercent !== undefined && formData.pensionPercent !== null && formData.pensionPercent !== ""
+                ? `${String(formData.pensionPercent).replace(".", ",")} %`
+                : null,
+            formattedPensionSupplement ? `kr. ${formattedPensionSupplement}` : null,
+            formattedPensionSupplement ? `${formattedPensionSupplement} kr.` : null,
+            "pensionsbidrag",
+            "pension",
+        ].filter(Boolean).join("||") : ""
         const svodSrc = svodMeta.anker ?? null
         const ca = caMeta.anker ?? null
         // Copydan/royalty: brug specifik kilde hvis AI fandt én, ellers fald tilbage til overenskomst-referencen
@@ -1433,13 +1460,13 @@ setActiveField(fieldId)
                                 </div>
                                 <Separator />
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F src={fieldSrc("pensionPercent")} label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>
+                                    <F src={fieldSrc("pensionPercent")} label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={pensionNavigation} active={activeField === "pension"} onClick={() => activateSource("pension", pensionNavigation)} /></>}>
                                         <div className="flex items-center gap-2">
                                             <Input type="number" step="0.1" value={String(formData.pensionPercent ?? "")} onChange={(e) => setField("pensionPercent", e.target.value)} placeholder="0" />
                                             <span className="text-sm text-muted-foreground">%</span>
                                         </div>
                                     </F>
-                                    <F src={fieldSrc("pensionSupplement")} label={<>{t("admin.validation.pension")} (kr.)<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>
+                                    <F src={fieldSrc("pensionSupplement")} label={<>{t("admin.validation.pension")} (kr.)<SourceBtn quote={pensionNavigation} active={activeField === "pension"} onClick={() => activateSource("pension", pensionNavigation)} /></>}>
                                         <Input type="number" value={String(formData.pensionSupplement ?? "")} onChange={(e) => setField("pensionSupplement", e.target.value)} placeholder="0" />
                                     </F>
                                 </div>
@@ -1450,7 +1477,7 @@ setActiveField(fieldId)
                                             <div className="flex items-center gap-2">
                                                 <Badge variant="outline" className="text-[11px] shrink-0">Personligt tillæg</Badge>
                                                 <span className="text-sm font-medium">{String(formData.personalSupplement)} kr.</span>
-                                                <SourceBtn quote={supplementsHl} active={activeField === "supplements"} onClick={() => activateSource("supplements", supplementsHl)} />
+                                                <SourceBtn quote={personalSupplementNavigation} active={activeField === "supplements"} onClick={() => activateSource("supplements", personalSupplementNavigation)} />
                                                 <button type="button" aria-label="Fjern personligt tillæg" className="ml-auto text-muted-foreground hover:text-destructive transition-colors" onClick={() => {
                                                     setField("personalSupplement", "")
                                                     setFormData(prev => ({ ...prev, personalSupplementConflict: false }))
