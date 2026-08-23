@@ -179,6 +179,7 @@ export default function AdminShellClient({ children, initialContext }: { childre
     const pendingContractMessagesCount = badges.adminContractMessages
     const pendingWorksCount = badges.adminWorks
     const pendingWorkMessagesCount = badges.adminWorkMessages
+    const pendingWorkShareCount = badges.adminWorkShareTasks
     const pendingReviewCount = badges.adminReviews
     const pendingScreeningCount = badges.adminScreenings
 
@@ -249,13 +250,16 @@ export default function AdminShellClient({ children, initialContext }: { childre
                             )}
                         </span>
                     )}
-                    {item.key === "vaerker" && (pendingWorksCount > 0 || pendingWorkMessagesCount > 0) && (
+                    {item.key === "vaerker" && (pendingWorksCount > 0 || pendingWorkMessagesCount > 0 || pendingWorkShareCount > 0) && (
                         <span className="ml-auto flex shrink-0 items-center gap-1">
                             {pendingWorkMessagesCount > 0 && (
                                 <span title={t("common.unreadMessages")} className={MENU_BADGE_BESKED}>{pendingWorkMessagesCount}</span>
                             )}
                             {pendingWorksCount > 0 && (
                                 <span title={t("common.pendingApproval")} className={MENU_BADGE_GODKEND}>{pendingWorksCount}</span>
+                            )}
+                            {pendingWorkShareCount > 0 && (
+                                <span title="Arbejdsandele til afstemning" className={MENU_BADGE_GODKEND}>{pendingWorkShareCount}</span>
                             )}
                         </span>
                     )}

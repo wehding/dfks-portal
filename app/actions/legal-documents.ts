@@ -11,6 +11,7 @@ import {
   LEGAL_DOCUMENT_TYPES,
   isLegalDocumentAudience,
   isLegalDocumentType,
+  normalizeDanishLegalText,
   type LegalDocumentAudience,
   type LegalDocumentRecord,
   type LegalDocumentType,
@@ -67,8 +68,8 @@ function rowToDocument(row: VersionRow, documentType: LegalDocumentType, audienc
     id: row.id,
     document_type: documentType,
     audience,
-    title: row.title,
-    body: row.body,
+    title: normalizeDanishLegalText(row.title),
+    body: normalizeDanishLegalText(row.body),
     version: row.version,
     content_hash: row.content_hash,
     published_at: row.published_at,
@@ -79,8 +80,8 @@ function cleanDocumentInput(input: { documentType: unknown; audience: unknown; t
   if (!isLegalDocumentType(input.documentType)) throw new Error("Dokumenttypen er ugyldig.");
   if (!isLegalDocumentAudience(input.audience)) throw new Error("Målgruppen er ugyldig.");
   const fallback = DEFAULT_LEGAL_DOCUMENT_COPY[input.audience][input.documentType];
-  const title = typeof input.title === "string" && input.title.trim() ? input.title.trim().slice(0, 180) : fallback.title;
-  const body = typeof input.body === "string" ? input.body.trim() : "";
+  const title = normalizeDanishLegalText(typeof input.title === "string" && input.title.trim() ? input.title.trim().slice(0, 180) : fallback.title);
+  const body = normalizeDanishLegalText(typeof input.body === "string" ? input.body.trim() : "");
   if (!body) throw new Error("Teksten må ikke være tom.");
   if (body.length > MAX_LEGAL_DOCUMENT_BODY_LENGTH) throw new Error("Teksten er for lang.");
   return { documentType: input.documentType, audience: input.audience, title, body };

@@ -6,7 +6,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOrgId } from "@/lib/org";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
-import { ensureWorkShareCase } from "@/lib/server/work-share-cases";
+import { ensureWorkShareCase, saveKnownShareParticipant } from "@/lib/server/work-share-cases";
 import { isCompleteShareResolution, normalizeSharePercent } from "@/lib/work-share-distribution";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { sendMemberNotification } from "@/lib/member-notifications";
@@ -59,11 +59,15 @@ export async function fetchMemberShareTask(params: {
       orgId, workId, seasonNumber, episodeNumber: params.episodeNumber,
       episodeNumbers: targetWorks.map(row => row.episode_number).filter((number): number is number => number != null),
     });
-    await db.from("work_share_participants").upsert(knownHolderIds.map(rightsHolderId => ({
-      case_id: shareCase.id, org_id: orgId, work_id: workId, rights_holder_id: rightsHolderId,
+    await Promise.all(knownHolderIds.map(rightsHolderId => saveKnownShareParticipant(db, {
+      case_id: shareCase.id,
+      org_id: orgId,
+      work_id: workId,
+      rights_holder_id: rightsHolderId,
       role: knownAssignments?.find(row => row.rights_holder_id === rightsHolderId)?.role ?? "Klipper",
-      relationship_status: rightsHolderId === holder.id ? "pending" : "pending",
-    })), { onConflict: "case_id,rights_holder_id" });
+      relationship_status: "pending",
+      updated_at: new Date().toISOString(),
+    })));
   }
   if (!shareCase) return { success: true as const, task: null, knownRightsHolderCount: knownHolderIds.length };
 
@@ -172,6 +176,25 @@ export async function fetchAdminShareCases() {
     .eq("org_id", admin.orgId).neq("status", "resolved").order("created_at");
   if (error) throw new Error(error.message);
   return { success: true as const, cases: data ?? [] };
+}
+
+export async function countAdminShareTasks() {
+  const session = await createClient();
+  const admin = await assertAdminRole(session, USER_ADMIN_ROLES);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+  const db = createServiceClient();
+  const [caseResult, disputeResult] = await Promise.all([
+    db.from("work_share_cases").select("id", { count: "exact", head: true }).eq("org_id", admin.orgId).neq("status", "resolved"),
+    db.from("member_work_collaboration_reviews").select("id", { count: "exact", head: true }).eq("org_id", admin.orgId).eq("status", "disputed"),
+  ]);
+  if (caseResult.error) throw new Error(caseResult.error.message);
+  if (disputeResult.error) throw new Error(disputeResult.error.message);
+  return {
+    success: true as const,
+    count: (caseResult.count ?? 0) + (disputeResult.count ?? 0),
+    shareCaseCount: caseResult.count ?? 0,
+    disputeCount: disputeResult.count ?? 0,
+  };
 }
 
 export async function matchShareParticipant(params: { participantId: string; rightsHolderId: string }) {

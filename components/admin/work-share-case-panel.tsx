@@ -43,7 +43,7 @@ function displayPercent(value: number | null) {
   return value == null ? "" : String(value);
 }
 
-export function WorkShareCasePanel() {
+export function WorkShareCasePanel({ onCountChange }: { onCountChange?: (count: number) => void } = {}) {
   const [cases, setCases] = useState<ShareCase[]>([]);
   const [disputes, setDisputes] = useState<CollaborationDispute[]>([]);
   const [holders, setHolders] = useState<Array<{ id: string; full_name: string }>>([]);
@@ -55,12 +55,14 @@ export function WorkShareCasePanel() {
   const load = useCallback(async () => {
     const [caseResult, holderResult, disputeResult] = await Promise.all([fetchAdminShareCases(), fetchAdminRightsHolders(), fetchAdminCollaborationDisputes()]);
     const nextCases = caseResult.cases as unknown as ShareCase[];
+    const nextDisputes = disputeResult.disputes as unknown as CollaborationDispute[];
     setCases(nextCases);
     setHolders(holderResult.rightsHolders);
-    setDisputes(disputeResult.disputes as unknown as CollaborationDispute[]);
+    setDisputes(nextDisputes);
+    onCountChange?.(nextCases.length + nextDisputes.length);
     setDrafts(Object.fromEntries(nextCases.map(shareCase => [shareCase.id, Object.fromEntries(shareCase.work_share_participants.map(row => [row.id, displayPercent(row.final_percent ?? row.proposed_percent ?? row.admin_seed_percent)]))])));
     setReserves(Object.fromEntries(nextCases.map(shareCase => [shareCase.id, displayPercent(shareCase.reserve_percent)])));
-  }, []);
+  }, [onCountChange]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -68,10 +70,12 @@ export function WorkShareCasePanel() {
     }, 1_200);
     return () => window.clearTimeout(timer);
   }, [load]);
-  if (!cases.length && !disputes.length) return null;
+  if (!cases.length && !disputes.length) {
+    return <p className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">Der er ingen arbejdsandele, der venter på afstemning.</p>;
+  }
 
   return (
-    <section className="space-y-4 rounded-lg border bg-card p-4">
+    <section className="space-y-4">
       <div>
         <h2 className="font-semibold">Afstem arbejdsandele</h2>
         <p className="mt-1 text-sm text-muted-foreground">Medlemmernes procenter er foreløbige og private. Gennemgå svarene, match eventuelle fritekstnavne, angiv endelige andele og en reserve. Sagen kan kun afsluttes, når summen er 100 %.</p>

@@ -71,6 +71,7 @@ import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import { normalizeCompanyName, type ExternalProductionCompany, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
 import { WorkShareCasePanel } from "@/components/admin/work-share-case-panel";
+import { countAdminShareTasks } from "@/app/actions/work-share-cases";
 import { normalizeWorkEditorRole, resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 
@@ -760,6 +761,8 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
   const [totalCount, setTotalCount] = useState(initialResult?.success ? initialResult.totalCount ?? 0 : 0);
   const [totalAllCount, setTotalAllCount] = useState(initialResult?.success ? initialResult.totalAllCount ?? 0 : 0);
   const [serverStats, setServerStats] = useState(initialResult?.success ? initialResult.stats ?? { total: 0, withContract: 0, missingContract: 0 } : { total: 0, withContract: 0, missingContract: 0 });
+  const [shareTaskCount, setShareTaskCount] = useState(0);
+  const [shareTasksOpen, setShareTasksOpen] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>((initialQuery?.sortKey as SortKey) ?? "status");
   const [sortDir, setSortDir] = useState<SortDir>(initialQuery?.sortDir ?? "asc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -815,6 +818,11 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
   const [enrichmentLoading, setEnrichmentLoading] = useState(false);
   const [enrichmentPreviews, setEnrichmentPreviews] = useState<WorkEnrichmentPreview[]>([]);
   const [expandedSeasons, setExpandedSeasons] = useState<Set<string>>(new Set());
+
+  const openContractUploadForWork = (work: WorkRow) => {
+    const workId = work.is_season_group && work.parent_work_id ? work.parent_work_id : work.id;
+    router.push(`/admin/kontrakter?tab=upload&new=1&work=${encodeURIComponent(workId)}&workTitle=${encodeURIComponent(work.title)}`);
+  };
   const [seasonEpisodes, setSeasonEpisodes] = useState<Record<string, WorkRow[]>>({});
   const [loadingSeasons, setLoadingSeasons] = useState<Set<string>>(new Set());
   const [seasonErrors, setSeasonErrors] = useState<Record<string, string>>({});
@@ -829,6 +837,15 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
   const loadRequestRef = useRef(0);
   const initialLoadConsumedRef = useRef(Boolean(initialResult?.success));
 
+  const refreshShareTaskCount = useCallback(async () => {
+    try {
+      const result = await countAdminShareTasks();
+      if (result.success) setShareTaskCount(result.count);
+    } catch {
+      setShareTaskCount(0);
+    }
+  }, []);
+
   useEffect(() => {
     async function fetchBeskedCount() {
       const result = await fetchAdminWorkInbox();
@@ -842,6 +859,13 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
       window.removeEventListener("works-updated", reload);
     };
   }, []);
+
+  useEffect(() => {
+    void refreshShareTaskCount();
+    const reload = () => void refreshShareTaskCount();
+    window.addEventListener("works-updated", reload);
+    return () => window.removeEventListener("works-updated", reload);
+  }, [refreshShareTaskCount]);
 
   const load = useCallback(async (page = currentPage) => {
     const requestId = ++loadRequestRef.current;
@@ -977,6 +1001,10 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
     else if (requestedStatus === "beskeder") {
       setFilterStatus("beskeder");
       setActiveTab("beskeder");
+    }
+    if (searchParams.get("shareTasks") === "1") {
+      setActiveTab("oversigt");
+      setShareTasksOpen(true);
     }
   }, [searchParams]);
 
@@ -2003,8 +2031,6 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
         }
       />
 
-      <WorkShareCasePanel />
-
       {/* Tab-navigation */}
       <div className="flex gap-0 border-b">
         <button
@@ -2051,6 +2077,21 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
         <SummaryCard label="Total værker" value={stats.total} />
         <SummaryCard label="Med kontrakt" value={stats.withContract} />
         <SummaryCard label="Mangler kontrakt" value={stats.missingContract} />
+        <button
+          type="button"
+          onClick={() => setShareTasksOpen(true)}
+          className={[
+            "min-w-0 rounded-lg border px-3 py-3 text-left text-card-foreground transition-colors sm:flex sm:min-w-56 sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-2.5",
+            shareTaskCount > 0
+              ? "border-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/20 dark:hover:bg-amber-950/35"
+              : "bg-card hover:bg-muted/40",
+          ].join(" ")}
+        >
+          <span className="line-clamp-2 min-h-8 text-[11px] font-medium leading-4 text-muted-foreground sm:min-h-0 sm:line-clamp-1 sm:text-sm">
+            Mangler afstemning af arbejdsandele
+          </span>
+          <span className="mt-1 block text-xl font-bold tabular-nums text-foreground sm:mt-0">{shareTaskCount}</span>
+        </button>
       </SummaryGrid>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
@@ -2144,17 +2185,6 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
       </div>
 
       <ListResultSummary filteredCount={totalCount} totalCount={totalAllCount} selectedCount={selectedIds.length} loading={loading} />
-      {totalCount > pageSize && (
-        <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-muted-foreground">
-          <span>Side {currentPage} af {Math.max(1, Math.ceil(totalCount / pageSize))}</span>
-          <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1 || loading} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}>
-            Forrige
-          </Button>
-          <Button type="button" variant="outline" size="sm" disabled={currentPage >= Math.ceil(totalCount / pageSize) || loading} onClick={() => setCurrentPage(page => page + 1)}>
-            Næste
-          </Button>
-        </div>
-      )}
 
       {selectedIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
@@ -2206,6 +2236,8 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
             .filter((name): name is string => Boolean(name)))];
           const workSelectionIds = selectionIdsForWork(work);
           const isSelected = workSelectionIds.length > 0 && workSelectionIds.every(id => selectedIds.includes(id));
+          const contractCount = isSeason ? work.overview_contract_count ?? 0 : work.contracts?.length ?? 0;
+          const isMissingContract = isSeason ? contractCount < (work.episode_count ?? 0) : contractCount === 0;
           return (
             <div key={work.id} className="space-y-2">
             <MobileDataCard className={pendingCount ? "border-amber-200 bg-amber-50/35" : undefined}>
@@ -2250,7 +2282,12 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                 </MobileMetaRow>
               </div>
               <div className="mt-3 text-xs text-muted-foreground">
-                {isSeason ? `${work.episode_count ?? 0} afsnit · Afsnit med kontrakt: ${work.overview_contract_count ?? 0}` : `DFI: ${work.dfi_id ?? "-"} · TMDB: ${work.tmdb_id ?? "-"} · Kontrakter: ${work.contracts?.length ?? 0}`}
+                {isSeason ? `${work.episode_count ?? 0} afsnit · Afsnit med kontrakt: ${contractCount}` : `DFI: ${work.dfi_id ?? "-"} · TMDB: ${work.tmdb_id ?? "-"}`}
+                <div className="mt-1">
+                  {isMissingContract ? (
+                    <button type="button" className="font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractUploadForWork(work)}>Mangler kontrakt</button>
+                  ) : `Kontrakter: ${contractCount}`}
+                </div>
                 {coEditors.length > 0 && <div className="mt-1 line-clamp-2">Klippere: {coEditors.join(", ")}</div>}
               </div>
             </MobileDataCard>
@@ -2266,13 +2303,18 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                 {episodes.map(episode => {
                   const names = (episode.work_assignments ?? []).map(a => `${a.rettighedshavere?.full_name ?? "Ukendt"} (${adminEditorLabel(a.role)})`);
                   return (
-                    <button key={episode.id} type="button" onClick={() => openEdit(episode)} className="block w-full rounded-lg border bg-background p-3 text-left hover:bg-muted/50">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium">S{String(episode.season_number ?? work.season_number ?? 0).padStart(2, "0")}E{String(episode.episode_number ?? 0).padStart(2, "0")} · {episode.title}</span>
-                        <ChevronRight className="h-4 w-4 shrink-0" />
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{names.length ? names.join(", ") : "Ingen tilknyttede brugere"} · Kontrakter: {episode.contracts?.length ?? 0}</p>
-                    </button>
+                    <div key={episode.id} className="rounded-lg border bg-background p-3 hover:bg-muted/50">
+                      <button type="button" onClick={() => openEdit(episode)} className="block w-full text-left">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium">S{String(episode.season_number ?? work.season_number ?? 0).padStart(2, "0")}E{String(episode.episode_number ?? 0).padStart(2, "0")} · {episode.title}</span>
+                          <ChevronRight className="h-4 w-4 shrink-0" />
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">{names.length ? names.join(", ") : "Ingen tilknyttede brugere"}</p>
+                      </button>
+                      {(episode.contracts?.length ?? 0) === 0 ? (
+                        <button type="button" className="mt-1 text-xs font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractUploadForWork(episode)}>Mangler kontrakt</button>
+                      ) : <p className="mt-1 text-xs text-muted-foreground">Kontrakter: {episode.contracts?.length ?? 0}</p>}
+                    </div>
                   );
                 })}
                 {!loadingSeasons.has(groupKey) && !seasonErrors[groupKey] && episodes.length === 0 && <p className="py-3 text-sm text-muted-foreground">Ingen afsnit i sæsonen.</p>}
@@ -2314,6 +2356,8 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
               const pendingCount = work.overview_pending_count ?? (work.work_change_requests ?? []).filter(request => request.status === "pending").length;
               const workSelectionIds = selectionIdsForWork(work);
               const isSelected = workSelectionIds.length > 0 && workSelectionIds.every(id => selectedIds.includes(id));
+              const contractCount = isSeason ? work.overview_contract_count ?? 0 : work.contracts?.length ?? 0;
+              const isMissingContract = isSeason ? contractCount < (work.episode_count ?? 0) : contractCount === 0;
               return (
                 <Fragment key={work.id}>
                 <TableRow className={pendingCount ? "bg-amber-50/45" : undefined}>
@@ -2358,7 +2402,11 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                       Varighed: {work.duration_minutes ?? "-"}
                       {isSeriesType(work.type) && <> · Sæson: {work.season_count ?? "-"} · Afsnit: {work.episode_count ?? "-"}</>}
                     </div>
-                    <div>{isSeason ? `Afsnit med kontrakt: ${work.overview_contract_count ?? 0}` : `Kontrakter: ${work.contracts?.length ?? 0}`}</div>
+                    <div>
+                      {isMissingContract ? (
+                        <button type="button" className="font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractUploadForWork(work)}>Mangler kontrakt</button>
+                      ) : `Kontrakter: ${contractCount}`}
+                    </div>
                     {(() => {
                       const coEditors = [...new Set((work.work_assignments ?? [])
                         .map(a => a.rettighedshavere?.full_name)
@@ -2400,7 +2448,14 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                       <TableCell className="pl-12"><button type="button" onClick={() => openEdit(episode)} className="text-left text-sm font-medium underline-offset-4 hover:underline">S{String(episode.season_number ?? work.season_number ?? 0).padStart(2, "0")}E{String(episode.episode_number ?? 0).padStart(2, "0")} · {episode.title}</button></TableCell>
                       <TableCell className="text-sm">Afsnit</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{episode.year ?? "-"}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{episodeNames.length ? episodeNames.join(", ") : "Ingen tilknyttede brugere"}<div>Kontrakter: {episode.contracts?.length ?? 0}</div></TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {episodeNames.length ? episodeNames.join(", ") : "Ingen tilknyttede brugere"}
+                        <div>
+                          {(episode.contracts?.length ?? 0) === 0 ? (
+                            <button type="button" className="font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractUploadForWork(episode)}>Mangler kontrakt</button>
+                          ) : `Kontrakter: ${episode.contracts?.length ?? 0}`}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{getWorkBroadcaster(episode) ?? "-"}</TableCell>
                       <TableCell><Badge variant="outline" className={STATUS_CLASS[episodeStatus] ?? ""}>{STATUS_LABELS[episodeStatus] ?? episodeStatus}</Badge></TableCell>
                     </TableRow>
@@ -2415,6 +2470,18 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
           </TableBody>
         </Table>
       </ResponsiveTableFrame>
+
+      {totalCount > pageSize && (
+        <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-muted-foreground">
+          <span>Side {currentPage} af {Math.max(1, Math.ceil(totalCount / pageSize))}</span>
+          <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1 || loading} onClick={() => setCurrentPage(page => Math.max(1, page - 1))}>
+            Forrige
+          </Button>
+          <Button type="button" variant="outline" size="sm" disabled={currentPage >= Math.ceil(totalCount / pageSize) || loading} onClick={() => setCurrentPage(page => page + 1)}>
+            Næste
+          </Button>
+        </div>
+      )}
 
       </>}
 
@@ -2858,6 +2925,15 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
               );
             })()
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={shareTasksOpen} onOpenChange={setShareTasksOpen}>
+        <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Afstem arbejdsandele</DialogTitle>
+          </DialogHeader>
+          <WorkShareCasePanel onCountChange={setShareTaskCount} />
         </DialogContent>
       </Dialog>
 

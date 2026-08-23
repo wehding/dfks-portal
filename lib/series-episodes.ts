@@ -103,6 +103,31 @@ function cleanOption(option: EpisodeOptionInput | null | undefined): SeriesEpiso
   return { number, title };
 }
 
+function isGenericEpisodeTitle(option: SeriesEpisodeOption) {
+  return option.title.trim().toLowerCase() === `afsnit ${option.number}`;
+}
+
+/**
+ * Samler afsnit fra kilder i prioriteret rækkefølge. Første kilde vinder,
+ * men en senere kilde må erstatte en ren "Afsnit N"-pladsholder.
+ */
+export function mergeEpisodeOptionsByPriority(
+  ...sources: Array<EpisodeOptionInput[] | null | undefined>
+): SeriesEpisodeOption[] {
+  const byNumber = new Map<number, SeriesEpisodeOption>();
+  for (const source of sources) {
+    for (const rawOption of source ?? []) {
+      const option = cleanOption(rawOption);
+      if (!option) continue;
+      const current = byNumber.get(option.number);
+      if (!current || (isGenericEpisodeTitle(current) && !isGenericEpisodeTitle(option))) {
+        byNumber.set(option.number, option);
+      }
+    }
+  }
+  return [...byNumber.values()].sort((left, right) => left.number - right.number);
+}
+
 export function episodeOptionsFromLocalChildren(children: SeriesChildLike[] | null | undefined, seasonNumber = 1): SeriesEpisodeOption[] {
   return (children ?? [])
     .filter(child => Number(child.season_number ?? seasonNumber) === Number(seasonNumber))

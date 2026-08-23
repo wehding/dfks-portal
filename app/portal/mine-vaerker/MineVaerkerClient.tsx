@@ -2,17 +2,19 @@
 
 import React, { useState } from "react";
 import dynamic from "next/dynamic";
-import { Film, Plus, Search, X, Trash2, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Film, Plus, Search, X, Trash2, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMemberSeasonEditContext, fetchMemberSeasonEpisodes, fetchMemberWorkDetail, fetchMemberWorkOverview, removeWorkAssignments } from "@/app/actions/member-works";
+import { fetchMemberSeasonEditContext, fetchMemberSeasonEpisodes, fetchMemberSeriesEpisodeOptions, fetchMemberWorkDetail, fetchMemberWorkOverview, removeWorkAssignments, syncMemberEpisodeAssignments, updateMemberCoEditors } from "@/app/actions/member-works";
 import { markWorkRequestCommentsRead } from "@/app/actions/work-management";
 import { useI18n } from "@/lib/i18n";
 import type { ManualWorkFormSeed } from "@/lib/manual-work";
+import { LocalRightsHolderAutocomplete } from "@/components/works/local-rights-holder-autocomplete";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
 import { ExpandableListTrigger, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
@@ -22,11 +24,12 @@ import { fetchMemberShareTaskTarget } from "@/app/actions/work-share-cases";
 import { confirmNoCoeditors, fetchMemberCollaborationReviews, fetchMemberWorkReviewTasks } from "@/app/actions/work-collaboration-reviews";
 import type { Contract } from "../mine-kontrakter/MineKontrakterClient";
 import { resolveWorkEditorRelation } from "@/lib/work-editor-roles";
-import type { MemberWorkReviewTask } from "@/lib/member-work-review";
+import type { MemberWorkReviewCoEditor, MemberWorkReviewTask } from "@/lib/member-work-review";
 import { collaborationReviewIndicator } from "@/lib/work-collaboration-review";
 import { memberOverviewItemsToAssignments } from "@/lib/member-work-overview";
 import type { MemberOverviewItem } from "@/lib/member-work-overview";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
+import { createClientId } from "@/lib/client-id";
 
 const AddWorkModal = dynamic(() => import("./components/AddWorkModal").then(module => module.AddWorkModal), { ssr: false });
 const EditWorkModal = dynamic(() => import("./components/EditWorkModal").then(module => module.EditWorkModal), { ssr: false });
@@ -34,6 +37,7 @@ const MineKontrakterClient = dynamic(() => import("../mine-kontrakter/MineKontra
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
+const REVIEW_ROLES = ["Klipper", "B-klipper", "Konceptuerende klipper"];
 
 type Work = {
   id: string;
@@ -74,6 +78,7 @@ export type OtherAssignment = { id: string; work_id: string; role: string | null
 type WorkProductionNumber = { tv_station: string | null; number: string | null };
 export type BroadcasterLogo = { name: string; logo_path: string | null };
 type SortKey = "date" | "title" | "year" | "type" | "role" | "episode" | "coEditors" | "contract";
+type EditReturnContext = "list" | "review" | "contract";
 const ADD_WORK_PREFILL_KEY = "dfks_add_work_prefill";
 
 type RequestComment = {
@@ -95,6 +100,12 @@ type ChangeRequest = {
 };
 
 type SortValue = string | number;
+type ReviewCoEditorDraft = {
+  id: string;
+  name: string;
+  rightsHolderId: string | null;
+  role: string;
+};
 
 type CollaborationReview = {
   id: string;
@@ -150,6 +161,19 @@ function displayRole(role: string | null | undefined, defaultRole = "Klipper", c
     defaultRole,
     coeditorWord,
   }).combinedLabel;
+}
+
+function emptyReviewCoEditor(): ReviewCoEditorDraft {
+  return { id: createClientId("review-co-editor"), name: "", rightsHolderId: null, role: "Klipper" };
+}
+
+function unknownReviewCoEditor(): ReviewCoEditorDraft {
+  return { id: createClientId("review-co-editor-unknown"), name: "Ukendt medklipper", rightsHolderId: null, role: "Klipper" };
+}
+
+function reviewSharePercentOrNull(value: string) {
+  const parsed = Number(value.replace(",", "."));
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
 }
 
 function requestKindLabel(request: ChangeRequest) {
@@ -272,7 +296,17 @@ export default function MineVaerkerClient({
   const [collaborationReviews, setCollaborationReviews] = useState<CollaborationReview[]>([]);
   const [reviewTasks, setReviewTasks] = useState<MemberWorkReviewTask[]>([]);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [reviewTaskIndex, setReviewTaskIndex] = useState(0);
   const [reviewCompletedCount, setReviewCompletedCount] = useState(0);
+  const [reviewRefreshDeferred, setReviewRefreshDeferred] = useState(false);
+  const [reviewCoEditorDrafts, setReviewCoEditorDrafts] = useState<ReviewCoEditorDraft[]>([]);
+  const [reviewSelfSharePercent, setReviewSelfSharePercent] = useState("");
+  const [reviewEpisodeOptions, setReviewEpisodeOptions] = useState<Array<{ number: number; title: string }>>([]);
+  const [reviewSelectedEpisodes, setReviewSelectedEpisodes] = useState<number[]>([]);
+  const [reviewEpisodesLoading, setReviewEpisodesLoading] = useState(false);
+  const [reviewEpisodesSaving, setReviewEpisodesSaving] = useState(false);
+  const [reviewInlineFeedback, setReviewInlineFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [soloConflictTask, setSoloConflictTask] = useState<MemberWorkReviewTask | null>(null);
   const [resumeReviewAfterEdit, setResumeReviewAfterEdit] = useState(false);
   const [bulkSoloWorkIds, setBulkSoloWorkIds] = useState<string[]>([]);
   const [bulkSoloConfirmOpen, setBulkSoloConfirmOpen] = useState(false);
@@ -289,6 +323,7 @@ export default function MineVaerkerClient({
   const [editEpisodeOptions, setEditEpisodeOptions] = useState<Array<{ number: number; title: string }>>([]);
   const [editEpisodeScope, setEditEpisodeScope] = useState<{ status: "pending" | "confirmed"; episode_numbers: number[]; covers_whole_season: boolean } | null>(null);
   const [editContextAssignments, setEditContextAssignments] = useState<OtherAssignment[]>([]);
+  const [editReturnContext, setEditReturnContext] = useState<EditReturnContext>("list");
   const [initialAddQuery, setInitialAddQuery] = useState("");
   const [initialManualWork, setInitialManualWork] = useState<ManualWorkFormSeed | null>(null);
   const addParamHandledRef = React.useRef<string | null>(null);
@@ -298,8 +333,12 @@ export default function MineVaerkerClient({
 
   const router   = useRouter();
   const searchParams = useSearchParams();
+  const returnParam = searchParams?.get("returnTo") ?? searchParams?.get("from") ?? "";
+  const inferredEditReturnContext: EditReturnContext = returnParam.toLowerCase().includes("kontrakt") ? "contract" : "list";
 
-  React.useEffect(() => setAssignments(initialAssignments), [initialAssignments]);
+  React.useEffect(() => {
+    if (!reviewDialogOpen) setAssignments(initialAssignments);
+  }, [initialAssignments, reviewDialogOpen]);
   React.useEffect(() => {
     const timeout = window.setTimeout(() => {
       const params = new URLSearchParams(searchParams?.toString() ?? "");
@@ -329,6 +368,20 @@ export default function MineVaerkerClient({
     }
     setCollaborationReviews(reviewResult.reviews as unknown as CollaborationReview[]);
     setReviewTasks(taskResult.tasks);
+    setReviewTaskIndex(index => Math.min(index, Math.max(0, taskResult.tasks.length - 1)));
+  }, [rightsHolderId]);
+
+  const loadReviewTasksOnly = React.useCallback(async () => {
+    if (!rightsHolderId) return false;
+    const result = await fetchMemberWorkReviewTasks({ rightsHolderId });
+    if (!result.success) {
+      setReviewInlineFeedback({ type: "error", text: result.error ?? "Gennemgangen kunne ikke indlæses." });
+      return false;
+    }
+    setReviewTasks(result.tasks);
+    setReviewTaskIndex(0);
+    setReviewRefreshDeferred(true);
+    return true;
   }, [rightsHolderId]);
 
   React.useEffect(() => {
@@ -339,6 +392,7 @@ export default function MineVaerkerClient({
   React.useEffect(() => {
     if (searchParams?.get("review") === "1" || searchParams?.get("collaborationReview") === "1") {
       setReviewCompletedCount(0);
+      setReviewTaskIndex(0);
       setReviewDialogOpen(true);
       router.replace("/portal/mine-vaerker", { scroll: false });
     }
@@ -430,7 +484,32 @@ export default function MineVaerkerClient({
     return null;
   };
 
-  const confirmSelectedAsSolo = async (workIds: string[]) => {
+  const flushDeferredReviewRefresh = React.useCallback(() => {
+    setReviewRefreshDeferred(false);
+    void loadCollaborationReviews();
+    window.dispatchEvent(new CustomEvent("works-updated"));
+  }, [loadCollaborationReviews]);
+
+  const finishReviewTaskLocally = React.useCallback((taskKey: string) => {
+    const hasRemainingTasks = reviewTasks.some(task => task.key !== taskKey);
+    setReviewTasks(current => {
+      const next = current.filter(task => task.key !== taskKey);
+      setReviewTaskIndex(index => Math.min(index, Math.max(0, next.length - 1)));
+      if (next.length === 0) {
+        setReviewDialogOpen(false);
+        setCollaborationFeedback({ type: "success", text: "Værksgennemgangen er færdig." });
+      }
+      return next;
+    });
+    setReviewCompletedCount(count => count + 1);
+    setReviewCoEditorDrafts([]);
+    setReviewSelfSharePercent("");
+    setReviewInlineFeedback(null);
+    if (hasRemainingTasks) setReviewRefreshDeferred(true);
+    else flushDeferredReviewRefresh();
+  }, [flushDeferredReviewRefresh, reviewTasks]);
+
+  const confirmSelectedAsSolo = async (workIds: string[], options?: { fastReviewTaskKey?: string }) => {
     if (!rightsHolderId || !workIds.length) return;
     setCollaborationSaving(true);
     setCollaborationFeedback(null);
@@ -444,19 +523,117 @@ export default function MineVaerkerClient({
           : `${result.confirmed} værk${result.confirmed === 1 ? " er" : "er er"} registreret uden medklippere.`,
       } as const;
       setCollaborationFeedback(feedback);
-      const statusByWork = new Map(result.results.map(item => [item.workId, item.status]));
-      setCollaborationReviews(current => current.map(review => {
-        const status = statusByWork.get(review.work_id);
-        return status ? { ...review, status } : review;
-      }));
       setSelected([]);
       setBulkSoloWorkIds([]);
       setBulkSoloConfirmOpen(false);
-      setReviewCompletedCount(count => count + workIds.length);
-      await loadCollaborationReviews();
-      window.dispatchEvent(new CustomEvent("works-updated"));
+      if (options?.fastReviewTaskKey) {
+        finishReviewTaskLocally(options.fastReviewTaskKey);
+      } else {
+        const statusByWork = new Map(result.results.map(item => [item.workId, item.status]));
+        setCollaborationReviews(current => current.map(review => {
+          const status = statusByWork.get(review.work_id);
+          return status ? { ...review, status } : review;
+        }));
+        setReviewCompletedCount(count => count + workIds.length);
+        await loadCollaborationReviews();
+        window.dispatchEvent(new CustomEvent("works-updated"));
+      }
     } catch (error) {
       setCollaborationFeedback({ type: "error", text: error instanceof Error ? error.message : "Svarene kunne ikke gemmes." });
+    } finally {
+      setCollaborationSaving(false);
+    }
+  };
+  const handleReviewSoloAction = (task: MemberWorkReviewTask) => {
+    if (task.kind !== "coeditor_review") return;
+    setReviewInlineFeedback(null);
+    if (task.existingCoEditors.length > 0) {
+      setSoloConflictTask(task);
+      return;
+    }
+    void confirmSelectedAsSolo([task.workId], { fastReviewTaskKey: task.key });
+  };
+
+  const saveReviewCoEditors = async (task: MemberWorkReviewTask, options?: { closeAfterSave?: boolean }) => {
+    if (task.kind !== "coeditor_review") return;
+    if (!rightsHolderId) {
+      setReviewInlineFeedback({ type: "error", text: "Din rettighedshaverprofil kunne ikke indlæses. Genindlæs siden og prøv igen." });
+      return;
+    }
+    const filledDrafts = reviewCoEditorDrafts.filter(editor => editor.name.trim());
+    const hasCoEditorContext = task.existingCoEditors.length > 0 || filledDrafts.length > 0;
+    if (!hasCoEditorContext) {
+      setReviewInlineFeedback({ type: "error", text: "Tilføj en medklipper eller vælg “Har klippet alene”." });
+      return;
+    }
+    const ownShare = reviewSharePercentOrNull(reviewSelfSharePercent);
+    if (ownShare === null) {
+      setReviewInlineFeedback({ type: "error", text: "Angiv din egen vurderede arbejdsandel mellem 0 og 100 procent." });
+      return;
+    }
+    setCollaborationSaving(true);
+    setReviewInlineFeedback(null);
+    try {
+      const result = await updateMemberCoEditors({
+        rightsHolderId,
+        workId: task.workId,
+        editScope: task.episodeNumber != null ? "episode" : "work",
+        selfSharePercent: ownShare,
+        changes: filledDrafts.map(editor => ({
+          name: editor.name,
+          rightsHolderId: editor.rightsHolderId,
+          role: editor.role,
+          action: "add",
+        })),
+      });
+      if (!result.success) throw new Error(result.error ?? "Medklipperne kunne ikke gemmes.");
+      setCollaborationFeedback({
+        type: "success",
+        text: result.requiresAdminReview
+          ? `${result.requiresAdminReview} ukendt medklipper er sendt til kontrol hos DFKS. Din arbejdsandel er gemt.`
+          : "Medklippere og din vurderede arbejdsandel er gemt.",
+      });
+      finishReviewTaskLocally(task.key);
+      if (options?.closeAfterSave) {
+        setReviewDialogOpen(false);
+        void flushDeferredReviewRefresh();
+      }
+    } catch (error) {
+      setReviewInlineFeedback({ type: "error", text: error instanceof Error ? error.message : "Medklipperne kunne ikke gemmes." });
+    } finally {
+      setCollaborationSaving(false);
+    }
+  };
+
+  const removeExistingReviewCoEditor = async (
+    task: Extract<MemberWorkReviewTask, { kind: "coeditor_review" }>,
+    editor: MemberWorkReviewCoEditor,
+  ) => {
+    if (!rightsHolderId) return;
+    setCollaborationSaving(true);
+    setReviewInlineFeedback(null);
+    try {
+      const result = await updateMemberCoEditors({
+        rightsHolderId,
+        workId: task.workId,
+        editScope: task.episodeNumber != null ? "episode" : "work",
+        completeReview: false,
+        changes: [{
+          assignmentId: editor.assignmentId,
+          rightsHolderId: editor.rightsHolderId,
+          originalRightsHolderId: editor.rightsHolderId,
+          role: editor.role ?? "Klipper",
+          action: "remove",
+        }],
+      });
+      if (!result.success) throw new Error(result.error ?? "Medklipperen kunne ikke fjernes.");
+      setReviewTasks(current => current.map(item => item.key === task.key && item.kind === "coeditor_review"
+        ? { ...item, existingCoEditors: item.existingCoEditors.filter(candidate => candidate.assignmentId !== editor.assignmentId) }
+        : item));
+      setReviewInlineFeedback({ type: "success", text: `${editor.name} er fjernet som medklipper.` });
+      setReviewRefreshDeferred(true);
+    } catch (error) {
+      setReviewInlineFeedback({ type: "error", text: error instanceof Error ? error.message : "Medklipperen kunne ikke fjernes." });
     } finally {
       setCollaborationSaving(false);
     }
@@ -508,27 +685,30 @@ export default function MineVaerkerClient({
           if (!ep) return null;
           const coEditors = coEditorMap[ep.id] ?? [];
           return (
-              <button
-                type="button"
-                key={assignment.id}
-                onClick={() => openEdit(assignment)}
-                className={`${className} flex w-full items-start gap-2 border-t py-3 text-left text-sm text-muted-foreground first:border-t-0 hover:bg-muted/70`}
-              >
-                <span className="inline-flex items-center rounded border bg-background px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-4 text-foreground">
-                  {ep.season_number != null && ep.episode_number != null
-                    ? `S${String(ep.season_number).padStart(2, "0")}E${String(ep.episode_number).padStart(2, "0")}`
-                    : ep.episode_number != null
-                      ? `E${String(ep.episode_number).padStart(2, "0")}`
-                      : "-"}
+              <div key={assignment.id} className={`${className} flex w-full items-start gap-2 border-t py-3 text-sm text-muted-foreground first:border-t-0 hover:bg-muted/70`}>
+                <button type="button" onClick={() => openEdit(assignment)} className="flex min-w-0 flex-1 items-start gap-2 text-left">
+                  <span className="inline-flex items-center rounded border bg-background px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-4 text-foreground">
+                    {ep.season_number != null && ep.episode_number != null
+                      ? `S${String(ep.season_number).padStart(2, "0")}E${String(ep.episode_number).padStart(2, "0")}`
+                      : ep.episode_number != null
+                        ? `E${String(ep.episode_number).padStart(2, "0")}`
+                        : "-"}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-foreground">{ep.title}</span>
+                    <span className="mt-1 block text-xs">Rolle: {displayRole(assignment.role, defaultRoleLabel, coeditorWord)}</span>
+                    <span className="mt-1 flex flex-wrap items-center gap-2 text-xs">Medklippere: {coEditors.length ? coEditors.join(", ") : "–"} {collaborationStatusBadge(collaborationReviewByWork.get(ep.id))}</span>
+                  </span>
+                </button>
+                <span className="flex shrink-0 flex-col items-end gap-1">
+                  {(ep.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(ep.id) ? (
+                    <button type="button" className="text-xs font-medium text-foreground" onClick={() => openContractForWork(ep)}>Kontrakt tilknyttet</button>
+                  ) : (
+                    <button type="button" className="text-xs font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractForWork(ep)}>Mangler kontrakt</button>
+                  )}
+                  <button type="button" className="text-xs font-medium text-foreground" onClick={() => openEdit(assignment)}>Rediger</button>
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium text-foreground">{ep.title}</span>
-                  <span className="mt-1 block text-xs">Rolle: {displayRole(assignment.role, defaultRoleLabel, coeditorWord)}</span>
-                  <span className="mt-1 flex flex-wrap items-center gap-2 text-xs">Medklippere: {coEditors.length ? coEditors.join(", ") : "–"} {collaborationStatusBadge(collaborationReviewByWork.get(ep.id))}</span>
-                  <span className="mt-0.5 block text-xs">{(ep.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(ep.id) ? "Kontrakt tilknyttet" : "Mangler kontrakt"}</span>
-                </span>
-                <span className="text-xs font-medium text-foreground">Rediger</span>
-              </button>
+              </div>
           );
         })
       )}
@@ -604,7 +784,8 @@ export default function MineVaerkerClient({
     }
   };
 
-  const openEdit = async (a: Assignment) => {
+  const openEdit = async (a: Assignment, returnContext: EditReturnContext = inferredEditReturnContext) => {
+    setEditReturnContext(returnContext);
     setEditScope(a.works?.parent_work_id && a.works.episode_number != null ? "episode" : "work");
     setEditSeasonWorkIds([]);
     setEditEpisodeOptions([]);
@@ -650,8 +831,9 @@ export default function MineVaerkerClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignments, searchParams]);
 
-  const openSeasonEdit = async (work: Work) => {
+  const openSeasonEdit = async (work: Work, returnContext: EditReturnContext = inferredEditReturnContext) => {
     if (!rightsHolderId || !work.parent_work_id || work.season_number == null) return;
+    setEditReturnContext(returnContext);
     const result = await fetchMemberSeasonEditContext({
       rightsHolderId,
       parentWorkId: work.parent_work_id,
@@ -688,61 +870,6 @@ export default function MineVaerkerClient({
     });
   };
 
-  const openReviewTaskEditor = async (task: MemberWorkReviewTask) => {
-    setReviewDialogOpen(false);
-    setResumeReviewAfterEdit(true);
-    if (task.kind === "episode_selection") {
-      const seasonAssignment = assignments.find(assignment =>
-        assignment.works?.is_season_group
-        && assignment.works.parent_work_id === task.seriesWorkId
-        && assignment.works.season_number === task.seasonNumber
-      );
-      if (!seasonAssignment?.works) {
-        setResumeReviewAfterEdit(false);
-        setReviewDialogOpen(true);
-        setMsg({ type: "error", text: t("works.review.seasonUnavailable") });
-        return;
-      }
-      await openSeasonEdit(seasonAssignment.works);
-      return;
-    }
-
-    const loadedAssignment = assignments.find(assignment => assignment.id === task.assignmentId)
-      ?? Object.values(seriesEpisodes).flat().find(assignment => assignment.id === task.assignmentId);
-    if (loadedAssignment) {
-      await openEdit(loadedAssignment);
-      return;
-    }
-    const placeholder: Assignment = {
-      id: task.assignmentId,
-      work_id: task.workId,
-      rights_holder_id: rightsHolderId,
-      role: null,
-      contract_id: null,
-      episode_id: null,
-      episodes: null,
-      works: {
-        id: task.workId,
-        title: task.title,
-        type: task.parentWorkId ? "serie" : "",
-        year: null,
-        duration_minutes: null,
-        episode_count: null,
-        parent_work_id: task.parentWorkId,
-        season_number: task.seasonNumber,
-        episode_number: task.episodeNumber,
-        genre: null,
-        director: null,
-        status: null,
-        dfi_id: null,
-        tmdb_id: null,
-        poster_url: null,
-        description: null,
-      },
-    };
-    await openEdit(placeholder);
-  };
-
   const beginSelectedSoloReview = () => {
     const selectedSet = new Set(selected);
     const selectedTasks = reviewTasks.filter(task => {
@@ -762,6 +889,7 @@ export default function MineVaerkerClient({
     if (episodeTask) {
       setReviewTasks(current => [episodeTask, ...current.filter(task => task.key !== episodeTask.key)]);
       setReviewCompletedCount(0);
+      setReviewTaskIndex(0);
       setReviewDialogOpen(true);
       return;
     }
@@ -832,6 +960,18 @@ export default function MineVaerkerClient({
     setEditEpisodeScope(null);
   };
 
+  const closeEditFromCancel = () => {
+    const returnContext = editReturnContext;
+    closeEdit();
+    setResumeReviewAfterEdit(false);
+    setEditReturnContext("list");
+    if (returnContext === "review") {
+      setReviewDialogOpen(true);
+    } else if (returnContext === "contract" && !editingContractId) {
+      router.push("/portal/kontraktgennemgang");
+    }
+  };
+
   const handleDeleteSelected = async () => {
     if (!selected.length) return;
     setRemoveConfirmOpen(true);
@@ -862,8 +1002,198 @@ export default function MineVaerkerClient({
 
   // ── Render ─────────────────────────────────────────────────
 
-  const currentReviewTask = reviewTasks[0] ?? null;
+  const currentReviewTask = reviewTasks[reviewTaskIndex] ?? reviewTasks[0] ?? null;
+  const currentReviewTaskKey = currentReviewTask?.key;
+  const currentReviewTaskKind = currentReviewTask?.kind;
+  const currentReviewOwnSharePercent = currentReviewTaskKind === "coeditor_review" ? currentReviewTask.ownSharePercent : null;
   const reviewTotal = reviewCompletedCount + reviewTasks.length;
+  const reviewCurrent = reviewTotal > 0 ? Math.min(reviewCompletedCount + reviewTaskIndex + 1, reviewTotal) : 0;
+  const moveReviewTask = (direction: -1 | 1) => {
+    setReviewTaskIndex(index => {
+      const total = reviewTasks.length;
+      if (total <= 1) return index;
+      return (index + direction + total) % total;
+    });
+  };
+  const handleReviewDialogOpenChange = (open: boolean) => {
+    if (open) {
+      setReviewDialogOpen(true);
+      return;
+    }
+    if (currentReviewTask?.kind === "coeditor_review") {
+      const enteredShare = reviewSharePercentOrNull(reviewSelfSharePercent);
+      const shareChanged = reviewSelfSharePercent.trim() !== "" && (enteredShare === null || enteredShare !== currentReviewOwnSharePercent);
+      const hasDraftInput = reviewCoEditorDrafts.some(editor => editor.name.trim() || editor.rightsHolderId) || shareChanged;
+      if (hasDraftInput) {
+        void saveReviewCoEditors(currentReviewTask, { closeAfterSave: true });
+        return;
+      }
+    }
+    setReviewDialogOpen(false);
+    if (reviewRefreshDeferred) flushDeferredReviewRefresh();
+  };
+
+  React.useEffect(() => {
+    if (currentReviewTaskKind === "coeditor_review") {
+      setReviewCoEditorDrafts([]);
+      setReviewSelfSharePercent(currentReviewOwnSharePercent != null ? String(currentReviewOwnSharePercent).replace(".", ",") : "");
+    } else {
+      setReviewCoEditorDrafts([]);
+      setReviewSelfSharePercent("");
+    }
+    setReviewInlineFeedback(null);
+    setSoloConflictTask(null);
+  }, [currentReviewTaskKey, currentReviewTaskKind, currentReviewOwnSharePercent]);
+
+  React.useEffect(() => {
+    if (currentReviewTask?.kind !== "episode_selection" || !rightsHolderId) {
+      setReviewEpisodeOptions([]);
+      setReviewSelectedEpisodes([]);
+      return;
+    }
+    let active = true;
+    setReviewEpisodesLoading(true);
+    setReviewInlineFeedback(null);
+    setReviewSelectedEpisodes(currentReviewTask.selectedEpisodeNumbers ?? []);
+    void fetchMemberSeriesEpisodeOptions({
+      rightsHolderId,
+      workId: currentReviewTask.seriesWorkId,
+      seasonNumber: currentReviewTask.seasonNumber,
+    }).then(result => {
+      if (!active) return;
+      if (!result.success) throw new Error(result.error ?? "Afsnittene kunne ikke hentes.");
+      setReviewEpisodeOptions(result.options ?? []);
+      if (currentReviewTask.coversWholeSeason) setReviewSelectedEpisodes((result.options ?? []).map(option => option.number));
+    }).catch(error => {
+      if (active) setReviewInlineFeedback({ type: "error", text: error instanceof Error ? error.message : "Afsnittene kunne ikke hentes." });
+    }).finally(() => {
+      if (active) setReviewEpisodesLoading(false);
+    });
+    return () => { active = false; };
+  }, [currentReviewTask, rightsHolderId]);
+
+  const saveReviewEpisodes = async (
+    task: Extract<MemberWorkReviewTask, { kind: "episode_selection" }>,
+    action: "queue" | "solo" = "queue",
+  ) => {
+    if (!rightsHolderId || reviewSelectedEpisodes.length === 0) {
+      setReviewInlineFeedback({ type: "error", text: "Vælg mindst ét afsnit." });
+      return;
+    }
+    const commonCoEditors = reviewCoEditorDrafts.filter(editor => editor.name.trim());
+    const ownShare = commonCoEditors.length > 0 ? reviewSharePercentOrNull(reviewSelfSharePercent) : null;
+    if (commonCoEditors.length > 0 && ownShare === null) {
+      setReviewInlineFeedback({ type: "error", text: "Angiv din egen vurderede arbejdsandel mellem 0 og 100 procent." });
+      return;
+    }
+    setReviewEpisodesSaving(true);
+    setReviewInlineFeedback(null);
+    try {
+      const seasonAssignment = assignments.find(assignment =>
+        assignment.works?.is_season_group
+        && assignment.works.parent_work_id === task.seriesWorkId
+        && assignment.works.season_number === task.seasonNumber
+      );
+      const allSelected = reviewEpisodeOptions.length > 0 && reviewSelectedEpisodes.length === reviewEpisodeOptions.length;
+      const result = await syncMemberEpisodeAssignments({
+        rightsHolderId,
+        workId: task.seriesWorkId,
+        role: seasonAssignment?.role ?? defaultRoleLabel,
+        selectedEpisodes: reviewSelectedEpisodes,
+        seasonNumber: task.seasonNumber,
+        coversWholeSeason: allSelected,
+      });
+      if (!result.success) throw new Error(result.error ?? "Afsnitsvalget kunne ikke gemmes.");
+      let requiresAdminReview = 0;
+      let soloConfirmed = 0;
+      let soloDisputed = 0;
+      if (action === "solo") {
+        const selectedWorkIds = result.selectedWorkIds ?? [];
+        if (!selectedWorkIds.length) throw new Error("De valgte afsnit kunne ikke findes.");
+        const soloResult = await confirmNoCoeditors({
+          rightsHolderId,
+          workIds: selectedWorkIds,
+          source: "member_bulk",
+        });
+        if (!soloResult.success) throw new Error(soloResult.error ?? "Afsnittene kunne ikke registreres som klippet alene.");
+        soloConfirmed = soloResult.confirmed;
+        soloDisputed = soloResult.disputed;
+      } else if (commonCoEditors.length > 0) {
+        const coEditorResult = await updateMemberCoEditors({
+          rightsHolderId,
+          workId: task.seriesWorkId,
+          editScope: "season",
+          seasonNumber: task.seasonNumber,
+          episodeNumbers: reviewSelectedEpisodes,
+          selfSharePercent: ownShare,
+          changes: commonCoEditors.map(editor => ({
+            name: editor.name,
+            rightsHolderId: editor.rightsHolderId,
+            role: editor.role,
+            action: "add",
+          })),
+        });
+        if (!coEditorResult.success) throw new Error(coEditorResult.error ?? "Medklipperne kunne ikke gemmes på afsnittene.");
+        requiresAdminReview = coEditorResult.requiresAdminReview ?? 0;
+      }
+      await loadReviewTasksOnly();
+      setReviewCompletedCount(0);
+      setReviewDialogOpen(true);
+      setCollaborationFeedback({
+        type: "success",
+        text: action === "solo"
+          ? `${soloConfirmed} afsnit er registreret som klippet alene.${soloDisputed ? ` ${soloDisputed} afsnit kræver gennemgang hos DFKS, fordi andre klippere allerede er registreret.` : ""}`
+          : commonCoEditors.length > 0
+          ? `${reviewSelectedEpisodes.length} afsnit er gemt med de samme medklippere.${requiresAdminReview ? ` ${requiresAdminReview} ukendt navn er sendt til kontrol hos DFKS.` : ""}`
+          : `${reviewSelectedEpisodes.length} afsnit er gemt og lagt i Gennemgå værk-køen.`,
+      });
+    } catch (error) {
+      setReviewInlineFeedback({ type: "error", text: error instanceof Error ? error.message : "Afsnitsvalget kunne ikke gemmes." });
+    } finally {
+      setReviewEpisodesSaving(false);
+    }
+  };
+
+  const openReviewSeasonSelector = async (task: Extract<MemberWorkReviewTask, { kind: "coeditor_review" }>) => {
+    if (!rightsHolderId || !task.parentWorkId || task.seasonNumber == null) return;
+    setReviewEpisodesLoading(true);
+    setReviewInlineFeedback(null);
+    try {
+      const result = await fetchMemberSeasonEditContext({
+        rightsHolderId,
+        parentWorkId: task.parentWorkId,
+        seasonNumber: task.seasonNumber,
+      });
+      if (!result.success) throw new Error(result.error ?? "Sæsonens afsnit kunne ikke hentes.");
+      const options = result.options ?? [];
+      const scope = result.episodeScope;
+      const assignedEpisodeNumbers = (result.assignments as Array<{ works?: { episode_number?: number | null } | null }>)
+        .map(assignment => assignment.works?.episode_number)
+        .filter((number): number is number => number != null);
+      const selectedEpisodeNumbers = scope?.covers_whole_season
+        ? options.map(option => option.number)
+        : scope?.episode_numbers?.length
+          ? scope.episode_numbers
+          : assignedEpisodeNumbers;
+      const selectionTask: Extract<MemberWorkReviewTask, { kind: "episode_selection" }> = {
+        key: `edit-episode-scope:${task.parentWorkId}:${task.seasonNumber}`,
+        groupKey: task.groupKey,
+        kind: "episode_selection",
+        title: result.parentWork.title?.trim() || task.title,
+        seriesWorkId: task.parentWorkId,
+        seasonNumber: task.seasonNumber,
+        episodeScopeId: scope?.id ?? `existing:${task.parentWorkId}:${task.seasonNumber}`,
+        selectedEpisodeNumbers,
+        coversWholeSeason: Boolean(scope?.covers_whole_season),
+      };
+      setReviewTasks(current => [selectionTask, ...current.filter(item => item.groupKey !== task.groupKey)]);
+      setReviewTaskIndex(0);
+    } catch (error) {
+      setReviewInlineFeedback({ type: "error", text: error instanceof Error ? error.message : "Sæsonens afsnit kunne ikke hentes." });
+    } finally {
+      setReviewEpisodesLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -911,7 +1241,7 @@ export default function MineVaerkerClient({
                 <p className="mt-1 text-xs opacity-80">{reviewTasks.length} {t("works.review.remaining")}{disputedCollaborationReviews.length ? ` · ${disputedCollaborationReviews.length} ${t("works.review.awaitingDfks")}` : ""}</p>
               </div>
             </div>
-            <Button type="button" disabled={!reviewTasks.length} onClick={() => { setReviewCompletedCount(0); setReviewDialogOpen(true); }}>
+            <Button type="button" disabled={!reviewTasks.length} onClick={() => { setReviewCompletedCount(0); setReviewTaskIndex(0); setReviewDialogOpen(true); }}>
               {t("works.review.start")}
             </Button>
           </div>
@@ -1156,9 +1486,11 @@ export default function MineVaerkerClient({
               </div>
 
               {/* Kontrakt-badge */}
-              <div
-                className="flex justify-end"
+              <button
+                type="button"
+                className="flex justify-end rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={e => { e.stopPropagation(); openContractForWork(w); }}
+                aria-label={hasAllContracts ? `Åbn kontrakt for ${w.title}` : `Upload kontrakt til ${w.title}`}
               >
                 {hasAllContracts ? (
                   <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
@@ -1167,7 +1499,7 @@ export default function MineVaerkerClient({
                 ) : (
                   <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-amber-300 text-amber-600`}>{t("works.contractMissing")}</Badge>
                 )}
-              </div>
+              </button>
             </div>
             <div
               key={`${a.id}-mobile`}
@@ -1210,9 +1542,11 @@ export default function MineVaerkerClient({
                         </p>
                       )}
                     </div>
-                    <div
-                      className="shrink-0"
+                    <button
+                      type="button"
+                      className="shrink-0 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={e => { e.stopPropagation(); openContractForWork(w); }}
+                      aria-label={hasAllContracts ? `Åbn kontrakt for ${w.title}` : `Upload kontrakt til ${w.title}`}
                     >
                       {hasAllContracts ? (
                         <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
@@ -1221,7 +1555,7 @@ export default function MineVaerkerClient({
                       ) : (
                         <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-amber-300 text-amber-600`}>{t("works.contractMissing")}</Badge>
                       )}
-                    </div>
+                    </button>
                   </div>
 
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
@@ -1297,59 +1631,392 @@ export default function MineVaerkerClient({
         </div>
       </div>
 
-      <Dialog open={reviewDialogOpen && Boolean(currentReviewTask)} onOpenChange={setReviewDialogOpen}>
-        <DialogContent className="w-[min(560px,calc(100vw-2rem))]">
+      <Dialog open={reviewDialogOpen && Boolean(currentReviewTask)} onOpenChange={handleReviewDialogOpenChange}>
+        <DialogContent className="w-[min(560px,calc(100vw-2rem))] max-sm:top-4 max-sm:max-h-[calc(100dvh-2rem)] max-sm:translate-y-0 max-sm:overflow-y-auto">
           {currentReviewTask && (
             <>
-              <DialogHeader>
-                <DialogTitle>{t("works.review.dialogTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("works.review.progress")
-                    .replace("{current}", String(Math.min(reviewCompletedCount + 1, reviewTotal)))
-                    .replace("{total}", String(reviewTotal))}
-                </DialogDescription>
+              <DialogHeader className="pr-14">
+                <div className="flex items-center justify-between gap-3">
+                  <DialogTitle>{t("works.review.dialogTitle")}</DialogTitle>
+                  <div className="flex shrink-0 items-center gap-1 rounded-md border bg-background px-1 py-0.5">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      disabled={reviewTasks.length <= 1}
+                      onClick={() => moveReviewTask(-1)}
+                      aria-label="Forrige værk"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="min-w-10 text-center text-xs text-muted-foreground">
+                      {reviewCurrent} / {reviewTotal}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      disabled={reviewTasks.length <= 1}
+                      onClick={() => moveReviewTask(1)}
+                      aria-label="Næste værk"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                <DialogDescription className="sr-only">Gennemgå dine serieafsnit og medklippere for det valgte værk.</DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 <div className="rounded-lg border bg-muted/20 p-4">
                   <p className="font-semibold">{currentReviewTask.title}</p>
-                  {currentReviewTask.seasonNumber != null && (
-                    <p className="mt-1 text-sm text-muted-foreground">
+                  {currentReviewTask.seasonNumber != null && currentReviewTask.kind === "coeditor_review" && currentReviewTask.parentWorkId ? (
+                    <button
+                      type="button"
+                      className="mt-1 rounded text-left text-sm text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => void openReviewSeasonSelector(currentReviewTask)}
+                    >
                       {t("works.season")} {currentReviewTask.seasonNumber}
-                      {currentReviewTask.kind === "coeditor_review" && currentReviewTask.episodeNumber != null
+                      {currentReviewTask.episodeNumber != null
                         ? ` · ${t("works.episode")} ${currentReviewTask.episodeNumber}`
                         : ""}
-                    </p>
+                      <span className="ml-2 font-medium text-foreground">· Vælg afsnit, du har klippet</span>
+                    </button>
+                  ) : currentReviewTask.seasonNumber != null ? (
+                    <p className="mt-1 text-sm text-muted-foreground">{t("works.season")} {currentReviewTask.seasonNumber}</p>
+                  ) : null}
+                  {currentReviewTask.kind === "coeditor_review" && currentReviewTask.existingCoEditors.length > 0 && (
+                    <div className="mt-3 space-y-2 border-t pt-3">
+                      <p className="text-xs font-medium text-muted-foreground">Registrerede medklippere</p>
+                      <div className="space-y-1.5">
+                        {currentReviewTask.existingCoEditors.map(editor => (
+                          <div key={editor.assignmentId} className="relative flex flex-wrap items-center justify-between gap-2 rounded-md bg-background px-3 py-2 pr-11 text-sm">
+                            <span className="font-medium">{editor.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {displayRole(editor.role, defaultRoleLabel, coeditorWord)}
+                              {editor.sharePercent != null ? ` · ${editor.sharePercent}%` : ""}
+                            </span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-1.5 top-1/2 h-8 w-8 -translate-y-1/2"
+                              disabled={collaborationSaving}
+                              onClick={() => void removeExistingReviewCoEditor(currentReviewTask, editor)}
+                              aria-label={`Fjern ${editor.name}`}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
                 {currentReviewTask.kind === "episode_selection" ? (
-                  <div className="space-y-2">
+                  <div className="space-y-4">
                     <p className="text-sm">{t("works.review.chooseEpisodesFirst")}</p>
-                    <p className="text-xs text-muted-foreground">{t("works.review.episodeFollowup")}</p>
+                    {reviewEpisodesLoading ? (
+                      <p className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">Henter sæsonens afsnit…</p>
+                    ) : reviewEpisodeOptions.length > 0 ? (
+                      <>
+                        <div className="flex h-11 w-full items-center justify-between rounded-md border bg-background px-3 text-sm font-medium">
+                          <span>{reviewSelectedEpisodes.length} af {reviewEpisodeOptions.length} afsnit valgt</span>
+                        </div>
+                        <div className="space-y-2 rounded-lg border bg-muted/20 p-2">
+                            <div className="grid grid-cols-2 gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-11 w-full"
+                                onClick={() => setReviewSelectedEpisodes(reviewEpisodeOptions.map(option => option.number))}
+                              >
+                                Vælg alle
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-11 w-full"
+                                onClick={() => setReviewSelectedEpisodes([])}
+                              >
+                                Fravælg alle
+                              </Button>
+                            </div>
+                            <div className="grid max-h-[38dvh] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                              {reviewEpisodeOptions.map(option => {
+                                const checked = reviewSelectedEpisodes.includes(option.number);
+                                return (
+                                  <label key={option.number} className="flex min-h-12 cursor-pointer items-center gap-3 rounded-md border bg-background px-3 py-2 text-sm">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => setReviewSelectedEpisodes(current => checked
+                                        ? current.filter(number => number !== option.number)
+                                        : [...current, option.number].sort((left, right) => left - right))}
+                                      className="h-4 w-4 shrink-0"
+                                    />
+                                    <span className="min-w-0"><strong>Afsnit {option.number}</strong>{option.title ? ` · ${option.title}` : ""}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            <div className="space-y-3 border-t pt-3">
+                              <div>
+                                <p className="text-sm font-medium">Medklippere på alle valgte afsnit</p>
+                                <p className="mt-1 text-xs text-muted-foreground">Valgfrit. De medklippere, du tilføjer her, knyttes samlet til alle markerede afsnit.</p>
+                              </div>
+                              {reviewCoEditorDrafts.map(editor => (
+                                <div key={editor.id} className="relative space-y-2 rounded-lg border bg-background p-3 pr-12">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="absolute right-2 top-2 h-8 w-8"
+                                    onClick={() => setReviewCoEditorDrafts(current => current.filter(item => item.id !== editor.id))}
+                                    aria-label="Fjern fælles medklipper"
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                  <Label>Medklipper</Label>
+                                  <LocalRightsHolderAutocomplete
+                                    value={editor.name}
+                                    placeholder={t("works.namePlaceholder")}
+                                    excludedIds={[
+                                      rightsHolderId,
+                                      ...reviewCoEditorDrafts.map(item => item.id === editor.id ? null : item.rightsHolderId),
+                                    ]}
+                                    onValueChange={value => setReviewCoEditorDrafts(current =>
+                                      current.map(item => item.id === editor.id ? { ...item, name: value, rightsHolderId: null } : item)
+                                    )}
+                                    onSelect={holder => setReviewCoEditorDrafts(current =>
+                                      current.map(item => item.id === editor.id ? { ...item, name: holder.full_name, rightsHolderId: holder.id } : item)
+                                    )}
+                                  />
+                                  <select
+                                    value={editor.role}
+                                    onChange={event => setReviewCoEditorDrafts(current =>
+                                      current.map(item => item.id === editor.id ? { ...item, role: event.target.value } : item)
+                                    )}
+                                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                                    aria-label="Den fælles medklippers rolle"
+                                  >
+                                    {REVIEW_ROLES.map(role => <option key={role} value={role}>{role}</option>)}
+                                  </select>
+                                  {!editor.rightsHolderId && editor.name.trim() && (
+                                    <p className="text-xs text-muted-foreground">Navnet er ikke valgt fra databasen og sendes derfor til kontrol hos DFKS.</p>
+                                  )}
+                                </div>
+                              ))}
+                              {reviewCoEditorDrafts.length > 0 && (
+                                <div className="space-y-1.5">
+                                  <Label htmlFor="review-series-self-share">Din egen vurderede arbejdsandel på de valgte afsnit (%)</Label>
+                                  <Input
+                                    id="review-series-self-share"
+                                    inputMode="decimal"
+                                    value={reviewSelfSharePercent}
+                                    onChange={event => setReviewSelfSharePercent(event.target.value)}
+                                    placeholder="Fx 40"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Der blev ikke fundet afsnit for sæsonen.</p>
+                    )}
+                    {reviewInlineFeedback && (
+                      <div className={`rounded-md border px-3 py-2 text-sm ${reviewInlineFeedback.type === "error" ? "border-red-200 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-200" : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200"}`}>
+                        {reviewInlineFeedback.text}
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-4">
                     <p className="text-sm">{t("works.review.confirmQuestion")}</p>
-                    <p className="text-xs text-muted-foreground">{t("works.review.shareExplanation")}</p>
+                    {reviewCoEditorDrafts.length > 0 && (
+                      <div className="space-y-2">
+                        {reviewCoEditorDrafts.map(editor => (
+                          <div key={editor.id} className="relative space-y-2 rounded-lg border bg-muted/20 p-3 pr-12">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-2 top-2 h-8 w-8"
+                              onClick={() => setReviewCoEditorDrafts(current => current.filter(item => item.id !== editor.id))}
+                              aria-label="Fjern medklipper"
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                            <Label>Medklipper</Label>
+                            <LocalRightsHolderAutocomplete
+                              value={editor.name}
+                              placeholder={t("works.namePlaceholder")}
+                              excludedIds={[
+                                rightsHolderId,
+                                ...currentReviewTask.existingCoEditors.map(item => item.rightsHolderId),
+                                ...reviewCoEditorDrafts.map(item => item.id === editor.id ? null : item.rightsHolderId),
+                              ]}
+                              onValueChange={value => {
+                                setReviewCoEditorDrafts(current =>
+                                  current.map(item => item.id === editor.id ? { ...item, name: value, rightsHolderId: null } : item)
+                                );
+                              }}
+                              onSelect={holder => {
+                                setReviewCoEditorDrafts(current =>
+                                  current.map(item => item.id === editor.id ? { ...item, name: holder.full_name, rightsHolderId: holder.id } : item)
+                                );
+                              }}
+                            />
+                            <select
+                              value={editor.role}
+                              onChange={event => {
+                                setReviewCoEditorDrafts(current =>
+                                  current.map(item => item.id === editor.id ? { ...item, role: event.target.value } : item)
+                                );
+                              }}
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                              aria-label="Medklipperens rolle"
+                            >
+                              {REVIEW_ROLES.map(role => <option key={role} value={role}>{role}</option>)}
+                            </select>
+                            {!editor.rightsHolderId && editor.name.trim() && (
+                              <p className="text-xs text-muted-foreground">Navnet er ikke valgt fra databasen og sendes derfor til kontrol hos DFKS.</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(currentReviewTask.existingCoEditors.length > 0 || reviewCoEditorDrafts.some(editor => editor.name.trim())) && (
+                      <div className="space-y-1.5">
+                        <Label htmlFor="review-self-share">Din egen vurderede arbejdsandel (%)</Label>
+                        <Input
+                          id="review-self-share"
+                          inputMode="decimal"
+                          value={reviewSelfSharePercent}
+                          onChange={event => setReviewSelfSharePercent(event.target.value)}
+                          placeholder="Fx 40"
+                        />
+                        <p className="text-xs text-muted-foreground">Skriv kun din egen andel. Procenten bliver først offentlig, når DFKS har afsluttet sagen.</p>
+                      </div>
+                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 w-full"
+                      onClick={() => setReviewCoEditorDrafts(current => [...current, emptyReviewCoEditor()])}
+                    >
+                      {currentReviewTask.existingCoEditors.length > 0 ? "Tilføj yderligere medklippere" : t("works.review.addCoeditor")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 w-full"
+                      disabled={reviewCoEditorDrafts.some(editor => editor.name === "Ukendt medklipper")}
+                      onClick={() => setReviewCoEditorDrafts(current => [...current, unknownReviewCoEditor()])}
+                    >
+                      Ukendt medklipper
+                    </Button>
+                    {reviewInlineFeedback && (
+                      <div className={`rounded-md border px-3 py-2 text-sm ${reviewInlineFeedback.type === "error" ? "border-red-200 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-200" : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200"}`}>
+                        {reviewInlineFeedback.text}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-              <DialogFooter className="gap-2 sm:justify-between">
-                <Button type="button" variant="ghost" onClick={() => setReviewDialogOpen(false)}>{t("works.review.continueLater")}</Button>
-                <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <DialogFooter>
+                <div className="flex w-full flex-col gap-2">
                   {currentReviewTask.kind === "episode_selection" ? (
-                    <Button type="button" onClick={() => void openReviewTaskEditor(currentReviewTask)}>{t("works.review.chooseEpisodes")}</Button>
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11 w-full"
+                        disabled={reviewEpisodesLoading || reviewEpisodesSaving || reviewSelectedEpisodes.length === 0}
+                        onClick={() => {
+                          setReviewCoEditorDrafts(current => [...current, emptyReviewCoEditor()]);
+                        }}
+                      >
+                        {reviewCoEditorDrafts.length > 0 ? "Tilføj yderligere medklippere" : "Tilføj medklipper"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11 w-full"
+                        disabled={reviewEpisodesLoading || reviewEpisodesSaving || reviewSelectedEpisodes.length === 0 || reviewCoEditorDrafts.some(editor => editor.name === "Ukendt medklipper")}
+                        onClick={() => setReviewCoEditorDrafts(current => [...current, unknownReviewCoEditor()])}
+                      >
+                        Ukendt medklipper
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11 w-full"
+                        disabled={reviewEpisodesLoading || reviewEpisodesSaving || reviewSelectedEpisodes.length === 0 || reviewCoEditorDrafts.some(editor => editor.name.trim())}
+                        onClick={() => void saveReviewEpisodes(currentReviewTask, "solo")}
+                      >
+                        Har klippet alene
+                      </Button>
+                      <Button
+                        type="button"
+                        className="h-11 w-full"
+                        disabled={reviewEpisodesLoading || reviewEpisodesSaving || reviewSelectedEpisodes.length === 0}
+                        onClick={() => void saveReviewEpisodes(currentReviewTask)}
+                      >
+                        {reviewEpisodesSaving ? "Gemmer…" : reviewCoEditorDrafts.some(editor => editor.name.trim()) ? "Gem afsnit og medklippere" : "Gem afsnitsvalg"}
+                      </Button>
+                    </>
                   ) : (
                     <>
-                      <Button type="button" variant="outline" disabled={collaborationSaving} onClick={() => void confirmSelectedAsSolo([currentReviewTask.workId])}>
+                      <Button type="button" variant="outline" className="h-11 w-full" disabled={collaborationSaving} onClick={() => handleReviewSoloAction(currentReviewTask)}>
                         {t("works.review.soloAction")}
                       </Button>
-                      <Button type="button" onClick={() => void openReviewTaskEditor(currentReviewTask)}>{t("works.review.addCoeditor")}</Button>
+                      <Button type="button" className="h-11 w-full" disabled={collaborationSaving} onClick={() => void saveReviewCoEditors(currentReviewTask)}>Gem</Button>
                     </>
                   )}
+                  <p className="pt-1 text-center text-xs text-muted-foreground">Du kan senere ændre dine valg under det enkelte værk.</p>
                 </div>
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(soloConflictTask)} onOpenChange={open => { if (!open) setSoloConflictTask(null); }}>
+        <DialogContent className="w-[min(480px,calc(100vw-2rem))]">
+          <DialogHeader>
+            <DialogTitle>Send konflikt til DFKS?</DialogTitle>
+            <DialogDescription>
+              Der er allerede registreret en eller flere medklippere på værket. Hvis du bekræfter, at du har klippet alene, oprettes der en sag, som DFKS skal gennemgå.
+            </DialogDescription>
+          </DialogHeader>
+          {soloConflictTask?.kind === "coeditor_review" && soloConflictTask.existingCoEditors.length > 0 && (
+            <div className="rounded-md border bg-muted/30 p-3 text-sm">
+              <p className="font-medium">Registrerede medklippere</p>
+              <ul className="mt-2 space-y-1 text-muted-foreground">
+                {soloConflictTask.existingCoEditors.map(editor => (
+                  <li key={editor.assignmentId}>{editor.name}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSoloConflictTask(null)}>Annuller</Button>
+            <Button
+              type="button"
+              disabled={collaborationSaving || soloConflictTask?.kind !== "coeditor_review"}
+              onClick={() => {
+                const task = soloConflictTask;
+                if (task?.kind !== "coeditor_review") return;
+                setSoloConflictTask(null);
+                void confirmSelectedAsSolo([task.workId], { fastReviewTaskKey: task.key });
+              }}
+            >
+              Bekræft og send til DFKS
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1421,7 +2088,7 @@ export default function MineVaerkerClient({
       {editAssignment && (
         <EditWorkModal
           isOpen={!!editAssignment}
-          onClose={() => { setResumeReviewAfterEdit(false); closeEdit(); }}
+          onClose={closeEditFromCancel}
           assignment={editAssignment}
           allAssignments={editScope === "season" ? editContextAssignments : allAssignments}
           editScope={editScope}
@@ -1454,6 +2121,7 @@ export default function MineVaerkerClient({
                   setReviewDialogOpen(true);
                 }
               });
+              setEditReturnContext("list");
               closeEdit();
             }
           }}
