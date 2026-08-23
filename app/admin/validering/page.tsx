@@ -966,9 +966,12 @@ setActiveField(fieldId)
             ? Number(formData.personalSupplement).toLocaleString("da-DK")
             : null
         // Ældre udtræk kan have mistet supplements-kildeteksten, fordi "kr. 1.251"
-        // tidligere blev afvist af kildevalideringen. Brug feltlabel + begge
-        // talformater som robuste kandidater, så linket stadig finder og markerer passagen.
+        // tidligere blev afvist af kildevalideringen. Prøv hele linjen først,
+        // så både label og beløb fremhæves; brug derefter smallere fallbacks.
         const personalSupplementNavigation = [
+            formattedPersonalSupplement ? `Personligt tillæg: kr. ${formattedPersonalSupplement}` : null,
+            formattedPersonalSupplement ? `Personligt tillæg kr. ${formattedPersonalSupplement}` : null,
+            formattedPersonalSupplement ? `Personligt tillæg: ${formattedPersonalSupplement} kr.` : null,
             supplementsHl,
             sources.supplements,
             "Personligt tillæg",
