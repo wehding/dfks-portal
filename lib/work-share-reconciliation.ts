@@ -19,6 +19,41 @@ export type ReconciledWorkCredit = {
   proposedPercent: number | null;
 };
 
+export type RightsHolderCreditMatch = {
+  rightsHolderId: string | null;
+  matchType: "existing" | "external_id" | "exact_name" | "unmatched" | "conflict";
+};
+
+export function isMissingWorkCreditCacheSchemaError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const row = error as { code?: unknown; message?: unknown };
+  const code = typeof row.code === "string" ? row.code : "";
+  const message = typeof row.message === "string" ? row.message.toLocaleLowerCase("da-DK") : "";
+  if (["42P01", "42883", "PGRST202", "PGRST205"].includes(code)) {
+    return message.includes("work_credit_source_syncs")
+      || message.includes("claim_work_credit_source_refresh")
+      || message.includes("replace_work_credit_evidence");
+  }
+  return false;
+}
+
+export function resolveRightsHolderCreditMatch(input: {
+  existingRightsHolderId?: string | null;
+  externalRightsHolderIds?: Iterable<string>;
+  exactNameRightsHolderIds?: Iterable<string>;
+}): RightsHolderCreditMatch {
+  if (input.existingRightsHolderId) return { rightsHolderId: input.existingRightsHolderId, matchType: "existing" };
+  const external = [...new Set(input.externalRightsHolderIds ?? [])];
+  if (external.length > 1) return { rightsHolderId: null, matchType: "conflict" };
+  const externalId = external[0] ?? null;
+  const exactNames = [...new Set(input.exactNameRightsHolderIds ?? [])];
+  if (externalId && exactNames.length === 1 && externalId !== exactNames[0]) return { rightsHolderId: null, matchType: "conflict" };
+  if (externalId) return { rightsHolderId: externalId, matchType: "external_id" };
+  if (exactNames.length > 1) return { rightsHolderId: null, matchType: "conflict" };
+  if (exactNames[0]) return { rightsHolderId: exactNames[0], matchType: "exact_name" };
+  return { rightsHolderId: null, matchType: "unmatched" };
+}
+
 export function normalizeCreditName(value: string) {
   return value
     .normalize("NFKD")
@@ -125,4 +160,3 @@ export function renderInvitationTemplate(template: string, values: {
     .replaceAll("{værker}", values.worksText)
     .replaceAll("{værk}", values.primaryWork);
 }
-

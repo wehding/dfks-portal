@@ -11,10 +11,26 @@ import { isCompleteShareResolution, normalizeSharePercent } from "@/lib/work-sha
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { markCollaborationReviewsCoeditorsReported } from "@/lib/server/work-collaboration-reviews";
-import { buildReconciledWorkCredits, refreshWorkCreditEvidence } from "@/lib/server/work-credit-evidence";
+import { buildReconciledWorkCredits, getWorkCreditSourceStates, matchWorkCreditsToRightsHolders, refreshWorkCreditEvidence } from "@/lib/server/work-credit-evidence";
 import { normalizeCreditName, proposeWorkShareCompromise } from "@/lib/work-share-reconciliation";
 import { normalizeSingleEmail } from "@/lib/email/mime";
 import { countUniqueWorkShareTasks } from "@/lib/work-share-task-count";
+
+const ADMIN_SHARE_CASE_SELECT = "id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,source_tags,source_details,excluded_at,last_reminder_sent_at,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name,email,user_id,invite_sent_at))";
+type AdminShareCaseRecord = Record<string, unknown> & { work_id: string; season_number: number | null; episode_number: number | null };
+
+async function attachCreditSourceStates(db: ReturnType<typeof createServiceClient>, orgId: string, cases: AdminShareCaseRecord[]) {
+  const workIds = [...new Set(cases.map(row => String(row.work_id ?? "")).filter(Boolean))];
+  const states = await getWorkCreditSourceStates(db, { orgId, workIds });
+  return cases.map(row => ({ ...row, credit_source_states: states.get(row.work_id) ?? [] }));
+}
+
+async function fetchAdminShareCase(db: ReturnType<typeof createServiceClient>, orgId: string, caseId: string) {
+  const { data, error } = await db.from("work_share_cases").select(ADMIN_SHARE_CASE_SELECT)
+    .eq("id", caseId).eq("org_id", orgId).maybeSingle();
+  if (error || !data) throw new Error(error?.message ?? "Fordelingssagen findes ikke.");
+  return (await attachCreditSourceStates(db, orgId, [data as unknown as AdminShareCaseRecord]))[0];
+}
 
 async function shareAdminContext() {
   const session = await createClient();
@@ -183,11 +199,23 @@ export async function fetchAdminShareCases() {
   const admin = await assertAdminRole(session, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
   const db = createServiceClient();
-  const { data, error } = await db.from("work_share_cases")
-    .select("id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,source_tags,source_details,excluded_at,last_reminder_sent_at,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name,email,user_id,invite_sent_at))")
-    .eq("org_id", admin.orgId).neq("status", "resolved").order("created_at");
-  if (error) throw new Error(error.message);
-  return { success: true as const, cases: data ?? [] };
+  const [{ data, error }, { data: disputes, error: disputeError }] = await Promise.all([
+    db.from("work_share_cases").select(ADMIN_SHARE_CASE_SELECT)
+      .eq("org_id", admin.orgId).neq("status", "resolved").order("created_at"),
+    db.from("member_work_collaboration_reviews")
+      .select("id,work_id,works(title,season_number,episode_number),rettighedshavere(full_name)")
+      .eq("org_id", admin.orgId).eq("status", "disputed"),
+  ]);
+  if (error || disputeError) throw new Error(error?.message ?? disputeError?.message ?? "Arbejdsandelene kunne ikke hentes.");
+  const cases = await attachCreditSourceStates(db, admin.orgId, (data ?? []) as unknown as AdminShareCaseRecord[]);
+  const references = cases.map(row => ({
+    work_id: String(row.work_id), season_number: row.season_number as number | null, episode_number: row.episode_number as number | null,
+  }));
+  for (const row of disputes ?? []) {
+    const work = row.works as unknown as { season_number?: number | null; episode_number?: number | null } | null;
+    references.push({ work_id: row.work_id, season_number: work?.season_number ?? null, episode_number: work?.episode_number ?? null });
+  }
+  return { success: true as const, cases, disputes: disputes ?? [], count: countUniqueWorkShareTasks(references) };
 }
 
 export async function countAdminShareTasks() {
@@ -209,40 +237,69 @@ export async function countAdminShareTasks() {
   return { success: true as const, count: countUniqueWorkShareTasks(references), shareCaseCount: cases?.length ?? 0, disputeCount: disputes?.length ?? 0 };
 }
 
-export async function refreshAdminShareCaseCredits(caseId: string) {
+export async function refreshAdminShareCaseCredits(caseId: string, force = false) {
   const { admin, db } = await shareAdminContext();
   const { data: shareCase } = await db.from("work_share_cases").select("id,work_id").eq("id", caseId).eq("org_id", admin.orgId).maybeSingle();
   if (!shareCase) throw new Error("Fordelingssagen findes ikke.");
-  await refreshWorkCreditEvidence(db, { orgId: admin.orgId, workId: shareCase.work_id });
-  const credits = await buildReconciledWorkCredits(db, { orgId: admin.orgId, workId: shareCase.work_id, caseId });
-  const { data: participants } = await db.from("work_share_participants").select("id,proposed_name,rights_holder_id").eq("case_id", caseId);
+  const refresh = await refreshWorkCreditEvidence(db, { orgId: admin.orgId, workId: shareCase.work_id, force });
+  const credits = await matchWorkCreditsToRightsHolders(db, {
+    orgId: admin.orgId,
+    credits: await buildReconciledWorkCredits(db, { orgId: admin.orgId, workId: shareCase.work_id, caseId }),
+  });
+  const { data: participants } = await db.from("work_share_participants")
+    .select("id,proposed_name,rights_holder_id,source_tags,source_details").eq("case_id", caseId).is("excluded_at", null);
   const participantByHolder = new Map((participants ?? []).filter(row => row.rights_holder_id).map(row => [row.rights_holder_id, row]));
   const participantByName = new Map((participants ?? []).filter(row => row.proposed_name).map(row => [normalizeCreditName(row.proposed_name ?? ""), row]));
   for (const credit of credits) {
-    const matchedParticipant = (credit.rightsHolderId ? participantByHolder.get(credit.rightsHolderId) : null)
-      ?? participantByName.get(normalizeCreditName(credit.name));
+    const holderParticipant = credit.rightsHolderId ? participantByHolder.get(credit.rightsHolderId) : null;
+    const nameParticipant = participantByName.get(normalizeCreditName(credit.name));
+    const matchedParticipant = holderParticipant ?? nameParticipant;
+    const sourceTags = [...new Set([...(matchedParticipant?.source_tags ?? []), ...credit.sources])];
+    const details = { externalPersonIds: credit.externalPersonIds, roles: credit.roles, matchType: credit.matchType };
     if (matchedParticipant) {
+      if (holderParticipant && nameParticipant && holderParticipant.id !== nameParticipant.id && !nameParticipant.rights_holder_id) {
+        const { error: mergeError } = await db.from("work_share_participants").update({
+          source_tags: sourceTags, source_details: details, updated_at: new Date().toISOString(),
+        }).eq("id", holderParticipant.id).eq("org_id", admin.orgId);
+        if (mergeError) throw new Error(mergeError.message);
+        const { error: excludeError } = await db.from("work_share_participants").update({
+          excluded_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq("id", nameParticipant.id).eq("org_id", admin.orgId);
+        if (excludeError) throw new Error(excludeError.message);
+        continue;
+      }
+      const matchUpdate = matchedParticipant.rights_holder_id || !credit.rightsHolderId || credit.matchType === "conflict"
+        ? {}
+        : { rights_holder_id: credit.rightsHolderId, relationship_status: "pending" };
       const { error: updateError } = await db.from("work_share_participants").update({
-        source_tags: credit.sources,
-        source_details: { externalPersonIds: credit.externalPersonIds, roles: credit.roles },
+        ...matchUpdate,
+        source_tags: sourceTags,
+        source_details: details,
         updated_at: new Date().toISOString(),
       }).eq("id", matchedParticipant.id).eq("org_id", admin.orgId);
       if (updateError) throw new Error(updateError.message);
       continue;
     }
-    const { error } = await db.from("work_share_participants").insert({
+    const { data: insertedParticipant, error } = await db.from("work_share_participants").insert({
       case_id: caseId,
       org_id: admin.orgId,
       work_id: shareCase.work_id,
+      rights_holder_id: credit.matchType === "conflict" ? null : credit.rightsHolderId,
       proposed_name: credit.name,
       role: normalizeWorkEditorRole(credit.roles[0] ?? "Klipper"),
-      relationship_status: "pending_match",
+      relationship_status: credit.rightsHolderId && credit.matchType !== "conflict" ? "pending" : "pending_match",
       source_tags: credit.sources,
-      source_details: { externalPersonIds: credit.externalPersonIds, roles: credit.roles },
-    });
+      source_details: details,
+    }).select("id,proposed_name,rights_holder_id,source_tags,source_details").single();
     if (error) throw new Error(error.message);
+    if (insertedParticipant.rights_holder_id) {
+      participantByHolder.set(insertedParticipant.rights_holder_id, insertedParticipant);
+    }
+    if (insertedParticipant.proposed_name) {
+      participantByName.set(normalizeCreditName(insertedParticipant.proposed_name), insertedParticipant);
+    }
   }
-  return { success: true as const, credits: await buildReconciledWorkCredits(db, { orgId: admin.orgId, workId: shareCase.work_id, caseId }) };
+  return { success: true as const, refresh, case: await fetchAdminShareCase(db, admin.orgId, caseId) };
 }
 
 export async function excludeShareParticipant(participantId: string) {

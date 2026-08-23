@@ -67,19 +67,27 @@ async function tmdbFetch(endpointPath: string) {
   throw new Error("TMDB kunne ikke kontaktes");
 }
 
-export async function searchTMDB(query: string) {
-  if (!process.env.TMDB_API_KEY) return [];
+export async function searchTMDBWithStatus(query: string) {
+  if (!process.env.TMDB_API_KEY) {
+    return { success: false as const, error: "TMDB_API_KEY mangler", results: [] as TMDBSearchItem[] };
+  }
   try {
     const res = await tmdbFetch(`/search/multi?query=${encodeURIComponent(query)}&language=da-DK`);
     if (!res.ok) throw new Error(`TMDB API status ${res.status}`);
     const data = await res.json() as TMDBSearchResponse;
-    return (data.results || [])
+    const results = (data.results || [])
       .filter(item => item.media_type === "movie" || item.media_type === "tv")
       .sort((a, b) => yearFromTmdbItem(b) - yearFromTmdbItem(a));
+    return { success: true as const, results };
   } catch (err) {
     console.error("TMDB search error:", err);
-    return [];
+    return { success: false as const, error: "Kunne ikke søge i TMDB", results: [] as TMDBSearchItem[] };
   }
+}
+
+export async function searchTMDB(query: string) {
+  const result = await searchTMDBWithStatus(query);
+  return result.results;
 }
 
 function yearFromTmdbItem(item: TMDBSearchItem) {

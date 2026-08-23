@@ -2,10 +2,24 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   normalizeCreditName,
+  isMissingWorkCreditCacheSchemaError,
   proposeWorkShareCompromise,
   reconcileWorkCredits,
+  resolveRightsHolderCreditMatch,
   renderInvitationTemplate,
 } from "../lib/work-share-reconciliation";
+
+test("manglende kildecache genkendes uden at skjule andre databasefejl", () => {
+  assert.equal(isMissingWorkCreditCacheSchemaError({
+    code: "PGRST205",
+    message: "Could not find the table 'public.work_credit_source_syncs' in the schema cache",
+  }), true);
+  assert.equal(isMissingWorkCreditCacheSchemaError({
+    code: "PGRST202",
+    message: "Could not find the function public.claim_work_credit_source_refresh in the schema cache",
+  }), true);
+  assert.equal(isMissingWorkCreditCacheSchemaError({ code: "42501", message: "permission denied" }), false);
+});
 import {
   MEMBER_WORK_INVITE_TEXT,
   NON_MEMBER_WORK_INVITE_TEXT,
@@ -31,6 +45,30 @@ test("en portalprofil opsuger et sikkert navnematch", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].rightsHolderId, "holder-1");
   assert.deepEqual(rows[0].sources.sort(), ["dfi", "local"]);
+});
+
+test("entydigt navn eller eksternt id forbindes automatisk", () => {
+  assert.deepEqual(resolveRightsHolderCreditMatch({ exactNameRightsHolderIds: ["camilla"] }), {
+    rightsHolderId: "camilla", matchType: "exact_name",
+  });
+  assert.deepEqual(resolveRightsHolderCreditMatch({ externalRightsHolderIds: ["simon"] }), {
+    rightsHolderId: "simon", matchType: "external_id",
+  });
+});
+
+test("uenige eller flere identiteter giver konflikt", () => {
+  assert.deepEqual(resolveRightsHolderCreditMatch({ externalRightsHolderIds: ["a", "b"], exactNameRightsHolderIds: ["a"] }), {
+    rightsHolderId: null, matchType: "conflict",
+  });
+  assert.deepEqual(resolveRightsHolderCreditMatch({ externalRightsHolderIds: ["a"], exactNameRightsHolderIds: ["b"] }), {
+    rightsHolderId: null, matchType: "conflict",
+  });
+  assert.deepEqual(resolveRightsHolderCreditMatch({ exactNameRightsHolderIds: ["a", "b"] }), {
+    rightsHolderId: null, matchType: "conflict",
+  });
+  assert.deepEqual(resolveRightsHolderCreditMatch({ externalRightsHolderIds: ["a"], exactNameRightsHolderIds: ["a", "b"] }), {
+    rightsHolderId: "a", matchType: "external_id",
+  });
 });
 
 test("kompromisforslaget summerer præcist til 100 minus reserve", () => {
