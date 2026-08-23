@@ -1240,8 +1240,8 @@ setActiveField(fieldId)
 
                                 <Separator />
 
-                                <div className="grid items-start gap-3 sm:grid-cols-2">
-                                    <div className="order-2 space-y-3">
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <div className="order-2 grid grid-rows-[auto_1fr] gap-3">
                                         <F
                                             src={fieldSrc("producerName")}
                                             label={t("admin.validation.producer")}
@@ -1341,7 +1341,7 @@ setActiveField(fieldId)
                                         </F>
                                     </div>
 
-                                    <div className="order-1">
+                                    <div className="order-1 grid grid-rows-[auto_1fr] gap-3">
                                         {formData.rightsHolderName !== undefined && (
                                             <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
                                             <Input
@@ -1370,7 +1370,7 @@ setActiveField(fieldId)
                                             )}
                                             </F>
                                         )}
-                                        <div className="mt-3 w-fit max-w-full">
+                                        <div className="h-full [&>div]:h-full">
                                             <F src={fieldSrc("gender")} label={t("admin.validation.gender")}>
                                                 <Select value={formData.gender ?? ""} onValueChange={(v) => setField("gender", v)}>
                                                     <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
