@@ -1294,7 +1294,7 @@ setActiveField(fieldId)
                                     )}
                                         </F>
 
-                                        <F label="Moderselskab (valgfrit)">
+                                        <F src="manuel" label="Moderselskab (valgfrit)">
                                     {parentExplicitNone ? (
                                         <div className="flex items-center gap-2 rounded border px-3 py-1.5 text-xs text-muted-foreground bg-muted/30">
                                             <span className="flex-1">Ingen moderselskab</span>
@@ -1370,7 +1370,7 @@ setActiveField(fieldId)
                                             )}
                                             </F>
                                         )}
-                                        <div className="mt-3">
+                                        <div className="mt-3 w-fit max-w-full">
                                             <F src={fieldSrc("gender")} label={t("admin.validation.gender")}>
                                                 <Select value={formData.gender ?? ""} onValueChange={(v) => setField("gender", v)}>
                                                     <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
