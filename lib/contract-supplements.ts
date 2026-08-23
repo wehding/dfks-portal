@@ -13,6 +13,11 @@ function resolveSupplementUnit(data: Record<string, unknown>, sourceText: unknow
   return data.salaryUnit === "weekly" ? "pr. uge" : null
 }
 
+function isEmployeePaidCost(supplement: ContractSupplement): boolean {
+  const evidence = `${supplement.note ?? ""} ${supplement.sourceText ?? ""}`
+  return /(?:trækkes|trukket|fratrækkes|fratrukket|modregnes|modregnet)[\s\S]{0,60}(?:løn|honorar|vederlag)|(?:egenbetaling|egen\s+betaling)|(?:medarbejderen|leverandøren|lønmodtageren)\s+(?:skal\s+)?betale|betales\s+af\s+(?:medarbejderen|leverandøren|lønmodtageren)/i.test(evidence)
+}
+
 /**
  * Backfills the structured supplement when an older/partial AI result found the
  * source clause but omitted otherSupplements[]. The narrow phrase match avoids
@@ -22,6 +27,7 @@ export function resolveOtherSupplements(data: Record<string, unknown>): Contract
   if (Array.isArray(data.otherSupplements) && data.otherSupplements.length > 0) {
     return data.otherSupplements
       .filter(item => item && typeof item === "object")
+      .filter(item => !isEmployeePaidCost(item as ContractSupplement))
       .map(item => {
         const supplement = item as ContractSupplement
         const evidence = `${supplement.note ?? ""} ${supplement.sourceText ?? ""}`

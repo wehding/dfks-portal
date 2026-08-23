@@ -1,4 +1,4 @@
-export const CONTRACT_IMPORT_PROMPT_VERSION = "2026-08-credit-clauses-v3";
+export const CONTRACT_IMPORT_PROMPT_VERSION = "2026-08-supplement-deductions-v4";
 export const CONTRACT_IMPORT_SCHEMA_VERSION = "2026-08-v3";
 export const CONTRACT_IMPORT_MAX_ATTEMPTS = 5;
 export const CONTRACT_IMPORT_LEASE_MINUTES = 15;

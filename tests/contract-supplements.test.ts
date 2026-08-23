@@ -21,6 +21,18 @@ test("bevarer en eksplicit enhed på et tillæg", () => {
   }), [{ category: "rejsetillaeg", amount: 500, unit: "engangsbeløb" }])
 })
 
+test("filtrerer medarbejderbetalte udgifter og lønfradrag fra tillæg", () => {
+  assert.deepEqual(resolveOtherSupplements({
+    otherSupplements: [{
+      category: "diaeter",
+      amount: 200,
+      unit: "pr. uge",
+      note: "Kantineordning",
+      sourceText: "Satsen er kr. 200 per uge, der vil blive trukket i Leverandørens løn/honorar.",
+    }],
+  }), [])
+})
+
 test("retter ældre kategorisering af fast over- og forskudttidstillæg", () => {
   assert.deepEqual(resolveOtherSupplements({
     otherSupplements: [{
