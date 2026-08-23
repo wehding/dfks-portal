@@ -43,6 +43,18 @@ const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
 }
 const OTHER_SUPPLEMENT_CATEGORIES = Object.keys(OTHER_SUPPLEMENT_LABELS)
 
+function resolvePersonalSupplement(data: Record<string, unknown>) {
+    const personalSupplement = data.personalSupplement
+    const legacySupplement = data.loentillaeg
+    const hasPersonalSupplement = personalSupplement !== null && personalSupplement !== undefined && personalSupplement !== ""
+    const hasLegacySupplement = legacySupplement !== null && legacySupplement !== undefined && legacySupplement !== ""
+
+    return {
+        value: hasPersonalSupplement ? personalSupplement : hasLegacySupplement ? legacySupplement : "",
+        conflict: hasPersonalSupplement && hasLegacySupplement && Number(personalSupplement) !== Number(legacySupplement),
+    }
+}
+
 const ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
 const BUCKET = "kontrakter"
 
@@ -408,6 +420,7 @@ function AdminValideringPageInner() {
             // Copydan og royalty: kun fra AI-udtræk — ingen hardcoded overenskomst-lister
             const impliedByCopydan = !!ed.copydan
             const impliedByRoyalty = !!ed.royalty
+            const personalSupplement = resolvePersonalSupplement(ed)
 
             setFormData({
                 producerName: ed.producerName ?? ed.employerName ?? "",
@@ -432,7 +445,8 @@ function AdminValideringPageInner() {
                 endDate: ed.endDate ?? "",
                 pensionPercent: ed.pensionPercent ?? "",
                 pensionSupplement: ed.pensionSupplement ?? "",
-                personalSupplement: ed.personalSupplement ?? "",
+                personalSupplement: personalSupplement.value,
+                personalSupplementConflict: personalSupplement.conflict,
                 otherSupplements: Array.isArray(ed.otherSupplements) ? ed.otherSupplements : [],
                 workingWeeks: ed.workingWeeks ?? "",
                 prolongationWeeks: ed.prolongationWeeks ?? "",
@@ -660,6 +674,8 @@ function AdminValideringPageInner() {
         // Ingen overenskomst (kun funktionærloven): ingen helligdag/BETA
         const ingenOverenskomst = !overenskomst || overenskomst === "ingen"
 
+        const personalSupplement = resolvePersonalSupplement(ed)
+
         return {
             producerName: (() => {
                 const raw = ed.employerName ?? ed.producerName ?? ed.parentCompanyName ?? ""
@@ -687,7 +703,8 @@ function AdminValideringPageInner() {
             endDate:                       ed.endDate ?? "",
             pensionPercent:                ed.pensionPercent ?? (impliedDe4 ? 9.5 : ""),
             pensionSupplement:             ed.pensionSupplement ?? "",
-            personalSupplement:            ed.personalSupplement ?? "",
+            personalSupplement:            personalSupplement.value,
+            personalSupplementConflict:    personalSupplement.conflict,
             otherSupplements:              Array.isArray(ed.otherSupplements) ? ed.otherSupplements : [],
             workingWeeks:                  ed.workingWeeks ?? "",
             prolongationWeeks:             ed.prolongationWeeks ?? "",
@@ -1425,22 +1442,41 @@ setActiveField(fieldId)
                                         <Input type="number" value={String(formData.pensionSupplement ?? "")} onChange={(e) => setField("pensionSupplement", e.target.value)} placeholder="0" />
                                     </F>
                                 </div>
-                                <F src={fieldSrc("personalSupplement")} label={<>{t("admin.validation.personalSupplement")}<SourceBtn quote={supplementsHl} active={activeField === "supplements"} onClick={() => activateSource("supplements", supplementsHl)} /></>}>
-                                    <Input type="number" value={String(formData.personalSupplement ?? "")} onChange={(e) => setField("personalSupplement", e.target.value)} placeholder="0" />
-                                </F>
                                 <div className="space-y-2">
-                                    <Label className="text-xs">Andre tillæg</Label>
+                                    <Label className="text-xs">Tillæg i kontrakten</Label>
+                                    {formData.personalSupplement !== "" && formData.personalSupplement !== null && formData.personalSupplement !== undefined && (
+                                        <div className="rounded border bg-muted/30 p-2 space-y-1.5">
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant="outline" className="text-[11px] shrink-0">Personligt tillæg</Badge>
+                                                <span className="text-sm font-medium">{String(formData.personalSupplement)} kr.</span>
+                                                <SourceBtn quote={supplementsHl} active={activeField === "supplements"} onClick={() => activateSource("supplements", supplementsHl)} />
+                                                <button type="button" aria-label="Fjern personligt tillæg" className="ml-auto text-muted-foreground hover:text-destructive transition-colors" onClick={() => {
+                                                    setField("personalSupplement", "")
+                                                    setFormData(prev => ({ ...prev, personalSupplementConflict: false }))
+                                                }}><X className="h-3.5 w-3.5" /></button>
+                                            </div>
+                                            {formData.personalSupplementConflict && (
+                                                <p className="text-[11px] text-amber-700 dark:text-amber-300">AI-felterne personalSupplement og loentillaeg er forskellige. Kontrollér beløbet mod kontrakten.</p>
+                                            )}
+                                            <Input type="number" value={String(formData.personalSupplement)} placeholder="Beløb" className="h-7 text-xs" onChange={(e) => {
+                                                setField("personalSupplement", e.target.value)
+                                                setFormData(prev => ({ ...prev, personalSupplementConflict: false }))
+                                            }} />
+                                        </div>
+                                    )}
                                     {(Array.isArray(formData.otherSupplements) ? formData.otherSupplements : []).map((s: Record<string, unknown>, i: number) => {
                                         const sUnit = s.unit != null ? String(s.unit) : null
                                         const sNote = s.note != null ? String(s.note) : null
                                         const sSrc = s.sourceText != null ? String(s.sourceText) : null
+                                        const sClauseId = s.clauseId != null ? String(s.clauseId) : null
+                                        const sNavigationSource = sSrc ?? (sClauseId ? sources.otherSupplements : null)
                                         return (
                                         <div key={i} className="rounded border bg-muted/30 p-2 space-y-1.5">
                                             <div className="flex items-center gap-2">
                                                 <Badge variant="outline" className="text-[11px] shrink-0">{OTHER_SUPPLEMENT_LABELS[s.category as string] ?? String(s.category)}</Badge>
                                                 {s.amount != null && <span className="text-sm font-medium">{String(s.amount)} kr.</span>}
                                                 {sUnit && <span className="text-xs text-muted-foreground">{sUnit}</span>}
-                                                {sSrc && <SourceBtn quote={sSrc} active={activeField === `otherSupplements_${i}`} onClick={() => activateSource(`otherSupplements_${i}`, sSrc)} />}
+                                                <SourceBtn quote={sNavigationSource} active={activeField === `otherSupplements_${i}`} onClick={() => activateSource(`otherSupplements_${i}`, sNavigationSource)} />
                                                 <button type="button" className="ml-auto text-muted-foreground hover:text-destructive transition-colors" onClick={() => {
                                                     const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
                                                     arr.splice(i, 1)
@@ -1471,6 +1507,10 @@ setActiveField(fieldId)
                                         </div>
                                         )
                                     })}
+                                    {(formData.personalSupplement === "" || formData.personalSupplement === null || formData.personalSupplement === undefined)
+                                        && (!Array.isArray(formData.otherSupplements) || formData.otherSupplements.length === 0) && (
+                                        <p className="text-xs text-muted-foreground">Ingen tillæg fundet i kontrakten.</p>
+                                    )}
                                     <button type="button" className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2" onClick={() => {
                                         const arr = Array.isArray(formData.otherSupplements) ? [...formData.otherSupplements] : []
                                         arr.push({ category: "fast_uspecificeret", amount: null, unit: "pr. uge", note: "", sourceText: null })
