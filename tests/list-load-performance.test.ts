@@ -87,12 +87,20 @@ test("Kontraktgennemgang bruger smal side og målrettede medarbejderopslag", asy
 
 test("Producentlisten bruger pagineret RPC uden skjulte rettighedshaver-id'er", async () => {
   const route = await source("app/api/admin/producers/route.ts");
-  const migration = await source("supabase/migrations/20260822183000_paginated_admin_producers.sql");
+  const client = await source("app/admin/producenter/producer-list-client.tsx");
+  const migration = await source("supabase/migrations/20260823020711_fix_producer_summary_filters_and_counts.sql");
   assert.match(route, /list_admin_producer_summaries/);
+  assert.match(route, /association_filter:[^\n]*associationGroup/);
+  assert.match(route, /producer_type_filter:[^\n]*producerType/);
+  assert.match(client, /params\.set\("associationGroup", associationGroup\)/);
+  assert.match(client, /params\.set\("producerType", producerType\)/);
   assert.match(migration, /revoke all on function public\.list_admin_producer_summaries/);
   assert.match(migration, /grant execute[\s\S]*service_role/);
   assert.doesNotMatch(migration, /rights_holder_ids/);
   assert.match(migration, /limit least\(greatest\(page_size, 1\), 100\)/);
+  assert.match(migration, /contract_aggregates/);
+  assert.match(migration, /work_aggregates/);
+  assert.match(migration, /'summary'/);
 });
 
 test("medlemsindbakken henter først beskedindhold ved åbning", async () => {

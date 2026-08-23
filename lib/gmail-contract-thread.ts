@@ -3,7 +3,7 @@ import "server-only";
 import { getGmailThread } from "@/lib/gmail-contract-client";
 import { GMAIL_CONTRACT_MAILBOX, isGmailDraftMessage, parseGmailContractMessage } from "@/lib/gmail-contract-import-core";
 import { createServiceClient } from "@/lib/supabase/service";
-import { mapWithConcurrency } from "@/lib/gmail-contract-thread-core";
+import { mapWithConcurrency, roundRobinByOrganisation } from "@/lib/gmail-contract-thread-core";
 
 export type ContractReviewThreadMessage = {
   id: string;
@@ -82,13 +82,27 @@ function resolveAlias() {
 export async function syncOpenContractReviewThreads(limit = 100) {
   const db = createServiceClient();
   const capped = Math.max(1, Math.min(100, limit));
-  const { data: sources, error } = await db.from("gmail_contract_messages")
-    .select("id,org_id,mailbox,gmail_thread_id,thread_synced_at,received_at")
-    .not("gmail_thread_id", "is", null)
-    .order("thread_synced_at", { ascending: true, nullsFirst: true })
-    .order("received_at", { ascending: true, nullsFirst: true })
-    .limit(500);
-  if (error) throw new Error(error.message);
+  const { data: openReviews, error: openReviewError } = await db.from("contract_reviews")
+    .select("org_id")
+    .not("gmail_contract_message_id", "is", null)
+    .neq("status", "afsluttet")
+    .neq("intake_status", "deleted")
+    .limit(5_000);
+  if (openReviewError) throw new Error(openReviewError.message);
+  const orgIds = [...new Set((openReviews ?? []).map(review => review.org_id))];
+  const sourceResults = await mapWithConcurrency(orgIds, 5, async orgId => {
+    const { data, error } = await db.from("gmail_contract_messages")
+      .select("id,org_id,mailbox,gmail_thread_id,thread_synced_at,received_at")
+      .eq("org_id", orgId)
+      .not("gmail_thread_id", "is", null)
+      .order("thread_synced_at", { ascending: true, nullsFirst: true })
+      .order("received_at", { ascending: true, nullsFirst: true })
+      .limit(capped);
+    if (error) throw new Error(error.message);
+    return data ?? [];
+  });
+  const sources = sourceResults.flatMap(result => result.status === "fulfilled" ? result.value : []);
+  if (sourceResults.some(result => result.status === "rejected")) throw new Error("Gmail-trådkandidater kunne ikke hentes");
   const unique = new Map<string, { orgId: string; threadId: string; sourceIds: string[] }>();
   for (const source of sources ?? []) {
     const key = `${source.org_id}:${source.mailbox}:${source.gmail_thread_id}`;
@@ -96,7 +110,7 @@ export async function syncOpenContractReviewThreads(limit = 100) {
     if (existing) existing.sourceIds.push(source.id);
     else unique.set(key, { orgId: source.org_id, threadId: source.gmail_thread_id!, sourceIds: [source.id] });
   }
-  const candidates = [...unique.values()].slice(0, capped);
+  const candidates = roundRobinByOrganisation([...unique.values()], capped);
   const sourceIds = candidates.flatMap(candidate => candidate.sourceIds);
   if (!sourceIds.length) return { attempted: 0, succeeded: 0, failed: 0 };
   const { data: reviews, error: reviewError } = await db.from("contract_reviews")

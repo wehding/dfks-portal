@@ -5,7 +5,7 @@ import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onbo
 import { isPublicPath } from "@/lib/auth/public-paths"
 import { readActiveOrgIdFromRequest } from "@/lib/active-org-context"
 import { resolveAppAccessContext } from "@/lib/app-access-context"
-import { applyAuthResponse, PRIVATE_AUTH_RESPONSE_HEADERS, type PendingAuthCookie } from "@/lib/supabase/auth-response"
+import { applyAuthResponse, expiredSupabaseAuthCookies, isRecoverableExpiredSession, PRIVATE_AUTH_RESPONSE_HEADERS, type PendingAuthCookie } from "@/lib/supabase/auth-response"
 
 export async function proxy(req: NextRequest) {
     const { pathname } = req.nextUrl
@@ -70,7 +70,21 @@ export async function proxy(req: NextRequest) {
     )
 
     // Opdater session (vigtigt — må ikke fjernes)
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (isRecoverableExpiredSession(authError)) {
+        const expiredCookies = expiredSupabaseAuthCookies(
+            req.cookies.getAll().map(cookie => cookie.name),
+            process.env.NEXT_PUBLIC_SUPABASE_URL,
+        )
+        for (const cookie of expiredCookies) req.cookies.set(cookie.name, "")
+        pendingAuthCookies = [...pendingAuthCookies, ...expiredCookies]
+        const url = req.nextUrl.clone()
+        url.pathname = "/"
+        url.search = ""
+        url.searchParams.set("notice", "session-expired")
+        return withAuthState(NextResponse.redirect(url))
+    }
 
     // Beskyttede stier kræver login
     const isProtected =

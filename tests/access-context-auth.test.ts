@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NextResponse } from "next/server";
-import { applyAuthResponse, PRIVATE_AUTH_RESPONSE_HEADERS } from "../lib/supabase/auth-response";
+import { applyAuthResponse, expiredSupabaseAuthCookies, isRecoverableExpiredSession, PRIVATE_AUTH_RESPONSE_HEADERS, supabaseAuthCookiePrefix } from "../lib/supabase/auth-response";
 import { classifyRequestAuthFailure, verifyRequestUser } from "../lib/supabase/request-auth";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -73,4 +73,26 @@ test("Supabase-responsens obligatoriske headers bevares", () => {
 
   assert.equal(response.headers.get("X-Auth-Test"), "bevaret");
   assert.equal(response.headers.get("Cache-Control"), PRIVATE_AUTH_RESPONSE_HEADERS["Cache-Control"]);
+});
+
+test("udløbne refresh-tokenfejl kan ryddes uden at skjule driftsfejl", () => {
+  assert.equal(isRecoverableExpiredSession({ code: "refresh_token_not_found" }), true);
+  assert.equal(isRecoverableExpiredSession({ message: "Invalid Refresh Token: Refresh Token Not Found" }), true);
+  assert.equal(isRecoverableExpiredSession({ status: 503, message: "Auth unavailable" }), false);
+});
+
+test("kun det aktuelle Supabase-projekts auth-cookies udløber", () => {
+  const url = "https://project-ref.supabase.co";
+  assert.equal(supabaseAuthCookiePrefix(url), "sb-project-ref-auth-token");
+  const expired = expiredSupabaseAuthCookies([
+    "sb-project-ref-auth-token.0",
+    "sb-project-ref-auth-token.1",
+    "sb-other-auth-token",
+    "dfks_active_org",
+  ], url);
+  assert.deepEqual(expired.map(cookie => cookie.name), [
+    "sb-project-ref-auth-token.0",
+    "sb-project-ref-auth-token.1",
+  ]);
+  assert.ok(expired.every(cookie => cookie.options.maxAge === 0));
 });

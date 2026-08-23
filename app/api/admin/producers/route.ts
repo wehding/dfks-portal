@@ -80,6 +80,10 @@ export async function GET(req: NextRequest) {
   const requestedPageSize = Number.parseInt(searchParams.get("pageSize") ?? "20") || 20;
   const pageSize = [20, 50, 100].includes(requestedPageSize) ? requestedPageSize : 20;
 
+  if (searchParams.get("view") === "editor-options") {
+    return NextResponse.json({ error: "Brug de afgrænsede producent-endpoints" }, { status: 410 });
+  }
+
   // The normal list uses a narrow, paginated database function. The legacy
   // payload remains temporarily available only while the editor is opened.
   if (searchParams.get("view") !== "editor-options") {
@@ -100,12 +104,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Producenter kunne ikke hentes" }, { status: 500 });
     }
     timer.mark("list");
-    const payload = (result.data ?? {}) as { rows?: unknown[]; filteredCount?: number; totalCount?: number; page?: number; pageSize?: number };
+    const payload = (result.data ?? {}) as { rows?: unknown[]; filteredCount?: number; totalCount?: number; summary?: Record<string, number>; page?: number; pageSize?: number };
     timer.finish({ route: "/api/admin/producers", rows: payload.rows?.length ?? 0 });
     return NextResponse.json({
       data: payload.rows ?? [],
       filteredCount: Number(payload.filteredCount ?? 0),
       totalCount: Number(payload.totalCount ?? 0),
+      summary: payload.summary ?? {},
       page: Number(payload.page ?? page),
       pageSize: Number(payload.pageSize ?? pageSize),
       canMerge: auth.role === "superadmin",

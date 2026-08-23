@@ -44,47 +44,6 @@ import { readFirstWorksheetRows } from "@/lib/excel/read-workbook"
 
 const MAX_STORE_ROWS = 20000
 
-// ── Mock data (fallback when no localStorage) ─────────────────
-
-const MOCK_BATCHES: AftalelicensBatch[] = [
-    {
-        id: "batch1",
-        kilde: "copydan_verdenstv",
-        year: 2023,
-        uploadedAt: "2024-03-15T10:30:00",
-        uploadedBy: "Admin",
-        totalRows: 312450,
-        filteredRows: 8340,
-        status: "sorting",
-        notes: "Kvartal 1-4 2023",
-    },
-    {
-        id: "batch2",
-        kilde: "tv2play",
-        year: 2023,
-        uploadedAt: "2024-03-10T14:00:00",
-        uploadedBy: "Admin",
-        totalRows: 2890,
-        filteredRows: 1240,
-        status: "weighted",
-    },
-    {
-        id: "batch3",
-        kilde: "copydan_arkiv",
-        year: 2022,
-        uploadedAt: "2023-09-01T09:00:00",
-        uploadedBy: "Admin",
-        totalRows: 45000,
-        filteredRows: 3100,
-        status: "completed",
-    },
-]
-
-const PENDING_CLAIMS: Record<string, number> = {
-    batch1: 2,
-    batch3: 1,
-}
-
 // ── Helpers ───────────────────────────────────────────────────
 
 const KILDE_LABELS: Record<AftalelicensKilde, string> = {
@@ -700,6 +659,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
 export default function AftalelicensPage() {
     const [batches, setBatches] = useState<AftalelicensBatch[]>([])
     const [batchesLoading, setBatchesLoading] = useState(true)
+    const [batchesError, setBatchesError] = useState<string | null>(null)
     const [importOpen, setImportOpen] = useState(false)
     const [claims, setClaims] = useState<Record<string, any>[]>([])
     const [activeClaim, setActiveClaim] = useState<Record<string, any> | null>(null)
@@ -715,17 +675,15 @@ export default function AftalelicensPage() {
     const loadBatchesFromServer = async () => {
         const result = await fetchAftalelicensBatches()
         if (result.success) {
+            setBatchesError(null)
             setBatches(result.batches.map(b => ({
                 id: b.id, kilde: b.kilde as AftalelicensKilde, year: b.year,
                 uploadedAt: b.uploaded_at, uploadedBy: b.uploaded_by ?? "Admin",
                 totalRows: b.total_rows, filteredRows: b.filtered_rows,
                 status: b.status as AftalelicensBatch["status"], notes: b.notes ?? undefined,
             })))
-        } else if (batches.length === 0) {
-            // Kun brug mock-data som absolut sidste udvej, hvis selve hentningen
-            // fejlede OG der ikke allerede er noget at vise — aldrig som stille
-            // erstatning for et tomt, men gyldigt resultat.
-            setBatches(MOCK_BATCHES)
+        } else {
+            setBatchesError(result.error ?? "Datasættene kunne ikke hentes")
         }
         setBatchesLoading(false)
     }
@@ -736,13 +694,11 @@ export default function AftalelicensPage() {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         void loadBatchesFromServer()
         void loadClaims()
-    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [])
 
     const pending = batches.filter(b => b.status === "sorting" || b.status === "imported").length
     const ready = batches.filter(b => b.status === "weighted").length
-    const lateClaimsCount = batches
-        .filter(b => b.status === "completed")
-        .reduce((s, b) => s + (PENDING_CLAIMS[b.id] ?? 0), 0)
+    const lateClaimsCount = 0
 
     const handleImport = async (batch: AftalelicensBatch, rows: ParsedRow[]) => {
         const result = await importScreeningSourceRows({
@@ -846,7 +802,14 @@ export default function AftalelicensPage() {
                                 </TableCell>
                             </TableRow>
                         )}
-                        {!batchesLoading && batches.length === 0 && (
+                        {!batchesLoading && batchesError && (
+                            <TableRow>
+                                <TableCell colSpan={8} className="py-8 text-center text-sm text-destructive">
+                                    {batchesError}
+                                </TableCell>
+                            </TableRow>
+                        )}
+                        {!batchesLoading && !batchesError && batches.length === 0 && (
                             <TableRow>
                                 <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-8">
                                     Ingen datasæt importeret endnu.
@@ -855,7 +818,7 @@ export default function AftalelicensPage() {
                         )}
                         {!batchesLoading && batches.map(batch => {
                             const cfg = STATUS_CONFIG[batch.status]
-                            const claimCount = PENDING_CLAIMS[batch.id] ?? 0
+                            const claimCount = 0
                             const isLate = claimCount > 0 && batch.status === "completed"
                             return (
                                 <TableRow key={batch.id} className={isLate ? "bg-orange-50/50 dark:bg-orange-950/10" : ""}>

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildMaskedReviewMailContext, latestThreadMessageId } from "../lib/contract-review-mail-context";
 import { isGmailDraftMessage } from "../lib/gmail-contract-import-core";
-import { mapWithConcurrency } from "../lib/gmail-contract-thread-core";
+import { mapWithConcurrency, roundRobinByOrganisation } from "../lib/gmail-contract-thread-core";
 
 test("Gmail-kladder udelades fra trådsynkronisering", () => {
   assert.equal(isGmailDraftMessage({ id: "1", labelIds: ["DRAFT"] }), true);
@@ -38,4 +38,13 @@ test("AI-konteksten maskerer persondata og bevarer første og nyeste besked", ()
   assert.match(context, /NYESTE/);
   assert.doesNotMatch(context, /person0@example\.dk/);
   assert.equal(latestThreadMessageId(messages), "gmail-7");
+});
+
+test("Gmail-trådsynkronisering fordeler pladser mellem organisationer", () => {
+  const rows = [
+    { orgId: "a", id: "a1" }, { orgId: "a", id: "a2" }, { orgId: "a", id: "a3" },
+    { orgId: "b", id: "b1" }, { orgId: "b", id: "b2" },
+    { orgId: "c", id: "c1" },
+  ];
+  assert.deepEqual(roundRobinByOrganisation(rows, 5).map(row => row.id), ["a1", "b1", "c1", "a2", "b2"]);
 });

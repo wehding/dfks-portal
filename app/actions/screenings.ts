@@ -3,6 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { isScreeningSourceRowId } from "@/lib/screening-source-row";
 import { revalidatePath } from "next/cache";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { resolveOrgId } from "@/lib/org";
@@ -508,6 +509,10 @@ export async function updateScreeningSourceRowSortStates(updates: ScreeningSourc
 
   const uniqueUpdates = Array.from(new Map(updates.map(update => [update.id, update])).values());
   if (uniqueUpdates.length === 0) return { success: true, failedIds: [] as string[] };
+  const invalidIds = uniqueUpdates.filter(update => !isScreeningSourceRowId(update.id)).map(update => update.id);
+  if (invalidIds.length > 0) {
+    return { success: false, error: "En eller flere sorteringsrækker er ugyldige", failedIds: invalidIds };
+  }
   if (uniqueUpdates.length > 2_000) {
     return { success: false, error: "For mange sorteringsændringer på én gang", failedIds: uniqueUpdates.map(update => update.id) };
   }
