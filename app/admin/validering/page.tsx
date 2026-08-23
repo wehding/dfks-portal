@@ -1241,7 +1241,7 @@ setActiveField(fieldId)
                                 <Separator />
 
                                 <div className="grid items-start gap-3 sm:grid-cols-2">
-                                    <div className="space-y-3">
+                                    <div className="order-2 space-y-3">
                                         <F
                                             src={fieldSrc("producerName")}
                                             label={t("admin.validation.producer")}
@@ -1341,8 +1341,9 @@ setActiveField(fieldId)
                                         </F>
                                     </div>
 
-                                    {formData.rightsHolderName !== undefined && (
-                                        <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
+                                    <div className="order-1">
+                                        {formData.rightsHolderName !== undefined && (
+                                            <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
                                             <Input
                                                 value={String(formData.rightsHolderName ?? "")}
                                                 onChange={(e) => { setField("rightsHolderName", e.target.value); setSelectedRhId(null) }}
@@ -1367,8 +1368,9 @@ setActiveField(fieldId)
                                             {!selectedRhId && formData.rightsHolderName && rhSuggestions.length === 0 && (formData.rightsHolderName as string).length > 2 && (
                                                 <p className="mt-1 text-xs text-amber-600">Ikke fundet i rettighedshavere</p>
                                             )}
-                                        </F>
-                                    )}
+                                            </F>
+                                        )}
+                                    </div>
                                 </div>
 
                                 <Separator />
