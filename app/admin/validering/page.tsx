@@ -44,6 +44,13 @@ const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
     andet: "Andet",
 }
 const OTHER_SUPPLEMENT_CATEGORIES = Object.keys(OTHER_SUPPLEMENT_LABELS)
+const SUPPLEMENT_UNITS = [
+    { value: "pr. uge", label: "Uge" },
+    { value: "pr. dag", label: "Dag" },
+    { value: "pr. måned", label: "Måned" },
+    { value: "pr. time", label: "Time" },
+    { value: "engangsbeløb", label: "Engangsbeløb" },
+] as const
 
 const ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
 const BUCKET = "kontrakter"
@@ -1485,7 +1492,7 @@ setActiveField(fieldId)
                                         const sClauseId = s.clauseId != null ? String(s.clauseId) : null
                                         const sNavigationSource = sSrc ?? (sClauseId ? sources.otherSupplements : null)
                                         return (
-                                        <div key={i} className={`rounded border p-2 space-y-1.5 ${SOURCE_STYLES[fieldSrc("otherSupplements") ?? "manuel"]}`}>
+                                        <div key={i} className={`rounded border p-3 space-y-2 ${SOURCE_STYLES[sSrc || sClauseId ? "ai" : "manuel"]}`}>
                                             <div className="flex items-center gap-2">
                                                 <Select value={String(s.category)} onValueChange={(v) => {
                                                     const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
@@ -1503,20 +1510,31 @@ setActiveField(fieldId)
                                                 }}><Trash2 className="h-3.5 w-3.5" /></button>
                                             </div>
                                             {sNote && <p className="text-[11px] text-muted-foreground pl-1">{sNote}</p>}
-                                            <div className="grid grid-cols-2 gap-1.5 items-center">
-                                                <div className="relative">
-                                                    <Input type="number" value={s.amount != null ? String(s.amount) : ""} placeholder="Beløb" className="h-7 pr-10 text-xs" onChange={(e) => {
+                                            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(150px,0.55fr)]">
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-xs">Beløb</Label>
+                                                    <div className="relative">
+                                                    <Input type="number" value={s.amount != null ? String(s.amount) : ""} placeholder="0" className="pr-10" onChange={(e) => {
                                                         const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
                                                         arr[i] = { ...arr[i], amount: e.target.value ? Number(e.target.value) : null }
                                                         setField("otherSupplements", arr)
                                                     }} />
-                                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">kr.</span>
+                                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">kr.</span>
+                                                    </div>
                                                 </div>
-                                                <Input value={s.unit ? String(s.unit) : ""} placeholder="Enhed" className="h-7 text-xs" onChange={(e) => {
-                                                    const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
-                                                    arr[i] = { ...arr[i], unit: e.target.value || null }
-                                                    setField("otherSupplements", arr)
-                                                }} />
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-xs">Enhed</Label>
+                                                    <Select value={s.unit ? String(s.unit) : undefined} onValueChange={(v) => {
+                                                        const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
+                                                        arr[i] = { ...arr[i], unit: v }
+                                                        setField("otherSupplements", arr)
+                                                    }}>
+                                                        <SelectTrigger><SelectValue placeholder="Vælg enhed" /></SelectTrigger>
+                                                        <SelectContent>
+                                                            {SUPPLEMENT_UNITS.map(unit => <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>)}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
                                             </div>
                                         </div>
                                         )

@@ -186,5 +186,7 @@ export function enrichSourcesWithClauseIds(
             match(discardIfBareNumber(sources.royalty)),
         prolongation_clause_id: sources.prolongation_clause_id ??
             match(discardIfBareNumber(sources.prolongation)),
+        creditedRoles_clause_id: sources.creditedRoles_clause_id ??
+            match(discardIfBareNumber(sources.creditedRoles)),
     }
 }

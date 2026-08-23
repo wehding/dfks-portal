@@ -10,6 +10,7 @@ import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { normaliseSources, extractClauseIdFromCitation, stripClauseIdPrefix } from "@/lib/ai-sources"
 import { resolveOtherSupplements } from "@/lib/contract-supplements"
 import { resolvePensionSupplement } from "@/lib/contract-pension"
+import { resolveContractCredit } from "@/lib/contract-credit"
 import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
@@ -335,6 +336,15 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             ? new Set(context.layout.clauses.map(c => c.id))
             : undefined
         extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>, knownIds)
+    }
+    const credit = resolveContractCredit(extracted, maskedText)
+    if (credit.creditedRoles || credit.sourceText) {
+        extracted.creditedRoles = credit.creditedRoles
+        extracted._sources = {
+            ...((extracted._sources as Record<string, unknown> | null) ?? {}),
+            creditedRoles: credit.sourceText,
+            creditedRoles_clause_id: credit.clauseId,
+        }
     }
     extracted.pensionSupplement = resolvePensionSupplement(extracted)
     extracted.otherSupplements = resolveOtherSupplements(extracted)

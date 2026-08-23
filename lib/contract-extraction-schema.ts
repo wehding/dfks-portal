@@ -11,7 +11,9 @@ const enumText = (values: string[]) => nullable({ type: "string", enum: values }
 const sourceKeys = [
   "workTitle", "salary", "pension", "supplements", "otherSupplements", "dates",
   "workingWeeks", "collectiveAgreement", "copydan", "svod", "royalty", "prolongation",
+  "creditedRoles",
 ] as const;
+const sourceSchemaKeys = sourceKeys.flatMap(key => [key, `${key}_clause_id`]);
 
 const properties: Record<string, JsonSchema> = {
   employerName: text,
@@ -99,7 +101,7 @@ const properties: Record<string, JsonSchema> = {
   specialNotes: text,
   _sources: {
     type: "object",
-    properties: Object.fromEntries(sourceKeys.map(key => [key, text])),
+    properties: Object.fromEntries(sourceSchemaKeys.map(key => [key, text])),
     additionalProperties: false,
   },
 };
@@ -237,7 +239,7 @@ export function normalizeContractExtraction(value: unknown) {
     if (!(key in raw)) { result[key] = null; continue; }
     if (key === "_sources") {
       const sources = raw._sources && typeof raw._sources === "object" ? raw._sources as Record<string, unknown> : {};
-      result._sources = Object.fromEntries(sourceKeys.map(sourceKey => {
+      result._sources = Object.fromEntries(sourceSchemaKeys.map(sourceKey => {
         const source = sources[sourceKey];
         return [sourceKey, typeof source === "string" && source.trim() ? source.trim().slice(0, 400) : null];
       }));

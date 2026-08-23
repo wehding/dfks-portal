@@ -130,6 +130,20 @@ test("det fælles AI-skema er et lukket JSON-objekt med centrale felter", () => 
   for (const field of ["workTitle", "rightsHolderName", "seasonNumber", "episodeNumbers", "salary", "copydan", "signatureStatus", "_sources"]) {
     assert.ok(field in properties);
   }
+  const sourceProperties = (properties._sources as { properties: Record<string, unknown> }).properties;
+  assert.ok("creditedRoles" in sourceProperties);
+  assert.ok("creditedRoles_clause_id" in sourceProperties);
+});
+
+test("normalisering bevarer krediteringskilden og klausul-id'et", () => {
+  const normalized = normalizeContractExtraction({
+    creditedRoles: "Klipper",
+    _sources: {
+      creditedRoles: "[s1_c10] Der er aftalt følgende vedrørende kreditering: Klipper Sofie Steenberger",
+      creditedRoles_clause_id: "s1_c10",
+    },
+  });
+  assert.equal((normalized._sources as Record<string, unknown>).creditedRoles_clause_id, "s1_c10");
 });
 
 test("Anthropic bruger JSON-prompten når det fulde schema overskrider providergrænserne", () => {
