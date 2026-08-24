@@ -1,5 +1,10 @@
 # Privat PDF-normalisering på Cloud Run
 
+PDF-sider med et brugbart eksisterende tekstlag bevares urørte. Kun billedsider eller
+ulæselige sider sendes først gennem regional Google Sensitive Data Protection (DLP)
+og derefter synkron Google Cloud Vision OCR på EU-endpointet. Vision-koordinaterne
+bruges til et usynligt, søgbart tekstlag; originalfilen overskrives aldrig.
+
 Tjenesten må kun deployes som en privat Cloud Run-service. Cloud Scheduler får rollen
 `Cloud Run Invoker`; `allUsers` og `allAuthenticatedUsers` må ikke tilføjes.
 
@@ -8,6 +13,9 @@ Miljøvariabler:
 - `PORTAL_BASE_URL`: portalens production-origin.
 - `OCR_CLOUD_RUN_AUDIENCE`: samme faste audience som portalen verificerer.
 - `SUPABASE_URL` og `SUPABASE_ANON_KEY`: offentlige projektværdier; aldrig service-role.
+- `GOOGLE_CLOUD_PROJECT`: Google Cloud-projektet.
+- `GOOGLE_VISION_LOCATION=eu` og `GOOGLE_DLP_LOCATION=eu`.
+- `OCR_TMP_DIR=/mnt/ramdisk`: anbefalet memory volume i Cloud Run.
 
 Cloud Run-servicekontoens mail gemmes i portalen som `OCR_CLOUD_RUN_SERVICE_ACCOUNT`.
 Tjenesten henter et Google-signatureret ID-token fra metadata-serveren. Den modtager
@@ -29,3 +37,8 @@ Supabase er eneste kø. Tre Cloud Run-tasks kan arbejde parallelt, fordi portale
 claim-funktion bruger en atomisk `FOR UPDATE SKIP LOCKED`-claim. Workerens image må
 kun få de offentlige Supabase-oplysninger; service-role, AI-nøgler og permanente
 Google-nøgler må aldrig tilføjes.
+
+Google-adgang sker med Cloud Run-servicens kortlivede metadata-token. Der bruges ingen
+API-nøgle eller permanent service-account-fil. Vision og DLP kaldes synkront over TLS 1.3;
+globale eller asynkrone endpoints afvises af klienten. DLP maskerer CPR- og finansdata,
+men ikke personnavne, før en side sendes til Vision.

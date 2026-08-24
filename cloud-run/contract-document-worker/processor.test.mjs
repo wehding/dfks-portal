@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
 import { writeFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -10,8 +11,10 @@ const config = {
   supabaseUrl: "https://project.supabase.co",
   supabaseAnonKey: "public-key",
   supabaseOrigin: "https://project.supabase.co",
+  googleProject: "dfks-test",
+  googleLocation: "eu",
+  tempRoot: tmpdir(),
   maxBytes: 25 * 1024 * 1024,
-  minReadableTextChars: 120,
 };
 
 function response(body, init = {}, url = "https://portal.example") {
@@ -26,6 +29,8 @@ function claimJob(overrides = {}) {
     downloadUrl: "https://project.supabase.co/storage/v1/object/sign/kontrakter/original.pdf?token=signed-secret",
     uploadPath: "org/processed/job/normalised.pdf",
     uploadToken: "upload-secret",
+    spatialUploadPath: "org/processed/job/vision-layout.json.gz",
+    spatialUploadToken: "spatial-secret",
     maxBytes: config.maxBytes,
     ...overrides,
   };
@@ -98,20 +103,15 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
         };
       },
     },
-    commandRunner: async (command, args) => {
-      if (command === "ocrmypdf") {
-        const outputPath = args.at(-1);
-        const sidecarPath = args[args.indexOf("--sidecar") + 1];
-        await writeFile(outputPath, Buffer.from("%PDF-1.7\nprocessed"));
-        await writeFile(sidecarPath, "OCR tekst");
-        return { stdout: "", stderr: "page 2 rotation 90" };
-      }
-      if (command === "pdfinfo") return { stdout: "Pages: 2\n", stderr: "" };
-      if (command === "pdftotext") {
-        await writeFile(args[1], "læsbar tekst ".repeat(20));
-        return { stdout: "", stderr: "" };
-      }
-      throw new Error("unexpected command");
+    spatialProcessor: async ({ outputPath, geometryPath }) => {
+      await writeFile(outputPath, Buffer.from("%PDF-1.7\nprocessed"));
+      await writeFile(geometryPath, Buffer.from("geometry"));
+      return {
+        status: "completed", classification: "image_only", pageCount: 2,
+        nativePageCount: 0, ocrPageCount: 2, unreadablePageCount: 0,
+        textCharCount: 300, redactionCounts: { DENMARK_CPR_NUMBER: 1 },
+        spatial: { score: 0.99, medianIou: 0.9, centerInsideRatio: 1 },
+      };
     },
     fetchImpl: async (url, init) => {
       const value = String(url);
@@ -124,9 +124,36 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
     },
   });
   assert.deepEqual(await processor(), { outcome: "completed" });
-  assert.equal(uploads.length, 1);
+  assert.equal(uploads.length, 2);
   assert.equal(uploads[0].path, job.uploadPath);
   assert.notEqual(uploads[0].path, originalPath);
+  assert.equal(uploads[1].path, job.spatialUploadPath);
   assert.equal(completions[0].status, "completed");
   assert.equal(completions[0].pageCount, 2);
+  assert.match(completions[0].originalSha256, /^[0-9a-f]{64}$/);
+  assert.match(completions[0].processedSha256, /^[0-9a-f]{64}$/);
+});
+
+test("native tekst ændrer ikke originalen og uploader intet derivat", async () => {
+  const uploads = [];
+  const completions = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { return { async uploadToSignedUrl(...args) { uploads.push(args); return { error: null }; } }; } },
+    spatialProcessor: async () => ({
+      status: "not_required", classification: "native_text", pageCount: 1,
+      nativePageCount: 1, ocrPageCount: 0, unreadablePageCount: 0, textCharCount: 500,
+    }),
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) { completions.push(JSON.parse(init.body)); return response("{}", { status: 200 }); }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+  assert.deepEqual(await processor(), { outcome: "completed" });
+  assert.equal(uploads.length, 0);
+  assert.equal(completions[0].status, "not_required");
+  assert.equal(completions[0].ocrApplied, false);
 });
