@@ -24,10 +24,11 @@ test("sæsonssager samler klippere fra seriens afsnit", () => {
   assert.match(evidence, /\.in\("work_id", assignmentWorkIds\)/);
 });
 
-test("arbejdsandele vises som én samlet tre-sektionsdialog", () => {
-  assert.match(wizard, /1\. Bekræft klippere/);
-  assert.match(wizard, /2\. Afstem procentandele/);
-  assert.match(wizard, /3\. Kontrollér og godkend/);
+test("klipper og arbejdsandel vises samlet i en kompakt dialog", () => {
+  assert.match(wizard, /1\. Klippere og arbejdsandele/);
+  assert.match(wizard, /Arbejdsandel \(%\)/);
+  assert.match(wizard, /2\. Kontrollér og godkend/);
+  assert.doesNotMatch(wizard, /3\. Kontrollér og godkend/);
   assert.doesNotMatch(wizard, /setStep\(/);
 });
 

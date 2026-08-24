@@ -63,6 +63,12 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
   const participants = useMemo(() => active?.work_share_participants.filter(row => !row.excluded_at) ?? [], [active]);
   const unresolved = participants.filter(row => !row.rights_holder_id);
   const missingResponses = participants.filter(row => row.rights_holder_id && ["pending", "pending_match"].includes(row.relationship_status));
+  const allocatedTotal = useMemo(() => participants.reduce((sum, participant) => {
+    const value = Number((drafts[participant.id] ?? "").replace(",", "."));
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0), [drafts, participants]);
+  const reserveValue = Number(reserve.replace(",", "."));
+  const combinedTotal = allocatedTotal + (Number.isFinite(reserveValue) ? reserveValue : 0);
 
   useEffect(() => {
     if (!active) return;
@@ -147,16 +153,22 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
       <div><p className="text-xs text-muted-foreground">{index + 1} af {cases.length}</p><h3 className="text-lg font-semibold">{active.works?.title ?? "Ukendt værk"}{active.season_number ? ` · sæson ${active.season_number}` : ""}</h3></div>
       <div className="flex gap-2"><Button size="sm" variant="outline" disabled={index === 0} onClick={() => setIndex(value => value - 1)}>Forrige</Button><Button size="sm" variant="outline" disabled={index >= cases.length - 1} onClick={() => setIndex(value => value + 1)}>Spring over</Button></div>
     </div>
-    <p className="text-sm text-muted-foreground">Gennemgå klippere og procentandele samlet. Den endelige kontrol opdateres løbende nederst i vinduet.</p>
+    <p className="text-sm text-muted-foreground">Bekræft personerne og angiv deres arbejdsandel direkte på samme linje.</p>
 
     <section className="space-y-3 rounded-lg border p-4" aria-labelledby="share-participants-heading">
-      <h4 id="share-participants-heading" className="font-semibold">1. Bekræft klippere</h4>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 id="share-participants-heading" className="font-semibold">1. Klippere og arbejdsandele</h4>
+        <div className="flex items-end gap-2"><Label className="space-y-1 text-xs">Reserve (%)<Input className="h-8 w-24" inputMode="decimal" value={reserve} onChange={event => setReserve(event.target.value)} /></Label><Button size="sm" variant="outline" onClick={() => void run(`proposal:${active.id}`, async () => { const result = await proposeAdminShareCompromise(active.id, Number(reserve.replace(",", "."))); setDrafts(current => ({ ...current, ...Object.fromEntries(result.participants.map(row => [row.participantId, String(row.finalPercent)])) })); }, "Kompromisforslaget er beregnet.")}>Beregn forslag</Button></div>
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm text-muted-foreground">Portalens oplysninger samles med krediteringer fra DFI og TMDb. Kilderne er vejledende og fastsætter aldrig procentandele.</p><p className="mt-1 text-xs text-muted-foreground">{busy === `credits:${active.id}` ? "Opdaterer kilder…" : active.credit_source_states?.some(state => state.status === "error") ? "En kilde kunne ikke opdateres. Gemte krediteringer vises fortsat." : active.credit_source_states?.every(state => state.status === "fresh") ? "Gemte kilder · opdateret inden for 7 dage" : "Gemte kilder vises, mens manglende data opdateres."}</p></div><Button size="sm" variant="outline" disabled={busy === `credits:${active.id}`} onClick={() => void refreshSources(true)}>Opdatér kilder</Button></div>
       {participants.map(participant => {
         const holder = participant.rettighedshavere;
         const create = createDraft[participant.id] ?? { name: participant.proposed_name ?? "", email: "", phone: "" };
-        return <div key={participant.id} className="space-y-3 rounded-md border p-3">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-medium">{holder?.full_name ?? participant.proposed_name ?? "Ukendt"}</p><p className="text-xs text-muted-foreground">{[...new Set(participant.source_details?.roles?.length ? participant.source_details.roles : [participant.role])].join(" · ")}</p><div className="mt-1 flex gap-1">{[...new Set(participant.source_tags ?? [])].map(source => <Badge key={source} variant="outline">{SOURCE_LABELS[source] ?? source}</Badge>)}</div></div><Badge variant={participant.rights_holder_id ? "secondary" : "outline"}>{participant.rights_holder_id ? holder?.invite_sent_at ? "Inviteret" : "Ikke inviteret" : "Ikke i systemet"}</Badge></div>
+        return <div key={participant.id} className="space-y-2 rounded-md border p-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_104px] items-start gap-3 sm:grid-cols-[minmax(0,1fr)_132px]">
+            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate font-medium">{holder?.full_name ?? participant.proposed_name ?? "Ukendt"}</p><Badge variant={participant.rights_holder_id ? "secondary" : "outline"}>{participant.rights_holder_id ? holder?.invite_sent_at ? "Inviteret" : "Ikke inviteret" : "Ikke i systemet"}</Badge></div><div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground"><span>{[...new Set(participant.source_details?.roles?.length ? participant.source_details.roles : [participant.role])].join(" · ")}</span>{[...new Set(participant.source_tags ?? [])].map(source => <Badge key={source} variant="outline" className="h-5 px-1.5 text-[10px]">{SOURCE_LABELS[source] ?? source}</Badge>)}</div></div>
+            <Label className="space-y-1 text-xs">Arbejdsandel (%)<Input className="h-8" inputMode="decimal" value={drafts[participant.id] ?? ""} onChange={event => setDrafts(current => ({ ...current, [participant.id]: event.target.value }))} /><span className="block text-[10px] font-normal text-muted-foreground">Indsendt: {participant.proposed_percent ?? "mangler"} %</span></Label>
+          </div>
           {!participant.rights_holder_id && <>
             <RightsHolderAutocomplete options={[]} searchEndpoint="/api/admin/rettighedshavere-search?scope=all" onChange={rightsHolderId => rightsHolderId && void run(`match:${participant.id}`, () => matchShareParticipant({ participantId: participant.id, rightsHolderId }), "Personen er forbundet.")} placeholder="Forbind med eksisterende rettighedshaver" />
             <details><summary className="cursor-pointer text-sm font-medium">Opret ny rettighedshaver</summary><div className="mt-2 grid gap-2 sm:grid-cols-3"><Input aria-label="Navn" value={create.name} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, name: event.target.value } }))} /><Input aria-label="E-mail" type="email" placeholder="E-mail (valgfri)" value={create.email} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, email: event.target.value } }))} /><Input aria-label="Telefon" placeholder="Telefon (valgfri)" value={create.phone} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, phone: event.target.value } }))} /></div><Button className="mt-2" size="sm" onClick={() => void run(`create:${participant.id}`, () => createRightsHolderFromShareParticipant({ participantId: participant.id, ...create }), "Rettighedshaveren er oprettet uden invitation.")}>Opret uden at invitere</Button></details>
@@ -165,22 +177,15 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
           {participant.rights_holder_id && <div className="flex flex-wrap gap-2">
             <Button asChild size="sm" variant="ghost"><Link href={`/admin/rettighedshavere?edit=${encodeURIComponent(participant.rights_holder_id)}`}>Åbn rettighedshaver</Link></Button>
             {!holder?.invite_sent_at && holder?.email && <Button size="sm" variant="outline" disabled={busy === `invite:${participant.id}`} onClick={() => void invite(participant)}>Inviter rettighedshaver</Button>}
+            {participant.proposed_percent == null && <Button size="sm" variant="outline" disabled={Boolean(participant.last_reminder_sent_at && Date.now() - new Date(participant.last_reminder_sent_at).getTime() < 3 * 86400000)} onClick={() => void run(`remind:${participant.id}`, () => remindShareParticipant(participant.id), "Påmindelsen er sendt.")}>Send påmindelse</Button>}
           </div>}
         </div>;
       })}
       {unresolved.length > 0 && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-500/10">Forbind, opret eller fravælg de resterende personer, før fordelingen kan godkendes.</p>}
     </section>
 
-    <section className="space-y-3 rounded-lg border p-4" aria-labelledby="share-percent-heading">
-      <h4 id="share-percent-heading" className="font-semibold">2. Afstem procentandele</h4>
-      <div className="flex flex-wrap items-end gap-3"><Label className="space-y-1">Reserve (%)<Input className="w-32" inputMode="decimal" value={reserve} onChange={event => setReserve(event.target.value)} /></Label><Button variant="outline" onClick={() => void run(`proposal:${active.id}`, async () => { const result = await proposeAdminShareCompromise(active.id, Number(reserve.replace(",", "."))); setDrafts(current => ({ ...current, ...Object.fromEntries(result.participants.map(row => [row.participantId, String(row.finalPercent)])) })); }, "Kompromisforslaget er beregnet.")}>Beregn kompromis</Button></div>
-      {participants.map(participant => <div key={participant.id} className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_160px_auto] sm:items-end"><div><p className="font-medium">{participant.rettighedshavere?.full_name ?? participant.proposed_name}</p><p className="text-xs text-muted-foreground">Indsendt: {participant.proposed_percent ?? "mangler"} %</p></div><Label className="space-y-1">Endelig andel (%)<Input inputMode="decimal" value={drafts[participant.id] ?? ""} onChange={event => setDrafts(current => ({ ...current, [participant.id]: event.target.value }))} /></Label>{participant.rights_holder_id && participant.proposed_percent == null && <Button size="sm" variant="outline" disabled={Boolean(participant.last_reminder_sent_at && Date.now() - new Date(participant.last_reminder_sent_at).getTime() < 3 * 86400000)} onClick={() => void run(`remind:${participant.id}`, () => remindShareParticipant(participant.id), "Påmindelsen er sendt.")}>Send påmindelse</Button>}</div>)}
-    </section>
-
     <section className="space-y-3 rounded-lg border p-4" aria-labelledby="share-review-heading">
-      <h4 id="share-review-heading" className="font-semibold">3. Kontrollér og godkend</h4>
-      <p className="text-sm">Kontrollér, at alle personer er afklaret, og at andele plus reserve er 100 %.</p>
-      <ul className="space-y-1 text-sm">{participants.map(row => <li key={row.id} className="flex justify-between gap-4"><span>{row.rettighedshavere?.full_name ?? row.proposed_name}</span><strong>{drafts[row.id] || "—"} %</strong></li>)}<li className="flex justify-between border-t pt-1"><span>Reserve</span><strong>{reserve} %</strong></li></ul>
+      <div className="flex flex-wrap items-center justify-between gap-3"><h4 id="share-review-heading" className="font-semibold">2. Kontrollér og godkend</h4><div className="flex gap-4 text-sm"><span>Fordelt <strong>{allocatedTotal.toLocaleString("da-DK", { maximumFractionDigits: 1 })} %</strong></span><span>Reserve <strong>{Number.isFinite(reserveValue) ? reserveValue.toLocaleString("da-DK", { maximumFractionDigits: 1 }) : "—"} %</strong></span><span>I alt <strong className={Math.abs(combinedTotal - 100) < 0.001 ? "text-emerald-700" : "text-amber-700"}>{combinedTotal.toLocaleString("da-DK", { maximumFractionDigits: 1 })} %</strong></span></div></div>
       {missingResponses.length > 0 && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-500/10">{missingResponses.length} deltager(e) har ikke svaret. Afslutning kræver ekstra bekræftelse.</p>}
       <div className="flex justify-end"><Button disabled={unresolved.length > 0} onClick={() => { const allowMissingResponses = missingResponses.length > 0 ? window.confirm("Der mangler svar. Vil du alligevel godkende den administrative fordeling?") : false; if (missingResponses.length && !allowMissingResponses) return; void run(`resolve:${active.id}`, () => resolveAdminShareCase({ caseId: active.id, reservePercent: Number(reserve.replace(",", ".")), participants: participants.map(row => ({ participantId: row.id, finalPercent: drafts[row.id] ? Number(drafts[row.id].replace(",", ".")) : null })), allowMissingResponses }), "Fordelingen er godkendt og gemt."); }}>Godkend fordeling</Button></div>
     </section>

@@ -74,6 +74,7 @@ export function isEligibleWorkShareRole(role: string | null | undefined) {
     || normalized.includes("assistant klipper")
     || normalized.includes("trailer klip")
     || normalized.includes("pilot klip")
+    || normalized.includes("pilotklip")
     || normalized.includes("klippekonsulent")
     || normalized.includes("supplerende klipper")
   ) return false;
