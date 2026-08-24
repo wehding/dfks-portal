@@ -31,6 +31,7 @@ import { resolveOtherSupplements } from "@/lib/contract-supplements"
 import { resolvePensionSupplement } from "@/lib/contract-pension"
 import { resolveContractSalary } from "@/lib/contract-salary"
 import { resolveContractCredit } from "@/lib/contract-credit"
+import { resolveContractProlongation } from "@/lib/contract-prolongation"
 import { resolveContractProductionType } from "@/lib/contract-production-type"
 
 const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
@@ -435,6 +436,7 @@ function AdminValideringPageInner() {
             const normalizedSalary = resolveContractSalary(ed)
             const pensionSupplement = resolvePensionSupplement(normalizedSalary)
             const contractCredit = resolveContractCredit(ed)
+            const prolongation = resolveContractProlongation(ed)
             const productionType = resolveContractProductionType({
                 aiValue: ed.productionType,
                 work: contracts.find(c => c.id === reviewingId)?.works,
@@ -473,8 +475,13 @@ function AdminValideringPageInner() {
                 otherSupplements: resolveOtherSupplements(ed),
                 workPhases: Array.isArray(ed.workPhases) ? ed.workPhases : [],
                 workingWeeks: ed.workingWeeks ?? "",
-                prolongationWeeks: ed.prolongationWeeks ?? "",
-                prolongationNote: ed.prolongationNote ?? "",
+                prolongationWeeks: prolongation.prolongationWeeks ?? "",
+                prolongationAmount: prolongation.prolongationAmount ?? "",
+                prolongationUnit: prolongation.prolongationUnit ?? "weeks",
+                prolongationTotalWeeks: prolongation.prolongationTotalWeeks ?? "",
+                prolongationInterpretation: prolongation.prolongationInterpretation,
+                needsManualProlongationReview: prolongation.needsManualProlongationReview,
+                prolongationNote: prolongation.prolongationNote ?? "",
                 svod: impliedBySvod,
                 copydan: impliedByCopydan,
                 royalty: impliedByRoyalty,
@@ -571,6 +578,11 @@ function AdminValideringPageInner() {
                 workPhases: Array.isArray(formData.workPhases) && formData.workPhases.length > 0 ? formData.workPhases : undefined,
                 workingWeeks: formData.workingWeeks ? Number(formData.workingWeeks) : undefined,
                 prolongationWeeks: formData.prolongationWeeks ? Number(formData.prolongationWeeks) : undefined,
+                prolongationAmount: formData.prolongationAmount ? Number(formData.prolongationAmount) : undefined,
+                prolongationUnit: formData.prolongationUnit || undefined,
+                prolongationTotalWeeks: formData.prolongationTotalWeeks ? Number(formData.prolongationTotalWeeks) : undefined,
+                prolongationInterpretation: formData.prolongationInterpretation || undefined,
+                needsManualProlongationReview: !!formData.needsManualProlongationReview,
                 prolongationNote: formData.prolongationNote || undefined,
                 svod: !!formData.svod,
                 copydan: !!formData.copydan,
@@ -713,6 +725,7 @@ function AdminValideringPageInner() {
         const normalizedSalary = resolveContractSalary(ed)
         const pensionSupplement = resolvePensionSupplement(normalizedSalary)
         const contractCredit = resolveContractCredit(ed)
+        const prolongation = resolveContractProlongation(ed)
         const productionType = resolveContractProductionType({ aiValue: ed.productionType, work: reviewingContract?.works })
 
         return {
@@ -752,8 +765,13 @@ function AdminValideringPageInner() {
             otherSupplements:              resolveOtherSupplements(ed),
             workPhases:                    Array.isArray(ed.workPhases) ? ed.workPhases : [],
             workingWeeks:                  ed.workingWeeks ?? "",
-            prolongationWeeks:             ed.prolongationWeeks ?? "",
-            prolongationNote:              ed.prolongationNote ?? "",
+            prolongationWeeks:             prolongation.prolongationWeeks ?? "",
+            prolongationAmount:            prolongation.prolongationAmount ?? "",
+            prolongationUnit:              prolongation.prolongationUnit ?? "weeks",
+            prolongationTotalWeeks:        prolongation.prolongationTotalWeeks ?? "",
+            prolongationInterpretation:    prolongation.prolongationInterpretation,
+            needsManualProlongationReview: prolongation.needsManualProlongationReview,
+            prolongationNote:              prolongation.prolongationNote ?? "",
             // SVOD og Copydan: kun fra AI-udtræk — ingen hardcoded overenskomst-lister
             svod:                          !!ed.svod,
             copydan:                       !!ed.copydan,
@@ -1554,13 +1572,37 @@ setActiveField(fieldId)
                                     </div>
                                 )}
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F src={fieldSrc("prolongationWeeks")} label={<>Prolongationsuger{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
-                                        <Input type="number" value={String(formData.prolongationWeeks ?? "")} onChange={(e) => setField("prolongationWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
+                                    <F src={fieldSrc("prolongationWeeks")} label={<>Prolongation{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
+                                        <div className="flex max-w-[280px] gap-2">
+                                            <Input type="number" step="any" value={String(formData.prolongationAmount ?? "")} onChange={(e) => {
+                                                const amount = e.target.value
+                                                setField("prolongationAmount", amount)
+                                                setField("prolongationWeeks", amount === "" ? "" : Number(amount) / (formData.prolongationUnit === "days" ? 5 : 1))
+                                                setField("needsManualProlongationReview", false)
+                                            }} placeholder="0" />
+                                            <Select value={formData.prolongationUnit ?? "weeks"} onValueChange={(unit) => {
+                                                setField("prolongationUnit", unit)
+                                                const amount = Number(formData.prolongationAmount)
+                                                if (Number.isFinite(amount)) setField("prolongationWeeks", amount / (unit === "days" ? 5 : 1))
+                                            }}>
+                                                <SelectTrigger className="w-[110px]"><SelectValue /></SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="days">Dage</SelectItem>
+                                                    <SelectItem value="weeks">Uger</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
                                     </F>
                                     <F src={fieldSrc("prolongationNote")} label={<>Prolongation — vilkår{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
                                         <Input value={String(formData.prolongationNote ?? "")} onChange={(e) => setField("prolongationNote", e.target.value)} placeholder="fx juleferie 21.12–07.01" />
                                     </F>
                                 </div>
+                                {formData.needsManualProlongationReview && (
+                                    <p className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                        Kræver manuel kontrol: AI har fortolket {formData.prolongationTotalWeeks} uger som en samlet maksimumsramme og beregnet {formData.prolongationWeeks} ekstra prolongationsuger.
+                                    </p>
+                                )}
                                 <Separator />
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <F src={fieldSrc("pensionPercent")} label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={pensionNavigation} active={activeField === "pension"} onClick={() => activateSource("pension", pensionNavigation)} /></>}>

@@ -207,6 +207,13 @@ export interface ExtractedContractData {
     signaturePage?: number
     signatureEvidence?: string
     workingWeeks?: number
+    prolongationWeeks?: number
+    prolongationAmount?: number
+    prolongationUnit?: "days" | "weeks"
+    prolongationTotalWeeks?: number
+    prolongationInterpretation?: "additional" | "total_limit" | "unclear"
+    needsManualProlongationReview?: boolean
+    prolongationNote?: string
     svod: boolean
     copydan: boolean
     royalty: boolean
