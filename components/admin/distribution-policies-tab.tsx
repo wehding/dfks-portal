@@ -36,8 +36,8 @@ import {
     getPolicyVersions,
     createPolicyVersion,
     activatePolicyVersion,
-    computePolicyPreview,
 } from "@/app/actions/rights-funds"
+import { computePolicyPreview } from "@/lib/rights-policy-preview"
 import type {
     RightsFund,
     DistributionPolicy,

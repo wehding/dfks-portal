@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
-import { computePolicyPreview } from "@/app/actions/rights-funds"
+import { computePolicyPreview } from "@/lib/rights-policy-preview"
 import type { PolicyVersionWithComponents } from "@/app/actions/rights-funds"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
