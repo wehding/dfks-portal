@@ -397,6 +397,7 @@ function RunRow({ run, onRefresh }: { run: CalculationRun; onRefresh: () => void
 // ── Hoved-side ────────────────────────────────────────────────────────────────
 
 export default function RettighedsmidlerPage() {
+    const router = useRouter()
     const [runs, setRuns] = useState<CalculationRun[]>([])
     const [loading, setLoading] = useState(true)
     const [newRunOpen, setNewRunOpen] = useState(false)

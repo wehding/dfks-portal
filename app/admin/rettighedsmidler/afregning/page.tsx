@@ -63,7 +63,8 @@ const STATUS_CONFIG: Record<SettlementStatus, {
     cancelled: { label: "Annulleret", variant: "outline",   icon: Ban },
 }
 
-const NEXT_STATUS: Record<string, SettlementStatus> = {
+type AdvanceableStatus = "prepared" | "approved" | "paid_out" | "cancelled"
+const NEXT_STATUS: Record<string, AdvanceableStatus> = {
     draft: "prepared", prepared: "approved", approved: "paid_out",
 }
 const NEXT_LABEL: Record<string, string> = {

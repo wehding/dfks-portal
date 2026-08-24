@@ -433,11 +433,7 @@ export default function RettighedsmidlerNotifikationerPage() {
         <div className="space-y-6">
             <PageHeader
                 title="Notifikationer"
-                description="Udgående beskeder og admin-opgavekø for rettighedsmidler"
-                breadcrumbs={[
-                    { label: "Rettighedsmidler", href: "/admin/rettighedsmidler" },
-                    { label: "Notifikationer" },
-                ]}
+                subtitle="Udgående beskeder og admin-opgavekø for rettighedsmidler"
                 actions={
                     <div className="flex gap-2">
                         <Button

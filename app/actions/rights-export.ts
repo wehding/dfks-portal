@@ -336,5 +336,4 @@ export async function redownloadExport(
     }
 }
 
-// Typer til brug i UI
 export type { PayrollExportBatch } from "@/app/actions/rights-settlements"
