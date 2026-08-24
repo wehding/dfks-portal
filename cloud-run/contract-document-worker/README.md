@@ -36,9 +36,13 @@ bruger `4`, mens fuld backfill bruger `0`.
 Supabase er eneste kø. Tre Cloud Run-tasks kan arbejde parallelt, fordi portalens
 claim-funktion bruger en atomisk `FOR UPDATE SKIP LOCKED`-claim. Workerens image må
 kun få de offentlige Supabase-oplysninger; service-role, AI-nøgler og permanente
-Google-nøgler må aldrig tilføjes.
+Google-nøgler må aldrig tilføjes. Produktionsprocessen afviser opstart, hvis
+`OCR_TMP_DIR` ikke peger på den monterede memory volume `/mnt/ramdisk`.
 
 Google-adgang sker med Cloud Run-servicens kortlivede metadata-token. Der bruges ingen
 API-nøgle eller permanent service-account-fil. Vision og DLP kaldes synkront over TLS 1.3;
-globale eller asynkrone endpoints afvises af klienten. DLP maskerer CPR- og finansdata,
-men ikke personnavne, før en side sendes til Vision.
+globale eller asynkrone endpoints afvises af klienten. Hvert råt sidebillede sendes kun
+én gang til DLP. DLP returnerer pixelkoordinater for CPR- og finansdata, som maskeres
+lokalt i workerens RAM, før det maskerede billede sendes til Vision. Personnavne maskeres
+ikke. Kun fundtyper og antal gemmes; fundet tekst og råbilleder gemmes aldrig i logs eller
+databasen.

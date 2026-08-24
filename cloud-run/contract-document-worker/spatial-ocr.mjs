@@ -234,10 +234,12 @@ export async function processPdfSpatially({
   await writeFile(geometryPath, await gzipAsync(Buffer.from(JSON.stringify(geometry))), { mode: 0o600 });
   const plainGeometryPath = join(workDir, "vision-geometry.json");
   await writeFile(plainGeometryPath, JSON.stringify(geometry), { mode: 0o600 });
-  await commandRunner("python3", [join(process.cwd(), "vision_overlay.py"), inputPath, plainGeometryPath, outputPath], 180_000);
+  const rotationNormalisedPath = join(workDir, "rotation-normalised.pdf");
+  await commandRunner("qpdf", ["--flatten-rotation", inputPath, rotationNormalisedPath], 180_000);
+  await commandRunner("python3", [join(process.cwd(), "vision_overlay.py"), rotationNormalisedPath, plainGeometryPath, outputPath], 180_000);
 
   const bboxPath = join(workDir, "output-bbox.html");
-  await commandRunner("pdftotext", ["-bbox-layout", outputPath, bboxPath], 120_000);
+  await commandRunner("pdftotext", ["-cropbox", "-bbox-layout", outputPath, bboxPath], 120_000);
   const extractedPages = parsePdftotextBbox(await readFile(bboxPath, "utf8"));
   const spatial = computeSpatialAccuracy(geometryPages, extractedPages);
   const finalTextPath = join(workDir, "output-text.txt");

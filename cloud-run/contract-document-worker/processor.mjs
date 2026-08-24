@@ -43,6 +43,10 @@ export function readRuntimeConfig(env = process.env) {
   if (!portalBaseUrl.startsWith("https://") || !supabaseOrigin.startsWith("https://")) {
     throw new FatalProcessingError("invalid_configuration");
   }
+  const tempRoot = env.OCR_TMP_DIR || tmpdir();
+  if (env.NODE_ENV === "production" && tempRoot !== "/mnt/ramdisk") {
+    throw new FatalProcessingError("invalid_temporary_storage_configuration");
+  }
   return {
     portalBaseUrl,
     audience: env.OCR_CLOUD_RUN_AUDIENCE,
@@ -50,7 +54,7 @@ export function readRuntimeConfig(env = process.env) {
     supabaseAnonKey: env.SUPABASE_ANON_KEY,
     supabaseOrigin,
     googleProject: env.GOOGLE_CLOUD_PROJECT,
-    tempRoot: env.OCR_TMP_DIR || tmpdir(),
+    tempRoot,
     maxBytes: MAX_BYTES,
   };
 }

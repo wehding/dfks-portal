@@ -87,16 +87,13 @@ create or replace function public.finish_contract_document_job_v2(
 returns public.contract_document_jobs
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = ''
 as $$
 declare
   finished public.contract_document_jobs;
   new_ai_job_id uuid;
   should_queue_ai boolean := false;
 begin
-  if auth.role() <> 'service_role' then
-    raise exception 'forbidden' using errcode = '42501';
-  end if;
   if p_status not in ('completed', 'failed', 'needs_review', 'not_required') then
     raise exception 'invalid status' using errcode = '22023';
   end if;

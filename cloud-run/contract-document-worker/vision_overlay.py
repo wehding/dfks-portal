@@ -49,13 +49,17 @@ def overlay_for_page(page, geometry):
         natural_width = max(0.01, pdfmetrics.stringWidth(text, FONT_NAME, font_size))
         scale = max(1.0, min(1000.0, target_width / natural_width * 100.0))
         angle = math.degrees(math.atan2(right[1] - left[1], right[0] - left[0]))
+        _, descent = pdfmetrics.getAscentDescent(FONT_NAME, font_size)
+        baseline_offset = -descent
+        radians = math.radians(angle)
         text_object = output.beginText()
         text_object.setTextRenderMode(3)
         text_object.setFont(FONT_NAME, font_size)
         text_object.setHorizScale(scale)
-        text_object.setTextTransform(math.cos(math.radians(angle)), math.sin(math.radians(angle)),
-                                     -math.sin(math.radians(angle)), math.cos(math.radians(angle)),
-                                     left[0], left[1])
+        text_object.setTextTransform(math.cos(radians), math.sin(radians),
+                                     -math.sin(radians), math.cos(radians),
+                                     left[0] - math.sin(radians) * baseline_offset,
+                                     left[1] + math.cos(radians) * baseline_offset)
         text_object.textOut(text)
         output.drawText(text_object)
 

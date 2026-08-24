@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { writeFile } from "node:fs/promises";
 import test from "node:test";
 
-import { createProcessor, FatalProcessingError } from "./processor.mjs";
+import { createProcessor, FatalProcessingError, readRuntimeConfig } from "./processor.mjs";
 
 const config = {
   portalBaseUrl: "https://portal.example",
@@ -35,6 +35,22 @@ function claimJob(overrides = {}) {
     ...overrides,
   };
 }
+
+test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () => {
+  const env = {
+    NODE_ENV: "production",
+    PORTAL_BASE_URL: "https://portal.example",
+    OCR_CLOUD_RUN_AUDIENCE: "https://portal.example/api/internal/document-processing",
+    SUPABASE_URL: "https://project.supabase.co",
+    SUPABASE_ANON_KEY: "public-key",
+    GOOGLE_CLOUD_PROJECT: "dfks-test",
+  };
+  assert.throws(() => readRuntimeConfig(env), (error) => (
+    error instanceof FatalProcessingError
+    && error.code === "invalid_temporary_storage_configuration"
+  ));
+  assert.equal(readRuntimeConfig({ ...env, OCR_TMP_DIR: "/mnt/ramdisk" }).tempRoot, "/mnt/ramdisk");
+});
 
 test("en kontrolleret dokumentfejl registreres og batchen kan fortsætte", async () => {
   const completions = [];
