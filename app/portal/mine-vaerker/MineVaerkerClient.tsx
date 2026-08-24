@@ -20,7 +20,7 @@ import { WORK_TYPES } from "@/lib/work-types";
 import { ExpandableListTrigger, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { ListResultSummary } from "@/components/list-result-summary";
-import { fetchMemberShareTaskTarget } from "@/app/actions/work-share-cases";
+import { fetchMemberCoEditorSuggestions, fetchMemberShareTaskTarget } from "@/app/actions/work-share-cases";
 import { confirmNoCoeditors, fetchMemberCollaborationReviews, fetchMemberWorkReviewTasks } from "@/app/actions/work-collaboration-reviews";
 import type { Contract } from "../mine-kontrakter/MineKontrakterClient";
 import { resolveWorkEditorRelation } from "@/lib/work-editor-roles";
@@ -105,6 +105,15 @@ type ReviewCoEditorDraft = {
   name: string;
   rightsHolderId: string | null;
   role: string;
+};
+
+type ReviewCoEditorSuggestion = {
+  key: string;
+  name: string;
+  rightsHolderId: string | null;
+  role: string;
+  sources: Array<"local" | "member" | "dfi" | "tmdb">;
+  matchType: "existing" | "external_id" | "exact_name" | "unmatched" | "conflict";
 };
 
 type CollaborationReview = {
@@ -300,6 +309,9 @@ export default function MineVaerkerClient({
   const [reviewCompletedCount, setReviewCompletedCount] = useState(0);
   const [reviewRefreshDeferred, setReviewRefreshDeferred] = useState(false);
   const [reviewCoEditorDrafts, setReviewCoEditorDrafts] = useState<ReviewCoEditorDraft[]>([]);
+  const [reviewCoEditorSuggestions, setReviewCoEditorSuggestions] = useState<ReviewCoEditorSuggestion[]>([]);
+  const [reviewSuggestionsOpen, setReviewSuggestionsOpen] = useState(false);
+  const [reviewSuggestionsLoading, setReviewSuggestionsLoading] = useState(false);
   const [reviewSelfSharePercent, setReviewSelfSharePercent] = useState("");
   const [reviewEpisodeOptions, setReviewEpisodeOptions] = useState<Array<{ number: number; title: string }>>([]);
   const [reviewSelectedEpisodes, setReviewSelectedEpisodes] = useState<number[]>([]);
@@ -552,6 +564,46 @@ export default function MineVaerkerClient({
       return;
     }
     void confirmSelectedAsSolo([task.workId], { fastReviewTaskKey: task.key });
+  };
+
+  const openUnknownCoEditorSuggestions = async (task: MemberWorkReviewTask) => {
+    if (!rightsHolderId) return;
+    setReviewSuggestionsOpen(true);
+    setReviewSuggestionsLoading(true);
+    setReviewInlineFeedback(null);
+    try {
+      const result = await fetchMemberCoEditorSuggestions({
+        rightsHolderId,
+        workId: task.kind === "episode_selection" ? task.seriesWorkId : task.workId,
+        seasonNumber: task.seasonNumber,
+      });
+      if (!result.success) throw new Error(result.error);
+      const excludedIds = new Set([
+        rightsHolderId,
+        ...(task.kind === "coeditor_review" ? task.existingCoEditors.map(editor => editor.rightsHolderId) : []),
+      ]);
+      setReviewCoEditorSuggestions((result.suggestions ?? []).filter(suggestion => !suggestion.rightsHolderId || !excludedIds.has(suggestion.rightsHolderId)) as ReviewCoEditorSuggestion[]);
+    } catch (error) {
+      setReviewCoEditorSuggestions([]);
+      setReviewInlineFeedback({ type: "error", text: error instanceof Error ? error.message : "Forslagene kunne ikke hentes." });
+    } finally {
+      setReviewSuggestionsLoading(false);
+    }
+  };
+
+  const toggleReviewSuggestion = (suggestion: ReviewCoEditorSuggestion) => {
+    setReviewCoEditorDrafts(current => {
+      const existing = current.find(editor => suggestion.rightsHolderId
+        ? editor.rightsHolderId === suggestion.rightsHolderId
+        : editor.name === suggestion.name);
+      if (existing) return current.filter(editor => editor.id !== existing.id);
+      return [...current, {
+        id: createClientId("review-credit-suggestion"),
+        name: suggestion.name,
+        rightsHolderId: suggestion.rightsHolderId,
+        role: suggestion.role,
+      }];
+    });
   };
 
   const saveReviewCoEditors = async (task: MemberWorkReviewTask, options?: { closeAfterSave?: boolean }) => {
@@ -1042,6 +1094,8 @@ export default function MineVaerkerClient({
       setReviewSelfSharePercent("");
     }
     setReviewInlineFeedback(null);
+    setReviewCoEditorSuggestions([]);
+    setReviewSuggestionsOpen(false);
     setSoloConflictTask(null);
   }, [currentReviewTaskKey, currentReviewTaskKind, currentReviewOwnSharePercent]);
 
@@ -1924,19 +1978,60 @@ export default function MineVaerkerClient({
                     >
                       {currentReviewTask.existingCoEditors.length > 0 ? "Tilføj yderligere medklippere" : t("works.review.addCoeditor")}
                     </Button>
+                    {reviewCurrent === 1 && <p className="-mt-2 text-xs text-muted-foreground">Søg efter en bestemt person, som du ved har klippet med på værket.</p>}
                     <Button
                       type="button"
                       variant="outline"
                       className="h-11 w-full"
-                      disabled={reviewCoEditorDrafts.some(editor => editor.name === "Ukendt medklipper")}
-                      onClick={() => setReviewCoEditorDrafts(current => [...current, unknownReviewCoEditor()])}
+                      disabled={reviewSuggestionsLoading}
+                      onClick={() => void openUnknownCoEditorSuggestions(currentReviewTask)}
                     >
-                      Ukendt medklipper
+                      {reviewSuggestionsLoading ? "Finder mulige medklippere…" : "Ukendt medklipper"}
                     </Button>
+                    {reviewCurrent === 1 && <p className="-mt-2 text-xs text-muted-foreground">Systemet foreslår mulige krediterede klippere fra portalen, DFI og TMDb. Du kan vælge én eller flere.</p>}
                     {reviewInlineFeedback && (
                       <div className={`rounded-md border px-3 py-2 text-sm ${reviewInlineFeedback.type === "error" ? "border-red-200 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-200" : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200"}`}>
                         {reviewInlineFeedback.text}
                       </div>
+                    )}
+                  </div>
+                )}
+                {reviewSuggestionsOpen && (
+                  <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50/60 p-3 dark:border-blue-900 dark:bg-blue-950/20">
+                    <div>
+                      <p className="text-sm font-semibold">Kunne det være en eller flere af disse?</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Forslagene bygger på registrerede krediteringer. Markér alle relevante personer.</p>
+                    </div>
+                    {reviewSuggestionsLoading ? (
+                      <p className="text-sm text-muted-foreground">Søger i portalen, DFI og TMDb…</p>
+                    ) : reviewCoEditorSuggestions.length > 0 ? (
+                      <div className="space-y-2">
+                        {reviewCoEditorSuggestions.map(suggestion => {
+                          const selected = reviewCoEditorDrafts.some(editor => suggestion.rightsHolderId
+                            ? editor.rightsHolderId === suggestion.rightsHolderId
+                            : editor.name === suggestion.name);
+                          return (
+                            <label key={suggestion.key} className="flex cursor-pointer items-start gap-3 rounded-md border bg-background p-3 text-sm">
+                              <input type="checkbox" className="mt-0.5 h-4 w-4" checked={selected} onChange={() => toggleReviewSuggestion(suggestion)} />
+                              <span className="min-w-0 flex-1">
+                                <span className="font-medium">{suggestion.name}</span>
+                                <span className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                                  <span>{suggestion.role}</span>
+                                  {suggestion.sources.map(source => <Badge key={source} variant="outline" className="h-5 px-1.5 text-[10px]">{source === "local" ? "Portal" : source === "member" ? "Indtastet" : source.toUpperCase()}</Badge>)}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">Der blev ikke fundet sikre forslag.</p>
+                    )}
+                    {!reviewSuggestionsLoading && (
+                      <Button type="button" variant="ghost" className="w-full" onClick={() => {
+                        setReviewCoEditorDrafts(current => current.some(editor => editor.name === "Ukendt medklipper") ? current : [...current, unknownReviewCoEditor()]);
+                        setReviewSuggestionsOpen(false);
+                      }}>Ingen passer – registrér ukendt medklipper</Button>
                     )}
                   </div>
                 )}
@@ -1956,15 +2051,17 @@ export default function MineVaerkerClient({
                       >
                         {reviewCoEditorDrafts.length > 0 ? "Tilføj yderligere medklippere" : "Tilføj medklipper"}
                       </Button>
+                      {reviewCurrent === 1 && <p className="-mt-1 text-xs text-muted-foreground">Søg efter en bestemt person, som du ved har klippet med på de valgte afsnit.</p>}
                       <Button
                         type="button"
                         variant="outline"
                         className="h-11 w-full"
-                        disabled={reviewEpisodesLoading || reviewEpisodesSaving || reviewSelectedEpisodes.length === 0 || reviewCoEditorDrafts.some(editor => editor.name === "Ukendt medklipper")}
-                        onClick={() => setReviewCoEditorDrafts(current => [...current, unknownReviewCoEditor()])}
+                        disabled={reviewEpisodesLoading || reviewEpisodesSaving || reviewSelectedEpisodes.length === 0 || reviewSuggestionsLoading}
+                        onClick={() => void openUnknownCoEditorSuggestions(currentReviewTask)}
                       >
-                        Ukendt medklipper
+                        {reviewSuggestionsLoading ? "Finder mulige medklippere…" : "Ukendt medklipper"}
                       </Button>
+                      {reviewCurrent === 1 && <p className="-mt-1 text-xs text-muted-foreground">Systemet foreslår mulige krediterede klippere fra portalen, DFI og TMDb. Du kan vælge én eller flere.</p>}
                       <Button
                         type="button"
                         variant="outline"
@@ -1974,6 +2071,7 @@ export default function MineVaerkerClient({
                       >
                         Har klippet alene
                       </Button>
+                      {reviewCurrent === 1 && <p className="-mt-1 text-xs text-muted-foreground">Vælg dette, hvis ingen andre klippere arbejdede på de valgte afsnit.</p>}
                       <Button
                         type="button"
                         className="h-11 w-full"
@@ -1988,7 +2086,9 @@ export default function MineVaerkerClient({
                       <Button type="button" variant="outline" className="h-11 w-full" disabled={collaborationSaving} onClick={() => handleReviewSoloAction(currentReviewTask)}>
                         {t("works.review.soloAction")}
                       </Button>
+                      {reviewCurrent === 1 && <p className="-mt-1 text-xs text-muted-foreground">Vælg dette, hvis ingen andre klippere arbejdede på værket eller afsnittet.</p>}
                       <Button type="button" className="h-11 w-full" disabled={collaborationSaving} onClick={() => void saveReviewCoEditors(currentReviewTask)}>Gem</Button>
+                      {reviewCurrent === 1 && <p className="-mt-1 text-xs text-muted-foreground">Gemmer dine valgte medklippere og din foreløbige arbejdsandel.</p>}
                     </>
                   )}
                   <p className="pt-1 text-center text-xs text-muted-foreground">Du kan senere ændre dine valg under det enkelte værk.</p>

@@ -243,7 +243,7 @@ export async function refreshWorkCreditEvidence(db: ServiceClient, params: {
 export async function buildReconciledWorkCredits(db: ServiceClient, params: {
   orgId: string;
   workId: string;
-  caseId: string;
+  caseId?: string | null;
   seasonNumber?: number | null;
 }) {
   const assignmentWorkIds = [params.workId];
@@ -258,8 +258,10 @@ export async function buildReconciledWorkCredits(db: ServiceClient, params: {
   const [{ data: assignments }, { data: participants }, { data: evidence }] = await Promise.all([
     db.from("work_assignments").select("rights_holder_id,role,share_percent,rettighedshavere(full_name)")
       .eq("org_id", params.orgId).in("work_id", assignmentWorkIds).not("rights_holder_id", "is", null),
-    db.from("work_share_participants").select("rights_holder_id,proposed_name,role,proposed_percent,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name)")
-      .eq("case_id", params.caseId).is("excluded_at", null),
+    params.caseId
+      ? db.from("work_share_participants").select("rights_holder_id,proposed_name,role,proposed_percent,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name)")
+        .eq("case_id", params.caseId).is("excluded_at", null)
+      : Promise.resolve({ data: [], error: null }),
     db.from("work_credit_evidence").select("source,external_person_id,credited_name,credited_role")
       .eq("org_id", params.orgId).eq("work_id", params.workId),
   ]);

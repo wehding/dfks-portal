@@ -5,6 +5,7 @@ import test from "node:test";
 const wizard = readFileSync("components/admin/work-share-reconciliation-wizard.tsx", "utf8");
 const actions = readFileSync("app/actions/work-share-cases.ts", "utf8");
 const memberEditor = readFileSync("app/portal/mine-vaerker/components/EditWorkModal.tsx", "utf8");
+const memberWorkList = readFileSync("app/portal/mine-vaerker/MineVaerkerClient.tsx", "utf8");
 const adminArchive = readFileSync("app/admin/vaerker/WorkArchiveClient.tsx", "utf8");
 const migration = readFileSync("supabase/migrations/20260823230302_cache_work_credit_sources.sql", "utf8");
 
@@ -56,6 +57,25 @@ test("værkeditorerne samler registrerede medklippere under rettighedshavere", (
 test("arbejdsandelsdialogen forbliver øverst ved sagsnavigation", () => {
   assert.match(adminArchive, /top-\[max\(1rem,env\(safe-area-inset-top\)\)\]/);
   assert.match(adminArchive, /translate-y-0/);
+});
+
+test("ukendt medklipper bruger samme interne og eksterne krediteringsgrundlag", () => {
+  assert.match(actions, /fetchMemberCoEditorSuggestions/);
+  assert.match(actions, /refreshWorkCreditEvidence/);
+  assert.match(actions, /buildReconciledWorkCredits/);
+  assert.match(actions, /matchWorkCreditsToRightsHolders/);
+  assert.match(actions, /Værket er ikke tilknyttet din profil/);
+  assert.match(memberWorkList, /Kunne det være en eller flere af disse\?/);
+  assert.match(memberWorkList, /reviewCoEditorSuggestions\.map/);
+  assert.match(memberWorkList, /type="checkbox"/);
+  assert.match(memberWorkList, /Ingen passer – registrér ukendt medklipper/);
+});
+
+test("det første gennemgangsværk forklarer hver handling", () => {
+  assert.match(memberWorkList, /reviewCurrent === 1/);
+  assert.match(memberWorkList, /Søg efter en bestemt person/);
+  assert.match(memberWorkList, /Systemet foreslår mulige krediterede klippere/);
+  assert.match(memberWorkList, /Vælg dette, hvis ingen andre klippere/);
 });
 
 test("værksmenuen adskiller almindelige opgaver fra arbejdsandele", () => {

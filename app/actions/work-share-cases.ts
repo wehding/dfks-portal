@@ -135,6 +135,62 @@ export async function fetchMemberShareTask(params: {
   };
 }
 
+export async function fetchMemberCoEditorSuggestions(params: {
+  rightsHolderId: string;
+  workId: string;
+  seasonNumber?: number | null;
+}) {
+  const { db, holder, orgId } = await ownContext(params.rightsHolderId);
+  const { data: work, error: workError } = await db.from("works")
+    .select("id,parent_work_id,season_number")
+    .eq("id", params.workId)
+    .maybeSingle();
+  if (workError || !work) return { success: false as const, error: workError?.message ?? "Værket findes ikke." };
+
+  const evidenceWorkId = work.parent_work_id ?? work.id;
+  const seasonNumber = params.seasonNumber ?? work.season_number ?? null;
+  const { data: seasonWorks, error: seasonError } = seasonNumber != null
+    ? await db.from("works").select("id").eq("parent_work_id", evidenceWorkId).eq("season_number", seasonNumber)
+    : { data: [], error: null };
+  if (seasonError) return { success: false as const, error: seasonError.message };
+  const assignmentWorkIds = [...new Set([params.workId, evidenceWorkId, ...(seasonWorks ?? []).map(row => row.id)])];
+  const { data: assignments, error: assignmentError } = await db.from("work_assignments")
+    .select("rights_holder_id")
+    .eq("org_id", orgId)
+    .in("work_id", assignmentWorkIds)
+    .not("rights_holder_id", "is", null);
+  if (assignmentError) return { success: false as const, error: assignmentError.message };
+  if (!(assignments ?? []).some(row => row.rights_holder_id === holder.id)) {
+    return { success: false as const, error: "Værket er ikke tilknyttet din profil." };
+  }
+
+  await refreshWorkCreditEvidence(db, { orgId, workId: evidenceWorkId });
+  const credits = await matchWorkCreditsToRightsHolders(db, {
+    orgId,
+    credits: await buildReconciledWorkCredits(db, {
+      orgId,
+      workId: evidenceWorkId,
+      caseId: null,
+      seasonNumber,
+    }),
+  });
+  const existingHolderIds = new Set((assignments ?? []).map(row => row.rights_holder_id).filter(Boolean));
+  return {
+    success: true as const,
+    suggestions: credits
+      .filter(credit => credit.rightsHolderId !== holder.id)
+      .filter(credit => !credit.rightsHolderId || !existingHolderIds.has(credit.rightsHolderId))
+      .map(credit => ({
+        key: credit.key,
+        name: credit.name,
+        rightsHolderId: credit.matchType === "conflict" ? null : credit.rightsHolderId,
+        role: normalizeWorkEditorRole(credit.roles[0] ?? "Klipper"),
+        sources: credit.sources,
+        matchType: credit.matchType,
+      })),
+  };
+}
+
 export async function fetchMemberShareTaskTarget(params: { rightsHolderId: string; caseId: string }) {
   const { db, holder, orgId } = await ownContext(params.rightsHolderId);
   const { data: participant } = await db.from("work_share_participants").select("case_id")
