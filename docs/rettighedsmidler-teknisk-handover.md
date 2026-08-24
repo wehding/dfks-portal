@@ -23,9 +23,8 @@ Følgende er fastlagt:
 
 Følgende afventer ekstern afklaring:
 
-1. Hvilken begivenhed der starter kravperioden og den systemmæssige deadline.
-2. Den konkrete DataLøn-konfiguration for B-indkomst.
-3. Hvordan bekræftet bankudbetaling dokumenteres i praksis.
+1. Den konkrete DataLøn-konfiguration for B-indkomst.
+2. Hvordan bekræftet bankudbetaling dokumenteres i praksis.
 
 ## 1. Produktgrænse og terminologi
 
@@ -179,7 +178,7 @@ Politikken indeholder:
 - en eller flere SKU-komponenter til sociale, kulturelle og uddannelsesmæssige formål,
 - eventuel lovbestemt kollektiv andel,
 - beregningsgrundlag og kontrolleret rækkefølge for hver komponent,
-- kravfristens længde og senere dens startregel,
+- kravperiodens længde og startregel,
 - behandling af ufordelbare midler,
 - godkendelsesorgan, dato og dokument-/beslutningsreference,
 - fire-øjne- og øvrige godkendelsesregler.
@@ -355,7 +354,17 @@ Den oprindelige fordeling og den senere godkendte fordeling bevares som separate
 
 ## 9. Kravfrist, efterlysning og ufordelbare midler
 
-Den normale forventning er tre år, men fristens start afventer juridisk fortolkning. Modellen skal understøtte forskellige perioder pr. rettighedskasse, da andre ordninger eller lande kan have andre frister.
+For DFKS løber treårsperioden fra udgangen af det kalenderår, hvor udnyttelsen fandt sted. En udnyttelse i 2024 har derfor deadline ved udgangen af 31. december 2027 og kan tidligst vurderes som ufordelbar fra 1. januar 2028.
+
+```text
+claim_period_start = 31. december i udnyttelsesåret
+claim_deadline = claim_period_start + 3 år
+eligible_for_undistributable_at = dagen efter claim_deadline
+```
+
+Udnyttelsesåret skal komme fra den konkrete udnyttelse/visning og snapshot'es på værktildelingen. En fordelingsrunde med udnyttelser fra flere kalenderår skal opdeles i fristgrupper, så midler fra forskellige udnyttelsesår ikke får samme deadline ved en fejl.
+
+Modellen skal fortsat understøtte andre perioder og startregler pr. organisation og rettighedskilde, fordi andre ordninger eller lande kan have andre regler.
 
 Gem mindst:
 
@@ -621,11 +630,6 @@ Alle økonomiske objekter skal være organisationsbundne.
 10. Senere DataLøn-API og statusintegration.
 
 ## 21. Åbne beslutninger
-
-### Juridisk
-
-- Hvilken begivenhed starter kravfristen?
-- Skal enkelte rettighedskasser have andre frister?
 
 ### DataLøn og skat
 

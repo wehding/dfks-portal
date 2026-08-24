@@ -257,7 +257,18 @@ Organisationen skal kunne offentliggøre efterlysninger af:
 
 Efterlysningen gentages og dokumenteres efter organisationens politik. Systemet gemmer, hvad der blev offentliggjort, hvornår og af hvem.
 
-Den forventede normale frist er tre år, men det præcise starttidspunkt afventer juridisk afklaring. Andre kasser og udenlandske organisationer kan have andre frister, så perioden skal kunne konfigureres.
+For DFKS løber treårsperioden fra udgangen af det kalenderår, hvor udnyttelsen fandt sted.
+
+Eksempel:
+
+```text
+Udnyttelsen fandt sted i 2024
+Udnyttelsesåret slutter 31.12.2024
+Treårsperioden løber til og med 31.12.2027
+Beløbet kan tidligst vurderes som ufordelbart 01.01.2028
+```
+
+Hvis en fordelingsrunde indeholder udnyttelser fra flere år, skal systemet holde fristerne adskilt efter udnyttelsesår. Andre rettighedskasser og udenlandske organisationer kan have andre perioder eller startregler, så disse regler konfigureres pr. organisation og rettighedskilde.
 
 Hvis et krav indsendes rettidigt, kan hensættelsen ikke behandles som ufordelbar eller omfordeles, før alle rettidige krav er færdigbehandlet.
 
@@ -433,8 +444,7 @@ For enhver rettighedshaver og enhver udbetaling skal systemet kunne svare på:
 
 ## 22. Afklaringer, der fortsat mangler
 
-1. Juristens svar om, hvornår kravfristen begynder.
-2. DFKS' konkrete DataLøn-opsætning for B-indkomst.
-3. Administratorens beskrivelse af, hvordan bankudbetaling bekræftes i dag.
+1. DFKS' konkrete DataLøn-opsætning for B-indkomst.
+2. Administratorens beskrivelse af, hvordan bankudbetaling bekræftes i dag.
 
 Disse punkter er bevidst markeret som åbne og skal ikke udfyldes med tekniske antagelser.
