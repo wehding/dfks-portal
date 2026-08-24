@@ -466,6 +466,9 @@ export default function RettighedsmidlerPage() {
                     ))}
                 </div>
                 <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => router.push("/admin/rettighedsmidler/efterlysninger")}>
+                        Efterlysninger & arvinger
+                    </Button>
                     <Button size="sm" variant="outline" onClick={load}>
                         <RotateCcw className="h-3.5 w-3.5 mr-1" />
                         Opdater
