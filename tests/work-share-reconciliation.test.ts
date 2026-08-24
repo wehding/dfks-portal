@@ -97,6 +97,24 @@ test("ligelig fordeling er deterministisk ved manglende svar", () => {
   assert.deepEqual(proposeWorkShareCompromise(input, 0).map(row => row.finalPercent), [33.4, 33.3, 33.3]);
 });
 
+test("kendte andele bevares og resten fordeles ligeligt", () => {
+  const result = proposeWorkShareCompromise([
+    { id: "a", proposedPercent: 50 },
+    { id: "b", proposedPercent: null },
+    { id: "c", proposedPercent: null },
+  ], 0);
+  assert.deepEqual(result.map(row => row.finalPercent), [50, 25, 25]);
+});
+
+test("reserve trækkes fra før manglende andele fordeles", () => {
+  const result = proposeWorkShareCompromise([
+    { id: "a", proposedPercent: 40 },
+    { id: "b", proposedPercent: null },
+    { id: "c", proposedPercent: null },
+  ], 10);
+  assert.deepEqual(result.map(row => row.finalPercent), [40, 25, 25]);
+});
+
 test("invitationens pladsholdere udfyldes", () => {
   const text = renderInvitationTemplate("Kære {navn}\n{værker}\n{organisation}\n{værk}", { name: "Carla", organisation: "DFKS", worksText: "• Film A", primaryWork: "Film A" });
   assert.equal(text, "Kære Carla\n• Film A\nDFKS\nFilm A");

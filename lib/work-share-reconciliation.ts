@@ -147,13 +147,32 @@ export function proposeWorkShareCompromise(
   }
   if (participants.length === 0) return [];
   const targetTenths = Math.round((100 - reservePercent) * 10);
-  const explicit = participants
-    .map(row => row.proposedPercent)
-    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
-  const fallbackWeight = explicit.length ? explicit.reduce((sum, value) => sum + value, 0) / explicit.length : 1;
-  const weights = participants.map(row => row.proposedPercent == null ? fallbackWeight : Math.max(0, row.proposedPercent));
+  const explicitTenths = participants.map(row => {
+    const value = row.proposedPercent;
+    return typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? Math.round(value * 10)
+      : null;
+  });
+  const missingIndexes = explicitTenths.flatMap((value, index) => value == null ? [index] : []);
+  const explicitTotal = explicitTenths.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+
+  if (missingIndexes.length > 0 && explicitTotal <= targetTenths) {
+    const resultTenths = explicitTenths.map(value => value ?? 0);
+    const remainingTenths = targetTenths - explicitTotal;
+    const equalShare = Math.floor(remainingTenths / missingIndexes.length);
+    const remainder = remainingTenths - equalShare * missingIndexes.length;
+    missingIndexes
+      .map(index => ({ index, id: participants[index].id }))
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .forEach((row, order) => {
+        resultTenths[row.index] = equalShare + (order < remainder ? 1 : 0);
+      });
+    return participants.map((participant, index) => ({ participantId: participant.id, finalPercent: resultTenths[index] / 10 }));
+  }
+
+  const weights = explicitTenths.map(value => value ?? 0);
   const totalWeight = weights.reduce((sum, value) => sum + value, 0) || participants.length;
-  const rawTenths = weights.map(weight => targetTenths * (totalWeight ? weight / totalWeight : 1 / participants.length));
+  const rawTenths = weights.map(weight => targetTenths * (weights.some(value => value > 0) ? weight / totalWeight : 1 / participants.length));
   const floors = rawTenths.map(value => Math.floor(value));
   let remainder = targetTenths - floors.reduce((sum, value) => sum + value, 0);
   const order = rawTenths

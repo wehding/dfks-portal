@@ -381,12 +381,25 @@ export async function remindShareParticipant(participantId: string) {
   return { success: true as const };
 }
 
-export async function proposeAdminShareCompromise(caseId: string, reservePercent: number) {
+export async function proposeAdminShareCompromise(
+  caseId: string,
+  reservePercent: number,
+  enteredPercentages: Array<{ participantId: string; percent: number | null }> = [],
+) {
   const { admin, db } = await shareAdminContext();
   const { data: shareCase } = await db.from("work_share_cases").select("id").eq("id", caseId).eq("org_id", admin.orgId).maybeSingle();
   if (!shareCase) throw new Error("Fordelingssagen findes ikke.");
   const { data: rows } = await db.from("work_share_participants").select("id,proposed_percent").eq("case_id", caseId).is("excluded_at", null);
-  return { success: true as const, participants: proposeWorkShareCompromise(rows ?? [], reservePercent) };
+  const enteredById = new Map(enteredPercentages.map(row => [row.participantId, row.percent]));
+  const participants = (rows ?? []).map(row => {
+    if (!enteredById.has(row.id)) return row;
+    const entered = enteredById.get(row.id);
+    if (entered != null && (!Number.isFinite(entered) || entered < 0 || entered > 100)) {
+      throw new Error("Arbejdsandele skal være mellem 0 og 100 procent.");
+    }
+    return { ...row, proposed_percent: entered };
+  });
+  return { success: true as const, participants: proposeWorkShareCompromise(participants, reservePercent) };
 }
 
 export async function matchShareParticipant(params: { participantId: string; rightsHolderId: string }) {
