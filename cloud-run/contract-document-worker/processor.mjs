@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createClient } from "@supabase/supabase-js";
+import { createGoogleOcrClient, GoogleOcrOperationalError } from "./google-secure-api.mjs";
+import { processPdfSpatially, sha256 } from "./spatial-ocr.mjs";
 
-const REQUIRED_ENV = ["PORTAL_BASE_URL", "OCR_CLOUD_RUN_AUDIENCE", "SUPABASE_URL", "SUPABASE_ANON_KEY"];
+const REQUIRED_ENV = ["PORTAL_BASE_URL", "OCR_CLOUD_RUN_AUDIENCE", "SUPABASE_URL", "SUPABASE_ANON_KEY", "GOOGLE_CLOUD_PROJECT"];
 const MAX_BYTES = 25 * 1024 * 1024;
-const MIN_READABLE_TEXT_CHARS = 120;
 
 export class FatalProcessingError extends Error {
   constructor(code, options) {
@@ -42,14 +43,19 @@ export function readRuntimeConfig(env = process.env) {
   if (!portalBaseUrl.startsWith("https://") || !supabaseOrigin.startsWith("https://")) {
     throw new FatalProcessingError("invalid_configuration");
   }
+  const tempRoot = env.OCR_TMP_DIR || tmpdir();
+  if (env.NODE_ENV === "production" && tempRoot !== "/mnt/ramdisk") {
+    throw new FatalProcessingError("invalid_temporary_storage_configuration");
+  }
   return {
     portalBaseUrl,
     audience: env.OCR_CLOUD_RUN_AUDIENCE,
     supabaseUrl: env.SUPABASE_URL,
     supabaseAnonKey: env.SUPABASE_ANON_KEY,
     supabaseOrigin,
+    googleProject: env.GOOGLE_CLOUD_PROJECT,
+    tempRoot,
     maxBytes: MAX_BYTES,
-    minReadableTextChars: MIN_READABLE_TEXT_CHARS,
   };
 }
 
@@ -100,16 +106,6 @@ async function runCommand(command, args, timeoutMs = 12 * 60_000) {
   });
 }
 
-function orientationCorrections(stderr) {
-  const corrections = [];
-  const pattern = /page\s+(\d+).*?(?:rotate|rotation).*?(90|180|270)/gi;
-  for (const match of stderr.matchAll(pattern)) {
-    corrections.push({ page: Number(match[1]), degrees: Number(match[2]) });
-    if (corrections.length >= 500) break;
-  }
-  return corrections;
-}
-
 async function readResponseWithLimit(response, byteLimit) {
   if (!response.body) throw new DocumentProcessingError("download_failed");
   const reader = response.body.getReader();
@@ -131,7 +127,8 @@ async function readResponseWithLimit(response, byteLimit) {
 function validateClaim(job) {
   if (!job || typeof job !== "object" || typeof job.jobId !== "string"
     || typeof job.downloadUrl !== "string" || typeof job.uploadPath !== "string"
-    || typeof job.uploadToken !== "string") {
+    || typeof job.uploadToken !== "string" || typeof job.spatialUploadPath !== "string"
+    || typeof job.spatialUploadToken !== "string") {
     throw new FatalProcessingError("invalid_claim_response");
   }
   return job;
@@ -161,6 +158,14 @@ export function createProcessor(options = {}) {
   const storage = options.storage ?? createClient(config.supabaseUrl, config.supabaseAnonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   }).storage;
+  const googleClient = options.googleClient ?? createGoogleOcrClient({ config: {
+    projectId: config.googleProject,
+    visionLocation: "eu",
+    dlpLocation: "eu",
+    visionEndpoint: "https://eu-vision.googleapis.com",
+    dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+  } });
+  const spatialProcessor = options.spatialProcessor ?? processPdfSpatially;
 
   return async function processOne() {
     const token = await identityTokenProvider();
@@ -170,11 +175,10 @@ export function createProcessor(options = {}) {
     const job = validateClaim(await claim.json());
     let workDir;
     try {
-      workDir = await mkdtemp(join(tmpdir(), "dfks-ocr-"));
+      workDir = await mkdtemp(join(config.tempRoot, "dfks-ocr-"));
       const inputPath = join(workDir, "input.pdf");
       const outputPath = join(workDir, "output.pdf");
-      const sidecarPath = join(workDir, "ocr.txt");
-      const textPath = join(workDir, "text.txt");
+      const geometryPath = join(workDir, "vision-layout.json.gz");
       let downloadUrl;
       try {
         downloadUrl = new URL(job.downloadUrl);
@@ -201,45 +205,63 @@ export function createProcessor(options = {}) {
         throw new DocumentProcessingError("invalid_pdf", "needs_review", "Filen er ikke en gyldig PDF.");
       }
       await writeFile(inputPath, input, { mode: 0o600 });
+      const originalSha256 = sha256(input);
+      const result = await spatialProcessor({
+        inputPath, outputPath, geometryPath, workDir, commandRunner, googleClient,
+      });
+      const completion = {
+        jobId: job.jobId,
+        documentClassification: result.classification,
+        ocrEngine: result.status === "not_required" ? null : "google-vision-eu-v1",
+        orientationCorrections: [],
+        ocrApplied: result.status === "completed",
+        pageCount: result.pageCount,
+        textCharCount: result.textCharCount ?? null,
+        nativePageCount: result.nativePageCount,
+        ocrPageCount: result.ocrPageCount,
+        unreadablePageCount: result.unreadablePageCount,
+        redactionCounts: result.redactionCounts ?? {},
+        spatialAccuracyScore: result.spatial?.score ?? null,
+        spatialMedianIou: result.spatial?.medianIou ?? null,
+        spatialCenterInsideRatio: result.spatial?.centerInsideRatio ?? null,
+        originalSha256,
+      };
+      if (result.status === "not_required") {
+        await sendCompletion(config, token, { ...completion, status: "not_required" }, fetchImpl);
+        return { outcome: "completed" };
+      }
+      if (result.status === "needs_review") {
+        await sendCompletion(config, token, {
+          ...completion,
+          status: "needs_review",
+          errorCode: result.unreadablePageCount > 0 ? "ocr_unreadable_page" : "ocr_spatial_quality",
+          safeErrorMessage: result.unreadablePageCount > 0
+            ? "Mindst én side gav ikke læsbar tekst. Kontrollér scanningens kvalitet."
+            : "Tekstlagets placering bestod ikke den geometriske kvalitetskontrol.",
+        }, fetchImpl);
+        return { outcome: "needs_review" };
+      }
 
-      const ocrResult = await commandRunner("ocrmypdf", [
-        "--rotate-pages", "--rotate-pages-threshold", "2.5", "--deskew", "--clean-final", "--skip-text",
-        "--language", "dan+eng", "--output-type", "pdfa-2", "--sidecar", sidecarPath, inputPath, outputPath,
-      ]);
       const output = await readFile(outputPath);
+      const geometry = await readFile(geometryPath);
       if (output.length > config.maxBytes * 2) {
         throw new DocumentProcessingError("processed_file_too_large", "needs_review", "PDF-filen overskrider den tilladte størrelse efter behandling.");
       }
       const { error: uploadError } = await storage.from("kontrakter")
         .uploadToSignedUrl(job.uploadPath, job.uploadToken, output, { contentType: "application/pdf" });
       if (uploadError) throw new DocumentProcessingError("upload_failed");
-
-      const info = await commandRunner("pdfinfo", [outputPath], 30_000);
-      const pageCount = Number(info.stdout.match(/Pages:\s+(\d+)/i)?.[1] || 0) || null;
-      await commandRunner("pdftotext", [outputPath, textPath], 60_000);
-      const extractedText = await readFile(textPath, "utf8").catch(() => "");
-      const sidecar = await readFile(sidecarPath, "utf8").catch(() => "");
-      const textCharCount = extractedText.replace(/\s/g, "").length;
-      const completion = {
-        jobId: job.jobId,
-        orientationCorrections: orientationCorrections(ocrResult.stderr),
-        ocrApplied: sidecar.trim().length > 0,
-        pageCount,
-        textCharCount,
-      };
-      if (textCharCount < config.minReadableTextChars) {
-        await sendCompletion(config, token, {
-          ...completion,
-          status: "needs_review",
-          errorCode: "ocr_no_readable_text",
-          safeErrorMessage: "OCR-behandlingen fandt ikke nok læsbar tekst. Kontrollér scanningens kvalitet.",
-        }, fetchImpl);
-        return { outcome: "needs_review" };
-      }
-      await sendCompletion(config, token, { ...completion, status: "completed" }, fetchImpl);
+      const { error: spatialUploadError } = await storage.from("kontrakter")
+        .uploadToSignedUrl(job.spatialUploadPath, job.spatialUploadToken, geometry, { contentType: "application/gzip" });
+      if (spatialUploadError) throw new DocumentProcessingError("spatial_upload_failed");
+      await sendCompletion(config, token, {
+        ...completion, status: "completed", processedSha256: sha256(output),
+      }, fetchImpl);
       return { outcome: "completed" };
     } catch (error) {
       if (error instanceof FatalProcessingError) throw error;
+      if (error instanceof GoogleOcrOperationalError) {
+        throw new FatalProcessingError("google_ocr_service_failed", { cause: error });
+      }
       const documentError = safeDocumentError(error);
       await sendCompletion(config, token, {
         jobId: job.jobId,

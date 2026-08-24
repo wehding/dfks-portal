@@ -32,6 +32,7 @@ import { resolvePensionSupplement } from "@/lib/contract-pension"
 import { resolveContractSalary } from "@/lib/contract-salary"
 import { resolveContractCredit } from "@/lib/contract-credit"
 import { resolveContractProlongation } from "@/lib/contract-prolongation"
+import { resolveContractProductionType } from "@/lib/contract-production-type"
 
 const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
     overtidstillaeg: "Overtidstillæg",
@@ -105,7 +106,7 @@ type ValidatingContract = {
     working_title: string | null
     employers: { id: string; name: string; cvr: string | null } | null
     rettighedshavere: { id: string; full_name: string } | null
-    works: { id: string; title: string } | null
+    works: { id: string; title: string; type: string | null; dfi_id: string | null; dfi_metadata: Record<string, unknown> | null } | null
     contract_attachments: { id: string; type: string; title: string | null; pdf_url: string | null }[]
     validation: {
         id: string
@@ -380,7 +381,7 @@ function AdminValideringPageInner() {
 
         const { data, error } = await supabase
             .from("contracts")
-            .select(`*, employers(id, name, cvr), rettighedshavere(id, full_name), works(id, title), contract_attachments(*)`)
+            .select(`*, employers(id, name, cvr), rettighedshavere(id, full_name), works(id, title, type, dfi_id, dfi_metadata), contract_attachments(*)`)
             .eq("org_id", ORG_ID)
             .order("created_at", { ascending: false })
 
@@ -436,6 +437,10 @@ function AdminValideringPageInner() {
             const pensionSupplement = resolvePensionSupplement(normalizedSalary)
             const contractCredit = resolveContractCredit(ed)
             const prolongation = resolveContractProlongation(ed)
+            const productionType = resolveContractProductionType({
+                aiValue: ed.productionType,
+                work: contracts.find(c => c.id === reviewingId)?.works,
+            })
 
             setFormData({
                 producerName: ed.producerName ?? ed.employerName ?? "",
@@ -444,7 +449,10 @@ function AdminValideringPageInner() {
                 creditedRoles: contractCredit.creditedRoles ?? "",
                 contractCredits: contractCredit.contractCredits,
                 creditClauseStatus: contractCredit.creditClauseStatus,
-                productionType: ed.productionType ?? "",
+                productionType: redigerede.includes("productionType") ? (ed.productionType ?? "") : (productionType.productionType ?? ""),
+                productionTypeSource: redigerede.includes("productionType") ? "manual" : productionType.source,
+                productionTypeAiSuggestion: productionType.aiSuggestion,
+                productionTypeConflict: !redigerede.includes("productionType") && productionType.hasConflict,
                 contractType: ed.collectiveAgreementByReference
                     ? "leverandør-ref"
                     : (ed.contractType === "leverandør" || ed.isFreelanceContract)
@@ -497,7 +505,7 @@ function AdminValideringPageInner() {
 
             fetchPctRuleNotes(ed._resolvedAgreementCode ?? null)
         })
-    }, [reviewingId]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [reviewingId, contracts]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const unreviewedContracts = contracts.filter(c => c.status === "kladde")
     const reviewedContracts = contracts.filter(c => c.status === "valideret" || c.status === "arkiveret")
@@ -551,6 +559,9 @@ function AdminValideringPageInner() {
                 creditClauseStatus: formData.creditClauseStatus || "unclear",
                 hasCreditClause: !["absent", "role_only"].includes(String(formData.creditClauseStatus ?? "unclear")),
                 productionType: formData.productionType || undefined,
+                productionTypeSource: formData.productionTypeSource || undefined,
+                productionTypeAiSuggestion: formData.productionTypeAiSuggestion || undefined,
+                productionTypeConflict: !!formData.productionTypeConflict,
                 salary: formData.salary ? Number(formData.salary) : undefined,
                 lumpSumAmount: formData.lumpSumAmount ? Number(formData.lumpSumAmount) : undefined,
                 salaryUnit: formData.salaryUnit || "monthly",
@@ -715,6 +726,7 @@ function AdminValideringPageInner() {
         const pensionSupplement = resolvePensionSupplement(normalizedSalary)
         const contractCredit = resolveContractCredit(ed)
         const prolongation = resolveContractProlongation(ed)
+        const productionType = resolveContractProductionType({ aiValue: ed.productionType, work: reviewingContract?.works })
 
         return {
             producerName: (() => {
@@ -729,7 +741,10 @@ function AdminValideringPageInner() {
             creditedRoles:                 contractCredit.creditedRoles ?? "",
             contractCredits:               contractCredit.contractCredits,
             creditClauseStatus:             contractCredit.creditClauseStatus,
-            productionType:                ed.productionType ?? "",
+            productionType:                productionType.productionType ?? "",
+            productionTypeSource:          productionType.source,
+            productionTypeAiSuggestion:    productionType.aiSuggestion,
+            productionTypeConflict:        productionType.hasConflict,
             contractType:                  ed.collectiveAgreementByReference
                                                ? "leverandør-ref"
                                                : isLeverandoer ? "leverandør" : "a-løn",
@@ -1405,8 +1420,11 @@ setActiveField(fieldId)
 
                                 <Separator />
 
-                                <F src={fieldSrc("productionType")} label="Produktionstype" locked={isLocked("productionType")}>
-                                    <Select value={formData.productionType ?? ""} onValueChange={(v) => setField("productionType", v)}>
+                                <F src={formData.productionTypeSource === "work_database" || formData.productionTypeSource === "dfi" ? "vaerk" : fieldSrc("productionType")} label="Produktionstype" locked={isLocked("productionType")}>
+                                    <Select value={formData.productionType ?? ""} onValueChange={(v) => {
+                                        setField("productionType", v)
+                                        setFormData(prev => ({ ...prev, productionTypeSource: "manual", productionTypeConflict: false }))
+                                    }}>
                                         <SelectTrigger><SelectValue placeholder="Vælg type..." /></SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="documentary" className="font-medium text-muted-foreground text-[10px]" disabled>── Dokumentar ──</SelectItem>
@@ -1426,6 +1444,15 @@ setActiveField(fieldId)
                                             <SelectItem value="other">Andet</SelectItem>
                                         </SelectContent>
                                     </Select>
+                                    {(formData.productionTypeSource === "work_database" || formData.productionTypeSource === "dfi") && (
+                                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                            <Badge variant="outline">{formData.productionTypeSource === "dfi" ? "DFI" : "Værksdatabase"}</Badge>
+                                            <span>Typen er hentet fra det tilknyttede værk.</span>
+                                            {formData.productionTypeConflict && formData.productionTypeAiSuggestion && (
+                                                <span className="text-amber-700 dark:text-amber-400">AI foreslog: {productionTypeLabel(formData.productionTypeAiSuggestion)}</span>
+                                            )}
+                                        </div>
+                                    )}
                                 </F>
 
                                 <div className="grid gap-3 sm:grid-cols-2">
@@ -2120,13 +2147,23 @@ setActiveField(fieldId)
 
 // ── Small helpers ─────────────────────────────────────────────
 
-type DataSource = "ai" | "overenskomst" | "klipper" | "manuel" | undefined
+type DataSource = "ai" | "overenskomst" | "klipper" | "manuel" | "vaerk" | undefined
 
 const SOURCE_STYLES: Record<NonNullable<DataSource>, string> = {
     ai:           "rounded-md bg-blue-50 dark:bg-blue-950/25 px-2.5 py-2 -mx-2.5",
     overenskomst: "rounded-md bg-amber-50 dark:bg-amber-950/25 px-2.5 py-2 -mx-2.5",
     klipper:      "rounded-md bg-emerald-50 dark:bg-emerald-950/25 px-2.5 py-2 -mx-2.5",
     manuel:       "rounded-md border border-input bg-background px-2.5 py-2 -mx-2.5",
+    vaerk:        "rounded-md bg-violet-50 dark:bg-violet-950/25 px-2.5 py-2 -mx-2.5",
+}
+
+function productionTypeLabel(value: unknown) {
+    const labels: Record<string, string> = {
+        feature: "Spillefilm", tvSeries: "TV-serie", documentary: "Dokumentarfilm",
+        docSeries: "Dokumentarserie", short: "Kortfilm", tvEntertainment: "TV-underholdning",
+        reality: "Reality", other: "Andet",
+    }
+    return labels[String(value ?? "")] ?? String(value ?? "")
 }
 
 function F({ label, action, locked, src, outlined = false, children }: {

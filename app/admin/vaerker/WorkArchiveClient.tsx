@@ -1442,6 +1442,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
         },
         productionCompanies: editProducerSelections,
         distributions: distributionPayload(editDistributions),
+        replaceAssignments: !editingSeasonGroup,
         assignments: [
           ...Object.values(assignmentDrafts).map(assignment => ({
             id: assignment.id,
@@ -2114,7 +2115,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
       </SummaryGrid>
 
       <Dialog open={shareTasksOpen} onOpenChange={setShareTasksOpen}>
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+        <DialogContent className="top-[max(1rem,env(safe-area-inset-top))] bottom-auto max-h-[calc(100svh-2rem)] max-w-4xl translate-y-0 overflow-y-auto rounded-lg sm:top-6 sm:translate-y-0">
           <DialogHeader><DialogTitle>Afstem arbejdsandele</DialogTitle></DialogHeader>
           <WorkShareReconciliationWizard onCountChange={handleShareTaskCountChange} />
         </DialogContent>
@@ -2852,14 +2853,14 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                   </InfoPanel>
                 )}
                 {!editingSeasonGroup && <InfoPanel title="Rettighedshavere">
-                  {(editing.work_assignments ?? []).length === 0 ? (
+                  {Object.keys(assignmentDrafts).length === 0 ? (
                     <p className="text-sm text-muted-foreground">Ingen rettighedshavere er koblet til værket.</p>
                   ) : (
                     <div className="space-y-3">
-                      {(editing.work_assignments ?? []).map(assignment => (
-                        <div key={assignment.id} className="grid gap-3 rounded-md border px-3 py-3 sm:grid-cols-[minmax(0,1fr)_180px_140px] sm:items-center">
+                      {(editing.work_assignments ?? []).filter(assignment => assignmentDrafts[assignment.id]).map(assignment => (
+                        <div key={assignment.id} className="grid gap-3 rounded-md border px-3 py-3 sm:grid-cols-[minmax(0,1fr)_180px_100px_auto] sm:items-center">
                           <div>
-                            <p className="text-sm font-medium">{assignment.rettighedshavere?.full_name ?? "Ukendt rettighedshaver"}</p>
+                            {assignment.rettighedshavere?.id ? <a href={`/admin/rettighedshavere?edit=${assignment.rettighedshavere.id}`} className="text-sm font-medium underline-offset-4 hover:underline">{assignment.rettighedshavere.full_name ?? "Ukendt rettighedshaver"}</a> : <p className="text-sm font-medium">Ukendt rettighedshaver</p>}
                             <p className="text-xs text-muted-foreground">Kreditering på værket</p>
                           </div>
                           <Select
@@ -2885,6 +2886,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                               [assignment.id]: { ...(prev[assignment.id] ?? { id: assignment.id, role: displayCreditRole(assignment.role) }), sharePercent: e.target.value },
                             }))}
                           />
+                          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Fjern ${assignment.rettighedshavere?.full_name ?? "rettighedshaver"}`} onClick={() => setAssignmentDrafts(previous => { const next = { ...previous }; delete next[assignment.id]; return next; })}><Trash2 className="h-4 w-4" /></Button>
                         </div>
                       ))}
                     </div>

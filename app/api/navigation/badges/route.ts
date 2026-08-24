@@ -48,9 +48,13 @@ export async function GET(request: NextRequest) {
     const work = item.works as unknown as { season_number?: number | null; episode_number?: number | null } | null;
     taskReferences.push({ work_id: item.work_id, season_number: work?.season_number, episode_number: work?.episode_number });
   }
+  const workShareTaskCount = countUniqueWorkShareTasks(taskReferences);
   const badgeRow = {
     ...((row as Record<string, unknown> | null) ?? {}),
-    admin_work_share_tasks: countUniqueWorkShareTasks(taskReferences),
+    // RPC'ens admin_works omfatter allerede arbejdsandelssager. De har deres
+    // eget mærke og trækkes derfor ud af det almindelige værk-pendingtal.
+    admin_works: Math.max(0, Number((row as Record<string, unknown> | null)?.admin_works ?? 0) - workShareTaskCount),
+    admin_work_share_tasks: workShareTaskCount,
   };
   return applyAuthResponse(NextResponse.json(normalizeNavigationBadgeCounts(badgeRow)));
 }
