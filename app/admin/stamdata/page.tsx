@@ -38,6 +38,8 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import NextLink from "next/link"
 import { getAftalelicensFilterRules, getAftalelicensWeightConfig, updateAftalelicensFilterRules, updateAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
+import { RightsFundsTab } from "@/components/admin/rights-funds-tab"
+import { DistributionPoliciesTab } from "@/components/admin/distribution-policies-tab"
 
 function MasterDataTable({
     type,
@@ -1083,6 +1085,8 @@ export default function AdminStamdataPage() {
                     <TabsTrigger value="filtreringsregler">Filtreringsregler</TabsTrigger>
                     <TabsTrigger value="vaegt">Vægte og hensættelser</TabsTrigger>
                     <TabsTrigger value="eksport">Eksportkolonner</TabsTrigger>
+                    <TabsTrigger value="rettighedskasser">Rettighedskasser</TabsTrigger>
+                    <TabsTrigger value="fordelingspolitikker">Fordelingspolitikker</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="roles" className="mt-4">
@@ -1131,6 +1135,14 @@ export default function AdminStamdataPage() {
 
                 <TabsContent value="eksport" className="mt-4">
                     <ExportKolonnerTab />
+                </TabsContent>
+
+                <TabsContent value="rettighedskasser" className="mt-4">
+                    <RightsFundsTab />
+                </TabsContent>
+
+                <TabsContent value="fordelingspolitikker" className="mt-4">
+                    <DistributionPoliciesTab />
                 </TabsContent>
             </Tabs>
         </div>
