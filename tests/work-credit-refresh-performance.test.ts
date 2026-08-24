@@ -17,6 +17,26 @@ test("kildeopdatering erstatter kun den aktive sag", () => {
   assert.match(actions, /case: await fetchAdminShareCase/);
 });
 
+test("sæsonssager samler klippere fra seriens afsnit", () => {
+  const evidence = readFileSync("lib/server/work-credit-evidence.ts", "utf8");
+  assert.match(evidence, /parent_work_id/);
+  assert.match(evidence, /season_number/);
+  assert.match(evidence, /\.in\("work_id", assignmentWorkIds\)/);
+});
+
+test("arbejdsandele vises som én samlet tre-sektionsdialog", () => {
+  assert.match(wizard, /1\. Bekræft klippere/);
+  assert.match(wizard, /2\. Afstem procentandele/);
+  assert.match(wizard, /3\. Kontrollér og godkend/);
+  assert.doesNotMatch(wizard, /setStep\(/);
+});
+
+test("værksmenuen adskiller almindelige opgaver fra arbejdsandele", () => {
+  const route = readFileSync("app/api/navigation/badges/route.ts", "utf8");
+  assert.match(route, /admin_works: Math\.max\(0, Number\([\s\S]+admin_works[\s\S]+\) - workShareTaskCount\)/);
+  assert.match(route, /admin_work_share_tasks: workShareTaskCount/);
+});
+
 test("kildecache har syv dages friskhed, retrybegrænsning og atomisk claim", () => {
   assert.match(migration, /interval '7 days'/);
   assert.match(migration, /on conflict \(org_id, work_id, source\) do update/i);

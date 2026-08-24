@@ -239,12 +239,17 @@ export async function countAdminShareTasks() {
 
 export async function refreshAdminShareCaseCredits(caseId: string, force = false) {
   const { admin, db } = await shareAdminContext();
-  const { data: shareCase } = await db.from("work_share_cases").select("id,work_id").eq("id", caseId).eq("org_id", admin.orgId).maybeSingle();
+  const { data: shareCase } = await db.from("work_share_cases").select("id,work_id,season_number").eq("id", caseId).eq("org_id", admin.orgId).maybeSingle();
   if (!shareCase) throw new Error("Fordelingssagen findes ikke.");
   const refresh = await refreshWorkCreditEvidence(db, { orgId: admin.orgId, workId: shareCase.work_id, force });
   const credits = await matchWorkCreditsToRightsHolders(db, {
     orgId: admin.orgId,
-    credits: await buildReconciledWorkCredits(db, { orgId: admin.orgId, workId: shareCase.work_id, caseId }),
+    credits: await buildReconciledWorkCredits(db, {
+      orgId: admin.orgId,
+      workId: shareCase.work_id,
+      caseId,
+      seasonNumber: shareCase.season_number,
+    }),
   });
   const { data: participants } = await db.from("work_share_participants")
     .select("id,proposed_name,rights_holder_id,source_tags,source_details").eq("case_id", caseId).is("excluded_at", null);

@@ -30,7 +30,6 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
   const [cases, setCases] = useState<ShareCase[]>([]);
   const [disputes, setDisputes] = useState<CollaborationDispute[]>([]);
   const [index, setIndex] = useState(0);
-  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [reserve, setReserve] = useState("0");
   const [createDraft, setCreateDraft] = useState<Record<string, { name: string; email: string; phone: string }>>({});
@@ -69,7 +68,6 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     if (!active) return;
     setDrafts(Object.fromEntries(active.work_share_participants.filter(row => !row.excluded_at).map(row => [row.id, String(row.final_percent ?? row.proposed_percent ?? row.admin_seed_percent ?? "")])));
     setReserve(String(active.reserve_percent ?? 0));
-    setStep(1);
     setBusy(`credits:${active.id}`);
     void refreshAdminShareCaseCredits(active.id).then(result => {
       const refreshed = result.case as unknown as ShareCase;
@@ -149,9 +147,10 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
       <div><p className="text-xs text-muted-foreground">{index + 1} af {cases.length}</p><h3 className="text-lg font-semibold">{active.works?.title ?? "Ukendt værk"}{active.season_number ? ` · sæson ${active.season_number}` : ""}</h3></div>
       <div className="flex gap-2"><Button size="sm" variant="outline" disabled={index === 0} onClick={() => setIndex(value => value - 1)}>Forrige</Button><Button size="sm" variant="outline" disabled={index >= cases.length - 1} onClick={() => setIndex(value => value + 1)}>Spring over</Button></div>
     </div>
-    <div className="grid grid-cols-3 gap-2 text-center text-xs">{["Bekræft klippere", "Afstem procentandele", "Kontrollér og godkend"].map((label, itemIndex) => <button key={label} type="button" onClick={() => setStep((itemIndex + 1) as 1 | 2 | 3)} className={`rounded-md border p-2 ${step === itemIndex + 1 ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}>{itemIndex + 1}. {label}</button>)}</div>
+    <p className="text-sm text-muted-foreground">Gennemgå klippere og procentandele samlet. Den endelige kontrol opdateres løbende nederst i vinduet.</p>
 
-    {step === 1 && <div className="space-y-3">
+    <section className="space-y-3 rounded-lg border p-4" aria-labelledby="share-participants-heading">
+      <h4 id="share-participants-heading" className="font-semibold">1. Bekræft klippere</h4>
       <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm text-muted-foreground">Portalens oplysninger samles med krediteringer fra DFI og TMDb. Kilderne er vejledende og fastsætter aldrig procentandele.</p><p className="mt-1 text-xs text-muted-foreground">{busy === `credits:${active.id}` ? "Opdaterer kilder…" : active.credit_source_states?.some(state => state.status === "error") ? "En kilde kunne ikke opdateres. Gemte krediteringer vises fortsat." : active.credit_source_states?.every(state => state.status === "fresh") ? "Gemte kilder · opdateret inden for 7 dage" : "Gemte kilder vises, mens manglende data opdateres."}</p></div><Button size="sm" variant="outline" disabled={busy === `credits:${active.id}`} onClick={() => void refreshSources(true)}>Opdatér kilder</Button></div>
       {participants.map(participant => {
         const holder = participant.rettighedshavere;
@@ -169,16 +168,22 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
           </div>}
         </div>;
       })}
-      <div className="flex justify-end"><Button disabled={unresolved.length > 0} onClick={() => setStep(2)}>Fortsæt til procentandele</Button></div>
-    </div>}
+      {unresolved.length > 0 && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-500/10">Forbind, opret eller fravælg de resterende personer, før fordelingen kan godkendes.</p>}
+    </section>
 
-    {step === 2 && <div className="space-y-3">
+    <section className="space-y-3 rounded-lg border p-4" aria-labelledby="share-percent-heading">
+      <h4 id="share-percent-heading" className="font-semibold">2. Afstem procentandele</h4>
       <div className="flex flex-wrap items-end gap-3"><Label className="space-y-1">Reserve (%)<Input className="w-32" inputMode="decimal" value={reserve} onChange={event => setReserve(event.target.value)} /></Label><Button variant="outline" onClick={() => void run(`proposal:${active.id}`, async () => { const result = await proposeAdminShareCompromise(active.id, Number(reserve.replace(",", "."))); setDrafts(current => ({ ...current, ...Object.fromEntries(result.participants.map(row => [row.participantId, String(row.finalPercent)])) })); }, "Kompromisforslaget er beregnet.")}>Beregn kompromis</Button></div>
       {participants.map(participant => <div key={participant.id} className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_160px_auto] sm:items-end"><div><p className="font-medium">{participant.rettighedshavere?.full_name ?? participant.proposed_name}</p><p className="text-xs text-muted-foreground">Indsendt: {participant.proposed_percent ?? "mangler"} %</p></div><Label className="space-y-1">Endelig andel (%)<Input inputMode="decimal" value={drafts[participant.id] ?? ""} onChange={event => setDrafts(current => ({ ...current, [participant.id]: event.target.value }))} /></Label>{participant.rights_holder_id && participant.proposed_percent == null && <Button size="sm" variant="outline" disabled={Boolean(participant.last_reminder_sent_at && Date.now() - new Date(participant.last_reminder_sent_at).getTime() < 3 * 86400000)} onClick={() => void run(`remind:${participant.id}`, () => remindShareParticipant(participant.id), "Påmindelsen er sendt.")}>Send påmindelse</Button>}</div>)}
-      <div className="flex justify-between"><Button variant="outline" onClick={() => setStep(1)}>Tilbage</Button><Button onClick={() => setStep(3)}>Kontrollér</Button></div>
-    </div>}
+    </section>
 
-    {step === 3 && <div className="space-y-3"><p className="text-sm">Kontrollér, at alle personer er afklaret, og at andele plus reserve er 100 %.</p><ul className="space-y-1 text-sm">{participants.map(row => <li key={row.id} className="flex justify-between"><span>{row.rettighedshavere?.full_name ?? row.proposed_name}</span><strong>{drafts[row.id] || "—"} %</strong></li>)}<li className="flex justify-between border-t pt-1"><span>Reserve</span><strong>{reserve} %</strong></li></ul>{missingResponses.length > 0 && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-500/10">{missingResponses.length} deltager(e) har ikke svaret. Afslutning kræver ekstra bekræftelse.</p>}<div className="flex justify-between"><Button variant="outline" onClick={() => setStep(2)}>Tilbage</Button><Button onClick={() => { const allowMissingResponses = missingResponses.length > 0 ? window.confirm("Der mangler svar. Vil du alligevel godkende den administrative fordeling?") : false; if (missingResponses.length && !allowMissingResponses) return; void run(`resolve:${active.id}`, () => resolveAdminShareCase({ caseId: active.id, reservePercent: Number(reserve.replace(",", ".")), participants: participants.map(row => ({ participantId: row.id, finalPercent: drafts[row.id] ? Number(drafts[row.id].replace(",", ".")) : null })), allowMissingResponses }), "Fordelingen er godkendt og gemt."); }}>Godkend fordeling</Button></div></div>}
+    <section className="space-y-3 rounded-lg border p-4" aria-labelledby="share-review-heading">
+      <h4 id="share-review-heading" className="font-semibold">3. Kontrollér og godkend</h4>
+      <p className="text-sm">Kontrollér, at alle personer er afklaret, og at andele plus reserve er 100 %.</p>
+      <ul className="space-y-1 text-sm">{participants.map(row => <li key={row.id} className="flex justify-between gap-4"><span>{row.rettighedshavere?.full_name ?? row.proposed_name}</span><strong>{drafts[row.id] || "—"} %</strong></li>)}<li className="flex justify-between border-t pt-1"><span>Reserve</span><strong>{reserve} %</strong></li></ul>
+      {missingResponses.length > 0 && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-500/10">{missingResponses.length} deltager(e) har ikke svaret. Afslutning kræver ekstra bekræftelse.</p>}
+      <div className="flex justify-end"><Button disabled={unresolved.length > 0} onClick={() => { const allowMissingResponses = missingResponses.length > 0 ? window.confirm("Der mangler svar. Vil du alligevel godkende den administrative fordeling?") : false; if (missingResponses.length && !allowMissingResponses) return; void run(`resolve:${active.id}`, () => resolveAdminShareCase({ caseId: active.id, reservePercent: Number(reserve.replace(",", ".")), participants: participants.map(row => ({ participantId: row.id, finalPercent: drafts[row.id] ? Number(drafts[row.id].replace(",", ".")) : null })), allowMissingResponses }), "Fordelingen er godkendt og gemt."); }}>Godkend fordeling</Button></div>
+    </section>
     </>}
   </div>;
 }

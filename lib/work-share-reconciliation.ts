@@ -64,6 +64,22 @@ export function normalizeCreditName(value: string) {
     .replace(/\s+/g, " ");
 }
 
+export function isEligibleWorkShareRole(role: string | null | undefined) {
+  const normalized = normalizeCreditName(role ?? "");
+  if (!normalized) return true;
+  if (
+    normalized.includes("b klipper")
+    || normalized.includes("klipperassistent")
+    || normalized.includes("assistant editor")
+    || normalized.includes("assistant klipper")
+    || normalized.includes("trailer klip")
+    || normalized.includes("pilot klip")
+    || normalized.includes("klippekonsulent")
+    || normalized.includes("supplerende klipper")
+  ) return false;
+  return normalized.includes("klip") || normalized.includes("edit");
+}
+
 function candidateKey(candidate: WorkCreditCandidate) {
   return candidate.rightsHolderId
     ? `holder:${candidate.rightsHolderId}`

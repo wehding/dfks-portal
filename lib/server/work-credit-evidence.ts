@@ -4,7 +4,7 @@ import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
 import { getTMDBWorkDetails, searchTMDBWithStatus } from "@/app/actions/tmdb";
 import { cleanDfiTitle, extractDfiPremiereYear, mapDfiWorkType } from "@/lib/dfi-metadata";
 import type { createServiceClient } from "@/lib/supabase/service";
-import { isMissingWorkCreditCacheSchemaError, normalizeCreditName, reconcileWorkCredits, resolveRightsHolderCreditMatch, type WorkCreditCandidate } from "@/lib/work-share-reconciliation";
+import { isEligibleWorkShareRole, isMissingWorkCreditCacheSchemaError, normalizeCreditName, reconcileWorkCredits, resolveRightsHolderCreditMatch, type WorkCreditCandidate } from "@/lib/work-share-reconciliation";
 import type { ReconciledWorkCredit } from "@/lib/work-share-reconciliation";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 
@@ -43,8 +43,7 @@ function text(row: Record<string, unknown>, keys: string[]) {
 }
 
 function isEditorRole(role: string | null) {
-  const normalized = normalizeCreditName(role ?? "");
-  return normalized.includes("klip") || normalized.includes("edit");
+  return isEligibleWorkShareRole(role);
 }
 
 function workTypeMatches(workType: string | null, candidateType: string | null) {
@@ -245,10 +244,20 @@ export async function buildReconciledWorkCredits(db: ServiceClient, params: {
   orgId: string;
   workId: string;
   caseId: string;
+  seasonNumber?: number | null;
 }) {
+  const assignmentWorkIds = [params.workId];
+  if (params.seasonNumber != null) {
+    const { data: seasonWorks, error: seasonError } = await db.from("works")
+      .select("id")
+      .eq("parent_work_id", params.workId)
+      .eq("season_number", params.seasonNumber);
+    if (seasonError) throw new Error(seasonError.message);
+    assignmentWorkIds.push(...(seasonWorks ?? []).map(row => row.id));
+  }
   const [{ data: assignments }, { data: participants }, { data: evidence }] = await Promise.all([
     db.from("work_assignments").select("rights_holder_id,role,share_percent,rettighedshavere(full_name)")
-      .eq("org_id", params.orgId).eq("work_id", params.workId).not("rights_holder_id", "is", null),
+      .eq("org_id", params.orgId).in("work_id", assignmentWorkIds).not("rights_holder_id", "is", null),
     db.from("work_share_participants").select("rights_holder_id,proposed_name,role,proposed_percent,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name)")
       .eq("case_id", params.caseId).is("excluded_at", null),
     db.from("work_credit_evidence").select("source,external_person_id,credited_name,credited_role")
@@ -257,10 +266,12 @@ export async function buildReconciledWorkCredits(db: ServiceClient, params: {
 
   const candidates: WorkCreditCandidate[] = [];
   for (const row of assignments ?? []) {
+    if (!isEligibleWorkShareRole(row.role)) continue;
     const holder = row.rettighedshavere as unknown as { full_name?: string } | null;
     if (holder?.full_name) candidates.push({ name: holder.full_name, role: row.role, source: "local", rightsHolderId: row.rights_holder_id, proposedPercent: row.share_percent });
   }
   for (const row of participants ?? []) {
+    if (!isEligibleWorkShareRole(row.role)) continue;
     const holder = row.rettighedshavere as unknown as { full_name?: string } | null;
     const name = holder?.full_name ?? row.proposed_name;
     if (!name) continue;
@@ -271,7 +282,10 @@ export async function buildReconciledWorkCredits(db: ServiceClient, params: {
       if (["local", "member", "dfi", "tmdb"].includes(source)) candidates.push({ name, role: row.role, source: source as WorkCreditCandidate["source"], rightsHolderId: row.rights_holder_id, proposedPercent: row.proposed_percent });
     }
   }
-  for (const row of evidence ?? []) candidates.push({ name: row.credited_name, role: row.credited_role, source: row.source as "dfi" | "tmdb", externalPersonId: row.external_person_id ? `${row.source}:${row.external_person_id}` : null });
+  for (const row of evidence ?? []) {
+    if (!isEligibleWorkShareRole(row.credited_role)) continue;
+    candidates.push({ name: row.credited_name, role: row.credited_role, source: row.source as "dfi" | "tmdb", externalPersonId: row.external_person_id ? `${row.source}:${row.external_person_id}` : null });
+  }
   return reconcileWorkCredits(candidates);
 }
 

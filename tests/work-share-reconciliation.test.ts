@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isEligibleWorkShareRole,
   normalizeCreditName,
   isMissingWorkCreditCacheSchemaError,
   proposeWorkShareCompromise,
@@ -8,6 +9,15 @@ import {
   resolveRightsHolderCreditMatch,
   renderInvitationTemplate,
 } from "../lib/work-share-reconciliation";
+
+test("kun egentlige klipperkrediteringer indgår i arbejdsandele", () => {
+  for (const role of ["Klipper", "Klip", "Editor", "Film Editor", "Konceptuerende klipper"]) {
+    assert.equal(isEligibleWorkShareRole(role), true, role);
+  }
+  for (const role of ["B-klipper", "Klipperassistent", "Assistant Editor", "Trailer klipper", "Pilotklip", "Klippekonsulent", "Supplerende klipper"]) {
+    assert.equal(isEligibleWorkShareRole(role), false, role);
+  }
+});
 
 test("manglende kildecache genkendes uden at skjule andre databasefejl", () => {
   assert.equal(isMissingWorkCreditCacheSchemaError({
