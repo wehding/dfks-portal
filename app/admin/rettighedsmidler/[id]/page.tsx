@@ -25,6 +25,7 @@ import { toast } from "sonner"
 import { getCalculationRun, advanceCalculationRunStatus, getWorkAllocations } from "@/app/actions/rights-calculation"
 import type { CalculationRun, WorkAllocation } from "@/app/actions/rights-calculation"
 import { RightsAllocationsPanel } from "@/components/admin/rights-allocations-panel"
+import { RightsReservesPanel } from "@/components/admin/rights-reserves-panel"
 import { createRightsAllocations, type AllocationInput } from "@/app/actions/rights-allocations"
 import Link from "next/link"
 
@@ -355,6 +356,19 @@ export default function CalculationRunDetailPage() {
                 <h2 className="text-lg font-semibold mb-3">Personfordeling</h2>
                 <RightsAllocationsPanel
                     runId={runId}
+                    currency={run.currency}
+                    runStatus={run.status}
+                />
+            </div>
+
+            <Separator />
+
+            {/* Reserve og krav */}
+            <div>
+                <h2 className="text-lg font-semibold mb-3">Reserve & krav</h2>
+                <RightsReservesPanel
+                    runId={runId}
+                    fundId={run.fund_id}
                     currency={run.currency}
                     runStatus={run.status}
                 />
