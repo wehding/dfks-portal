@@ -472,6 +472,9 @@ export default function RettighedsmidlerPage() {
                     <Button size="sm" variant="outline" onClick={() => router.push("/admin/rettighedsmidler/efterlysninger")}>
                         Efterlysninger
                     </Button>
+                    <Button size="sm" variant="outline" onClick={() => router.push("/admin/rettighedsmidler/notifikationer")}>
+                        Notifikationer
+                    </Button>
                     <Button size="sm" variant="outline" onClick={load}>
                         <RotateCcw className="h-3.5 w-3.5 mr-1" />
                         Opdater
