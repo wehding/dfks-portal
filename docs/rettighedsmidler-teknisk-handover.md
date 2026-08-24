@@ -23,7 +23,7 @@ Følgende er fastlagt:
 
 Følgende afventer ekstern afklaring:
 
-1. Hvilken begivenhed der starter forældelses-/kravfristen.
+1. Hvilken begivenhed der starter kravperioden og den systemmæssige deadline.
 2. Den konkrete DataLøn-konfiguration for B-indkomst.
 3. Hvordan bekræftet bankudbetaling dokumenteres i praksis.
 
@@ -170,17 +170,25 @@ Satser må ikke hardkodes. En politik skal kunne gælde for:
 organisation + rettighedskasse/ordning + fordelingsår eller gyldighedsperiode
 ```
 
+Politikker administreres centralt på organisationens stamdataside, men en sats er aldrig global for hele platformen. En politik er afgrænset til organisation, rettighedskilde og gyldighedsperiode. Stamdata skal eksempelvis kunne vise separate, versionerede politikker for Verdens TV, AVU, Arkiv og KulturPlus.
+
 Politikken indeholder:
 
-- administrationsprocent,
-- hensættelsesprocent,
-- direkte social procent,
-- social procent af hensættelsen,
+- administrationsfradrag,
+- hensættelse til efterfølgende krav,
+- en eller flere SKU-komponenter til sociale, kulturelle og uddannelsesmæssige formål,
+- eventuel lovbestemt kollektiv andel,
+- beregningsgrundlag og kontrolleret rækkefølge for hver komponent,
 - kravfristens længde og senere dens startregel,
-- udbetalingsgrænse eller reference til organisationens standard,
-- godkendelsesregler.
+- behandling af ufordelbare midler,
+- godkendelsesorgan, dato og dokument-/beslutningsreference,
+- fire-øjne- og øvrige godkendelsesregler.
 
-### Kanonisk beregningsrækkefølge
+Udbetalingsgrænsen administreres også på stamdatasiden, men er almindelig organisationsstamdata og ikke en del af den enkelte fordelingsberegning.
+
+### Komponentbaseret beregningsmodel
+
+Administration beregnes som udgangspunkt først:
 
 ```text
 Bruttorettighedsbeløb
@@ -188,7 +196,23 @@ Bruttorettighedsbeløb
 = fordelingsgrundlag
 ```
 
-Fra fordelingsgrundlaget beregnes uafhængigt:
+De efterfølgende fradrag og klassifikationer oprettes som begrænsede, validerede policykomponenter. Systemet er ikke en fri formelbygger. En komponent har mindst type, procentsats, beregningsgrundlag, rækkefølge og aktiv-status.
+
+Tilladte komponenttyper omfatter:
+
+- `CLAIM_RESERVE`,
+- `SKU_DIRECT`,
+- `SKU_FROM_RESERVE`,
+- `STATUTORY_COLLECTIVE_SHARE`.
+
+Tilladte beregningsgrundlag skal mindst kunne omfatte:
+
+- bruttovederlag,
+- beløb efter administration,
+- kravshensættelsen,
+- resterende individuelt fordelbart beløb.
+
+Den tidligere aftalte model kan dermed udtrykkes som:
 
 ```text
 Samlet hensættelse
@@ -209,6 +233,8 @@ Individuel fordeling
 
 Den sociale andel af hensættelsen må ikke trækkes fra den individuelle fordeling igen. Den er en intern klassifikation af et allerede tilbageholdt beløb.
 
+En lovbestemt kollektiv andel er en selvstændig komponent og må ikke bogføres eller rapporteres som almindelig SKU. Procentsatsen indtastes centralt i den relevante kildes fordelingspolitik på stamdatasiden. Den kan variere mellem organisationer, kilder og perioder og skal have gyldighedsdato, policyversion og godkendelsesreference.
+
 Invariant:
 
 ```text
@@ -222,12 +248,18 @@ Brutto
 
 Alle satser og faktiske beløb snapshot'es på den godkendte kørsel. Senere politikændringer må ikke ændre historiske beregninger.
 
+Når en anvendt policy ændres, oprettes en ny version. En policyversion, der allerede er brugt af en fordelingsrunde, er read-only.
+
 ### Validering og afrunding
 
 - Alle satser ligger mellem 0 og 100 %.
-- Hensættelsesprocent + direkte social procent må ikke overstige 100 % af fordelingsgrundlaget.
+- Den samlede komponentberegning må ikke skabe et negativt individuelt fordelbart beløb.
+- Komponentafhængigheder må ikke være cirkulære.
+- Kildespecifikke minimumskrav skal ligge i policy-/regelmotoren og ikke som spredt frontendlogik.
 - Beløb opbevares i mindste valutaenhed som heltal eller beregnes med sikker decimalaritmetik.
 - Restører fordeles deterministisk, så der aldrig skabes eller mistes penge.
+
+Stamdatasiden skal altid vise en beregningspreview, før en ny policyversion kan godkendes og aktiveres.
 
 ## 5. Beregningsrunde og værkbeløb
 
@@ -321,7 +353,7 @@ Regler:
 
 Den oprindelige fordeling og den senere godkendte fordeling bevares som separate versioner.
 
-## 9. Kravfrist, efterlysning og omfordeling
+## 9. Kravfrist, efterlysning og ufordelbare midler
 
 Den normale forventning er tre år, men fristens start afventer juridisk fortolkning. Modellen skal understøtte forskellige perioder pr. rettighedskasse, da andre ordninger eller lande kan have andre frister.
 
@@ -333,7 +365,9 @@ Gem mindst:
 - juridisk note,
 - status.
 
-Et rettidigt indsendt krav blokerer omfordeling, indtil alle rettidige krav er endeligt behandlet.
+Et rettidigt indsendt krav blokerer behandling af restmidler, indtil alle rettidige krav er endeligt behandlet.
+
+At nå en deadline er ikke det samme som, at et juridisk krav automatisk er forældet. Når deadline er nået, kan restbeløbet få status `eligible_for_undistributable`. En særskilt, auditeret og om nødvendigt fire-øjne-godkendt handling klassificerer det derefter som ufordelbart.
 
 ### Efterlysning
 
@@ -356,9 +390,16 @@ For hver publicering bevares:
 
 Offentlig visning må ikke indeholde CPR, bankoplysninger eller unødvendige beløb.
 
-### Omfordeling
+### Behandling af ufordelbare midler
 
-Når fristen er udløbet, og alle rettidige krav er afsluttet:
+Behandlingen konfigureres på fordelingspolitikken. Muligheder skal mindst kunne omfatte:
+
+- genfordeling efter oprindelig værk-/fordelingsnøgle,
+- overførsel til kollektive midler,
+- anden individuel genfordeling,
+- manuel beslutning.
+
+DFKS' aktuelt aftalte standard er genfordeling efter den oprindelige værkfordeling. Når fristen er nået, alle rettidige krav er afsluttet, og behandlingen er godkendt:
 
 1. Resterende generel hensættelse fordeles til værker efter den oprindelige point-/værkfordeling.
 2. Inden for hvert værk anvendes den endeligt godkendte fordeling for runden.
@@ -366,6 +407,24 @@ Når fristen er udløbet, og alle rettidige krav er afsluttet:
 4. Døde rettighedshaveres andele går til deres registrerede arvinger.
 
 Omfordeling opretter nye tildelinger. Historiske poster overskrives ikke.
+
+### Hensættelsens livscyklus
+
+Hensættelsen er et selvstændigt subsystem med eksplicitte bevægelser for oprettelse, godkendte krav, frigivelser, SKU fra hensættelsen og behandling af ufordelbare midler. Resterende beløb afledes af disse bevægelser og må ikke kun bero på et frit mutérbart saldofelt.
+
+Relevante statusser omfatter:
+
+```text
+active
+partially_used
+deadline_reached
+awaiting_open_claims
+eligible_for_undistributable
+undistributable
+treatment_approved
+redistributed / transferred_to_collective_funds
+closed
+```
 
 ## 10. Arvinger
 
@@ -463,7 +522,7 @@ Det bør mindst kunne anvendes på:
 - endelig bogføring af fordelingsrunde,
 - ændring af godkendt fordelingsnøgle,
 - større krav,
-- omfordeling af udløbne hensættelser,
+- behandling af hensættelser, der kan klassificeres som ufordelbare,
 - DataLøn-eksport/frigivelse,
 - manuel bekræftelse af bankudbetaling,
 - ændring af fordelingspolitikker.
@@ -490,6 +549,7 @@ For hver tildeling skal rettighedshaveren kunne se:
 - andel af samlet hensættelse,
 - direkte sociale midler,
 - sociale midler fra hensættelsen,
+- eventuel lovbestemt kollektiv andel,
 - nettobeløb tildelt personen.
 
 Portalvisningen skal kunne vise både den samlede puljeopgørelse og personens egen andel fra brutto til netto.
@@ -524,12 +584,15 @@ Navnene er konceptuelle og skal tilpasses repositoryets migrationsstil:
 
 - `rights_funds`
 - `distribution_policies`
+- `distribution_policy_versions`
+- `distribution_policy_components`
 - `rights_calculation_runs`
 - `rights_work_allocations`
 - `rights_allocations`
 - `rights_adjustments`
 - `withheld_beneficiary_positions`
 - `reserve_entries`
+- `undistributable_fund_actions`
 - `royalty_statements`
 - `rights_claims`
 - `rights_holder_search_publications`
@@ -546,7 +609,7 @@ Alle økonomiske objekter skal være organisationsbundne.
 
 ## 20. Anbefalet implementeringsrækkefølge
 
-1. Domænetyper, pengearitmetik og fordelingspolitik.
+1. Domænetyper, pengearitmetik samt versionerede fordelingspolitikker og komponenter på stamdatasiden.
 2. Beregningsrunder og værkbeløb med snapshots.
 3. Personfordeling og rettighedstildelinger.
 4. Portalens rettighedsoversigt og gennemsigtighed.
@@ -575,4 +638,3 @@ Alle økonomiske objekter skal være organisationsbundne.
 - Skal første version bruge manuel bekræftelse, DataLøn-status eller bankafstemning?
 
 Disse punkter må ikke udfyldes med antagelser i implementeringen.
-

@@ -94,7 +94,19 @@ Royalty kan komme løbende og oprettes derfor som nye afregningsperioder frem fo
 
 ## 5. Fra brutto til det, der kan fordeles
 
-Organisationerne kan have forskellige politikker. Alle procenter skal derfor kunne konfigureres efter organisation, rettighedskasse og periode.
+Organisationerne kan have forskellige politikker. Alle procenter administreres ét centralt sted på organisationens stamdataside, men konfigureres særskilt efter rettighedskilde og periode.
+
+Eksempel:
+
+```text
+Stamdata → Fordelingspolitikker
+├─ Verdens TV
+├─ AVU
+├─ Arkiv
+└─ KulturPlus
+```
+
+Hver politik har versionsnummer, gyldighedsperiode og dokumentation for, hvem eller hvilket organ der har godkendt den. Gamle fordelingsrunder beholder altid den policyversion, de blev beregnet med.
 
 Den grundlæggende rækkefølge er:
 
@@ -108,7 +120,10 @@ Fra fordelingsgrundlaget kan organisationen afsætte:
 
 - en hensættelse til senere krav,
 - et direkte beløb til sociale aktiviteter,
-- en social andel af den allerede tilbageholdte hensættelse.
+- en social andel af den allerede tilbageholdte hensættelse,
+- en eventuel lovbestemt kollektiv andel.
+
+De enkelte dele kan efter den godkendte policy beregnes af forskellige grundlag, eksempelvis brutto, beløbet efter administration eller selve hensættelsen. Systemet tilbyder kun kontrollerede og validerede kombinationer og viser altid en prøveberegning, før en policy aktiveres.
 
 Eksempel:
 
@@ -133,6 +148,8 @@ Ren kravshensættelse                     4.050 kr.
 ```
 
 De 450 kr. trækkes ikke fra den individuelle fordeling igen. De er allerede en del af de 4.500 kr., der blev tilbageholdt.
+
+En lovbestemt kollektiv andel vises og registreres separat fra organisationens almindelige sociale, kulturelle og uddannelsesmæssige midler. Procentsatsen indtastes centralt i stamdata på den relevante rettighedskildes policy og kan derfor være forskellig for eksempelvis Verdens TV og KulturPlus.
 
 ## 6. Fordeling til værker
 
@@ -229,7 +246,7 @@ C får sit historiske krav fra hensættelsen eller organisationen. A og B behold
 
 Systemet reducerer ikke A og B's fremtidige retmæssige andel for at hente den gamle overbetaling tilbage. Historikken viser situationen, men personen får ingen gæld.
 
-## 11. Efterlysning og kravfrist
+## 11. Efterlysning, kravfrist og ufordelbare midler
 
 Organisationen skal kunne offentliggøre efterlysninger af:
 
@@ -242,11 +259,20 @@ Efterlysningen gentages og dokumenteres efter organisationens politik. Systemet 
 
 Den forventede normale frist er tre år, men det præcise starttidspunkt afventer juridisk afklaring. Andre kasser og udenlandske organisationer kan have andre frister, så perioden skal kunne konfigureres.
 
-Hvis et krav indsendes rettidigt, kan hensættelsen ikke omfordeles, før alle rettidige krav er færdigbehandlet.
+Hvis et krav indsendes rettidigt, kan hensættelsen ikke behandles som ufordelbar eller omfordeles, før alle rettidige krav er færdigbehandlet.
 
-## 12. Omfordeling af resterende hensættelse
+Når systemets deadline nås, betyder det ikke automatisk, at et muligt juridisk krav er forældet. Systemet markerer i stedet beløbet som muligt ufordelbart. En særskilt, dokumenteret godkendelse afgør derefter, om og hvordan beløbet skal behandles.
 
-Når kravfristen er udløbet, og alle rettidige krav er afsluttet:
+## 12. Behandling af resterende hensættelse
+
+Organisationens policy afgør, hvad der sker med ufordelbare midler. En policy kan eksempelvis vælge:
+
+- genfordeling efter den oprindelige fordelingsnøgle,
+- overførsel til kollektive midler,
+- en anden individuel genfordeling,
+- manuel beslutning.
+
+DFKS' aktuelt aftalte model er genfordeling efter den oprindelige fordeling. Når deadline er nået, alle rettidige krav er afsluttet, og behandlingen er godkendt:
 
 1. Restbeløbet føres tilbage til værkerne efter den oprindelige point-/værkfordeling.
 2. På hvert værk fordeles beløbet efter den endeligt godkendte personfordeling for runden.
@@ -379,6 +405,7 @@ For enhver rettighedshaver og enhver udbetaling skal systemet kunne svare på:
 - Hvor meget gik til administration?
 - Hvor meget blev hensat til krav?
 - Hvor meget gik til sociale formål?
+- Hvor meget gik til en eventuel lovbestemt kollektiv andel?
 - Hvilken fordelingsprocent blev brugt?
 - Hvor stort et nettobeløb blev tildelt personen?
 - Hvem godkendte beregningen?
@@ -391,6 +418,10 @@ For enhver rettighedshaver og enhver udbetaling skal systemet kunne svare på:
 | Lukkede organisationer | Forhindrer data- og pengestrømme på tværs af organisationer |
 | Rettighedstildelinger frem for konto | Portalen dokumenterer tilgodehavender og er ikke en wallet |
 | Separate rettighedskasser | Copydan, SVOD og royalty skal kunne forstås og vises særskilt |
+| Centrale, kildespecifikke policies i stamdata | Organisationen får ét administrationssted uden at gøre satser globale |
+| Komponentbaseret beregning | SKU, hensættelse og kollektiv andel kan have forskellige lovlige beregningsgrundlag |
+| Lovbestemt kollektiv andel vises separat | Den må ikke forveksles med organisationens almindelige SKU-midler |
+| Ufordelbar er ikke automatisk forældet | Deadline fører til vurdering og godkendelse, ikke automatisk juridisk konklusion |
 | Historiske snapshots | Gamle beregninger må ikke ændres, når politikker ændres |
 | Uforanderlig historik | Korrektioner og krav skal kunne revideres |
 | Personer kan ikke skylde | Organisationen bærer risikoen for historiske fejl |
@@ -407,4 +438,3 @@ For enhver rettighedshaver og enhver udbetaling skal systemet kunne svare på:
 3. Administratorens beskrivelse af, hvordan bankudbetaling bekræftes i dag.
 
 Disse punkter er bevidst markeret som åbne og skal ikke udfyldes med tekniske antagelser.
-
