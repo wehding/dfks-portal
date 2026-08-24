@@ -115,6 +115,8 @@ function documentProcessingErrorMessage(contract: ContractRow) {
         invalid_download_origin: "Den midlertidige filadresse kom ikke fra den forventede lagerkonto.",
         signed_url_failed: "Systemet kunne ikke oprette sikker, midlertidig adgang til PDF-filen.",
         document_processing_failed: "PDF'en kunne ikke rettes eller OCR-behandles efter de automatiske forsøg.",
+        ocr_unreadable_page: "Mindst én PDF-side gav ikke læsbar tekst. Kontrollér scanningens kvalitet.",
+        ocr_spatial_quality: "PDF'ens søgbare tekstlag bestod ikke den geometriske kvalitetskontrol.",
     }
     if (contract.document_processing_error_code) {
         return messages[contract.document_processing_error_code] ?? "PDF-behandlingen fejlede og kræver manuel kontrol."
@@ -1299,7 +1301,8 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             toast.error("Kontrakten mangler fil")
             return
         }
-        if (contract.pdf_url.toLowerCase().endsWith(".pdf") && contract.document_processing_status !== "ready") {
+        if (contract.pdf_url.toLowerCase().endsWith(".pdf")
+            && !["ready", "not_required"].includes(contract.document_processing_status)) {
             const message = documentProcessingErrorMessage(contract)
                 ?? (contract.document_processing_status === "processing"
                     ? "PDF'en er ved at blive rettet og OCR-behandlet. Start AI-aflæsningen igen, når PDF-behandlingen er færdig."
