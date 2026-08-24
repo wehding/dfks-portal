@@ -88,6 +88,7 @@ create table if not exists calculation_runs (
     check (prepared_by is null or approved_by is null or prepared_by != approved_by)
 );
 
+drop trigger if exists calculation_runs_updated_at on calculation_runs;
 create trigger calculation_runs_updated_at
   before update on calculation_runs
   for each row execute function set_updated_at();
