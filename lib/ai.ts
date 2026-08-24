@@ -375,7 +375,7 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
   "extractedData": {
     "producerName": "string or null",
 ${SOURCES_SCHEMA_PROMPT},
-    "productionType": "Returner EN af disse værdier baseret på kontraktens indhold og kontekst: feature (spillefilm/biograffilm), tvSeries (tv-serie/dramaserie/sæson), documentary (dokumentarfilm/enkelt dokumentar), docSeries (dokumentarserie), short (kortfilm), tvEntertainment (tv-underholdning/show/program), reality (reality-tv), other (alt andet). Hvis kontrakten nævner ord som spillefilm, feature film, biograffilm → brug feature. Tv-serie, dramaserie, sæson → tvSeries. Dokumentar → documentary. Er du i tvivl, gæt ud fra genre, producent og distributionsplatform.",
+    "productionType": "Returner EN af disse værdier, når typen fremgår sikkert af kontrakten: feature (spillefilm/biograffilm), tvSeries (tv-serie/dramaserie), documentary (dokumentarfilm/enkelt dokumentar), docSeries (dokumentarserie), short (kortfilm), tvEntertainment (tv-underholdning/show/program), reality (reality-tv), other (eksplicit anden type), ellers null. Gæt ikke ud fra titel, producent, genre eller distributionsplatform.",
     "salary": null,
     "salaryUnit": "monthly|weekly|daily|total",
     "startDate": "YYYY-MM-DD or null",
@@ -426,7 +426,7 @@ Vigtige regler:
 - salary skal være et rent tal (ingen valutasymboler)
 - Datoer på formatet YYYY-MM-DD
 - aiDataMiningClause = true hvis kontrakten indeholder AI/data mining-forbehold
-- productionType skal ALTID udfyldes — gæt ud fra kontekst hvis det ikke er eksplicit nævnt. En kontrakt med en stor dansk produktionsselskab og ingen seriestruktur er sandsynligvis feature. Nævnes afsnit/episoder er det tvSeries eller docSeries.
+- productionType udfyldes kun, når typen står eksplicit eller kan udledes sikkert af kontrakten. Gæt aldrig ud fra producent, titel, genre eller distributionsplatform. Afsnit/episoder viser serieformat, men ikke i sig selv om serien er fiktion eller dokumentar; returnér null ved den tvivl.
 - SÆRLIG KREDITERING — Dramaturg: Hvis kontrakten nævner "Dramaturg" som kreditering (f.eks. "Der er aftalt følgende vedrørende kreditering: Dramaturg" eller lignende), er dette en særlig og usædvanlig kreditering som DFKS er specifikt interesseret i. En dramaturgkreditering markerer at klipperen har haft en kreativ og dramaturgisk funktion ud over ren klipning — det er vigtigt for faglig anerkendelse og præcedensvirkning. Gør ALTID følgende: (1) Beskriv det i specialNotes med den eksakte kreditformulering fra kontrakten. (2) Opret et info-flag med category "Kreditering", title "Dramaturgkreditering aftalt" og description der forklarer hvad der er aftalt og at DFKS noterer dette særskilt.`
 
 export function buildSystemPrompt(): string {
