@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Plus, ChevronRight, CheckCircle2, Clock, AlertCircle, Ban, BookOpen, RotateCcw } from "lucide-react"
+import { Plus, ChevronRight, CheckCircle2, Clock, Ban, BookOpen, RotateCcw } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -32,6 +32,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { getRightsFunds, getPolicyVersions } from "@/app/actions/rights-funds"
 import type { RightsFund, PolicyVersionWithComponents } from "@/app/actions/rights-funds"
 import {
@@ -296,6 +297,7 @@ function NewRunDialog({
 // ── Beregningsrunde-række ─────────────────────────────────────────────────────
 
 function RunRow({ run, onRefresh }: { run: CalculationRun; onRefresh: () => void }) {
+    const router = useRouter()
     const [advancing, setAdvancing] = useState(false)
     const cfg = STATUS_CONFIG[run.status] ?? { label: run.status, variant: "outline" as const, icon: Clock }
     const Icon = cfg.icon
@@ -347,7 +349,10 @@ function RunRow({ run, onRefresh }: { run: CalculationRun; onRefresh: () => void
     const next = nextStatus()
 
     return (
-        <TableRow>
+        <TableRow
+            className="cursor-pointer hover:bg-muted/50"
+            onClick={() => router.push(`/admin/rettighedsmidler/${run.id}`)}
+        >
             <TableCell>
                 <div>
                     <p className="font-medium text-sm">{run.period_label}</p>
@@ -373,7 +378,7 @@ function RunRow({ run, onRefresh }: { run: CalculationRun; onRefresh: () => void
             <TableCell className="text-xs text-muted-foreground">
                 {formatDate(run.created_at)}
             </TableCell>
-            <TableCell className="text-right space-x-1 whitespace-nowrap">
+            <TableCell className="text-right space-x-1 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                 {next && run.status !== "cancelled" && (
                     <Button size="sm" variant="outline" onClick={handleAdvance} disabled={advancing}>
                         {advancing ? "…" : nextLabel[next] ?? next}
