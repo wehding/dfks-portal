@@ -28,6 +28,9 @@ test("klipper og arbejdsandel vises samlet i en kompakt dialog", () => {
   assert.match(wizard, /1\. Klippere og arbejdsandele/);
   assert.match(wizard, /Arbejdsandel i procent/);
   assert.match(wizard, /grid grid-cols-3/);
+  assert.match(wizard, /Forrige værk/);
+  assert.match(wizard, /Spring til næste værk/);
+  assert.doesNotMatch(wizard, /Portalens oplysninger samles med krediteringer/);
   assert.match(wizard, /2\. Kontrollér og godkend/);
   assert.doesNotMatch(wizard, /3\. Kontrollér og godkend/);
   assert.doesNotMatch(wizard, /setStep\(/);

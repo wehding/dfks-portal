@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 type Holder = { full_name: string; email: string | null; user_id: string | null; invite_sent_at: string | null };
 type Participant = { id: string; rights_holder_id: string | null; proposed_name: string | null; role: string; relationship_status: string; proposed_percent: number | null; admin_seed_percent: number | null; final_percent: number | null; source_tags: string[]; source_details: { roles?: string[] } | null; excluded_at: string | null; last_reminder_sent_at: string | null; rettighedshavere: Holder | null };
@@ -150,8 +151,8 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     </details>}
     {!active ? null : <>
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><p className="text-xs text-muted-foreground">{index + 1} af {cases.length}</p><h3 className="text-lg font-semibold">{active.works?.title ?? "Ukendt værk"}{active.season_number ? ` · sæson ${active.season_number}` : ""}</h3></div>
-      <div className="flex gap-2"><Button size="sm" variant="outline" disabled={index === 0} onClick={() => setIndex(value => value - 1)}>Forrige</Button><Button size="sm" variant="outline" disabled={index >= cases.length - 1} onClick={() => setIndex(value => value + 1)}>Spring over</Button></div>
+      <h3 className="text-lg font-semibold">{active.works?.title ?? "Ukendt værk"}{active.season_number ? ` · sæson ${active.season_number}` : ""}</h3>
+      <div className="flex items-center gap-2" aria-label="Navigér mellem værker"><Button size="icon-xs" variant="outline" aria-label="Forrige værk" title="Forrige værk" disabled={index === 0} onClick={() => setIndex(value => value - 1)}><ChevronLeft /></Button><span className="min-w-12 text-center text-xs text-muted-foreground">{index + 1} af {cases.length}</span><Button size="icon-xs" variant="outline" aria-label="Spring til næste værk" title="Spring over" disabled={index >= cases.length - 1} onClick={() => setIndex(value => value + 1)}><ChevronRight /></Button></div>
     </div>
     <p className="text-sm text-muted-foreground">Bekræft personerne og angiv deres arbejdsandel direkte på samme linje.</p>
 
@@ -160,7 +161,6 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
         <h4 id="share-participants-heading" className="font-semibold">1. Klippere og arbejdsandele</h4>
         <div className="flex items-end gap-2"><Label className="space-y-1 text-xs">Reserve (%)<Input className="h-8 w-24" inputMode="decimal" value={reserve} onChange={event => setReserve(event.target.value)} /></Label><Button size="sm" variant="outline" onClick={() => void run(`proposal:${active.id}`, async () => { const result = await proposeAdminShareCompromise(active.id, Number(reserve.replace(",", "."))); setDrafts(current => ({ ...current, ...Object.fromEntries(result.participants.map(row => [row.participantId, String(row.finalPercent)])) })); }, "Kompromisforslaget er beregnet.")}>Beregn forslag</Button></div>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm text-muted-foreground">Portalens oplysninger samles med krediteringer fra DFI og TMDb. Kilderne er vejledende og fastsætter aldrig procentandele.</p><p className="mt-1 text-xs text-muted-foreground">{busy === `credits:${active.id}` ? "Opdaterer kilder…" : active.credit_source_states?.some(state => state.status === "error") ? "En kilde kunne ikke opdateres. Gemte krediteringer vises fortsat." : active.credit_source_states?.every(state => state.status === "fresh") ? "Gemte kilder · opdateret inden for 7 dage" : "Gemte kilder vises, mens manglende data opdateres."}</p></div><Button size="sm" variant="outline" disabled={busy === `credits:${active.id}`} onClick={() => void refreshSources(true)}>Opdatér kilder</Button></div>
       {participants.map(participant => {
         const holder = participant.rettighedshavere;
         const create = createDraft[participant.id] ?? { name: participant.proposed_name ?? "", email: "", phone: "" };
@@ -182,6 +182,7 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
         </div>;
       })}
       {unresolved.length > 0 && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-500/10">Forbind, opret eller fravælg de resterende personer, før fordelingen kan godkendes.</p>}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3"><p className="text-xs text-muted-foreground">{busy === `credits:${active.id}` ? "Opdaterer kilder…" : active.credit_source_states?.some(state => state.status === "error") ? "En kilde kunne ikke opdateres. Gemte krediteringer vises fortsat." : active.credit_source_states?.every(state => state.status === "fresh") ? "Gemte kilder · opdateret inden for 7 dage" : "Gemte kilder vises, mens manglende data opdateres."}</p><Button size="xs" variant="outline" disabled={busy === `credits:${active.id}`} onClick={() => void refreshSources(true)}>Opdatér kilder</Button></div>
     </section>
 
     <section className="space-y-3 rounded-lg border p-4" aria-labelledby="share-review-heading">
