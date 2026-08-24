@@ -300,7 +300,7 @@ function RunRow({ run, onRefresh }: { run: CalculationRun; onRefresh: () => void
     const cfg = STATUS_CONFIG[run.status] ?? { label: run.status, variant: "outline" as const, icon: Clock }
     const Icon = cfg.icon
 
-    const nextStatus = (): CalculationRunStatus | null => {
+    const nextStatus = (): Exclude<CalculationRunStatus, "draft"> | null => {
         switch (run.status) {
             case "draft":             return "calculated"
             case "calculated":        return "awaiting_approval"
