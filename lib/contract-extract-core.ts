@@ -354,6 +354,8 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
     extracted = resolveContractSalary(extracted)
     const prolongation = resolveContractProlongation(extracted)
     extracted.prolongationWeeks = prolongation.prolongationWeeks
+    extracted.prolongationAmount = prolongation.prolongationAmount
+    extracted.prolongationUnit = prolongation.prolongationUnit
     extracted.prolongationTotalWeeks = prolongation.prolongationTotalWeeks
     extracted.prolongationInterpretation = prolongation.prolongationInterpretation
     extracted.needsManualProlongationReview = prolongation.needsManualProlongationReview

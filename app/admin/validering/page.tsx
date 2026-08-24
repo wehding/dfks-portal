@@ -468,6 +468,8 @@ function AdminValideringPageInner() {
                 workPhases: Array.isArray(ed.workPhases) ? ed.workPhases : [],
                 workingWeeks: ed.workingWeeks ?? "",
                 prolongationWeeks: prolongation.prolongationWeeks ?? "",
+                prolongationAmount: prolongation.prolongationAmount ?? "",
+                prolongationUnit: prolongation.prolongationUnit ?? "weeks",
                 prolongationTotalWeeks: prolongation.prolongationTotalWeeks ?? "",
                 prolongationInterpretation: prolongation.prolongationInterpretation,
                 needsManualProlongationReview: prolongation.needsManualProlongationReview,
@@ -565,6 +567,8 @@ function AdminValideringPageInner() {
                 workPhases: Array.isArray(formData.workPhases) && formData.workPhases.length > 0 ? formData.workPhases : undefined,
                 workingWeeks: formData.workingWeeks ? Number(formData.workingWeeks) : undefined,
                 prolongationWeeks: formData.prolongationWeeks ? Number(formData.prolongationWeeks) : undefined,
+                prolongationAmount: formData.prolongationAmount ? Number(formData.prolongationAmount) : undefined,
+                prolongationUnit: formData.prolongationUnit || undefined,
                 prolongationTotalWeeks: formData.prolongationTotalWeeks ? Number(formData.prolongationTotalWeeks) : undefined,
                 prolongationInterpretation: formData.prolongationInterpretation || undefined,
                 needsManualProlongationReview: !!formData.needsManualProlongationReview,
@@ -747,6 +751,8 @@ function AdminValideringPageInner() {
             workPhases:                    Array.isArray(ed.workPhases) ? ed.workPhases : [],
             workingWeeks:                  ed.workingWeeks ?? "",
             prolongationWeeks:             prolongation.prolongationWeeks ?? "",
+            prolongationAmount:            prolongation.prolongationAmount ?? "",
+            prolongationUnit:              prolongation.prolongationUnit ?? "weeks",
             prolongationTotalWeeks:        prolongation.prolongationTotalWeeks ?? "",
             prolongationInterpretation:    prolongation.prolongationInterpretation,
             needsManualProlongationReview: prolongation.needsManualProlongationReview,
@@ -1539,8 +1545,26 @@ setActiveField(fieldId)
                                     </div>
                                 )}
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F src={fieldSrc("prolongationWeeks")} label={<>Prolongationsuger{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
-                                        <Input type="number" value={String(formData.prolongationWeeks ?? "")} onChange={(e) => { setField("prolongationWeeks", e.target.value); setField("needsManualProlongationReview", false) }} placeholder="0" className="max-w-[120px]" />
+                                    <F src={fieldSrc("prolongationWeeks")} label={<>Prolongation{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
+                                        <div className="flex max-w-[280px] gap-2">
+                                            <Input type="number" step="any" value={String(formData.prolongationAmount ?? "")} onChange={(e) => {
+                                                const amount = e.target.value
+                                                setField("prolongationAmount", amount)
+                                                setField("prolongationWeeks", amount === "" ? "" : Number(amount) / (formData.prolongationUnit === "days" ? 5 : 1))
+                                                setField("needsManualProlongationReview", false)
+                                            }} placeholder="0" />
+                                            <Select value={formData.prolongationUnit ?? "weeks"} onValueChange={(unit) => {
+                                                setField("prolongationUnit", unit)
+                                                const amount = Number(formData.prolongationAmount)
+                                                if (Number.isFinite(amount)) setField("prolongationWeeks", amount / (unit === "days" ? 5 : 1))
+                                            }}>
+                                                <SelectTrigger className="w-[110px]"><SelectValue /></SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="days">Dage</SelectItem>
+                                                    <SelectItem value="weeks">Uger</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
                                     </F>
                                     <F src={fieldSrc("prolongationNote")} label={<>Prolongation — vilkår{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
                                         <Input value={String(formData.prolongationNote ?? "")} onChange={(e) => setField("prolongationNote", e.target.value)} placeholder="fx juleferie 21.12–07.01" />

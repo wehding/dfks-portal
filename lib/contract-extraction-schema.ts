@@ -41,6 +41,8 @@ const properties: Record<string, JsonSchema> = {
   workingDays: number,
   workingWeeks: number,
   prolongationWeeks: number,
+  prolongationAmount: number,
+  prolongationUnit: enumText(["days", "weeks"]),
   prolongationTotalWeeks: number,
   prolongationInterpretation: enumText(["additional", "total_limit", "unclear"]),
   needsManualProlongationReview: boolean,
