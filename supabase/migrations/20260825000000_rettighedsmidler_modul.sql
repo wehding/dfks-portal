@@ -729,6 +729,11 @@ begin
       ('withheld_beneficiary_positions', 'withheld_beneficiary_positions_withheld_amount_check', $constraint$CHECK (withheld_amount >= 0)$constraint$),
       ('withheld_beneficiary_positions', 'withheld_beneficiary_positions_work_allocation_id_fkey', $constraint$FOREIGN KEY (work_allocation_id) REFERENCES rights_work_allocations(id) ON DELETE RESTRICT$constraint$)
     ) as constraints_to_add(table_name, constraint_name, definition)
+    order by case
+      when definition like 'PRIMARY KEY%' then 1
+      when definition like 'UNIQUE%' then 2
+      else 3
+    end
   loop
     if not exists (
       select 1 from pg_constraint
