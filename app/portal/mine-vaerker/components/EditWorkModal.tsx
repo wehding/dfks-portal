@@ -10,8 +10,9 @@ import { MessageThread, type MessageThreadMessage } from "@/components/messages/
 import { Modal } from "./Modal";
 import { submitWorkDataCorrection } from "@/app/actions/work-management";
 import { useI18n } from "@/lib/i18n";
-import { fetchMemberSeriesEpisodeOptions, resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, syncMemberEpisodeAssignments, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { fetchMemberSeriesEpisodeOptions, resolveUnifiedSearchResultDetails, searchWorksUnified, syncMemberEpisodeAssignments, updateMemberCoEditors, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { LocalRightsHolderAutocomplete } from "@/components/works/local-rights-holder-autocomplete";
 import { buildCompleteEpisodeOptions, inferSeriesWorkFields, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
 import { createClientId } from "@/lib/client-id";
@@ -29,14 +30,10 @@ interface CoEditorDraft {
   role: string;
   assignmentId?: string | null;
   rightsHolderId?: string | null;
+  originalRightsHolderId?: string | null;
   locked?: boolean;
   action?: "add" | "remove" | "change";
 }
-
-type CoEditorSuggestion = {
-  id: string;
-  full_name: string;
-};
 
 type MemberShareTask = {
   id: string;
@@ -254,7 +251,6 @@ export function EditWorkModal({
   const [workCorrection, setWorkCorrection]             = useState<WorkCorrectionForm | null>(null);
   const [workCorrectionComment, setWorkCorrectionComment] = useState("");
   const [editCoEditors, setEditCoEditors]               = useState<CoEditorDraft[]>([]);
-  const [coEditorSuggestions, setCoEditorSuggestions]   = useState<Record<string, CoEditorSuggestion[]>>({});
   const [isSendingCorrection, setIsSendingCorrection]   = useState(false);
   const [commentError, setCommentError]                 = useState(false);
   const [selectedEpisodes, setSelectedEpisodes]         = useState<Record<number, boolean>>({});
@@ -266,6 +262,7 @@ export function EditWorkModal({
   const [externalResults, setExternalResults] = useState<UnifiedSearchWorkResult[]>([]);
   const [externalLoading, setExternalLoading] = useState(false);
   const [selfSharePercent, setSelfSharePercent] = useState("");
+  const [saveFeedback, setSaveFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [shareTask, setShareTask] = useState<MemberShareTask | null>(null);
   const [shareTaskLoading, setShareTaskLoading] = useState(false);
   const [shareTaskSaving, setShareTaskSaving] = useState(false);
@@ -280,6 +277,7 @@ export function EditWorkModal({
       setExternalResults([]);
       setWorkCorrectionComment("");
       setSelfSharePercent("");
+      setSaveFeedback(null);
       setCommentError(false);
       const seriesKey = assignment.works?.parent_work_id ?? assignment.works?.id;
       const season = assignment.works?.season_number ?? 1;
@@ -290,7 +288,6 @@ export function EditWorkModal({
       const initialNumbers = assignedEpisodes.length > 0 ? assignedEpisodes : initialEpisodeScope?.episode_numbers ?? [];
       setSelectedEpisodes(Object.fromEntries(initialNumbers.map(number => [number, true])));
       setCoversWholeSeason(Boolean(initialEpisodeScope?.covers_whole_season));
-      setCoEditorSuggestions({});
       setDirectEpisodeOptions(initialEpisodeOptions);
       const inferredSeries = inferSeriesWorkFields({
         title: assignment.works?.title,
@@ -313,6 +310,7 @@ export function EditWorkModal({
             role: displayRole(other.role),
             assignmentId: other.id,
             rightsHolderId: other.rights_holder_id ?? other.rettighedshavere?.id ?? null,
+            originalRightsHolderId: other.rights_holder_id ?? other.rettighedshavere?.id ?? null,
             locked: true,
           }))
       );
@@ -331,6 +329,21 @@ export function EditWorkModal({
     }).then(result => {
       if (!cancelled && result.success) {
         setShareTask(result.task as unknown as MemberShareTask | null);
+        setEditCoEditors(current => {
+          const existing = new Set(current.map(editor => `${editor.rightsHolderId}:${displayRole(editor.role)}`));
+          const additions = (result.registeredCoEditors ?? [])
+            .filter(editor => !existing.has(`${editor.rightsHolderId}:${displayRole(editor.role)}`))
+            .map(editor => ({
+              id: editor.assignmentId,
+              name: editor.name,
+              role: displayRole(editor.role),
+              assignmentId: editor.assignmentId,
+              rightsHolderId: editor.rightsHolderId,
+              originalRightsHolderId: editor.rightsHolderId,
+              locked: true,
+            } satisfies CoEditorDraft));
+          return [...current, ...additions];
+        });
         const ownPercent = result.task?.ownParticipant?.proposed_percent;
         setSelfSharePercent(ownPercent == null ? "" : String(ownPercent));
       }
@@ -374,20 +387,6 @@ export function EditWorkModal({
     };
     void loadSeriesEpisodes();
   }, [assignment.rights_holder_id, assignment.works, editScope, isOpen]);
-
-  const searchCoEditors = async (editorId: string, query: string) => {
-    const q = query.trim();
-    if (q.length === 1) {
-      setCoEditorSuggestions(prev => ({ ...prev, [editorId]: [] }));
-      return;
-    }
-    const result = await searchRightsHoldersForMember(q);
-    const data = result.success ? result.results : [];
-    const existingIds = new Set(editCoEditors.map(editor => editor.rightsHolderId).filter(Boolean));
-    const suggestions = ((data ?? []) as CoEditorSuggestion[])
-      .filter(suggestion => !existingIds.has(suggestion.id));
-    setCoEditorSuggestions(prev => ({ ...prev, [editorId]: suggestions }));
-  };
 
   const handleExternalSearch = async () => {
     if (!externalQuery.trim()) return;
@@ -442,24 +441,31 @@ export function EditWorkModal({
 
   const handleSendWorkCorrection = async () => {
     if (!assignment.works || !workCorrection) return;
+    setSaveFeedback(null);
     const myEpisodes = Object.entries(selectedEpisodes)
       .filter(([, checked]) => checked)
       .map(([num]) => parseInt(num, 10))
       .sort((a, b) => a - b);
     const initialCorrection = workToCorrectionForm(assignment.works);
     const hasWorkDataChanges = JSON.stringify(workCorrection) !== JSON.stringify(initialCorrection);
-    const hasCoEditorChanges = editCoEditors.some(editor => !editor.locked || editor.action === "remove" || editor.action === "change");
+    const changedCoEditors = editCoEditors.filter(editor => !editor.locked || editor.action === "remove" || editor.action === "change");
+    const hasCoEditorChanges = changedCoEditors.length > 0;
     const addedCoEditors = editCoEditors.filter(editor => !editor.locked && editor.name.trim());
     const ownShare = sharePercentOrNull(selfSharePercent);
     if (addedCoEditors.length > 0 && ownShare === null) {
-      onWorkUpdated("Angiv dit eget foreløbige procentbud, når du tilføjer en medklipper.", false);
+      setSaveFeedback({ type: "error", text: "Angiv din egen vurderede arbejdsandel, når du tilføjer en medklipper." });
+      return;
+    }
+    const missingRightsHolder = changedCoEditors.some(editor => (editor.action === "add" || editor.action === "change" || !editor.locked) && !editor.rightsHolderId);
+    if (missingRightsHolder) {
+      setSaveFeedback({ type: "error", text: "Vælg en eksisterende rettighedshaver fra listen, før du gemmer medklipperen." });
       return;
     }
     const roleChanged = editRole !== displayRole(assignment.role);
-    const hasAdminCorrection = hasWorkDataChanges || hasCoEditorChanges || (editScope !== "season" && roleChanged);
-    if (hasAdminCorrection && !workCorrectionComment.trim()) {
+    if (hasWorkDataChanges && !workCorrectionComment.trim()) {
       setCommentError(true);
       setShowWorkCorrection(true);
+      setSaveFeedback({ type: "error", text: `Skriv en bemærkning til ${organisationShortName}, før du gemmer rettelsen.` });
       return;
     }
     setIsSendingCorrection(true);
@@ -476,7 +482,26 @@ export function EditWorkModal({
         });
         if (!syncResult.success) throw new Error(syncResult.error ?? "Afsnitstilknytningerne kunne ikke gemmes.");
       }
-      if (hasAdminCorrection) {
+      if (hasCoEditorChanges || roleChanged) {
+        const res = await updateMemberCoEditors({
+          rightsHolderId: assignment.rights_holder_id!,
+          workId: assignment.works.id,
+          editScope,
+          seasonNumber: editScope === "season" ? directEpisodeSeason : undefined,
+          episodeNumbers: editScope === "season" ? myEpisodes : undefined,
+          memberRole: editRole,
+          selfSharePercent: addedCoEditors.length > 0 ? ownShare : null,
+          changes: changedCoEditors.map(editor => ({
+            assignmentId: editor.assignmentId,
+            rightsHolderId: editor.rightsHolderId,
+            originalRightsHolderId: editor.originalRightsHolderId,
+            role: editor.role,
+            action: editor.action ?? "add",
+          })),
+        });
+        if (!res.success) throw new Error(res.error ?? "Medklipperne kunne ikke gemmes.");
+      }
+      if (hasWorkDataChanges) {
         const res = await submitWorkDataCorrection({
           assignmentId: assignment.id,
           workId: assignment.works.id,
@@ -500,16 +525,22 @@ export function EditWorkModal({
             field_sources: workCorrection.field_sources,
           },
           comment: workCorrectionComment,
-          coEditors: editCoEditors.filter(editor => !editor.locked || editor.action === "remove" || editor.action === "change"),
-          selfSharePercent: ownShare,
-          myEpisodes: editScope === "season" ? myEpisodes : [],
-          memberRole: editRole,
         });
         if (!res.success) throw new Error(t("works.createFailed"));
       }
-      onWorkUpdated(hasAdminCorrection ? t("works.correctionSent") : "Sæsonens afsnit er gemt.", true, editScope === "season" ? editRole : undefined, assignment.id);
+      const message = hasWorkDataChanges
+        ? t("works.correctionSent")
+        : hasCoEditorChanges
+          ? "Medklipperne er gemt."
+          : editScope === "season"
+            ? "Sæsonens afsnit er gemt."
+            : t("common.saved");
+      setSaveFeedback({ type: "success", text: message });
+      onWorkUpdated(message, true, roleChanged || editScope === "season" ? editRole : undefined, assignment.id);
     } catch (err: unknown) {
-      onWorkUpdated(err instanceof Error ? err.message : t("works.createFailed"), false);
+      const message = err instanceof Error ? err.message : t("works.createFailed");
+      setSaveFeedback({ type: "error", text: message });
+      onWorkUpdated(message, false);
     } finally {
       setIsSendingCorrection(false);
     }
@@ -572,17 +603,6 @@ export function EditWorkModal({
           />
         </div>
       )}
-      <div className="space-y-1.5 mb-6">
-        <Label className="text-sm font-medium text-muted-foreground">{t("works.yourRole")}</Label>
-        <select value={editRole} onChange={e => setEditRole(e.target.value)} className={selectCls}>
-          {ROLES.map(r => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-      </div>
-
       {editScope === "season" && (directSeriesEpisodeCount > 0 || directSeriesEpisodeOptions.length > 0 || initialEpisodeScope?.status === "pending") && (
         <div className="mb-6 rounded-lg border p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -634,11 +654,17 @@ export function EditWorkModal({
 
       {/* MEDKLIPPERE SEKTION (Altid synlig på side 1) */}
       <div className="rounded-lg border p-4 mb-6">
-        <p className="mb-3 text-sm font-semibold text-foreground">{t("works.coEditors")}</p>
+        <p className="mb-3 text-sm font-semibold text-foreground">Rettighedshavere</p>
+        <div className="mb-4 space-y-1.5">
+          <Label className="text-sm font-medium text-muted-foreground">{t("works.yourRole")}</Label>
+          <select value={editRole} onChange={e => setEditRole(e.target.value)} className={selectCls}>
+            {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
         <div className="mb-4 rounded-md bg-blue-50 p-3 text-sm text-blue-950 dark:bg-blue-500/10 dark:text-blue-100">
           <p className="font-medium">Hvad skal du gøre?</p>
           <p className="mt-1 text-xs leading-relaxed">
-            Hvis du ikke har klippet {editScope === "episode" ? "afsnittet" : "værket"} alene, skal du tilføje de andre klippere, der har arbejdet på {editScope === "episode" ? "afsnittet" : "værket"}. Når du tilføjer en medklipper, skal du også angive dit eget foreløbige procentbud. Hver medklipper bliver bedt om at angive sin egen andel. I kan ikke se hinandens bud, og DFKS fastsætter og offentliggør først den endelige fordeling. Hvis du har klippet {editScope === "episode" ? "afsnittet" : "værket"} alene, skal du vælge “Har klippet alene” – du skal ikke angive en procent.
+            Hvis du ikke har klippet {editScope === "episode" ? "afsnittet" : "værket"} alene, skal du tilføje de andre klippere, der har arbejdet på {editScope === "episode" ? "afsnittet" : "værket"}. Når du tilføjer en medklipper, skal du også angive din egen vurderede arbejdsandel. Hver medklipper bliver bedt om at angive sin egen andel. I kan ikke se hinandens bud, og DFKS fastsætter og offentliggør først den endelige fordeling. Hvis du har klippet {editScope === "episode" ? "afsnittet" : "værket"} alene, skal du vælge “Har klippet alene” – du skal ikke angive en procent.
           </p>
         </div>
         {assignment.rights_holder_id && collaborationReviewWorkIds.length > 0 && (
@@ -654,7 +680,11 @@ export function EditWorkModal({
                     : "Dit svar ‘Har klippet alene’ er gemt.";
                   onWorkUpdated(message, true);
                 })
-                .catch(error => onWorkUpdated(error instanceof Error ? error.message : "Svaret kunne ikke gemmes.", false))
+                .catch(error => {
+                  const message = error instanceof Error ? error.message : "Svaret kunne ikke gemmes.";
+                  setSaveFeedback({ type: "error", text: message });
+                  onWorkUpdated(message, false);
+                })
                 .finally(() => setSoloSaving(false));
             }}>Har klippet alene</Button>
           </div>
@@ -663,48 +693,33 @@ export function EditWorkModal({
           {editCoEditors.map(editor => (
             <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
               <div className="relative">
-                <Input
+                <LocalRightsHolderAutocomplete
                   value={editor.name}
                   disabled={editor.locked && editor.action !== "change"}
-                  onFocus={() => {
-                    if (!editor.locked || editor.action === "change") void searchCoEditors(editor.id, editor.name);
-                  }}
-                  onChange={e => {
-                      const value = e.target.value;
-                      setEditCoEditors(prev =>
-                        prev.map(item =>
-                          item.id === editor.id
-                            ? { ...item, name: value, rightsHolderId: null, action: item.locked ? "change" : item.action }
-                            : item
-                        )
-                      );
-                      searchCoEditors(editor.id, value);
-                    }}
                   placeholder={t("works.namePlaceholder")}
+                  excludedIds={[
+                    assignment.rights_holder_id,
+                    ...editCoEditors.map(item => item.id === editor.id ? null : item.rightsHolderId),
+                  ]}
+                  onValueChange={value => {
+                    setEditCoEditors(prev =>
+                      prev.map(item =>
+                        item.id === editor.id
+                          ? { ...item, name: value, rightsHolderId: null, action: item.locked ? "change" : item.action }
+                          : item
+                      )
+                    );
+                  }}
+                  onSelect={suggestion => {
+                    setEditCoEditors(prev =>
+                      prev.map(item =>
+                        item.id === editor.id
+                          ? { ...item, name: suggestion.full_name, rightsHolderId: suggestion.id, action: item.locked ? "change" : item.action }
+                          : item
+                      )
+                    );
+                  }}
                 />
-                {(coEditorSuggestions[editor.id] ?? []).length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-sm">
-                    {(coEditorSuggestions[editor.id] ?? []).map(suggestion => (
-                      <button
-                        key={suggestion.id}
-                        type="button"
-                        className="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
-                        onClick={() => {
-                          setEditCoEditors(prev =>
-                            prev.map(item =>
-                              item.id === editor.id
-                                ? { ...item, name: suggestion.full_name, rightsHolderId: suggestion.id, action: item.locked ? "change" : item.action }
-                                : item
-                            )
-                          );
-                          setCoEditorSuggestions(prev => ({ ...prev, [editor.id]: [] }));
-                        }}
-                      >
-                        {suggestion.full_name}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
               <select
                 value={editor.role}
@@ -786,7 +801,7 @@ export function EditWorkModal({
         <p className="mt-2 text-xs text-gray-500">{t("works.editCoEditorsHint")}</p>
         {(editCoEditors.some(editor => !editor.locked && editor.name.trim()) || shareTask) && (
           <div className="mt-4 max-w-sm space-y-1.5">
-            <Label htmlFor="edit-self-share">Din egen foreløbige arbejdsandel (%)</Label>
+            <Label htmlFor="edit-self-share">Din egen vurderede arbejdsandel (%)</Label>
             <Input id="edit-self-share" inputMode="decimal" value={selfSharePercent} onChange={event => setSelfSharePercent(event.target.value)} placeholder="Fx 40" />
             <p className="text-xs text-muted-foreground">Skriv kun din egen andel. Procenten bliver først offentlig, når DFKS har afsluttet sagen.</p>
           </div>
@@ -803,8 +818,12 @@ export function EditWorkModal({
                   percent: sharePercentOrNull(selfSharePercent), declined: false, responseScope: editScope,
                 }).then(result => {
                   if (!result.success) throw new Error(result.error);
-                  onWorkUpdated("Dit foreløbige procentbud er gemt og sendt til DFKS.", true);
-                }).catch(error => onWorkUpdated(error instanceof Error ? error.message : "Svaret kunne ikke gemmes.", false))
+                  onWorkUpdated("Din vurderede arbejdsandel er gemt og sendt til DFKS.", true);
+                }).catch(error => {
+                  const message = error instanceof Error ? error.message : "Svaret kunne ikke gemmes.";
+                  setSaveFeedback({ type: "error", text: message });
+                  onWorkUpdated(message, false);
+                })
                   .finally(() => setShareTaskSaving(false));
               }}
             >Gem mit procentbud</Button>
@@ -816,7 +835,11 @@ export function EditWorkModal({
                   .then(result => {
                     if (!result.success) throw new Error(result.error);
                     onWorkUpdated("Du har oplyst, at du ikke har arbejdet på værket. DFKS gennemgår sagen.", true);
-                  }).catch(error => onWorkUpdated(error instanceof Error ? error.message : "Svaret kunne ikke gemmes.", false))
+                  }).catch(error => {
+                    const message = error instanceof Error ? error.message : "Svaret kunne ikke gemmes.";
+                    setSaveFeedback({ type: "error", text: message });
+                    onWorkUpdated(message, false);
+                  })
                   .finally(() => setShareTaskSaving(false));
               }}
             >Jeg har ikke arbejdet på værket</Button>
@@ -982,19 +1005,30 @@ export function EditWorkModal({
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm font-medium text-muted-foreground">{t("works.commentToAdmin")}</Label>
-              <Textarea value={workCorrectionComment} onChange={e => { setWorkCorrectionComment(e.target.value); if (commentError) setCommentError(false); }} placeholder={locale === "da" ? "Forklar kort rettelsen, fx ændrede værksdata, rolle, afsnit eller medklippere." : "Briefly explain the correction, such as changed work data, role, episodes, or co-editors."} className={commentError ? "border-red-500 focus-visible:ring-red-500" : undefined} />
+              <Textarea value={workCorrectionComment} onChange={e => { setWorkCorrectionComment(e.target.value); if (commentError) setCommentError(false); }} placeholder={locale === "da" ? "Forklar kort rettelsen af værksdata, fx titel, type, år eller instruktør." : "Briefly explain the work data correction, such as title, type, year, or director."} className={commentError ? "border-red-500 focus-visible:ring-red-500" : undefined} />
               {commentError && <p className="text-xs text-red-600">{locale === "da" ? `Skriv en bemærkning til ${organisationShortName}, før du sender rettelsen.` : `Add a note to ${organisationShortName} before sending the correction.`}</p>}
             </div>
           </div>
         )}
       </div>
+      {saveFeedback && (
+        <div
+          className={`mt-4 rounded-lg border px-4 py-3 text-sm ${
+            saveFeedback.type === "success"
+              ? "border-green-200 bg-green-50 text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-100"
+              : "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100"
+          }`}
+        >
+          {saveFeedback.text}
+        </div>
+      )}
       <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end mt-4 pt-4 border-t border-gray-100">
         <Button variant="outline" onClick={onClose}>
           {t("common.cancel")}
         </Button>
         <Button onClick={handleSendWorkCorrection} disabled={isSendingCorrection} className="gap-2">
           {isSendingCorrection && <Loader2 className="h-4 w-4 animate-spin" />}
-          {locale === "da" ? `Send rettelse til ${organisationShortName}` : `Send correction to ${organisationShortName}`}
+          {t("common.save")}
         </Button>
       </div>
     </Modal>

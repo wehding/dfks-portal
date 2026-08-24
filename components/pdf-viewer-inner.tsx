@@ -1,7 +1,7 @@
 "use client"
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
-import { useState, useCallback, useEffect, useRef } from "react"
+import { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { Document, Page, pdfjs } from "react-pdf"
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -216,16 +216,19 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     sectionHighlightsRef.current = sectionHighlights
 
     // Lag 5 og tekst-søgning er gensidigt udelukkende: hvis koordinat-boksen
-    // dækker det aktive felt, skal HVERKEN den grønne ord-markering ELLER
+    // findes for det aktive felt, skal HVERKEN den grønne ord-markering ELLER
     // sectionHighlights' gule paragraf-markering vises. Løftet til komponent-
     // niveau, så begge effekter (tekst-søgnings-navigation og highlighting)
     // bruger samme, konsistente beregning.
     const hasCoordinateBox = !!(
         activeClauseId && layout &&
-        layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)?.pdfBbox
+        layout.clauses.find(c => c.id === activeClauseId)?.pdfBbox
     )
     const effectiveActiveHighlight = hasCoordinateBox ? null : activeHighlight
-    const effectiveSectionHighlights = hasCoordinateBox ? [] : sectionHighlights
+    const effectiveSectionHighlights = useMemo(
+        () => hasCoordinateBox ? [] : sectionHighlights,
+        [hasCoordinateBox, sectionHighlights],
+    )
     const effectiveActiveHighlightRef = useRef(effectiveActiveHighlight)
     const effectiveSectionHighlightsRef = useRef(effectiveSectionHighlights)
     effectiveActiveHighlightRef.current = effectiveActiveHighlight
@@ -317,7 +320,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         }
         timer = setTimeout(tryApply, 300)
         return () => clearTimeout(timer)
-    }, [highlights, sectionHighlights, activeHighlight, pageNumber, pageRendered, activeClauseId, layout])
+    }, [highlights, effectiveActiveHighlight, effectiveSectionHighlights, pageNumber, pageRendered, activeClauseId, layout])
 
 
     if (error) {

@@ -1,24 +1,44 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
 type RightsHolderOption = { id: string; full_name: string };
 
-export function RightsHolderAutocomplete({ options, value, onChange, placeholder = "Søg rettighedshaver…" }: {
+export function RightsHolderAutocomplete({ options, value, onChange, placeholder = "Søg rettighedshaver…", searchEndpoint }: {
   options: RightsHolderOption[];
   value?: string | null;
   onChange: (id: string) => void;
   placeholder?: string;
+  searchEndpoint?: string;
 }) {
-  const selected = options.find(option => option.id === value);
+  const [remoteOptions, setRemoteOptions] = useState<RightsHolderOption[]>([]);
+  const allOptions = useMemo(() => {
+    const rows = [...options, ...remoteOptions];
+    return [...new Map(rows.map(row => [row.id, row])).values()];
+  }, [options, remoteOptions]);
+  const selected = allOptions.find(option => option.id === value);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!searchEndpoint || query.trim().length < 2) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const separator = searchEndpoint.includes("?") ? "&" : "?";
+        const response = await fetch(`${searchEndpoint}${separator}q=${encodeURIComponent(query.trim())}`, { signal: controller.signal });
+        if (response.ok) setRemoteOptions(await response.json());
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") setRemoteOptions([]);
+      }
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, searchEndpoint]);
   const matches = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("da");
-    return options.filter(option => !normalized || option.full_name.toLocaleLowerCase("da").includes(normalized)).slice(0, 10);
-  }, [options, query]);
+    return allOptions.filter(option => !normalized || option.full_name.toLocaleLowerCase("da").includes(normalized)).slice(0, 10);
+  }, [allOptions, query]);
 
   if (selected) return <div className="flex min-h-10 items-center justify-between gap-3 rounded-md bg-muted px-3 py-2 text-sm">
     <span className="min-w-0 truncate font-medium">{selected.full_name}</span>

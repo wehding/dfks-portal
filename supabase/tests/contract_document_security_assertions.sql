@@ -21,7 +21,8 @@ begin
   if has_table_privilege('anon', 'public.contract_document_jobs', 'SELECT')
     or has_table_privilege('authenticated', 'public.contract_document_jobs', 'SELECT')
     or has_function_privilege('authenticated', 'public.claim_next_contract_document_job(integer)', 'EXECUTE')
-    or has_function_privilege('authenticated', 'public.finish_contract_document_job(uuid,text,jsonb,boolean,integer,integer,text,text)', 'EXECUTE') then
+    or has_function_privilege('authenticated', 'public.finish_contract_document_job(uuid,text,jsonb,boolean,integer,integer,text,text)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.finish_contract_document_job_v2(uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text)', 'EXECUTE') then
     raise exception 'Document queue regression: browser roles can access the server-only queue';
   end if;
 
@@ -41,8 +42,8 @@ begin
     raise exception 'Version regression: previous contract was not linked';
   end if;
 
-  insert into public.contract_document_jobs (id, org_id, contract_id, original_storage_path, output_storage_path)
-  values (job_id, test_org, current_id, test_org || '/current.pdf', test_org || '/processed/current.pdf');
+  insert into public.contract_document_jobs (id, org_id, contract_id, original_storage_path, output_storage_path, spatial_data_path)
+  values (job_id, test_org, current_id, test_org || '/current.pdf', test_org || '/processed/current.pdf', test_org || '/processed/vision-layout.json.gz');
   insert into public.contracts (id, org_id, work_id, type, status, pdf_url)
   values
     (second_contract_id, test_org, work_id, 'A-løn', 'kladde', test_org || '/second.pdf'),
@@ -62,12 +63,18 @@ begin
   if position('for update skip locked' in lower(pg_get_functiondef('public.claim_next_contract_document_job(integer)'::regprocedure))) = 0 then
     raise exception 'Document queue regression: parallel claims are not protected by SKIP LOCKED';
   end if;
-  perform public.finish_contract_document_job(job_id, 'completed', '[]'::jsonb, true, 2, 1000, null, null);
+  perform public.finish_contract_document_job_v2(
+    job_id, 'completed', 'image_only', 'google-vision-eu-v1', '[]'::jsonb,
+    true, 2, 1000, 0, 2, 0, '{"DENMARK_CPR_NUMBER": 1}'::jsonb,
+    0.99, 0.90, 1.0, repeat('a', 64), repeat('b', 64), null, null
+  );
   if not exists (
     select 1 from public.contracts
     where id = current_id and pdf_url = test_org || '/current.pdf'
       and processed_pdf_url = test_org || '/processed/current.pdf'
       and document_processing_status = 'ready'
+      and document_ocr_engine = 'google-vision-eu-v1'
+      and document_spatial_data_path = test_org || '/processed/vision-layout.json.gz'
       and status = 'kladde'
   ) then
     raise exception 'Document queue regression: original or derivative state is incorrect';
@@ -81,6 +88,21 @@ begin
   if (select count(*) from public.contract_ai_jobs
       where contract_id = current_id and attachment_id is null and status = 'queued') <> 1 then
     raise exception 'Document queue regression: completed OCR did not create exactly one active AI job';
+  end if;
+  perform public.finish_contract_document_job_v2(
+    second_job_id, 'not_required', 'native_text', null, '[]'::jsonb,
+    false, 1, 750, 1, 0, 0, '{}'::jsonb,
+    null, null, null, repeat('c', 64), null, null, null
+  );
+  if not exists (
+    select 1 from public.contracts
+    where id = second_contract_id
+      and pdf_url = test_org || '/second.pdf'
+      and processed_pdf_url is null
+      and document_processing_status = 'not_required'
+      and status = 'kladde'
+  ) then
+    raise exception 'Document queue regression: native PDF was modified or misclassified';
   end if;
 end $$;
 

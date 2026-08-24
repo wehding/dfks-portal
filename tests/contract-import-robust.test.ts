@@ -130,6 +130,36 @@ test("det fælles AI-skema er et lukket JSON-objekt med centrale felter", () => 
   for (const field of ["workTitle", "rightsHolderName", "seasonNumber", "episodeNumbers", "salary", "copydan", "signatureStatus", "_sources"]) {
     assert.ok(field in properties);
   }
+  const sourceProperties = (properties._sources as { properties: Record<string, unknown> }).properties;
+  assert.ok("creditedRoles" in sourceProperties);
+  assert.ok("creditedRoles_clause_id" in sourceProperties);
+});
+
+test("normalisering bevarer krediteringskilden og klausul-id'et", () => {
+  const normalized = normalizeContractExtraction({
+    creditedRoles: "Klipper",
+    _sources: {
+      creditedRoles: "[s1_c10] Der er aftalt følgende vedrørende kreditering: Klipper Sofie Steenberger",
+      creditedRoles_clause_id: "s1_c10",
+    },
+  });
+  assert.equal((normalized._sources as Record<string, unknown>).creditedRoles_clause_id, "s1_c10");
+});
+
+test("normalisering bevarer strukturerede arbejdsfaser og tillæg", () => {
+  const workPhase = { phase: "post_edit_finishing", weeks: 1, paymentType: "included_in_salary", amount: 9200, amountType: "calculated", note: "Lydmix", sourceText: "[s2_c7] deltagelse i lydmix" };
+  const supplement = { category: "efterarbejde", amount: 2000, unit: "engangsbeløb", note: "Lydmix", sourceText: "[s2_c8] tillæg 2.000 kr." };
+  const normalized = normalizeContractExtraction({ workPhases: [workPhase], otherSupplements: [supplement] });
+  assert.deepEqual(normalized.workPhases, [workPhase]);
+  assert.deepEqual(normalized.otherSupplements, [supplement]);
+});
+
+test("arbejdsfaser sammenlægges på tværs af kontraktdele", () => {
+  const merged = mergeContractExtractionChunks([
+    { workPhases: [{ phase: "preproduction", weeks: 1 }] },
+    { workPhases: [{ phase: "post_edit_finishing", weeks: 1 }] },
+  ]);
+  assert.equal((merged.workPhases as unknown[]).length, 2);
 });
 
 test("Anthropic bruger JSON-prompten når det fulde schema overskrider providergrænserne", () => {

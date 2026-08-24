@@ -12,6 +12,15 @@ import { LanguageToggle } from "@/components/language-toggle"
 import { createClient } from "@/lib/supabase/client"
 import { resolvePostLoginDestination } from "@/lib/auth/post-login"
 
+function withLoginTimeout<T>(promise: Promise<T>, message: string, timeoutMs = 15000): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+            window.setTimeout(() => reject(new Error(message)), timeoutMs)
+        }),
+    ])
+}
+
 export default function LoginPage() {
     const { t } = useI18n()
     const router = useRouter()
@@ -31,14 +40,19 @@ export default function LoginPage() {
     })
 
     useEffect(() => {
-        const orgId = new URLSearchParams(window.location.search).get("org")
+        const params = new URLSearchParams(window.location.search)
+        if (params.get("notice") === "session-expired") {
+            setNotice(t("auth.sessionExpired"))
+            window.history.replaceState(null, "", window.location.pathname)
+        }
+        const orgId = params.get("org")
         if (!orgId) return
         void fetch(`/api/public/branding?org=${encodeURIComponent(orgId)}`)
             .then(response => response.ok ? response.json() : null)
             .then(nextBrand => {
                 if (nextBrand) setBrand(nextBrand)
             })
-    }, [])
+    }, [t])
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -51,19 +65,39 @@ export default function LoginPage() {
 
         setLoading(true)
 
-        const supabase = createClient()
-        const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
+        try {
+            const supabase = createClient()
+            await supabase.auth.signOut({ scope: "local" }).catch(() => undefined)
+            const { error: authError } = await withLoginTimeout(
+                supabase.auth.signInWithPassword({ email, password }),
+                "Login tog for lang tid. Prøv igen.",
+            )
 
-        if (authError) {
-            setError("Forkert e-mail eller adgangskode.")
+            if (authError) {
+                setError("Forkert e-mail eller adgangskode.")
+                return
+            }
+
+            const { data: { user } } = await withLoginTimeout(
+                supabase.auth.getUser(),
+                "Login blev oprettet, men brugeren kunne ikke hentes. Prøv igen.",
+            )
+            if (!user) {
+                setError("Kunne ikke hente den indloggede bruger.")
+                return
+            }
+
+            const destination = await withLoginTimeout(
+                resolvePostLoginDestination(supabase, user.id, user.last_sign_in_at),
+                "Login lykkedes, men adgang til organisationen kunne ikke afklares. Prøv igen eller kontakt administrator.",
+            )
+            router.push(destination)
+            router.refresh()
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Login kunne ikke gennemføres. Prøv igen.")
+        } finally {
             setLoading(false)
-            return
         }
-
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) { setError("Kunne ikke hente den indloggede bruger."); setLoading(false); return }
-        router.push(await resolvePostLoginDestination(supabase, user.id, user.last_sign_in_at))
-        router.refresh()
     }
 
     const handlePasswordReset = async () => {
@@ -107,9 +141,10 @@ export default function LoginPage() {
                                 src="/logo.png"
                                 alt={brand.long_name}
                                 width={280}
-                                height={120}
-                                className="dark:invert"
-                                priority
+                                height={93}
+                                sizes="280px"
+                                className="h-[93px] w-[280px] object-contain dark:invert"
+                                preload
                             />
                         )}
                         <div className="text-center">

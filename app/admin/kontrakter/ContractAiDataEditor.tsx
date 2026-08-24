@@ -42,7 +42,7 @@ const SALARY_SOURCE_LABELS: Record<string, string> = {
 };
 const SALARY_SOURCE_VALUES = Object.fromEntries(Object.entries(SALARY_SOURCE_LABELS).map(([value, label]) => [label, value]));
 const ARRAY_KEYS = new Set(["distribution", "productionCountries", "creditedRoles"]);
-const NUMBER_KEYS = new Set(["salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "pensionEmployerPercent", "pensionEmployeePercent", "pensionTotalPercent", "pensionBasisAmount", "personalSupplement", "royaltyPercent", "holidayPayRate", "betaRate", "signaturePage", "duration", "premiereYear"]);
+const NUMBER_KEYS = new Set(["salary", "workingDays", "workingWeeks", "pensionPercent", "pensionSupplement", "pensionEmployerPercent", "pensionEmployeePercent", "pensionTotalPercent", "pensionBasisAmount", "personalSupplement", "royaltyPercent", "holidayPayRate", "betaRate", "signaturePage", "duration", "premiereYear"]);
 const SOURCE_KEYS: Record<string, string> = {
   salary: "salary", pensionPercent: "pension", personalSupplement: "supplements",
   otherSupplements: "otherSupplements", signatureStatus: "signature", signatureMethod: "signature", signatureDate: "signature",
@@ -74,7 +74,6 @@ const FIELDS: Partial<Record<ContractValidationSectionKey, Field[]>> = {
     { key: "needsManualSalaryReview", label: "Kræver manuel løngennemgang", type: "bool" },
     { key: "workingDays", label: "Arbejdsdage", type: "number" },
     { key: "workingWeeks", label: "Arbejdsuger", type: "number" },
-    { key: "loentillaeg", label: "Løntillæg (fallback)", type: "number" },
     { key: "contractType", label: "Kontrakttype", type: "text", readOnly: true },
     { key: "agreementEmploymentForm", label: "Ansættelsesform i overenskomsten", type: "text", readOnly: true },
     { key: "pensionPercent", label: "Arbejdsgivers pension %", type: "number" },

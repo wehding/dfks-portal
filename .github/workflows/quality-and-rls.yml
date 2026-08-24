@@ -60,3 +60,57 @@ jobs:
       - run: npx supabase test db
       - if: always()
         run: npx supabase stop --no-backup
+
+  performance-smoke:
+    name: Performance smoke (7 centrale sider)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROFILE_ENCRYPTION_KEY: ci-only-profile-encryption-key
+      ORG_CONTEXT_SECRET: ci-only-org-context-secret
+      NEXT_PUBLIC_SITE_URL: http://127.0.0.1:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx supabase start
+      - name: Indlæs lokale Supabase-nøgler
+        run: |
+          npx supabase status -o env > /tmp/supabase.env
+          while IFS='=' read -r key value; do
+            value="${value%\"}"
+            value="${value#\"}"
+            case "$key" in
+              API_URL) echo "NEXT_PUBLIC_SUPABASE_URL=$value" >> "$GITHUB_ENV" ;;
+              ANON_KEY) echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$value" >> "$GITHUB_ENV" ;;
+              SERVICE_ROLE_KEY) echo "SUPABASE_SERVICE_ROLE_KEY=$value" >> "$GITHUB_ENV" ;;
+            esac
+          done < /tmp/supabase.env
+      - run: node scripts/seed-performance-smoke.mjs
+      - run: npm run build
+      - name: Start produktionsserver
+        run: npm run start -- --hostname 127.0.0.1 > /tmp/dfks-performance-server.log 2>&1 &
+      - name: Vent på portalen
+        run: |
+          for attempt in $(seq 1 60); do
+            curl --fail --silent http://127.0.0.1:3000 >/dev/null && exit 0
+            sleep 1
+          done
+          exit 1
+      - run: npm run test:performance-smoke
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-smoke-report
+          path: performance-report
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-server-log
+          path: /tmp/dfks-performance-server.log
+      - if: always()
+        run: npx supabase stop --no-backup

@@ -5,10 +5,10 @@ import test from "node:test";
 const visibleAdminFiles = [
   "lib/i18n.tsx",
   "lib/admin-help.ts",
-  "app/admin/vaerker/page.tsx",
+  "app/admin/vaerker/WorkArchiveClient.tsx",
   "app/actions/work-identity.ts",
   "app/actions/work-collaboration-reviews.ts",
-  "components/admin/work-share-case-panel.tsx",
+  "components/admin/work-share-reconciliation-wizard.tsx",
 ];
 
 test("viser Værksarkiv uden gamle adminbetegnelser", () => {

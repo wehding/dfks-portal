@@ -3,6 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { errorMessage } from "@/lib/error-message";
 import React, { useMemo, useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Sparkles, Link as LinkIcon, History, Plus } from "lucide-react";
 import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, fetchMemberContractsList, getContractDocumentPreview, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
 import { addManualWorkAndLinkContract, fetchMemberSeriesEpisodeOptions, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, submitContractCollaborationReview, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
@@ -11,9 +12,7 @@ import { retryMemberAttachmentAnalysis } from "@/app/actions/member-attachments"
 import { confirmContractEpisodes } from "@/app/actions/contract-episode-confirmations";
 import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { toast } from "sonner";
-import { useSearchParams } from "next/navigation";
-import UploadDialog from "./UploadDialog";
-import AddAlongeDialog from "./AddAlongeDialog";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +31,10 @@ import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWor
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 import { ListResultSummary } from "@/components/list-result-summary";
+import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
+
+const UploadDialog = dynamic(() => import("./UploadDialog"), { ssr: false });
+const AddAlongeDialog = dynamic(() => import("./AddAlongeDialog"), { ssr: false });
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 const COLLABORATION_ROLES = ["Klipper", "Film Editor", "Klippeassistent", "Dramaturg", "Klipper/Instruktør"];
@@ -243,6 +246,8 @@ export default function MineKontrakterClient({
   initialOpenContractId,
   editorOnly = false,
   onEditorClose,
+  pageResult,
+  initialQuery,
 }: {
   initialContracts: Contract[];
   myWorks?: MyWork[];
@@ -250,14 +255,17 @@ export default function MineKontrakterClient({
   initialOpenContractId?: string;
   editorOnly?: boolean;
   onEditorClose?: () => void;
+  pageResult?: { page: number; pageSize: number; filteredCount: number; totalCount: number; hasNextPage: boolean };
+  initialQuery?: { search: string; status: string; workType: string; sortKey: SortKey; sortDir: "asc" | "desc" };
 }) {
   const { t } = useI18n();
   const [contracts, setContracts] = useState(initialContracts);
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [isUploading, setIsUploading] = useState(searchParams?.get("upload") === "true");
   const uploadWorkId    = searchParams?.get("workId") ?? undefined;
   const uploadWorkTitle = searchParams?.get("workTitle") ? decodeURIComponent(searchParams.get("workTitle")!) : undefined;
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialQuery?.search ?? "");
   const [msg, setMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
   const [viewUrl, setViewUrl] = useState<string | null>(null);
@@ -457,7 +465,7 @@ export default function MineKontrakterClient({
         return;
       }
       if (coEditors.length && parsePercentInput(row.selfSharePercent) === null) {
-        toast.error(`Angiv din egen foreløbige procent for ${row.title}.`);
+        toast.error(`Angiv din egen vurderede arbejdsandel for ${row.title}.`);
         return;
       }
     }
@@ -673,18 +681,43 @@ export default function MineKontrakterClient({
 
   const [isAddingAllonge, setIsAddingAllonge] = useState(false);
   const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
-  const [pageSize, setPageSize] = useState(20);
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [sortKey, setSortKey] = useState<SortKey>("date");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [pageSize, setPageSize] = useState(pageResult?.pageSize ?? 20);
+  const [statusFilter, setStatusFilter] = useState(initialQuery?.status ?? "all");
+  const [typeFilter, setTypeFilter] = useState(initialQuery?.workType ?? "all");
+  const [sortKey, setSortKey] = useState<SortKey>(initialQuery?.sortKey ?? "date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(initialQuery?.sortDir ?? "desc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [commentDraft, setCommentDraft] = useState("");
   const [commentSaving, setCommentSaving] = useState(false);
   const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false);
   const [deleteContractId, setDeleteContractId] = useState<string | null>(null);
 
-  const total     = contracts.length;
+  useEffect(() => {
+    setContracts(initialContracts);
+  }, [initialContracts]);
+
+  useEffect(() => {
+    if (!pageResult) return;
+    const timeout = window.setTimeout(() => {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      const setOrDelete = (key: string, value: string, defaultValue: string) => value === defaultValue ? params.delete(key) : params.set(key, value);
+      setOrDelete("q", search.trim(), "");
+      setOrDelete("status", statusFilter, "all");
+      setOrDelete("type", typeFilter, "all");
+      setOrDelete("sort", sortKey, "date");
+      setOrDelete("direction", sortDir, "desc");
+      setOrDelete("pageSize", String(pageSize), "20");
+      if (search !== (initialQuery?.search ?? "") || statusFilter !== (initialQuery?.status ?? "all") || typeFilter !== (initialQuery?.workType ?? "all") || sortKey !== (initialQuery?.sortKey ?? "date") || sortDir !== (initialQuery?.sortDir ?? "desc") || pageSize !== pageResult.pageSize) {
+        params.delete("page");
+      }
+      const next = params.toString();
+      const current = searchParams?.toString() ?? "";
+      if (next !== current) router.replace(next ? `/portal/mine-kontrakter?${next}` : "/portal/mine-kontrakter", { scroll: false });
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [initialQuery, pageResult, pageSize, router, search, searchParams, sortDir, sortKey, statusFilter, typeFilter]);
+
+  const total = pageResult?.totalCount ?? contracts.length;
   const validerede = contracts.filter(c => c.status === "valideret").length;
   const afventer  = contracts.filter(c => c.status === "kladde").length;
 
@@ -728,7 +761,7 @@ export default function MineKontrakterClient({
     if (typeof left === "number" && typeof right === "number") return (left - right) * direction;
     return String(left).localeCompare(String(right), "da-DK", { numeric: true, sensitivity: "base" }) * direction;
   }), [contracts, search, sortDir, sortKey, statusFilter, typeFilter]);
-  const visibleContracts = filtered.slice(0, pageSize);
+  const visibleContracts = filtered;
   const allFilteredSelected = filtered.length > 0 && filtered.every(c => selectedIds.includes(c.id));
   const selectedDeleteContracts = contracts.filter(c => selectedIds.includes(c.id));
   const selectedDeleteAttachments = selectedDeleteContracts.reduce((sum, contract) => sum + (contract.contract_attachments?.length ?? 0), 0);
@@ -1210,6 +1243,10 @@ export default function MineKontrakterClient({
 
   return (
     <div className={editorOnly ? "contents [&>:not(.member-contract-editor-overlay)]:hidden" : "flex flex-col gap-6"}>
+      {!editorOnly && <ListReadinessMarker route="member-contracts" stage="primary" />}
+      {!editorOnly && contracts.length > 0 && <ListReadinessMarker route="member-contracts" stage="first-row" />}
+      {!editorOnly && <ListReadinessMarker route="member-contracts" stage="secondary" />}
+      {!editorOnly && <ListReadinessMarker route="member-contracts" stage="complete" />}
 
       {/* Header */}
       <PortalPageHeader
@@ -1222,9 +1259,24 @@ export default function MineKontrakterClient({
 
       {/* Statistik */}
       <SummaryGrid>
-        <SummaryCard label={t("common.total")} value={total} />
-        <SummaryCard label={t("common.validated")} value={validerede} />
-        <SummaryCard label={t("common.pendingValidation")} value={afventer} />
+        <SummaryCard
+          label={t("common.total")}
+          value={total}
+          active={!search && statusFilter === "all" && typeFilter === "all"}
+          onClick={() => { setSearch(""); setStatusFilter("all"); setTypeFilter("all"); }}
+        />
+        <SummaryCard
+          label={t("common.validated")}
+          value={validerede}
+          active={!search && statusFilter === "valideret" && typeFilter === "all"}
+          onClick={() => { setSearch(""); setStatusFilter("valideret"); setTypeFilter("all"); }}
+        />
+        <SummaryCard
+          label={t("common.pendingValidation")}
+          value={afventer}
+          active={!search && statusFilter === "kladde" && typeFilter === "all"}
+          onClick={() => { setSearch(""); setStatusFilter("kladde"); setTypeFilter("all"); }}
+        />
       </SummaryGrid>
 
       {/* Toast-besked */}
@@ -1316,7 +1368,7 @@ export default function MineKontrakterClient({
 	          <label className="flex items-center gap-2 text-sm text-muted-foreground">
 	            {t("contracts.show")}
 	            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
-	              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+	              {[20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
 	            </select>
 	          </label>
 	          {filtered.length > 0 && (
@@ -1327,7 +1379,7 @@ export default function MineKontrakterClient({
 	          )}
 	        </div>
 
-        <ListResultSummary filteredCount={filtered.length} totalCount={contracts.length} selectedCount={selectedIds.length} className="px-1" />
+        <ListResultSummary filteredCount={pageResult?.filteredCount ?? filtered.length} totalCount={total} selectedCount={selectedIds.length} className="px-1" />
 
 	        {/* Kolonnehoveder */}
 	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.1fr_1.1fr_1.2fr_1fr_1fr_0.9fr]">
@@ -1427,6 +1479,23 @@ export default function MineKontrakterClient({
             </React.Fragment>
           );
         })}
+        {pageResult && pageResult.filteredCount > pageResult.pageSize && (
+          <div className="flex items-center justify-between gap-3 border-t px-4 py-3 text-sm">
+            <span>Side {pageResult.page} af {Math.max(1, Math.ceil(pageResult.filteredCount / pageResult.pageSize))}</span>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" disabled={pageResult.page <= 1} onClick={() => {
+                const params = new URLSearchParams(searchParams?.toString() ?? "");
+                params.set("page", String(Math.max(1, pageResult.page - 1)));
+                router.replace(`/portal/mine-kontrakter?${params.toString()}`, { scroll: false });
+              }}>Forrige</Button>
+              <Button type="button" variant="outline" disabled={!pageResult.hasNextPage} onClick={() => {
+                const params = new URLSearchParams(searchParams?.toString() ?? "");
+                params.set("page", String(pageResult.page + 1));
+                router.replace(`/portal/mine-kontrakter?${params.toString()}`, { scroll: false });
+              }}>Næste</Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Upload-dialog */}
@@ -1778,7 +1847,7 @@ export default function MineKontrakterClient({
 
                             {entry.coEditors.length > 0 && (
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-medium text-muted-foreground">Din foreløbige arbejdsandel (%)</Label>
+                                <Label className="text-xs font-medium text-muted-foreground">Din vurderede arbejdsandel (%)</Label>
                                 <Input
                                   type="text"
                                   inputMode="decimal"

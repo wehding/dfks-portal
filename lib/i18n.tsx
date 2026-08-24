@@ -1,7 +1,6 @@
 "use client"
 
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react"
-import { usePathname } from "next/navigation"
 
 export type Locale = "da" | "en"
 
@@ -245,6 +244,7 @@ const translations = {
         "auth.forgotPassword": "Glemt adgangskode?",
         "auth.welcome": "Velkommen.",
         "auth.subtitle": "Log ind for at tilgå din portal",
+        "auth.sessionExpired": "Din session er udløbet. Log ind igen.",
         "accountAccess.inviteTitle": "Velkommen til {org}",
         "accountAccess.recoveryTitle": "Vælg en ny adgangskode",
         "accountAccess.inviteDescription": "Vælg en adgangskode for at aktivere din konto og fortsætte til portalen.",
@@ -397,7 +397,6 @@ const translations = {
         "works.review.chooseEpisodesFirst": "Vælg de afsnit, du har arbejdet på, eller bekræft hele sæsonen.",
         "works.review.episodeFollowup": "Når afsnitsvalget er gemt, gennemgår du hvert valgt afsnit særskilt for eventuelle medklippere.",
         "works.review.confirmQuestion": "Har du klippet dette værk eller afsnit alene, eller skal der tilføjes en medklipper?",
-        "works.review.shareExplanation": "Når du tilføjer en medklipper, genbruges den private fordelingssag med jeres separate foreløbige bud.",
         "works.review.continueLater": "Fortsæt senere",
         "works.review.chooseEpisodes": "Vælg afsnit",
         "works.review.soloAction": "Har klippet alene",
@@ -407,7 +406,7 @@ const translations = {
         "works.review.confirmSolo": "Bekræft",
         "works.review.noOpenSelected": "Ingen af de valgte værker har en åben medklipperopgave.",
         "works.review.seasonUnavailable": "Sæsonen kunne ikke åbnes. Genindlæs siden og prøv igen.",
-        "works.editCoEditorsHint": "Ændringer af eksisterende {coeditors} sendes til admin.",
+        "works.editCoEditorsHint": "Ændringer af eksisterende {coeditors} gemmes direkte.",
         "works.commentToAdmin": "Bemærkning til admin",
         "works.commentPlaceholder": "Skriv evt. hvorfor værket/ændringen skal godkendes...",
         "works.suggestCorrection": "Foreslå rettelse af værksdata",
@@ -415,11 +414,11 @@ const translations = {
         "works.adminComments": "Kommentarer fra administrator",
         "works.correctionSent": "Rettelsen er sendt til admin og afventer godkendelse.",
         "works.removeCoEditor": "Fjern",
-        "works.suggestEdit": "Foreslå ret",
-        "works.suggestRemove": "Foreslå fjern",
+        "works.suggestEdit": "Ret",
+        "works.suggestRemove": "Fjern",
         "works.undo": "Fortryd",
         "works.lock": "Lås",
-        "works.removeNotice": "Fjernelse kræver admin-godkendelse.",
+        "works.removeNotice": "Fjernelsen gemmes, når du trykker Gem.",
         "works.lockedCoEditorsHint": "Eksisterende {coeditors} fra databasen kan ikke ændres her.",
         "works.manualWork": "Manuelt værk",
         "works.addedPending": "Værket er tilføjet, og {coeditor}forslaget afventer admin.",
@@ -1134,6 +1133,7 @@ const translations = {
         "auth.forgotPassword": "Forgot password?",
         "auth.welcome": "Welcome.",
         "auth.subtitle": "Sign in to access your portal",
+        "auth.sessionExpired": "Your session has expired. Please sign in again.",
         "accountAccess.inviteTitle": "Welcome to {org}",
         "accountAccess.recoveryTitle": "Choose a new password",
         "accountAccess.inviteDescription": "Choose a password to activate your account and continue to the portal.",
@@ -1286,7 +1286,6 @@ const translations = {
         "works.review.chooseEpisodesFirst": "Choose the episodes you worked on, or confirm the entire season.",
         "works.review.episodeFollowup": "After saving the episode selection, you will review each selected episode separately for possible co-editors.",
         "works.review.confirmQuestion": "Did you edit this work or episode alone, or should a co-editor be added?",
-        "works.review.shareExplanation": "Adding a co-editor reuses the private allocation case with your separate preliminary shares.",
         "works.review.continueLater": "Continue later",
         "works.review.chooseEpisodes": "Choose episodes",
         "works.review.soloAction": "Edited alone",
@@ -1296,7 +1295,7 @@ const translations = {
         "works.review.confirmSolo": "Confirm",
         "works.review.noOpenSelected": "None of the selected works has an open co-editor task.",
         "works.review.seasonUnavailable": "The season could not be opened. Reload the page and try again.",
-        "works.editCoEditorsHint": "Changes to existing co-editors will be sent to the admin for approval.",
+        "works.editCoEditorsHint": "Changes to existing co-editors are saved directly.",
         "works.commentToAdmin": "Comment for admin",
         "works.commentPlaceholder": "Explain why this work/change should be approved...",
         "works.suggestCorrection": "Suggest correction of work data",
@@ -1304,11 +1303,11 @@ const translations = {
         "works.adminComments": "Comments from administrator",
         "works.correctionSent": "The correction has been sent to the admin and is pending approval.",
         "works.removeCoEditor": "Remove",
-        "works.suggestEdit": "Suggest edit",
-        "works.suggestRemove": "Suggest remove",
+        "works.suggestEdit": "Edit",
+        "works.suggestRemove": "Remove",
         "works.undo": "Undo",
         "works.lock": "Lock",
-        "works.removeNotice": "Removal requires admin approval.",
+        "works.removeNotice": "The removal is saved when you press Save.",
         "works.lockedCoEditorsHint": "Existing co-editors from the database cannot be changed here.",
         "works.manualWork": "Manual work",
         "works.addedPending": "The work has been added, and the co-editor proposal is pending admin approval.",
@@ -1813,8 +1812,6 @@ function applyTerminology(text: string, coeditor: string): string {
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-    const pathname = usePathname()
-    const usesOrganisationTerminology = pathname.startsWith("/admin") || pathname.startsWith("/portal")
     const [locale, setLocale] = useState<Locale>("da")
     const [localeLoaded, setLocaleLoaded] = useState(false)
     // Foreningens fagord (fallback: DFKS/klipper). Kun dansk tokeniseres.
@@ -1822,8 +1819,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         const stored = window.localStorage.getItem("dfks_locale")
-        if (stored === "da" || stored === "en") setLocale(stored)
-        setLocaleLoaded(true)
+        queueMicrotask(() => {
+            if (stored === "da" || stored === "en") setLocale(stored)
+            setLocaleLoaded(true)
+        })
     }, [])
 
     useEffect(() => {
@@ -1833,17 +1832,13 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }, [locale, localeLoaded])
 
     useEffect(() => {
-        if (!usesOrganisationTerminology) return
-        let active = true
-        void (async () => {
-            const response = await fetch("/api/access/context", { cache: "no-store" })
-            if (!response.ok) return
-            const context = await response.json() as { terminology?: { coeditor_word?: string } }
-            const word = context.terminology?.coeditor_word
-            if (active && word) setCoeditorWord(word)
-        })()
-        return () => { active = false }
-    }, [usesOrganisationTerminology])
+        const update = (event: Event) => {
+            const word = (event as CustomEvent<{ coeditorWord?: string }>).detail?.coeditorWord
+            if (word) setCoeditorWord(word)
+        }
+        window.addEventListener("dfks-terminology", update)
+        return () => window.removeEventListener("dfks-terminology", update)
+    }, [])
 
     const t = useCallback(
         (key: TranslationKey, params?: Record<string, string | number>): string => {

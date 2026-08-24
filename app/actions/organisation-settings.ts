@@ -7,6 +7,7 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import type { OrgBranding, OrgTerminology } from "@/lib/db/types";
 import { resolveDefaultRoleLabel } from "@/lib/branding";
 import { normalizeSingleEmail } from "@/lib/email/mime";
+import { validateWorkInvitationTemplate } from "@/lib/rights-holder-invitation-templates";
 import { getForeningLetIntegration, testForeningLetCredentials, upsertForeningLetIntegration } from "@/lib/org-integrations";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import type { FilterRule } from "@/lib/streaming-types";
@@ -36,6 +37,10 @@ type OrganisationSettingsPayload = {
   from_email: string | null;
   invite_email_text: string | null;
   invite_reminder_text: string | null;
+  member_work_invite_subject: string | null;
+  member_work_invite_text: string | null;
+  non_member_work_invite_subject: string | null;
+  non_member_work_invite_text: string | null;
   welcome_message_text: string | null;
   coeditor_word: string;
   role_labels: string[];
@@ -95,7 +100,7 @@ export async function getOrganisationSettings() {
   const db = createServiceClient();
   const { data, error } = await db
     .from("organisations")
-    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_minimum_group_size, statistics_dominance_limit, statistics_profile_config")
+    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, member_work_invite_subject, member_work_invite_text, non_member_work_invite_subject, non_member_work_invite_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_minimum_group_size, statistics_dominance_limit, statistics_profile_config")
     .eq("id", orgId)
     .single();
 
@@ -123,6 +128,10 @@ export async function getOrganisationSettings() {
     from_email: (data.from_email as string | null) ?? null,
     invite_email_text: (data.invite_email_text as string | null) ?? null,
     invite_reminder_text: (data.invite_reminder_text as string | null) ?? null,
+    member_work_invite_subject: (data.member_work_invite_subject as string | null) ?? null,
+    member_work_invite_text: (data.member_work_invite_text as string | null) ?? null,
+    non_member_work_invite_subject: (data.non_member_work_invite_subject as string | null) ?? null,
+    non_member_work_invite_text: (data.non_member_work_invite_text as string | null) ?? null,
     welcome_message_text: (data.welcome_message_text as string | null) ?? null,
     short_name: branding.short_name ?? data.name,
     long_name: branding.long_name ?? data.name,
@@ -143,8 +152,8 @@ export async function getOrganisationSettings() {
     statistics_profile_config: {
       professional_start_year: (data.statistics_profile_config as Record<string, unknown> | null)?.professional_start_year !== false,
       primary_profession_type: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.primary_profession_type),
-      secondary_profession_types: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.secondary_profession_types),
-      usual_work_mode: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.usual_work_mode),
+      secondary_profession_types: false,
+      usual_work_mode: (data.statistics_profile_config as Record<string, unknown> | null)?.usual_work_mode !== false,
       primary_work_region: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.primary_work_region),
     },
     statistics_work_regions: (workRegionRows ?? []).map(row => row.name_da as string),
@@ -185,7 +194,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const statisticsProfileConfig = {
     professional_start_year: Boolean(payload.statistics_profile_config?.professional_start_year),
     primary_profession_type: Boolean(payload.statistics_profile_config?.primary_profession_type),
-    secondary_profession_types: Boolean(payload.statistics_profile_config?.primary_profession_type && payload.statistics_profile_config?.secondary_profession_types),
+    secondary_profession_types: false,
     usual_work_mode: Boolean(payload.statistics_profile_config?.usual_work_mode),
     primary_work_region: Boolean(payload.statistics_profile_config?.primary_work_region),
   };
@@ -204,6 +213,12 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
     } catch {
       throw new Error("Svaradressen skal være én gyldig e-mailadresse uden afsendernavn.");
     }
+  }
+  for (const [subject, body] of [
+    [payload.member_work_invite_subject, payload.member_work_invite_text],
+    [payload.non_member_work_invite_subject, payload.non_member_work_invite_text],
+  ] as const) {
+    if (subject || body) validateWorkInvitationTemplate(subject ?? "", body ?? "");
   }
 
   const { data: previousOrganisation, error: previousOrganisationError } = await db.from("organisations")
@@ -245,6 +260,10 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
       from_email: replyToEmail,
       invite_email_text: cleanOptionalString(payload.invite_email_text),
       invite_reminder_text: cleanOptionalString(payload.invite_reminder_text),
+      member_work_invite_subject: cleanOptionalString(payload.member_work_invite_subject),
+      member_work_invite_text: cleanOptionalString(payload.member_work_invite_text),
+      non_member_work_invite_subject: cleanOptionalString(payload.non_member_work_invite_subject),
+      non_member_work_invite_text: cleanOptionalString(payload.non_member_work_invite_text),
       welcome_message_text: cleanOptionalString(payload.welcome_message_text),
       branding,
       terminology,

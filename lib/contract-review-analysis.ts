@@ -21,6 +21,7 @@ type ExistingReviewAnalysisInput = {
   focusAreas?: string[];
   notes?: string | null;
   emailReference?: string | null;
+  emailReferenceMessageId?: string | null;
   actorUserId?: string | null;
   source: "portal" | "admin" | "import";
 };
@@ -89,6 +90,8 @@ export async function analyseExistingContractReview(input: ExistingReviewAnalysi
       response_draft_subject: responseDraftSubject,
       response_draft: responseDraft,
       response_draft_updated_at: responseDraft ? new Date().toISOString() : null,
+      response_draft_thread_message_id: input.emailReferenceMessageId ?? null,
+      response_draft_version: 0,
     })
     .eq("id", input.reviewId)
     .eq("org_id", input.orgId)

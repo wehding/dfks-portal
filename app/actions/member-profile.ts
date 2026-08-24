@@ -75,19 +75,8 @@ export async function completeOnboarding(formData: FormData) {
     const { data: allowedProfession } = await service.from("organisation_profession_types").select("profession_type_id").eq("org_id", orgId).eq("profession_type_id", primaryProfessionTypeId).maybeSingle();
     if (!allowedProfession) return { success: false, error: "Den valgte faggruppe er ikke tilgængelig i organisationen." };
   }
-  let secondaryProfessionTypeIds: string[] = [];
-  if (config.secondary_profession_types && orgId) {
-    try {
-      const parsed = JSON.parse(String(formData.get("secondary_profession_type_ids") ?? "[]"));
-      secondaryProfessionTypeIds = Array.isArray(parsed) ? [...new Set(parsed.filter((id): id is string => typeof id === "string" && id !== primaryProfessionTypeId))].slice(0, 12) : [];
-    } catch { secondaryProfessionTypeIds = []; }
-    if (secondaryProfessionTypeIds.length) {
-      const { data: allowedRows } = await service.from("organisation_profession_types").select("profession_type_id").eq("org_id", orgId).in("profession_type_id", secondaryProfessionTypeIds);
-      const allowed = new Set((allowedRows ?? []).map(row => row.profession_type_id as string));
-      if (secondaryProfessionTypeIds.some(id => !allowed.has(id))) return { success: false, error: "En valgt faggruppe er ikke tilgængelig i organisationen." };
-    }
-  }
-  const workMode = config.usual_work_mode && typeof formData.get("usual_work_mode") === "string" ? String(formData.get("usual_work_mode")) || null : null;
+  const secondaryProfessionTypeIds: string[] = [];
+  const workMode = config.usual_work_mode !== false && typeof formData.get("usual_work_mode") === "string" ? String(formData.get("usual_work_mode")) || null : null;
   const workRegionCode = config.primary_work_region && typeof formData.get("primary_work_region_code") === "string" ? String(formData.get("primary_work_region_code")) || null : null;
   if (workRegionCode && orgId) {
     const { data: allowedRegion } = await service.from("organisation_work_regions").select("code").eq("org_id", orgId).eq("code", workRegionCode).eq("active", true).maybeSingle();
@@ -204,12 +193,17 @@ export async function getMemberStatisticsProfile() {
   const orgId = await resolveOrgId(db, user.id);
   const affiliations = Array.isArray(holder.org_affiliations) ? holder.org_affiliations : [holder.org_affiliations];
   const affiliation = affiliations.find(row => row?.org_id === orgId) ?? null;
-  const [{ data: organisation }, { data: professions }, { data: regions }, { data: secondaryProfessions }] = await Promise.all([
+  const [{ data: organisation }, { data: professions }, { data: regions }] = await Promise.all([
     orgId ? db.from("organisations").select("statistics_profile_config,statistics_minimum_group_size,terminology").eq("id", orgId).maybeSingle() : Promise.resolve({ data: null }),
     orgId ? db.from("organisation_profession_types").select("profession_type_id,display_order,profession_types(name)").eq("org_id", orgId).order("display_order") : Promise.resolve({ data: [] }),
     orgId ? db.from("organisation_work_regions").select("code,name_da,name_en").eq("org_id", orgId).eq("active", true).order("display_order") : Promise.resolve({ data: [] }),
-    db.from("rights_holder_profession_types").select("profession_type_id").eq("rights_holder_id", holder.id),
   ]);
+  const rawConfig = (organisation?.statistics_profile_config ?? {}) as Record<string, boolean>;
+  const statisticsConfig: Record<string, boolean> = {
+    ...rawConfig,
+    secondary_profession_types: false,
+    usual_work_mode: rawConfig.usual_work_mode !== false,
+  };
   return {
     success: true as const,
     profile: {
@@ -221,9 +215,9 @@ export async function getMemberStatisticsProfile() {
       primaryProfessionTypeId: holder.primary_profession_type_id as string | null,
       usualWorkMode: holder.usual_work_mode as string | null,
       primaryWorkRegionCode: holder.primary_work_region_code as string | null,
-      secondaryProfessionTypeIds: (secondaryProfessions ?? []).map(row => row.profession_type_id as string),
+      secondaryProfessionTypeIds: [],
     },
-    config: (organisation?.statistics_profile_config ?? {}) as Record<string, boolean>,
+    config: statisticsConfig,
     minimumGroupSize: Number(organisation?.statistics_minimum_group_size ?? 5),
     professionLabel: ((organisation?.terminology as { role_labels?: string[] } | null)?.role_labels?.[0] ?? "faget"),
     professionTypes: (professions ?? []).map(row => ({ id: row.profession_type_id as string, name: (row.profession_types as unknown as { name?: string } | null)?.name ?? "" })).filter(row => row.name),
@@ -249,9 +243,8 @@ export async function updateMemberStatisticsProfile(input: {
   if (year != null && (!Number.isInteger(year) || year < 1940 || year > new Date().getFullYear())) return { success: false, error: "Startåret er ugyldigt." };
   const allowedProfession = !input.primaryProfessionTypeId || current.professionTypes.some(option => option.id === input.primaryProfessionTypeId);
   const allowedRegion = !input.primaryWorkRegionCode || current.workRegions.some(option => option.code === input.primaryWorkRegionCode);
-  const secondaryIds = current.config.secondary_profession_types ? [...new Set((input.secondaryProfessionTypeIds ?? []).filter(id => id !== input.primaryProfessionTypeId))].slice(0, 12) : [];
-  const allowedSecondary = secondaryIds.every(id => current.professionTypes.some(option => option.id === id));
-  if (!allowedProfession || !allowedRegion || !allowedSecondary) return { success: false, error: "Et statistikvalg er ikke tilgængeligt i organisationen." };
+  const secondaryIds: string[] = [];
+  if (!allowedProfession || !allowedRegion) return { success: false, error: "Et statistikvalg er ikke tilgængeligt i organisationen." };
   const { data: holder } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
   const orgId = await resolveOrgId(db, user.id);
   if (!holder || !orgId) return { success: false, error: "Profilen er ikke knyttet til en organisation." };
@@ -264,7 +257,7 @@ export async function updateMemberStatisticsProfile(input: {
     start_year: current.config.professional_start_year ? year : null,
     primary_profession_id: current.config.primary_profession_type ? input.primaryProfessionTypeId || null : null,
     secondary_profession_ids: secondaryIds,
-    work_mode: current.config.usual_work_mode ? input.usualWorkMode || null : null,
+    work_mode: current.config.usual_work_mode !== false ? input.usualWorkMode || null : null,
     work_region_code: current.config.primary_work_region ? input.primaryWorkRegionCode || null : null,
   });
   if (error || !updated) return { success: false, error: "Statistikindstillingerne kunne ikke gemmes samlet." };

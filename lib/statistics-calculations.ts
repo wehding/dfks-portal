@@ -15,7 +15,7 @@ export function salaryToMonthly(salary: number, unit: string) {
 }
 
 export function salarySupplements(data: Record<string, unknown> | null | undefined) {
-  const personalSupplement = statisticsNumber(data?.personalSupplement ?? data?.loentillaeg) ?? 0;
+  const personalSupplement = statisticsNumber(data?.personalSupplement) ?? 0;
   const others = Array.isArray(data?.otherSupplements) ? (data.otherSupplements as Array<{ category?: string; amount?: unknown }>) : [];
   const structuredPostProduction = others
     .filter(supplement => supplement.category === "efterarbejde")

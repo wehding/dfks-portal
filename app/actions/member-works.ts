@@ -10,7 +10,7 @@ import { getDFIFilmDetails, normalizeDfiSeriesResults, searchDFIFilms } from "@/
 import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
-import { buildCompleteEpisodeOptions, episodeOptionsFromLocalChildren, isSeriesType, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
+import { buildCompleteEpisodeOptions, episodeOptionsFromLocalChildren, isSeriesType, mergeEpisodeOptionsByPriority, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
 import { isExactManualWorkMatch, manualWorkDuplicateDecision } from "@/lib/manual-work";
 import { groupWorksBySeason, stripSeasonEpisodes, type SeasonGroupingRow } from "@/lib/work-season-groups";
 import { contractCoversEpisode } from "@/lib/contract-work-scope";
@@ -25,7 +25,7 @@ import { MEMBER_SERIES_PARENT_SELECT } from "@/lib/series-work-ownership";
 import { registerShareSuggestions } from "@/lib/server/work-share-cases";
 import { normalizeSharePercent } from "@/lib/work-share-distribution";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
-import { ensureMemberCollaborationReviews, resolveCollaborationReviewWorkIds } from "@/lib/server/work-collaboration-reviews";
+import { ensureMemberCollaborationReviews, markCollaborationReviewsCoeditorsReported, resolveCollaborationReviewWorkIds } from "@/lib/server/work-collaboration-reviews";
 import { collaborationReviewStatusForSoloClaim } from "@/lib/work-collaboration-review";
 
 import { requireMemberContext } from "@/lib/org";
@@ -57,7 +57,10 @@ type ProposedCoEditor = {
   name: string;
   role: string;
   rightsHolderId?: string | null;
+  originalRightsHolderId?: string | null;
   assignmentId?: string | null;
+  sharePercent?: number | null;
+  share_percent?: number | null;
   action?: "add" | "remove" | "change";
 };
 
@@ -158,7 +161,8 @@ async function resolveExternalSeriesEpisodesForTitle(params: {
 }) {
   let dfiMetadata: DfiMetadata | null = null;
   let tmdbId = params.tmdbId ?? null;
-  let episodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
+  let dfiEpisodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
+  let tmdbEpisodeOptions: { number: number; title: string }[] = [];
   let episodeCount: number | null = null;
   let seasonFound = false;
   let lookupError: string | null = null;
@@ -175,9 +179,9 @@ async function resolveExternalSeriesEpisodesForTitle(params: {
       const dfiEpisodes = dfiEpisodeOptionsFromFilm(dfiMetadata);
       const dfiSeasonNumber = parseSeasonNumberFromTitle(String((dfiMetadata as Record<string, unknown>).Title ?? params.title)) ?? 1;
       if (params.seasonNumber === dfiSeasonNumber) {
-        episodeOptions = dfiEpisodes.options;
+        dfiEpisodeOptions = dfiEpisodes.options;
         episodeCount = dfiEpisodes.episodeCount;
-        seasonFound = episodeOptions.length > 0 || Boolean(episodeCount);
+        seasonFound = dfiEpisodeOptions.length > 0 || Boolean(episodeCount);
       }
       if (!tmdbId && typeof (dfiMetadata as Record<string, unknown>).TmdbId === "number") {
         tmdbId = Number((dfiMetadata as Record<string, unknown>).TmdbId);
@@ -199,16 +203,15 @@ async function resolveExternalSeriesEpisodesForTitle(params: {
     }
     if (tmdbId) {
       const season = await getTMDBSeasonEpisodes(tmdbId, params.seasonNumber);
-      const tmdbOptions = (season.episodes ?? [])
+      tmdbEpisodeOptions = (season.episodes ?? [])
         .map(episode => ({
           number: Number(episode.episode_number),
           title: episode.name || `Afsnit ${episode.episode_number}`,
         }))
         .filter(option => Number.isFinite(option.number) && option.number > 0);
-      if (tmdbOptions.length > episodeOptions.length) episodeOptions = tmdbOptions;
-      if (tmdbOptions.length) {
+      if (tmdbEpisodeOptions.length) {
         seasonFound = true;
-        episodeCount = Math.max(episodeCount ?? 0, ...tmdbOptions.map(option => option.number));
+        episodeCount = Math.max(episodeCount ?? 0, ...tmdbEpisodeOptions.map(option => option.number));
       } else if (!season.success && !season.notFound) {
         lookupError = season.error ?? "Kunne ikke hente sæsonens afsnit.";
       }
@@ -217,7 +220,8 @@ async function resolveExternalSeriesEpisodesForTitle(params: {
     console.error("TMDB serieafsnit lookup fejlede:", error);
   }
 
-  return { dfiMetadata, tmdbId, episodeOptions, episodeCount, seasonFound, lookupError };
+  const episodeOptions = mergeEpisodeOptionsByPriority(dfiEpisodeOptions, tmdbEpisodeOptions);
+  return { dfiMetadata, tmdbId, dfiEpisodeOptions, tmdbEpisodeOptions, episodeOptions, episodeCount, seasonFound, lookupError };
 }
 
 async function currentUser() {
@@ -267,14 +271,54 @@ type MemberOverviewAssignmentRow = {
   } | null;
 };
 
-export async function fetchMemberWorkOverview(params: { rightsHolderId: string }) {
+export async function fetchMemberWorkOverview(params: {
+  rightsHolderId: string;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  workType?: string;
+  status?: string;
+  sortKey?: string;
+  sortDir?: "asc" | "desc";
+}) {
   const db = createServiceClient();
   const { rightsHolder, context } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const pageSize = [20, 50, 100].includes(params.pageSize ?? 20) ? params.pageSize ?? 20 : 20;
+  const { data: pageKeys, error: pageError } = await db.rpc("list_member_work_page", {
+    p_org_id: context.orgId,
+    p_rights_holder_id: rightsHolder.id,
+    p_search: params.search?.trim() ?? "",
+    p_work_type: params.workType ?? "all",
+    p_status: params.status ?? "all",
+    p_sort: params.sortKey ?? "date",
+    p_direction: params.sortDir ?? "desc",
+    p_page: page,
+    p_page_size: pageSize,
+  });
+  if (pageError) return { success: false, error: pageError.message, items: [] };
+  const keyRows = (pageKeys ?? []) as Array<{
+    logical_key: string | null;
+    work_ids: string[] | null;
+    assignment_ids: string[] | null;
+    scope_ids: string[] | null;
+    filtered_count: number | string;
+    total_count: number | string;
+  }>;
+  const filteredCount = Number(keyRows[0]?.filtered_count ?? 0);
+  const totalCount = Number(keyRows[0]?.total_count ?? 0);
+  const logicalKeys = new Set(keyRows.map(row => row.logical_key).filter((value): value is string => Boolean(value)));
+  const assignmentIds = [...new Set(keyRows.flatMap(row => row.assignment_ids ?? []))];
+  const scopeIds = [...new Set(keyRows.flatMap(row => row.scope_ids ?? []))];
+  if (!logicalKeys.size) {
+    return { success: true, items: [], page, pageSize, filteredCount, totalCount, hasNextPage: false };
+  }
   const { data, error } = await db
     .from("work_assignments")
     .select("id, role, contract_id, episode_id, created_at, works!inner(id, title, type, year, duration_minutes, episode_count, parent_work_id, season_number, episode_number, status, poster_url, description)")
     .eq("org_id", context.orgId)
     .eq("rights_holder_id", rightsHolder.id)
+    .in("id", assignmentIds)
     .order("created_at", { ascending: false });
   if (error) return { success: false, error: error.message, items: [] };
 
@@ -283,7 +327,8 @@ export async function fetchMemberWorkOverview(params: { rightsHolderId: string }
     .from("member_series_episode_scopes")
     .select("id,org_id,rights_holder_id,series_work_id,season_number,status,episode_numbers,covers_whole_season,source,confirmed_at")
     .eq("org_id", context.orgId)
-    .eq("rights_holder_id", rightsHolder.id);
+    .eq("rights_holder_id", rightsHolder.id)
+    .in("id", scopeIds.length ? scopeIds : ["00000000-0000-0000-0000-000000000000"]);
   if (scopesError) return { success: false, error: scopesError.message, items: [] };
   const scopes = episodeScopes ?? [];
   const workIds = assignments.map(item => item.works?.id).filter((id): id is string => Boolean(id));
@@ -395,8 +440,14 @@ export async function fetchMemberWorkOverview(params: { rightsHolderId: string }
       coversWholeSeason: scope.covers_whole_season,
     }];
   });
-  const items = [...groupedItems, ...pendingSeasonItems];
-  return { success: true, items };
+  const items = [...groupedItems, ...pendingSeasonItems]
+    .filter(item => logicalKeys.has(item.kind === "season" ? item.key : `work:${item.work.id}`))
+    .sort((left, right) => {
+      const leftKey = left.kind === "season" ? left.key : `work:${left.work.id}`;
+      const rightKey = right.kind === "season" ? right.key : `work:${right.work.id}`;
+      return [...logicalKeys].indexOf(leftKey) - [...logicalKeys].indexOf(rightKey);
+    });
+  return { success: true, items, page, pageSize, filteredCount, totalCount, hasNextPage: (page - 1) * pageSize + items.length < filteredCount };
 }
 
 export async function fetchMemberSeasonEpisodes(params: { rightsHolderId: string; parentWorkId: string; seasonNumber: number }) {
@@ -1987,6 +2038,20 @@ export async function searchRightsHoldersForMember(query: string) {
   return { success: true, results: data ?? [] };
 }
 
+export async function listLocalRightsHoldersForMember() {
+  const db = createServiceClient();
+  const user = await currentUser();
+  const orgId = await currentOrgId(db, user.id);
+  const { data, error } = await db
+    .from("rettighedshavere")
+    .select("id, full_name")
+    .eq("org_id", orgId)
+    .is("archived_at", null)
+    .order("full_name");
+  if (error) return { success: false as const, error: error.message, results: [] };
+  return { success: true as const, results: data ?? [] };
+}
+
 export async function fetchMemberSeriesEpisodeOptions(params: {
   rightsHolderId: string;
   workId: string;
@@ -2033,10 +2098,15 @@ export async function fetchMemberSeriesEpisodeOptions(params: {
     external.episodeCount ?? 0,
     ...(localChildren ?? []).map(child => Number(child.episode_number ?? 0))
   );
+  const localOptions = episodeOptionsFromLocalChildren(localChildren, seasonNumber);
+  const mergedOptions = mergeEpisodeOptionsByPriority(
+    localOptions,
+    external.dfiEpisodeOptions,
+    external.tmdbEpisodeOptions,
+  );
   const options = buildCompleteEpisodeOptions({
     episodeCount,
-    externalOptions: external.episodeOptions,
-    localChildren,
+    externalOptions: mergedOptions,
     seasonNumber,
   });
 
@@ -2152,34 +2222,184 @@ export async function syncMemberEpisodeAssignments(params: {
   revalidatePath("/portal");
   revalidatePath("/portal/mine-kontrakter");
   revalidatePath("/admin/vaerker");
-  return { success: true, added: toAdd.map(item => item.episode_number), updated: toUpdate.map(item => item.episode_number), removed: toRemove.map(item => item.episode_number), unchanged: selected.size - toAdd.length - toUpdate.length };
+  return {
+    success: true,
+    added: toAdd.map(item => item.episode_number),
+    updated: toUpdate.map(item => item.episode_number),
+    removed: toRemove.map(item => item.episode_number),
+    unchanged: selected.size - toAdd.length - toUpdate.length,
+    selectedWorkIds: (episodes ?? [])
+      .filter(episode => selected.has(episode.episode_number))
+      .map(episode => episode.id),
+  };
 }
 
 export async function updateMemberCoEditors(params: {
+  rightsHolderId: string;
   workId: string;
-  changes: Array<{ assignmentId?: string | null; rightsHolderId?: string | null; role: string; action?: "add" | "remove" | "change" }>;
+  changes: Array<{ name?: string | null; assignmentId?: string | null; rightsHolderId?: string | null; originalRightsHolderId?: string | null; role: string; sharePercent?: number | null; share_percent?: number | null; action?: "add" | "remove" | "change" }>;
+  editScope?: "work" | "season" | "episode";
+  seasonNumber?: number | null;
+  episodeNumbers?: number[];
+  memberRole?: string | null;
+  selfSharePercent?: number | null;
+  completeReview?: boolean;
 }) {
   const db = createServiceClient();
-  const user = await currentUser();
-  const orgId = await currentOrgId(db, user.id);
-  const { data: ownHolder } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).eq("org_id", orgId).maybeSingle();
-  if (!ownHolder) return { success: false, error: "Rettighedshaveren findes ikke." };
-  const { data: ownAssignment } = await db.from("work_assignments").select("id").eq("work_id", params.workId).eq("rights_holder_id", ownHolder.id).maybeSingle();
-  if (!ownAssignment) return { success: false, error: "Du kan kun redigere medklippere på dine egne værker." };
+  const { user, rightsHolder: ownHolder, context } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const orgId = context.orgId;
+
+  const { data: work } = await db
+    .from("works")
+    .select("id,parent_work_id,season_number,episode_number")
+    .eq("id", params.workId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (!work) return { success: false, error: "Værket findes ikke." };
+
+  let targetWorkIds = [params.workId];
+  if (params.editScope === "season") {
+    const parentWorkId = work.parent_work_id ?? work.id;
+    const seasonNumber = params.seasonNumber ?? work.season_number ?? 1;
+    const normalizedEpisodes = normalizeEpisodeNumbers(params.episodeNumbers ?? []);
+    let query = db
+      .from("works")
+      .select("id,episode_number")
+      .eq("org_id", orgId)
+      .eq("parent_work_id", parentWorkId)
+      .eq("season_number", seasonNumber)
+      .not("episode_number", "is", null);
+    if (normalizedEpisodes.length) query = query.in("episode_number", normalizedEpisodes);
+    const { data: episodes, error } = await query;
+    if (error) return { success: false, error: error.message };
+    targetWorkIds = (episodes ?? []).map(episode => episode.id);
+  }
+  if (!targetWorkIds.length) return { success: false, error: "Der er ingen afsnit at gemme på." };
+
+  const { data: ownAssignments, error: ownAssignmentsError } = await db
+    .from("work_assignments")
+    .select("id,work_id,role")
+    .eq("org_id", orgId)
+    .eq("rights_holder_id", ownHolder.id)
+    .in("work_id", targetWorkIds);
+  if (ownAssignmentsError) return { success: false, error: ownAssignmentsError.message };
+  if (!(ownAssignments ?? []).length) return { success: false, error: "Du kan kun redigere medklippere på dine egne værker." };
+
+  const memberRole = cleanText(params.memberRole);
+  const selfSharePercent = normalizeSharePercent(params.selfSharePercent);
+  const ownUpdate: Record<string, string | number | null> = {};
+  if (memberRole) ownUpdate.role = normalizeWorkEditorRole(memberRole);
+  if (selfSharePercent !== null) ownUpdate.share_percent = selfSharePercent;
+  if (Object.keys(ownUpdate).length) {
+    let { error } = await db
+      .from("work_assignments")
+      .update(ownUpdate)
+      .in("id", (ownAssignments ?? []).map(assignment => assignment.id));
+    if (error?.code === "42703" || error?.message?.includes("share_percent")) {
+      const fallback = { ...ownUpdate };
+      delete fallback.share_percent;
+      if (Object.keys(fallback).length) {
+        ({ error } = await db
+          .from("work_assignments")
+          .update(fallback)
+          .in("id", (ownAssignments ?? []).map(assignment => assignment.id)));
+      } else {
+        error = null;
+      }
+    }
+    if (error) return { success: false, error: error.message };
+  }
+
+  const pendingAdminSuggestions: Array<{ name: string; role: string; rightsHolderId: null }> = [];
   for (const change of params.changes) {
-    if (change.action === "remove" && change.assignmentId) {
-      const { error } = await db.from("work_assignments").delete().eq("id", change.assignmentId).eq("work_id", params.workId).eq("org_id", orgId);
+    const role = normalizeWorkEditorRole(change.role);
+    const sharePercent = normalizeSharePercent(change.sharePercent ?? change.share_percent);
+    const updatePayload: Record<string, string | number | null> = { role };
+    if (sharePercent !== null) updatePayload.share_percent = sharePercent;
+
+    if (change.action === "remove") {
+      const removeRightsHolderId = params.editScope === "season" ? change.originalRightsHolderId ?? change.rightsHolderId : null;
+      let query = db.from("work_assignments").delete().in("work_id", targetWorkIds).eq("org_id", orgId);
+      if (removeRightsHolderId) query = query.eq("rights_holder_id", removeRightsHolderId);
+      else if (change.assignmentId) query = query.eq("id", change.assignmentId);
+      else return { success: false, error: "Medklipperen kunne ikke findes." };
+      const { error } = await query;
       if (error) return { success: false, error: error.message };
-    } else if (change.action === "change" && change.assignmentId && change.rightsHolderId) {
-      const { error } = await db.from("work_assignments").update({ rights_holder_id: change.rightsHolderId, role: normalizeWorkEditorRole(change.role) }).eq("id", change.assignmentId).eq("work_id", params.workId).eq("org_id", orgId);
+    } else if (change.action === "change" && change.rightsHolderId) {
+      const originalRightsHolderId = change.originalRightsHolderId ?? change.rightsHolderId;
+      let query = db
+        .from("work_assignments")
+        .update({ ...updatePayload, rights_holder_id: change.rightsHolderId })
+        .eq("org_id", orgId)
+        .in("work_id", targetWorkIds);
+      if (params.editScope === "season" && originalRightsHolderId) query = query.eq("rights_holder_id", originalRightsHolderId);
+      else if (change.assignmentId) query = query.eq("id", change.assignmentId);
+      else query = query.eq("rights_holder_id", originalRightsHolderId);
+      let { error } = await query;
+      if (error?.code === "42703" || error?.message?.includes("share_percent")) {
+        const fallback = { role, rights_holder_id: change.rightsHolderId };
+        let fallbackQuery = db.from("work_assignments").update(fallback).eq("org_id", orgId).in("work_id", targetWorkIds);
+        if (params.editScope === "season" && originalRightsHolderId) fallbackQuery = fallbackQuery.eq("rights_holder_id", originalRightsHolderId);
+        else if (change.assignmentId) fallbackQuery = fallbackQuery.eq("id", change.assignmentId);
+        else fallbackQuery = fallbackQuery.eq("rights_holder_id", originalRightsHolderId);
+        ({ error } = await fallbackQuery);
+      }
       if (error) return { success: false, error: error.message };
     } else if (change.action === "add" && change.rightsHolderId) {
-      const { error } = await db.from("work_assignments").upsert({ org_id: orgId, work_id: params.workId, rights_holder_id: change.rightsHolderId, role: normalizeWorkEditorRole(change.role) }, { onConflict: "work_id,rights_holder_id,role" });
+      const targetRightsHolderId = change.rightsHolderId;
+      const rows: Array<{ org_id: string; work_id: string; rights_holder_id: string; role: string; share_percent?: number | null }> = targetWorkIds.map(workId => ({
+        org_id: orgId,
+        work_id: workId,
+        rights_holder_id: targetRightsHolderId,
+        role,
+        ...(sharePercent !== null ? { share_percent: sharePercent } : {}),
+      }));
+      let { error } = await db.from("work_assignments").upsert(rows, { onConflict: "work_id,rights_holder_id,role" });
+      if (error?.code === "42703" || error?.message?.includes("share_percent")) {
+        const rowsWithoutShare = rows.map(row => ({ org_id: row.org_id, work_id: row.work_id, rights_holder_id: row.rights_holder_id, role: row.role }));
+        ({ error } = await db.from("work_assignments").upsert(rowsWithoutShare, { onConflict: "work_id,rights_holder_id,role" }));
+      }
       if (error) return { success: false, error: error.message };
+    } else if (change.action === "add" && cleanText(change.name)) {
+      pendingAdminSuggestions.push({
+        name: cleanText(change.name) as string,
+        role,
+        rightsHolderId: null,
+      });
+    } else if (change.action === "add" || change.action === "change") {
+      return { success: false, error: "Indtast medklipperens navn." };
     }
   }
+  if (pendingAdminSuggestions.length > 0) {
+    if (selfSharePercent === null) {
+      return { success: false, error: "Angiv din egen arbejdsandel, før en ukendt medklipper sendes til kontrol hos DFKS." };
+    }
+    await registerShareSuggestions(db, {
+      orgId,
+      workId: params.editScope === "season" ? work.parent_work_id ?? work.id : work.id,
+      seasonNumber: params.editScope === "season" ? params.seasonNumber ?? work.season_number : null,
+      episodeNumber: params.editScope === "episode" ? work.episode_number : null,
+      episodeNumbers: params.editScope === "season" ? params.episodeNumbers ?? [] : [],
+      actorUserId: user.id,
+      actorRightsHolderId: ownHolder.id,
+      actorRole: memberRole ?? ownAssignments?.[0]?.role ?? "Klipper",
+      actorPercent: selfSharePercent,
+      suggestions: pendingAdminSuggestions,
+    });
+  }
+  if (params.completeReview !== false && (params.changes.length > 0 || selfSharePercent !== null)) {
+    await markCollaborationReviewsCoeditorsReported(db, {
+      orgId,
+      rightsHolderId: ownHolder.id,
+      actorUserId: user.id,
+      workId: params.workId,
+      seasonNumber: params.editScope === "season" ? params.seasonNumber ?? work.season_number : null,
+      episodeNumbers: params.editScope === "season" ? params.episodeNumbers ?? [] : null,
+    });
+  }
   revalidatePath("/portal/mine-vaerker");
-  return { success: true };
+  revalidatePath("/admin/vaerker");
+  return { success: true, requiresAdminReview: pendingAdminSuggestions.length };
 }
 
 export async function submitContractCollaborationReview(params: {

@@ -5,6 +5,8 @@ import { assertContractReviewInOrg } from "@/lib/authz"
 import { normalizeContractReviewAnalysisStatus, type ContractReviewJobSnapshot } from "@/lib/contract-review-job-status"
 import { auditRequestContext } from "@/lib/audit-access-server"
 import { recordAuditEvent } from "@/lib/audit-log-server"
+import { getContractReviewThread, syncContractReviewThread } from "@/lib/gmail-contract-thread"
+import { normalizeReviewEmailAddress, normalizeReviewEmailAddresses } from "@/lib/contract-review-email"
 
 // GET /api/admin/contracts/[id]
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -22,6 +24,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     } catch {
         return NextResponse.json({ error: "Ikke fundet" }, { status: 404 })
     }
+
+    // Ved åbning forsøges en frisk trådsynkronisering. En kort cacheperiode
+    // forhindrer, at almindelig sidepolling kalder Gmail gentagne gange.
+    await syncContractReviewThread(id, auth.orgId, { minimumAgeMs: 60_000 }).catch(() => null)
 
     const { data, error } = await admin
         .from("contract_reviews")
@@ -66,6 +72,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             .maybeSingle()
         emailSource = source ?? null
     }
+    const emailThread = await getContractReviewThread(id, auth.orgId).catch(() => [])
+    const suggestedTo = data.response_draft_to ?? emailThread.find(message => message.direction === "incoming")?.from ?? data.member_email ?? null
 
     const { data: latestJob } = await admin.from("contract_review_jobs")
         .select("status,attempts,next_attempt_at,error_message")
@@ -102,7 +110,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         orgIds: [auth.orgId],
     })
 
-    return NextResponse.json({ data: normalizedData, assignees, canAssign, emailSource }, { headers: { "cache-control": "no-store" } })
+    return NextResponse.json({
+        data: { ...normalizedData, response_draft_to: suggestedTo },
+        assignees, canAssign, emailSource, emailThread,
+    }, { headers: { "cache-control": "no-store" } })
 }
 
 // PATCH /api/admin/contracts/[id]
@@ -185,23 +196,38 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         updates.response_draft_subject = body.responseDraftSubject.trim() || null
         updates.response_draft_updated_at = new Date().toISOString()
     }
+    if (body.responseDraftTo !== undefined) {
+        try { updates.response_draft_to = typeof body.responseDraftTo === "string" && body.responseDraftTo.trim() ? normalizeReviewEmailAddress(body.responseDraftTo) : null }
+        catch { return NextResponse.json({ error: "Modtagerens e-mailadresse er ugyldig" }, { status: 400 }) }
+    }
+    if (body.responseDraftCc !== undefined) {
+        try { updates.response_draft_cc = normalizeReviewEmailAddresses(body.responseDraftCc) }
+        catch { return NextResponse.json({ error: "En eller flere Cc-adresser er ugyldige" }, { status: 400 }) }
+    }
+
+    const changesDraft = ["responseDraft", "responseDraftSubject", "responseDraftTo", "responseDraftCc"]
+        .some(field => body[field] !== undefined)
+    const expectedVersion = Number(body.responseDraftVersion)
+    if (changesDraft) {
+        if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
+            return NextResponse.json({ error: "Mailudkastets version mangler" }, { status: 400 })
+        }
+        updates.response_draft_version = expectedVersion + 1
+    }
 
     if (Object.keys(updates).length === 0) {
         return NextResponse.json({ error: "Ingen felter at opdatere" }, { status: 400 })
     }
 
-    const { data, error } = await admin
-        .from("contract_reviews")
-        .update(updates)
-        .eq("id", id)
-        .eq("org_id", auth.orgId)
-        .select()
-        .single()
+    let updateQuery = admin.from("contract_reviews").update(updates).eq("id", id).eq("org_id", auth.orgId)
+    if (changesDraft) updateQuery = updateQuery.eq("response_draft_version", expectedVersion)
+    const { data, error } = await updateQuery.select().maybeSingle()
 
     if (error) {
         console.error("[admin-contract] update failed", error.code)
         return NextResponse.json({ error: "Kontrakten kunne ikke opdateres." }, { status: 500 })
     }
+    if (!data) return NextResponse.json({ error: "Mailudkastet blev ændret samtidig. Genindlæs sagen." }, { status: 409 })
 
     return NextResponse.json({ data })
 }

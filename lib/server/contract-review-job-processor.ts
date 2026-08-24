@@ -2,6 +2,8 @@ import "server-only";
 
 import { analyseExistingContractReview } from "@/lib/contract-review-analysis";
 import { createServiceClient } from "@/lib/supabase/service";
+import { buildMaskedReviewMailContext, latestThreadMessageId } from "@/lib/contract-review-mail-context";
+import { getContractReviewThread, syncContractReviewThread } from "@/lib/gmail-contract-thread";
 
 const MAX_ATTEMPTS = 5;
 const DEFAULT_BATCH_SIZE = 10;
@@ -52,15 +54,12 @@ async function processClaimedJob(job: ClaimedReviewJob): Promise<ContractReviewJ
     if (fileError || !file) throw new Error(fileError?.message ?? "Originalfil kunne ikke hentes");
 
     let emailReference: string | null = null;
+    let emailReferenceMessageId: string | null = null;
     if (review.gmail_contract_message_id) {
-      const { data: mail } = await db.from("gmail_contract_messages")
-        .select("subject,body_text")
-        .eq("id", review.gmail_contract_message_id)
-        .eq("org_id", review.org_id)
-        .maybeSingle();
-      emailReference = mail
-        ? [mail.subject ? `Emne: ${mail.subject}` : null, mail.body_text].filter(Boolean).join("\n\n")
-        : null;
+      await syncContractReviewThread(review.id, review.org_id).catch(() => null);
+      const thread = await getContractReviewThread(review.id, review.org_id);
+      emailReference = buildMaskedReviewMailContext(thread) || null;
+      emailReferenceMessageId = latestThreadMessageId(thread);
     }
 
     await analyseExistingContractReview({
@@ -79,6 +78,7 @@ async function processClaimedJob(job: ClaimedReviewJob): Promise<ContractReviewJ
       focusAreas: review.focus_areas ?? [],
       notes: review.notes,
       emailReference,
+      emailReferenceMessageId,
       source: review.intake_source === "portal" ? "portal" : review.intake_source === "gmail" ? "import" : "admin",
     });
 

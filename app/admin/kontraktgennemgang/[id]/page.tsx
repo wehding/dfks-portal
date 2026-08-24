@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation"
 import {
     ArrowLeft, Sparkles, Mail, Copy, CheckCircle2, AlertTriangle, Info,
     ChevronRight, Pencil, Eye, ThumbsUp,
-    ThumbsDown, FileText, RotateCcw,
+    ThumbsDown, FileText, RotateCcw, RefreshCw, ExternalLink,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
@@ -79,6 +79,18 @@ interface EmailSource {
     cc_addresses: string[]
     received_at: string | null
     body_text: string | null
+}
+
+interface EmailThreadMessage {
+    id: string
+    gmailMessageId: string
+    subject: string | null
+    from: string | null
+    to: string[]
+    cc: string[]
+    receivedAt: string | null
+    body: string | null
+    direction: "incoming" | "outgoing"
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -212,8 +224,13 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     const [contractText] = useState("")
     const [mailText, setMailText] = useState("")
     const [mailSubject, setMailSubject] = useState("")
+    const [mailTo, setMailTo] = useState("")
+    const [mailCc, setMailCc] = useState("")
     const [mailEditMode, setMailEditMode] = useState(false)
     const [emailSource, setEmailSource] = useState<EmailSource | null>(null)
+    const [emailThread, setEmailThread] = useState<EmailThreadMessage[]>([])
+    const [mailAction, setMailAction] = useState<"sync" | "suggestion" | "gmail" | null>(null)
+    const [gmailDraftUrl, setGmailDraftUrl] = useState<string | null>(null)
     const [activeQuote, setActiveQuote] = useState<string | null>(null)
     const [activeFpId, setActiveFpId] = useState<string | null>(null)
     const [reanalysing, setReanalysing] = useState(false)
@@ -240,6 +257,10 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                 setAssignees(Array.isArray(json.assignees) ? json.assignees : [])
                 setCanAssign(Boolean(json.canAssign))
                 setEmailSource(json.emailSource ?? null)
+                setEmailThread(Array.isArray(json.emailThread) ? json.emailThread : [])
+                setMailTo(r?.response_draft_to ?? "")
+                setMailCc((r?.response_draft_cc ?? []).join(", "))
+                setGmailDraftUrl(r?.gmail_response_draft_id ? "https://mail.google.com/mail/u/0/#drafts" : null)
                 if (r?.risk_level) setRiskLevel(r.risk_level)
                 if (r?.should_escalate != null) setShouldEscalate(r.should_escalate)
                 if (r?.ai_result && Object.keys(r.ai_result).length > 0) {
@@ -302,16 +323,84 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         if (mark) mark.scrollIntoView({ behavior: "smooth", block: "center" })
     }, [activeQuote])
 
-    const updateReview = async (updates: { status?: string; assignedTo?: string; jurist_response?: string; responseDraft?: string; responseDraftSubject?: string; action?: "claim" | "release" | "assign" }) => {
+    const updateReview = async (updates: { status?: string; assignedTo?: string; jurist_response?: string; responseDraft?: string; responseDraftSubject?: string; responseDraftTo?: string; responseDraftCc?: string[]; responseDraftVersion?: number; action?: "claim" | "release" | "assign" }) => {
         const resp = await fetch(`/api/admin/contracts/${id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(updates),
         })
         const json = await resp.json()
-        if (!resp.ok) { toast.error(json.error ?? "Opdatering fejlede"); return }
+        if (!resp.ok) { toast.error(json.error ?? "Opdatering fejlede"); return null }
         setReview(json.data)
         toast.success("Opdateret")
+        return json.data as DbContractReview
+    }
+
+    const savePortalDraft = async () => {
+        if (!review) return null
+        const updated = await updateReview({
+            responseDraft: cleanMailText(mailText), responseDraftSubject: mailSubject,
+            responseDraftTo: mailTo, responseDraftCc: mailCc.split(/[;,]/).map(value => value.trim()).filter(Boolean),
+            responseDraftVersion: review.response_draft_version ?? 0,
+        })
+        if (updated) {
+            setMailTo(updated.response_draft_to ?? mailTo)
+            setMailCc((updated.response_draft_cc ?? []).join(", "))
+        }
+        return updated
+    }
+
+    const syncMailThread = async () => {
+        setMailAction("sync")
+        try {
+            const response = await fetch(`/api/admin/contracts/${id}/gmail-thread`, { method: "POST" })
+            const json = await response.json()
+            if (!response.ok) throw new Error(json.error)
+            setEmailThread(json.messages ?? [])
+            toast.success("Mailtråden er opdateret")
+        } catch (error) { toast.error(errorMessage(error)) }
+        finally { setMailAction(null) }
+    }
+
+    const refreshMailSuggestion = async () => {
+        if (!review) return
+        setMailAction("suggestion")
+        try {
+            const response = await fetch(`/api/admin/contracts/${id}/mail-suggestion`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ expectedVersion: review.response_draft_version ?? 0 }),
+            })
+            const json = await response.json()
+            if (!response.ok) {
+                if (json.data) setReview(json.data)
+                throw new Error(json.error)
+            }
+            setReview(json.data)
+            setMailText(json.data.response_draft ?? "")
+            setMailSubject(json.data.response_draft_subject ?? "")
+            toast.success("Mailforslaget er opdateret med hele tråden")
+        } catch (error) { toast.error(errorMessage(error)) }
+        finally { setMailAction(null) }
+    }
+
+    const createGmailDraft = async () => {
+        if (!review) return
+        setMailAction("gmail")
+        try {
+            const response = await fetch(`/api/admin/contracts/${id}/gmail-draft`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ to: mailTo, cc: mailCc.split(/[;,]/).map(value => value.trim()).filter(Boolean), subject: mailSubject, text: cleanMailText(mailText), expectedVersion: review.response_draft_version ?? 0 }),
+            })
+            const json = await response.json()
+            if (!response.ok) {
+                if (json.data) setReview(json.data)
+                throw new Error(json.error)
+            }
+            setReview(json.data)
+            setGmailDraftUrl(json.gmail?.url ?? "https://mail.google.com/mail/u/0/#drafts")
+            toast.success("Kladden er gemt i Gmail")
+        } catch (error) { toast.error(errorMessage(error)) }
+        finally { setMailAction(null) }
     }
 
     // Rens mailtekst for eventuelle risikovurderingslinjer inden afsendelse
@@ -401,6 +490,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     const verdictCfg = result ? VERDICT_CONFIG[result.samlet_vurdering] : null
     const quotes = result?.feedbackpunkter.map(fp => fp.citat).filter(Boolean) ?? []
     const highlightedHtml = highlightText(contractText, quotes, activeQuote)
+    const latestThreadMessageId = emailThread.at(-1)?.gmailMessageId ?? null
+    const hasNewThreadMessages = Boolean(latestThreadMessageId && latestThreadMessageId !== review.response_draft_thread_message_id)
 
     return (
         <div className="flex flex-col gap-4">
@@ -703,17 +794,54 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                     <div className="border-b bg-amber-50 px-4 py-2 text-[11px] text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                         AI-forslag — skal kontrolleres af en jurist. Systemet sender ikke mail.
                     </div>
-                    {emailSource && (
+                    {(emailSource || emailThread.length > 0) && (
                         <details className="border-b px-4 py-2 text-xs">
-                            <summary className="cursor-pointer font-medium">Mail og spørgsmål fra medlemmet</summary>
-                            <div className="mt-2 space-y-1 text-muted-foreground">
-                                <p><span className="text-foreground">Fra:</span> {emailSource.from_address ?? "Ukendt"}</p>
-                                <p><span className="text-foreground">Emne:</span> {emailSource.subject ?? "Uden emne"}</p>
-                                {emailSource.received_at && <p><span className="text-foreground">Modtaget:</span> {new Date(emailSource.received_at).toLocaleString("da-DK")}</p>}
-                                <div className="mt-2 whitespace-pre-wrap rounded border bg-muted/30 p-2 text-foreground">{emailSource.body_text || "Mailen indeholdt ingen læsbar tekst."}</div>
+                            <summary className="cursor-pointer font-medium">
+                                Mail og spørgsmål fra medlemmet
+                                {hasNewThreadMessages && <Badge className="ml-2 bg-amber-100 text-amber-800 hover:bg-amber-100">Nye beskeder</Badge>}
+                            </summary>
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                                <span className="text-muted-foreground">{emailThread.length || 1} besked(er) i tråden</span>
+                                <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={mailAction === "sync"} onClick={syncMailThread}>
+                                    <RefreshCw className={`h-3 w-3 ${mailAction === "sync" ? "animate-spin" : ""}`} /> Opdatér mailtråd
+                                </Button>
+                            </div>
+                            <div className="mt-2 space-y-2 text-muted-foreground">
+                                {(emailThread.length ? emailThread : emailSource ? [{
+                                    id: "source", gmailMessageId: "source", subject: emailSource.subject, from: emailSource.from_address,
+                                    to: emailSource.to_addresses, cc: emailSource.cc_addresses, receivedAt: emailSource.received_at,
+                                    body: emailSource.body_text, direction: "incoming" as const,
+                                }] : []).map(message => (
+                                    <article key={message.id} className={`rounded border p-2 ${message.direction === "outgoing" ? "bg-blue-50/60 dark:bg-blue-950/20" : "bg-muted/30"}`}>
+                                        <p><span className="text-foreground">Fra:</span> {message.from ?? "Ukendt"}</p>
+                                        <p><span className="text-foreground">Til:</span> {message.to.join(", ") || "Ukendt"}</p>
+                                        {message.cc.length > 0 && <p><span className="text-foreground">Cc:</span> {message.cc.join(", ")}</p>}
+                                        <p><span className="text-foreground">Emne:</span> {message.subject ?? "Uden emne"}</p>
+                                        {message.receivedAt && <p><span className="text-foreground">Tidspunkt:</span> {new Date(message.receivedAt).toLocaleString("da-DK")}</p>}
+                                        <div className="mt-2 whitespace-pre-wrap text-foreground">{message.body || "Mailen indeholdt ingen læsbar tekst."}</div>
+                                    </article>
+                                ))}
                             </div>
                         </details>
                     )}
+                    {hasNewThreadMessages && (
+                        <div className="flex items-center justify-between gap-2 border-b bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                            <span>Nye beskeder siden mailforslaget</span>
+                            <Button size="sm" variant="outline" className="h-7 text-xs" disabled={mailAction === "suggestion"} onClick={refreshMailSuggestion}>
+                                {mailAction === "suggestion" ? "Opdaterer…" : "Opdatér mailforslag"}
+                            </Button>
+                        </div>
+                    )}
+                    <div className="border-b px-4 py-2.5 shrink-0 space-y-2">
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-muted-foreground w-12 shrink-0">Til:</span>
+                            <Input value={mailTo} onChange={e => setMailTo(e.target.value)} className="h-7 text-xs" placeholder="medlem@example.dk" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-muted-foreground w-12 shrink-0">Cc:</span>
+                            <Input value={mailCc} onChange={e => setMailCc(e.target.value)} className="h-7 text-xs" placeholder="Flere adresser adskilles med komma" />
+                        </div>
+                    </div>
                     <div className="border-b px-4 py-2.5 shrink-0">
                         <div className="flex items-center gap-2">
                             <span className="text-[10px] text-muted-foreground w-12 shrink-0">Emne:</span>
@@ -727,16 +855,23 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             {mailText ? renderMailWithHighlights(mailText) : <span className="text-muted-foreground">Ingen feedback-mail endnu. Kør analyse for at generere.</span>}
                         </div>
                     )}
-                    <div className="border-t px-4 py-2.5 shrink-0 flex gap-2">
+                    <div className="border-t px-4 py-2.5 shrink-0 flex flex-wrap gap-2">
                         <Button size="sm" variant="outline" className="gap-1.5 text-xs flex-1" onClick={handleCopyGul}>
                             <span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-300 shrink-0" />
                             Kopiér til producent
                         </Button>
-                        <Button size="sm" className="gap-1.5 text-xs flex-1" onClick={() => {
-                            updateReview({ responseDraft: cleanMailText(mailText), responseDraftSubject: mailSubject })
-                        }}>
+                        <Button size="sm" className="gap-1.5 text-xs flex-1" onClick={savePortalDraft}>
                             Gem kladde
                         </Button>
+                        <Button size="sm" variant="secondary" className="basis-full gap-1.5 text-xs" disabled={mailAction === "gmail" || !mailTo || !mailText} onClick={createGmailDraft}>
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            {mailAction === "gmail" ? "Gemmer i Gmail…" : review.gmail_response_draft_id ? "Opdatér kladde i Gmail" : "Opret kladde i Gmail"}
+                        </Button>
+                        {gmailDraftUrl && (
+                            <a href={gmailDraftUrl} target="_blank" rel="noreferrer" className="basis-full text-center text-xs text-primary underline underline-offset-2">
+                                Åbn kladder i Gmail
+                            </a>
+                        )}
                     </div>
                 </div>
             </div>

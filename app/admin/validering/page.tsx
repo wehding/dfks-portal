@@ -27,6 +27,11 @@ import { getContractValidationData } from "@/app/actions/contract-imports"
 import { normaliseSources } from "@/lib/ai-sources"
 import { resolveAnker } from "@/lib/resolveAnker"
 import { SourceBtn } from "@/components/source-btn"
+import { resolveOtherSupplements } from "@/lib/contract-supplements"
+import { resolvePensionSupplement } from "@/lib/contract-pension"
+import { resolveContractSalary } from "@/lib/contract-salary"
+import { resolveContractCredit } from "@/lib/contract-credit"
+import { resolveContractProductionType } from "@/lib/contract-production-type"
 
 const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
     overtidstillaeg: "Overtidstillæg",
@@ -42,6 +47,25 @@ const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
     andet: "Andet",
 }
 const OTHER_SUPPLEMENT_CATEGORIES = Object.keys(OTHER_SUPPLEMENT_LABELS)
+const SUPPLEMENT_UNITS = [
+    { value: "pr. uge", label: "Uge" },
+    { value: "pr. dag", label: "Dag" },
+    { value: "pr. måned", label: "Måned" },
+    { value: "pr. time", label: "Time" },
+    { value: "engangsbeløb", label: "Engangsbeløb" },
+] as const
+const WORK_PHASE_LABELS: Record<string, string> = {
+    preproduction: "Præproduktion",
+    editing: "Klip",
+    post_edit_finishing: "Færdiggørelse efter klip",
+}
+const WORK_PHASE_PAYMENT_LABELS: Record<string, string> = {
+    included_in_salary: "Inkluderet i honoraret",
+    separate_supplement: "Særskilt tillæg",
+    unpaid: "Ikke betalt",
+    unclear: "Uklart",
+}
+const CREDIT_STATUS_LABELS: Record<string, string> = { precise: "Præcis klausul", vague: "Upræcis klausul", role_only: "Kun arbejdsfunktion", conditional: "Betinget kreditering", absent: "Ingen klausul", unclear: "Kræver manuel kontrol" }
 
 const ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
 const BUCKET = "kontrakter"
@@ -81,7 +105,7 @@ type ValidatingContract = {
     working_title: string | null
     employers: { id: string; name: string; cvr: string | null } | null
     rettighedshavere: { id: string; full_name: string } | null
-    works: { id: string; title: string } | null
+    works: { id: string; title: string; type: string | null; dfi_id: string | null; dfi_metadata: Record<string, unknown> | null } | null
     contract_attachments: { id: string; type: string; title: string | null; pdf_url: string | null }[]
     validation: {
         id: string
@@ -356,7 +380,7 @@ function AdminValideringPageInner() {
 
         const { data, error } = await supabase
             .from("contracts")
-            .select(`*, employers(id, name, cvr), rettighedshavere(id, full_name), works(id, title), contract_attachments(*)`)
+            .select(`*, employers(id, name, cvr), rettighedshavere(id, full_name), works(id, title, type, dfi_id, dfi_metadata), contract_attachments(*)`)
             .eq("org_id", ORG_ID)
             .order("created_at", { ascending: false })
 
@@ -408,32 +432,46 @@ function AdminValideringPageInner() {
             // Copydan og royalty: kun fra AI-udtræk — ingen hardcoded overenskomst-lister
             const impliedByCopydan = !!ed.copydan
             const impliedByRoyalty = !!ed.royalty
+            const normalizedSalary = resolveContractSalary(ed)
+            const pensionSupplement = resolvePensionSupplement(normalizedSalary)
+            const contractCredit = resolveContractCredit(ed)
+            const productionType = resolveContractProductionType({
+                aiValue: ed.productionType,
+                work: contracts.find(c => c.id === reviewingId)?.works,
+            })
 
             setFormData({
                 producerName: ed.producerName ?? ed.employerName ?? "",
                 rightsHolderName: ed.rightsHolderName ?? "",
                 workTitle: ed.workTitle ?? "",
-                creditedRoles: Array.isArray(ed.creditedRoles) ? ed.creditedRoles.join(", ") : (ed.creditedRoles ?? ""),
-                productionType: ed.productionType ?? "",
+                creditedRoles: contractCredit.creditedRoles ?? "",
+                contractCredits: contractCredit.contractCredits,
+                creditClauseStatus: contractCredit.creditClauseStatus,
+                productionType: redigerede.includes("productionType") ? (ed.productionType ?? "") : (productionType.productionType ?? ""),
+                productionTypeSource: redigerede.includes("productionType") ? "manual" : productionType.source,
+                productionTypeAiSuggestion: productionType.aiSuggestion,
+                productionTypeConflict: !redigerede.includes("productionType") && productionType.hasConflict,
                 contractType: ed.collectiveAgreementByReference
                     ? "leverandør-ref"
                     : (ed.contractType === "leverandør" || ed.isFreelanceContract)
                         ? "leverandør"
                         : "a-løn",
                 overenskomst: ed.overenskomst ?? "ingen",
-                salary: ed.salary ?? "",
-                salaryUnit: ed.salaryUnit ?? "monthly",
-                salaryConfidence: ed.salaryConfidence ?? null,
-                salaryNote: ed.salaryNote ?? null,
-                salarySourceType: ed.salarySourceType ?? null,
-                needsManualSalaryReview: !!ed.needsManualSalaryReview,
+                salary: normalizedSalary.salary ?? "",
+                lumpSumAmount: normalizedSalary.lumpSumAmount ?? null,
+                salaryUnit: normalizedSalary.salaryUnit ?? "monthly",
+                salaryConfidence: normalizedSalary.salaryConfidence ?? null,
+                salaryNote: normalizedSalary.salaryNote ?? null,
+                salarySourceType: normalizedSalary.salarySourceType ?? null,
+                needsManualSalaryReview: !!normalizedSalary.needsManualSalaryReview,
                 agreementReferenceStatus: ed.agreementReferenceStatus ?? null,
                 startDate: ed.startDate ?? "",
                 endDate: ed.endDate ?? "",
                 pensionPercent: ed.pensionPercent ?? "",
-                pensionSupplement: ed.pensionSupplement ?? "",
+                pensionSupplement: pensionSupplement ?? "",
                 personalSupplement: ed.personalSupplement ?? "",
-                otherSupplements: Array.isArray(ed.otherSupplements) ? ed.otherSupplements : [],
+                otherSupplements: resolveOtherSupplements(ed),
+                workPhases: Array.isArray(ed.workPhases) ? ed.workPhases : [],
                 workingWeeks: ed.workingWeeks ?? "",
                 prolongationWeeks: ed.prolongationWeeks ?? "",
                 prolongationNote: ed.prolongationNote ?? "",
@@ -460,7 +498,7 @@ function AdminValideringPageInner() {
 
             fetchPctRuleNotes(ed._resolvedAgreementCode ?? null)
         })
-    }, [reviewingId]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [reviewingId, contracts]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const unreviewedContracts = contracts.filter(c => c.status === "kladde")
     const reviewedContracts = contracts.filter(c => c.status === "valideret" || c.status === "arkiveret")
@@ -484,7 +522,7 @@ function AdminValideringPageInner() {
             })
             .catch(e => console.error("[validering] DOCX hentning fejlede:", e))
             .finally(() => setStoredDocxLoading(false))
-    }, [reviewingContract?.id])
+    }, [reviewingContract?.id, reviewingContract?.pdf_url, reviewingContract?.signedPdfUrl])
 
     const leaveReview = () => {
         if (cameFromQueue) {
@@ -510,15 +548,27 @@ function AdminValideringPageInner() {
                 rightsHolderName: formData.rightsHolderName || undefined,
                 workTitle: formData.workTitle || undefined,
                 creditedRoles: formData.creditedRoles || undefined,
+                contractCredits: Array.isArray(formData.contractCredits) ? formData.contractCredits : undefined,
+                creditClauseStatus: formData.creditClauseStatus || "unclear",
+                hasCreditClause: !["absent", "role_only"].includes(String(formData.creditClauseStatus ?? "unclear")),
                 productionType: formData.productionType || undefined,
+                productionTypeSource: formData.productionTypeSource || undefined,
+                productionTypeAiSuggestion: formData.productionTypeAiSuggestion || undefined,
+                productionTypeConflict: !!formData.productionTypeConflict,
                 salary: formData.salary ? Number(formData.salary) : undefined,
+                lumpSumAmount: formData.lumpSumAmount ? Number(formData.lumpSumAmount) : undefined,
                 salaryUnit: formData.salaryUnit || "monthly",
+                salaryConfidence: formData.salaryConfidence || undefined,
+                salarySourceType: formData.salarySourceType || undefined,
+                salaryNote: formData.salaryNote || undefined,
+                needsManualSalaryReview: !!formData.needsManualSalaryReview,
                 startDate: formData.startDate || undefined,
                 endDate: formData.endDate || undefined,
                 pensionPercent: formData.pensionPercent ? Number(formData.pensionPercent) : undefined,
                 pensionSupplement: formData.pensionSupplement ? Number(formData.pensionSupplement) : undefined,
                 personalSupplement: formData.personalSupplement ? Number(formData.personalSupplement) : undefined,
                 otherSupplements: Array.isArray(formData.otherSupplements) && formData.otherSupplements.length > 0 ? formData.otherSupplements : undefined,
+                workPhases: Array.isArray(formData.workPhases) && formData.workPhases.length > 0 ? formData.workPhases : undefined,
                 workingWeeks: formData.workingWeeks ? Number(formData.workingWeeks) : undefined,
                 prolongationWeeks: formData.prolongationWeeks ? Number(formData.prolongationWeeks) : undefined,
                 prolongationNote: formData.prolongationNote || undefined,
@@ -547,7 +597,7 @@ function AdminValideringPageInner() {
                 holiday_pay_rate:               extractedData.holidayPayRate ?? null,
                 beta_rate:                      extractedData.betaRate ?? null,
                 has_overenskomst_incorporation: !!extractedData.collectiveAgreement,
-                has_credit_clause:              !!(extractedData.creditedRoles),
+                has_credit_clause:              !!extractedData.hasCreditClause,
                 notes:                          extractedData.specialNotes ?? null,
                 // Udvidede kolonner (migration 20260612)
                 extracted_data:                 extractedData,
@@ -660,6 +710,11 @@ function AdminValideringPageInner() {
         // Ingen overenskomst (kun funktionærloven): ingen helligdag/BETA
         const ingenOverenskomst = !overenskomst || overenskomst === "ingen"
 
+        const normalizedSalary = resolveContractSalary(ed)
+        const pensionSupplement = resolvePensionSupplement(normalizedSalary)
+        const contractCredit = resolveContractCredit(ed)
+        const productionType = resolveContractProductionType({ aiValue: ed.productionType, work: reviewingContract?.works })
+
         return {
             producerName: (() => {
                 const raw = ed.employerName ?? ed.producerName ?? ed.parentCompanyName ?? ""
@@ -670,25 +725,32 @@ function AdminValideringPageInner() {
             })(),
             rightsHolderName:              ed.rightsHolderName ?? "",
             workTitle:                     ed.workTitle ?? "",
-            creditedRoles:                 Array.isArray(ed.creditedRoles) ? ed.creditedRoles.join(", ") : (ed.creditedRoles ?? ""),
-            productionType:                ed.productionType ?? "",
+            creditedRoles:                 contractCredit.creditedRoles ?? "",
+            contractCredits:               contractCredit.contractCredits,
+            creditClauseStatus:             contractCredit.creditClauseStatus,
+            productionType:                productionType.productionType ?? "",
+            productionTypeSource:          productionType.source,
+            productionTypeAiSuggestion:    productionType.aiSuggestion,
+            productionTypeConflict:        productionType.hasConflict,
             contractType:                  ed.collectiveAgreementByReference
                                                ? "leverandør-ref"
                                                : isLeverandoer ? "leverandør" : "a-løn",
             overenskomst,
-            salary:                        ed.salary ?? "",
-            salaryUnit:                    ed.salaryUnit ?? "monthly",
-            salaryConfidence:              ed.salaryConfidence ?? null,
-            salaryNote:                    ed.salaryNote ?? null,
-            salarySourceType:              ed.salarySourceType ?? null,
-            needsManualSalaryReview:       !!ed.needsManualSalaryReview,
+            salary:                        normalizedSalary.salary ?? "",
+            lumpSumAmount:                 normalizedSalary.lumpSumAmount ?? null,
+            salaryUnit:                    normalizedSalary.salaryUnit ?? "monthly",
+            salaryConfidence:              normalizedSalary.salaryConfidence ?? null,
+            salaryNote:                    normalizedSalary.salaryNote ?? null,
+            salarySourceType:              normalizedSalary.salarySourceType ?? null,
+            needsManualSalaryReview:       !!normalizedSalary.needsManualSalaryReview,
             agreementReferenceStatus:      ed.agreementReferenceStatus ?? null,
             startDate:                     ed.startDate ?? "",
             endDate:                       ed.endDate ?? "",
             pensionPercent:                ed.pensionPercent ?? (impliedDe4 ? 9.5 : ""),
-            pensionSupplement:             ed.pensionSupplement ?? "",
+            pensionSupplement:             pensionSupplement ?? "",
             personalSupplement:            ed.personalSupplement ?? "",
-            otherSupplements:              Array.isArray(ed.otherSupplements) ? ed.otherSupplements : [],
+            otherSupplements:              resolveOtherSupplements(ed),
+            workPhases:                    Array.isArray(ed.workPhases) ? ed.workPhases : [],
             workingWeeks:                  ed.workingWeeks ?? "",
             prolongationWeeks:             ed.prolongationWeeks ?? "",
             prolongationNote:              ed.prolongationNote ?? "",
@@ -944,6 +1006,36 @@ setActiveField(fieldId)
         const datesHl = resolve(sources.dates)
         const weeksHl = resolve(sources.workingWeeks)
         const supplementsHl = resolve(sources.supplements) ?? safeNumberFallback(formData.personalSupplement)
+        const formattedPersonalSupplement = formData.personalSupplement !== undefined && formData.personalSupplement !== null && formData.personalSupplement !== ""
+            ? Number(formData.personalSupplement).toLocaleString("da-DK")
+            : null
+        // Ældre udtræk kan have mistet supplements-kildeteksten, fordi "kr. 1.251"
+        // tidligere blev afvist af kildevalideringen. Prøv hele linjen først,
+        // så både label og beløb fremhæves; brug derefter smallere fallbacks.
+        const personalSupplementNavigation = [
+            formattedPersonalSupplement ? `Personligt tillæg: kr. ${formattedPersonalSupplement}` : null,
+            formattedPersonalSupplement ? `Personligt tillæg kr. ${formattedPersonalSupplement}` : null,
+            formattedPersonalSupplement ? `Personligt tillæg: ${formattedPersonalSupplement} kr.` : null,
+            supplementsHl,
+            sources.supplements,
+            "Personligt tillæg",
+            "personlige tillæg",
+            formattedPersonalSupplement,
+            formData.personalSupplement != null ? String(formData.personalSupplement) : null,
+        ].filter(Boolean).join("||")
+        const formattedPensionSupplement = formData.pensionSupplement !== undefined && formData.pensionSupplement !== null && formData.pensionSupplement !== ""
+            ? Number(formData.pensionSupplement).toLocaleString("da-DK")
+            : null
+        const pensionNavigation = (sources.pension || sources.pension_clause_id) ? [
+            resolve(sources.pension),
+            formData.pensionPercent !== undefined && formData.pensionPercent !== null && formData.pensionPercent !== ""
+                ? `${String(formData.pensionPercent).replace(".", ",")} %`
+                : null,
+            formattedPensionSupplement ? `kr. ${formattedPensionSupplement}` : null,
+            formattedPensionSupplement ? `${formattedPensionSupplement} kr.` : null,
+            "pensionsbidrag",
+            "pension",
+        ].filter(Boolean).join("||") : ""
         const svodSrc = svodMeta.anker ?? null
         const ca = caMeta.anker ?? null
         // Copydan/royalty: brug specifik kilde hvis AI fandt én, ellers fald tilbage til overenskomst-referencen
@@ -986,9 +1078,15 @@ setActiveField(fieldId)
             creditedRoles: sources.creditedRoles_clause_id,
         }
         const otherSuppMatch = activeField?.match(/^otherSupplements_(\d+)$/)
+        const workPhaseMatch = activeField?.match(/^workPhases_(\d+)$/)
+        const contractCreditMatch = activeField?.match(/^contractCredits_(\d+)$/)
         const activeClauseId = activeField
             ? otherSuppMatch
                 ? ((Array.isArray(formData.otherSupplements) ? formData.otherSupplements[Number(otherSuppMatch[1])] : null) as Record<string, unknown> | null)?.clauseId as string | null ?? null
+                : workPhaseMatch
+                    ? ((Array.isArray(formData.workPhases) ? formData.workPhases[Number(workPhaseMatch[1])] : null) as Record<string, unknown> | null)?.clauseId as string | null ?? null
+                : contractCreditMatch
+                    ? ((Array.isArray(formData.contractCredits) ? formData.contractCredits[Number(contractCreditMatch[1])] : null) as Record<string, unknown> | null)?.clauseId as string | null ?? null
                 : (FIELD_TO_CLAUSE_ID[activeField] ?? null)
             : null
         if (activeField) console.log(`[LAG5-B] activeField=${activeField} → activeClauseId=${activeClauseId ?? "null"}, layout=${contractLayout ? contractLayout.clauses.length + " klausuler" : "NULL"}`)
@@ -1009,6 +1107,10 @@ setActiveField(fieldId)
             hasCoord(sources.dates_clause_id)           ? null : datesHl,
             hasCoord(sources.workingWeeks_clause_id)    ? null : weeksHl,
             hasCoord(sources.prolongation_clause_id)    ? null : prolongHl,
+            ...(Array.isArray(formData.workPhases) ? formData.workPhases.map((phase: Record<string, unknown>) => {
+                const clauseId = typeof phase.clauseId === "string" ? phase.clauseId : null
+                return hasCoord(clauseId) ? null : typeof phase.sourceText === "string" ? phase.sourceText : null
+            }) : []),
         ].filter(Boolean) as string[]
 
 
@@ -1153,16 +1255,18 @@ setActiveField(fieldId)
 
                                 <Separator />
 
-                                <F
-                                    src={fieldSrc("producerName")}
-                                    label={t("admin.validation.producer")}
-                                    action={
-                                        <button type="button" className="text-[11px] text-primary underline underline-offset-2"
-                                            onClick={() => { setNewEmpName(formData.producerName?.trim() ?? ""); setNewEmpCvr(""); setNewEmpDfiId(null); setNewEmpRelation(null); setNewEmpDfiResults([]); setNewEmpDbMatches([]); setShowNewEmployer(true) }}>
-                                            + Opret ny
-                                        </button>
-                                    }
-                                >
+                                <div className="grid gap-y-3 sm:grid-cols-2 sm:gap-x-6">
+                                    <div className="order-2 grid grid-rows-[auto_1fr] gap-3">
+                                        <F
+                                            src={fieldSrc("producerName")}
+                                            label={t("admin.validation.producer")}
+                                            action={
+                                                <button type="button" className="text-[11px] text-primary underline underline-offset-2"
+                                                    onClick={() => { setNewEmpName(formData.producerName?.trim() ?? ""); setNewEmpCvr(""); setNewEmpDfiId(null); setNewEmpRelation(null); setNewEmpDfiResults([]); setNewEmpDbMatches([]); setShowNewEmployer(true) }}>
+                                                    + Opret ny
+                                                </button>
+                                            }
+                                        >
                                     <Input
                                         value={String(formData.producerName ?? "")}
                                         onChange={(e) => { setField("producerName", e.target.value); setSelectedEmployerId(null) }}
@@ -1203,9 +1307,9 @@ setActiveField(fieldId)
                                             )}
                                         </div>
                                     )}
-                                </F>
+                                        </F>
 
-                                <F label="Moderselskab (valgfrit)">
+                                        <F src="manuel" label="Moderselskab (valgfrit)">
                                     {parentExplicitNone ? (
                                         <div className="flex items-center gap-2 rounded border px-3 py-1.5 text-xs text-muted-foreground bg-muted/30">
                                             <span className="flex-1">Ingen moderselskab</span>
@@ -1249,11 +1353,12 @@ setActiveField(fieldId)
                                             Sæt til ingen moderselskab
                                         </button>
                                     )}
-                                </F>
+                                        </F>
+                                    </div>
 
-                                <div className="grid gap-3 sm:grid-cols-2">
-                                    {formData.rightsHolderName !== undefined && (
-                                        <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
+                                    <div className="order-1 grid grid-rows-[auto_1fr] gap-3">
+                                        {formData.rightsHolderName !== undefined && (
+                                            <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
                                             <Input
                                                 value={String(formData.rightsHolderName ?? "")}
                                                 onChange={(e) => { setField("rightsHolderName", e.target.value); setSelectedRhId(null) }}
@@ -1278,17 +1383,30 @@ setActiveField(fieldId)
                                             {!selectedRhId && formData.rightsHolderName && rhSuggestions.length === 0 && (formData.rightsHolderName as string).length > 2 && (
                                                 <p className="mt-1 text-xs text-amber-600">Ikke fundet i rettighedshavere</p>
                                             )}
-                                        </F>
-                                    )}
-                                    <F src={fieldSrc("creditedRoles")} label={<>Kreditering{creditHl && <SourceBtn quote={creditHl} active={activeField === "creditedRoles"} onClick={() => activateSource("creditedRoles", creditHl)} />}</>}>
-                                        <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor..." />
-                                    </F>
+                                            </F>
+                                        )}
+                                        <div className="h-full [&>div]:h-full">
+                                            <F src={fieldSrc("gender")} outlined label={t("admin.validation.gender")}>
+                                                <Select value={formData.gender ?? ""} onValueChange={(v) => setField("gender", v)}>
+                                                    <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="male">{t("admin.stats.male")}</SelectItem>
+                                                        <SelectItem value="female">{t("admin.stats.female")}</SelectItem>
+                                                        <SelectItem value="other">Andet</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </F>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <Separator />
 
-                                <F src={fieldSrc("productionType")} label="Produktionstype" locked={isLocked("productionType")}>
-                                    <Select value={formData.productionType ?? ""} onValueChange={(v) => setField("productionType", v)}>
+                                <F src={formData.productionTypeSource === "work_database" || formData.productionTypeSource === "dfi" ? "vaerk" : fieldSrc("productionType")} label="Produktionstype" locked={isLocked("productionType")}>
+                                    <Select value={formData.productionType ?? ""} onValueChange={(v) => {
+                                        setField("productionType", v)
+                                        setFormData(prev => ({ ...prev, productionTypeSource: "manual", productionTypeConflict: false }))
+                                    }}>
                                         <SelectTrigger><SelectValue placeholder="Vælg type..." /></SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="documentary" className="font-medium text-muted-foreground text-[10px]" disabled>── Dokumentar ──</SelectItem>
@@ -1308,6 +1426,15 @@ setActiveField(fieldId)
                                             <SelectItem value="other">Andet</SelectItem>
                                         </SelectContent>
                                     </Select>
+                                    {(formData.productionTypeSource === "work_database" || formData.productionTypeSource === "dfi") && (
+                                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                            <Badge variant="outline">{formData.productionTypeSource === "dfi" ? "DFI" : "Værksdatabase"}</Badge>
+                                            <span>Typen er hentet fra det tilknyttede værk.</span>
+                                            {formData.productionTypeConflict && formData.productionTypeAiSuggestion && (
+                                                <span className="text-amber-700 dark:text-amber-400">AI foreslog: {productionTypeLabel(formData.productionTypeAiSuggestion)}</span>
+                                            )}
+                                        </div>
+                                    )}
                                 </F>
 
                                 <div className="grid gap-3 sm:grid-cols-2">
@@ -1343,16 +1470,6 @@ setActiveField(fieldId)
                                             <SelectItem value="yes">Ja — direkte navngiven overenskomst</SelectItem>
                                             <SelectItem value="no">Nej — eksplicit afvist</SelectItem>
                                             <SelectItem value="unknown">Ukendt / ikke afklaret</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </F>
-                                <F src={fieldSrc("gender")} label={t("admin.validation.gender")}>
-                                    <Select value={formData.gender ?? ""} onValueChange={(v) => setField("gender", v)}>
-                                        <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="male">{t("admin.stats.male")}</SelectItem>
-                                            <SelectItem value="female">{t("admin.stats.female")}</SelectItem>
-                                            <SelectItem value="other">Andet</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </F>
@@ -1405,6 +1522,37 @@ setActiveField(fieldId)
                                 <F src={fieldSrc("workingWeeks")} label={<>{t("admin.validation.workingWeeks")}<SourceBtn quote={weeksHl} active={activeField === "workingWeeks"} onClick={() => activateSource("workingWeeks", weeksHl)} /></>}>
                                     <Input type="number" value={String(formData.workingWeeks ?? "")} onChange={(e) => setField("workingWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
                                 </F>
+                                {Array.isArray(formData.workPhases) && formData.workPhases.length > 0 && (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <Label className="text-xs">Arbejdsfordeling</Label>
+                                            <span className="text-[10px] text-muted-foreground">Kun faser nævnt i kontrakten</span>
+                                        </div>
+                                        {formData.workPhases.map((phase: Record<string, unknown>, i: number) => {
+                                            const phaseSource = typeof phase.sourceText === "string" ? phase.sourceText : null
+                                            const phaseClauseId = typeof phase.clauseId === "string" ? phase.clauseId : null
+                                            const phaseNote = typeof phase.note === "string" ? phase.note : ""
+                                            const phaseField = `workPhases_${i}`
+                                            return <div key={i} className={`rounded-md border px-3 py-2 ${SOURCE_STYLES[phaseSource || phaseClauseId ? "ai" : "manuel"]}`}>
+                                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                                    <span className="min-w-[155px] text-sm font-medium">{WORK_PHASE_LABELS[String(phase.phase)] ?? "Arbejdsfase"}</span>
+                                                    <span className="text-sm">{phase.weeks != null ? `${phase.weeks} ${Number(phase.weeks) === 1 ? "uge" : "uger"}` : "Periode ukendt"}</span>
+                                                    <span className="text-xs text-muted-foreground">{WORK_PHASE_PAYMENT_LABELS[String(phase.paymentType)] ?? "Betaling ukendt"}</span>
+                                                    <SourceBtn quote={phaseSource ?? undefined} active={activeField === phaseField} onClick={() => activateSource(phaseField, phaseSource)} />
+                                                    <button type="button" title="Fjern arbejdsfase" aria-label="Fjern arbejdsfase" className="ml-auto rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" onClick={() => {
+                                                        const phases = [...(formData.workPhases as Record<string, unknown>[])]
+                                                        phases.splice(i, 1)
+                                                        setField("workPhases", phases)
+                                                    }}><Trash2 className="h-3.5 w-3.5" /></button>
+                                                </div>
+                                                {(phase.amount != null || phaseNote) && <p className="mt-1 text-[11px] text-muted-foreground">
+                                                    {phase.amount != null ? `${Number(phase.amount).toLocaleString("da-DK")} kr. ${phase.amountType === "calculated" ? "(beregnet)" : ""}` : ""}
+                                                    {phase.amount != null && phaseNote ? " · " : ""}{phaseNote}
+                                                </p>}
+                                            </div>
+                                        })}
+                                    </div>
+                                )}
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <F src={fieldSrc("prolongationWeeks")} label={<>Prolongationsuger{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
                                         <Input type="number" value={String(formData.prolongationWeeks ?? "")} onChange={(e) => setField("prolongationWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
@@ -1415,62 +1563,94 @@ setActiveField(fieldId)
                                 </div>
                                 <Separator />
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F src={fieldSrc("pensionPercent")} label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>
+                                    <F src={fieldSrc("pensionPercent")} label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={pensionNavigation} active={activeField === "pension"} onClick={() => activateSource("pension", pensionNavigation)} /></>}>
                                         <div className="flex items-center gap-2">
                                             <Input type="number" step="0.1" value={String(formData.pensionPercent ?? "")} onChange={(e) => setField("pensionPercent", e.target.value)} placeholder="0" />
                                             <span className="text-sm text-muted-foreground">%</span>
                                         </div>
                                     </F>
-                                    <F src={fieldSrc("pensionSupplement")} label={<>{t("admin.validation.pension")} (kr.)<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>
+                                    <F src={fieldSrc("pensionSupplement")} label={<>{t("admin.validation.pension")} (kr.)<SourceBtn quote={pensionNavigation} active={activeField === "pension"} onClick={() => activateSource("pension", pensionNavigation)} /></>}>
                                         <Input type="number" value={String(formData.pensionSupplement ?? "")} onChange={(e) => setField("pensionSupplement", e.target.value)} placeholder="0" />
                                     </F>
                                 </div>
-                                <F src={fieldSrc("personalSupplement")} label={<>{t("admin.validation.personalSupplement")}<SourceBtn quote={supplementsHl} active={activeField === "supplements"} onClick={() => activateSource("supplements", supplementsHl)} /></>}>
-                                    <Input type="number" value={String(formData.personalSupplement ?? "")} onChange={(e) => setField("personalSupplement", e.target.value)} placeholder="0" />
-                                </F>
                                 <div className="space-y-2">
-                                    <Label className="text-xs">Andre tillæg</Label>
+                                    <Label className="text-xs">Tillæg i kontrakten</Label>
+                                    {formData.personalSupplement !== "" && formData.personalSupplement !== null && formData.personalSupplement !== undefined && (
+                                        <div className={`rounded border p-2 space-y-1.5 ${SOURCE_STYLES[fieldSrc("personalSupplement") ?? "manuel"]}`}>
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant="outline" className="text-[11px] shrink-0">Personligt tillæg</Badge>
+                                                <SourceBtn quote={personalSupplementNavigation} active={activeField === "supplements"} onClick={() => activateSource("supplements", personalSupplementNavigation)} />
+                                                <button type="button" title="Fjern tillæg" aria-label="Fjern personligt tillæg" className="ml-auto rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" onClick={() => {
+                                                    setField("personalSupplement", "")
+                                                }}><Trash2 className="h-3.5 w-3.5" /></button>
+                                            </div>
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <div className="relative">
+                                                <Input type="number" value={String(formData.personalSupplement)} placeholder="Beløb" className="h-7 pr-10 text-xs" onChange={(e) => {
+                                                    setField("personalSupplement", e.target.value)
+                                                }} />
+                                                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">kr.</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
                                     {(Array.isArray(formData.otherSupplements) ? formData.otherSupplements : []).map((s: Record<string, unknown>, i: number) => {
-                                        const sUnit = s.unit != null ? String(s.unit) : null
                                         const sNote = s.note != null ? String(s.note) : null
                                         const sSrc = s.sourceText != null ? String(s.sourceText) : null
+                                        const sClauseId = s.clauseId != null ? String(s.clauseId) : null
+                                        const sNavigationSource = sSrc ?? (sClauseId ? sources.otherSupplements : null)
                                         return (
-                                        <div key={i} className="rounded border bg-muted/30 p-2 space-y-1.5">
+                                        <div key={i} className={`rounded border p-3 space-y-2 ${SOURCE_STYLES[sSrc || sClauseId ? "ai" : "manuel"]}`}>
                                             <div className="flex items-center gap-2">
-                                                <Badge variant="outline" className="text-[11px] shrink-0">{OTHER_SUPPLEMENT_LABELS[s.category as string] ?? String(s.category)}</Badge>
-                                                {s.amount != null && <span className="text-sm font-medium">{String(s.amount)} kr.</span>}
-                                                {sUnit && <span className="text-xs text-muted-foreground">{sUnit}</span>}
-                                                {sSrc && <SourceBtn quote={sSrc} active={activeField === `otherSupplements_${i}`} onClick={() => activateSource(`otherSupplements_${i}`, sSrc)} />}
-                                                <button type="button" className="ml-auto text-muted-foreground hover:text-destructive transition-colors" onClick={() => {
-                                                    const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
-                                                    arr.splice(i, 1)
-                                                    setField("otherSupplements", arr)
-                                                }}><X className="h-3.5 w-3.5" /></button>
-                                            </div>
-                                            {sNote && <p className="text-[11px] text-muted-foreground pl-1">{sNote}</p>}
-                                            <div className="grid grid-cols-[1fr_auto_1fr] gap-1.5 items-center">
-                                                <Input type="number" value={s.amount != null ? String(s.amount) : ""} placeholder="Beløb" className="h-7 text-xs" onChange={(e) => {
-                                                    const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
-                                                    arr[i] = { ...arr[i], amount: e.target.value ? Number(e.target.value) : null }
-                                                    setField("otherSupplements", arr)
-                                                }} />
-                                                <Input value={s.unit ? String(s.unit) : ""} placeholder="Enhed" className="h-7 text-xs" onChange={(e) => {
-                                                    const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
-                                                    arr[i] = { ...arr[i], unit: e.target.value || null }
-                                                    setField("otherSupplements", arr)
-                                                }} />
                                                 <Select value={String(s.category)} onValueChange={(v) => {
                                                     const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
                                                     arr[i] = { ...arr[i], category: v }
                                                     setField("otherSupplements", arr)
                                                 }}>
-                                                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                    <SelectTrigger className="h-7 w-[180px] text-xs"><SelectValue /></SelectTrigger>
                                                     <SelectContent>{OTHER_SUPPLEMENT_CATEGORIES.map(c => <SelectItem key={c} value={c} className="text-xs">{OTHER_SUPPLEMENT_LABELS[c]}</SelectItem>)}</SelectContent>
                                                 </Select>
+                                                <SourceBtn quote={sNavigationSource} active={activeField === `otherSupplements_${i}`} onClick={() => activateSource(`otherSupplements_${i}`, sNavigationSource)} />
+                                                <button type="button" title="Fjern tillæg" aria-label={`Fjern ${OTHER_SUPPLEMENT_LABELS[s.category as string] ?? "tillæg"}`} className="ml-auto rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" onClick={() => {
+                                                    const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
+                                                    arr.splice(i, 1)
+                                                    setField("otherSupplements", arr)
+                                                }}><Trash2 className="h-3.5 w-3.5" /></button>
+                                            </div>
+                                            {sNote && <p className="text-[11px] text-muted-foreground pl-1">{sNote}</p>}
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-xs">Beløb</Label>
+                                                    <div className="relative">
+                                                    <Input type="number" value={s.amount != null ? String(s.amount) : ""} placeholder="0" className="pr-10" onChange={(e) => {
+                                                        const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
+                                                        arr[i] = { ...arr[i], amount: e.target.value ? Number(e.target.value) : null }
+                                                        setField("otherSupplements", arr)
+                                                    }} />
+                                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">kr.</span>
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-xs">Enhed</Label>
+                                                    <Select value={s.unit ? String(s.unit) : undefined} onValueChange={(v) => {
+                                                        const arr = [...(formData.otherSupplements as Record<string, unknown>[])]
+                                                        arr[i] = { ...arr[i], unit: v }
+                                                        setField("otherSupplements", arr)
+                                                    }}>
+                                                        <SelectTrigger><SelectValue placeholder="Vælg enhed" /></SelectTrigger>
+                                                        <SelectContent>
+                                                            {SUPPLEMENT_UNITS.map(unit => <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>)}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
                                             </div>
                                         </div>
                                         )
                                     })}
+                                    {(formData.personalSupplement === "" || formData.personalSupplement === null || formData.personalSupplement === undefined)
+                                        && (!Array.isArray(formData.otherSupplements) || formData.otherSupplements.length === 0) && (
+                                        <p className="text-xs text-muted-foreground">Ingen tillæg fundet i kontrakten.</p>
+                                    )}
                                     <button type="button" className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2" onClick={() => {
                                         const arr = Array.isArray(formData.otherSupplements) ? [...formData.otherSupplements] : []
                                         arr.push({ category: "fast_uspecificeret", amount: null, unit: "pr. uge", note: "", sourceText: null })
@@ -1579,6 +1759,12 @@ setActiveField(fieldId)
                                 <div>
                                     <Label className="text-xs mb-3 block font-semibold uppercase tracking-wide text-muted-foreground">Kontraktbeskyttelse</Label>
                                     <RightRow label={t("admin.validation.aiClause")} desc={t("admin.validation.aiClauseDesc")} checked={formData.aiDataMiningClause ?? false} onChange={(v) => setField("aiDataMiningClause", v)} />
+                                </div>
+                                <Separator />
+                                <div className={`rounded-md border p-3 space-y-2 ${SOURCE_STYLES[Array.isArray(formData.contractCredits) && formData.contractCredits.some((credit: Record<string, unknown>) => credit.sourceText || credit.clauseId) ? "ai" : "manuel"]}`}>
+                                    <div className="flex items-center justify-between gap-3"><Label className="text-xs">Kreditering i kontrakten</Label><Select value={String(formData.creditClauseStatus ?? "unclear")} onValueChange={(value) => setField("creditClauseStatus", value)}><SelectTrigger className="h-7 w-[180px] text-xs"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(CREDIT_STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+                                    {Array.isArray(formData.contractCredits) && formData.contractCredits.length > 0 ? <div className="space-y-1.5">{formData.contractCredits.map((credit: Record<string, unknown>, i: number) => { const source = typeof credit.sourceText === "string" ? credit.sourceText : null; const field = `contractCredits_${i}`; return <div key={i} className="flex items-center gap-2"><Input className="h-8" value={String(credit.title ?? "")} onChange={(event) => { const credits = [...(formData.contractCredits as Record<string, unknown>[])]; credits[i] = { ...credits[i], title: event.target.value }; setField("contractCredits", credits); setField("creditedRoles", credits.map(item => String(item.title ?? "")).filter(Boolean).join(", ")) }} /><SourceBtn quote={source ?? undefined} active={activeField === field} onClick={() => activateSource(field, source)} /><button type="button" title="Fjern kreditering" className="rounded p-1 text-muted-foreground hover:text-destructive" onClick={() => { const credits = [...(formData.contractCredits as Record<string, unknown>[])]; credits.splice(i, 1); setField("contractCredits", credits); setField("creditedRoles", credits.map(item => String(item.title ?? "")).filter(Boolean).join(", ")) }}><Trash2 className="h-3.5 w-3.5" /></button></div> })}</div> : <p className="text-xs text-muted-foreground">Ingen konkret krediteringstitel fundet.</p>}
+                                    <button type="button" className="text-xs text-muted-foreground underline underline-offset-2" onClick={() => { const credits = Array.isArray(formData.contractCredits) ? [...formData.contractCredits] : []; credits.push({ title: "", sourceText: null, clauseId: null }); setField("contractCredits", credits) }}>+ Tilføj kreditering manuelt</button>
                                 </div>
                             </TabsContent>
 
@@ -1919,25 +2105,36 @@ setActiveField(fieldId)
 
 // ── Small helpers ─────────────────────────────────────────────
 
-type DataSource = "ai" | "overenskomst" | "klipper" | "manuel" | undefined
+type DataSource = "ai" | "overenskomst" | "klipper" | "manuel" | "vaerk" | undefined
 
 const SOURCE_STYLES: Record<NonNullable<DataSource>, string> = {
     ai:           "rounded-md bg-blue-50 dark:bg-blue-950/25 px-2.5 py-2 -mx-2.5",
     overenskomst: "rounded-md bg-amber-50 dark:bg-amber-950/25 px-2.5 py-2 -mx-2.5",
     klipper:      "rounded-md bg-emerald-50 dark:bg-emerald-950/25 px-2.5 py-2 -mx-2.5",
-    manuel:       "rounded-md bg-muted/40 px-2.5 py-2 -mx-2.5",
+    manuel:       "rounded-md border border-input bg-background px-2.5 py-2 -mx-2.5",
+    vaerk:        "rounded-md bg-violet-50 dark:bg-violet-950/25 px-2.5 py-2 -mx-2.5",
 }
 
-function F({ label, action, locked, src, children }: {
+function productionTypeLabel(value: unknown) {
+    const labels: Record<string, string> = {
+        feature: "Spillefilm", tvSeries: "TV-serie", documentary: "Dokumentarfilm",
+        docSeries: "Dokumentarserie", short: "Kortfilm", tvEntertainment: "TV-underholdning",
+        reality: "Reality", other: "Andet",
+    }
+    return labels[String(value ?? "")] ?? String(value ?? "")
+}
+
+function F({ label, action, locked, src, outlined = false, children }: {
     label: React.ReactNode
     action?: React.ReactNode
     locked?: boolean
     src?: DataSource
+    outlined?: boolean
     children: React.ReactNode
 }) {
-    const wrapperClass = src ? SOURCE_STYLES[src] : "space-y-1.5"
+    const wrapperStyle = src ? SOURCE_STYLES[src] : outlined ? SOURCE_STYLES.manuel : ""
     return (
-        <div className={src ? `${SOURCE_STYLES[src]} space-y-1.5` : "space-y-1.5"}>
+        <div className={wrapperStyle ? `${wrapperStyle} space-y-1.5` : "space-y-1.5"}>
             <div className="flex items-center gap-2">
                 <Label className="text-xs">{label}</Label>
                 {locked && (
@@ -2208,7 +2405,7 @@ function TextViewer({ text, loading = false, highlights, sectionHighlights = [],
         }
         result += escapeHtml(text.slice(cursor))
         return result
-    }, [text, highlights, activeHighlight])
+    }, [text, highlights, activeHighlight, sectionEndMarkers, sectionHighlights])
 
     useEffect(() => {
         if (!containerRef.current || !activeHighlight) return

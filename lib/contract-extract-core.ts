@@ -8,6 +8,10 @@ import { createClient } from "@supabase/supabase-js"
 import { getSupabaseServiceKey } from "@/lib/env"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { normaliseSources, extractClauseIdFromCitation, stripClauseIdPrefix } from "@/lib/ai-sources"
+import { resolveOtherSupplements } from "@/lib/contract-supplements"
+import { resolvePensionSupplement } from "@/lib/contract-pension"
+import { resolveContractCredit } from "@/lib/contract-credit"
+import { resolveContractSalary } from "@/lib/contract-salary"
 import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
@@ -334,14 +338,39 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             : undefined
         extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>, knownIds)
     }
+    const credit = resolveContractCredit(extracted, maskedText)
+    extracted.contractCredits = credit.contractCredits
+    extracted.creditClauseStatus = credit.creditClauseStatus
+    extracted.hasCreditClause = !["absent", "role_only"].includes(credit.creditClauseStatus)
+    if (credit.creditedRoles || credit.sourceText) {
+        extracted.creditedRoles = credit.creditedRoles
+        extracted._sources = {
+            ...((extracted._sources as Record<string, unknown> | null) ?? {}),
+            creditedRoles: credit.sourceText,
+            creditedRoles_clause_id: credit.clauseId,
+        }
+    }
+    extracted = resolveContractSalary(extracted)
+    extracted.pensionSupplement = resolvePensionSupplement(extracted)
+    extracted.otherSupplements = resolveOtherSupplements(extracted)
     // Strip [sX_cY]-tag fra otherSupplements[].sourceText og gem clauseId pr. post
     if (Array.isArray(extracted.otherSupplements)) {
         extracted = {
             ...extracted,
             otherSupplements: (extracted.otherSupplements as Array<Record<string, unknown>>).map(s => ({
                 ...s,
-                clauseId: extractClauseIdFromCitation(s.sourceText as string | null),
+                clauseId: extractClauseIdFromCitation(s.sourceText as string | null) ?? s.clauseId ?? null,
                 sourceText: stripClauseIdPrefix(s.sourceText as string | null),
+            })),
+        }
+    }
+    if (Array.isArray(extracted.workPhases)) {
+        extracted = {
+            ...extracted,
+            workPhases: (extracted.workPhases as Array<Record<string, unknown>>).map(phase => ({
+                ...phase,
+                clauseId: extractClauseIdFromCitation(phase.sourceText as string | null) ?? phase.clauseId ?? null,
+                sourceText: stripClauseIdPrefix(phase.sourceText as string | null),
             })),
         }
     }

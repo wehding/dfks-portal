@@ -46,6 +46,11 @@ export type GmailMessage = {
   payload?: GmailMessagePart;
 };
 
+export type GmailThread = {
+  id: string;
+  messages?: GmailMessage[];
+};
+
 export type GmailContractAttachment = {
   attachmentId: string;
   inlineData: string | null;
@@ -234,6 +239,10 @@ export function parseGmailContractMessage(message: GmailMessage): ParsedGmailCon
     bodyText: bodyText || null,
     attachments,
   };
+}
+
+export function isGmailDraftMessage(message: GmailMessage): boolean {
+  return message.labelIds?.includes("DRAFT") ?? false;
 }
 
 export function parsePubSubNotificationBody(body: unknown): { emailAddress: string; historyId: string } {

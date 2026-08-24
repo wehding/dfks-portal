@@ -4,7 +4,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import {
-    ArrowLeft, Check, X, Flag, Search, ChevronDown, Download, Calculator, Lock, Loader2, ExternalLink, Info,
+    ArrowLeft, Check, X, Flag, Search, ChevronDown, Download, Calculator, Lock, Loader2, Info,
     ChevronsUpDown, ChevronUp, FileText, Clock, AlertTriangle,
     Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff, Pencil,
 } from "lucide-react"
@@ -179,16 +179,6 @@ function genMockVaerker(): AftalelicensVaerk[] {
     ]
 
     return [...filmItems, ...noiseItems, ...s1e2Extra]
-}
-
-// DFI mock lookup
-async function dfiLookup(title: string): Promise<AftalelicensVaerk["dfiData"] | null> {
-    await new Promise(r => setTimeout(r, 800))
-    const data: Record<string, AftalelicensVaerk["dfiData"]> = {
-        "Borgen": { title: "Borgen", duration: 55, year: 2010, category: "tv_serie_lang", directors: ["Susanne Bier"], editors: ["Mads Eriksen"] },
-        "Kærlighed for voksne": { title: "Kærlighed for voksne", duration: 88, year: 2022, category: "spillefilm", directors: ["Kaspar Munk"], editors: ["Sara Lund", "Peter Mollerup"] },
-    }
-    return data[title] ?? null
 }
 
 // ── Status badge ──────────────────────────────────────────────
@@ -599,7 +589,6 @@ function SortTable({ batchId, vaerker, onUpdate }: {
     const [dupFilter, setDupFilter] = useState("")
     const [sortCol, setSortCol] = useState<SortCol>("date")
     const [sortDir, setSortDir] = useState<SortDir>("asc")
-    const [dfiLoading, setDfiLoading] = useState<string | null>(null)
     const [noteEdit, setNoteEdit] = useState<{
         id: string
         value: string
@@ -884,19 +873,6 @@ function SortTable({ batchId, vaerker, onUpdate }: {
         })
         return list
     }, [vaerker, filter, hideRejected, search, dupFilter, sortCol, sortDir])
-
-    const handleDfi = async (vaerk: AftalelicensVaerk) => {
-        setDfiLoading(vaerk.id)
-        const data = await dfiLookup(vaerk.rawTitle)
-        setDfiLoading(null)
-        if (data) {
-            onUpdate(vaerk.id, { dfiData: data, dfiMatched: true })
-            toast.success(`DFI-match: ${data.title}`)
-        } else {
-            onUpdate(vaerk.id, { dfiMatched: false })
-            toast.info("Ikke fundet i Filmdatabasen")
-        }
-    }
 
     const setStatus = (id: string, status: SortStatus) => {
         onUpdate(id, {
@@ -1241,9 +1217,7 @@ function SortTable({ batchId, vaerker, onUpdate }: {
                                     />
                                 </TableCell>
                                 <TableCell>
-                                    {dfiLoading === v.id ? (
-                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                                    ) : v.dfiMatched === true ? (
+                                    {v.dfiMatched === true ? (
                                         <span
                                             title={v.dfiData ? `${v.dfiData.title} (${v.dfiData.year}) — ${v.dfiData.category}` : "Fundet i Filmdatabasen"}
                                             className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 cursor-default"
@@ -1252,15 +1226,7 @@ function SortTable({ batchId, vaerker, onUpdate }: {
                                         </span>
                                     ) : v.dfiMatched === false ? (
                                         <span className="text-xs text-muted-foreground/40">—</span>
-                                    ) : (
-                                        <button
-                                            onClick={() => handleDfi(v)}
-                                            className="text-muted-foreground/50 hover:text-blue-600 transition-colors"
-                                            title="Søg i Filmdatabasen"
-                                        >
-                                            <ExternalLink className="h-3.5 w-3.5" />
-                                        </button>
-                                    )}
+                                    ) : <span className="text-xs text-muted-foreground/40">—</span>}
                                 </TableCell>
                                 <TableCell>
                                     <div className="flex items-center gap-1.5">
@@ -2581,7 +2547,17 @@ const MOCK_KRAV: KlipperKrav[] = [
     },
 ]
 
-function ClaimsTab({ batchStatus }: { batchStatus: string }) {
+function ClaimsTab() {
+    return (
+        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+            Klipperkrav er ikke tilkoblet produktionsdata endnu.
+        </div>
+    )
+}
+
+// Beholdes kun som designreference, indtil klipperkrav får en rigtig datakilde.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function LegacyClaimsPrototype({ batchStatus }: { batchStatus: string }) {
     const [krav, setKrav] = useState<KlipperKrav[]>(MOCK_KRAV)
     const [rejectDialog, setRejectDialog] = useState<string | null>(null)
     const [rejectNote, setRejectNote] = useState("")
@@ -3708,7 +3684,7 @@ export default function AftalelicensDetailPage() {
     }
 
     const sortingComplete = vaerker.every(v => v.sortStatus !== "pending")
-    const pendingClaimsCount = MOCK_KRAV.filter(k => k.status === "pending").length
+    const pendingClaimsCount = 0
 
     if (batchLoading || rowsLoading) {
         return (
@@ -3800,7 +3776,7 @@ export default function AftalelicensDetailPage() {
                 </TabsContent>
 
                 <TabsContent value="krav" className="mt-4">
-                    <ClaimsTab batchStatus={batch.status} />
+                    <ClaimsTab />
                 </TabsContent>
             </Tabs>
         </div>

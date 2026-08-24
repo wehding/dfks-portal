@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@supabase/ssr"
 import { INVITE_COOKIE, getInviteGateCode } from "@/lib/auth/invite-gate"
-import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onboarding-state"
 import { isPublicPath } from "@/lib/auth/public-paths"
-import { readActiveOrgIdFromRequest } from "@/lib/active-org-context"
-import { resolveAppAccessContext } from "@/lib/app-access-context"
-import { applyAuthResponse, PRIVATE_AUTH_RESPONSE_HEADERS, type PendingAuthCookie } from "@/lib/supabase/auth-response"
+import { applyAuthResponse, expiredSupabaseAuthCookies, isRecoverableExpiredSession, PRIVATE_AUTH_RESPONSE_HEADERS, type PendingAuthCookie } from "@/lib/supabase/auth-response"
 
 export async function proxy(req: NextRequest) {
     const { pathname } = req.nextUrl
@@ -70,7 +67,21 @@ export async function proxy(req: NextRequest) {
     )
 
     // Opdater session (vigtigt — må ikke fjernes)
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (isRecoverableExpiredSession(authError)) {
+        const expiredCookies = expiredSupabaseAuthCookies(
+            req.cookies.getAll().map(cookie => cookie.name),
+            process.env.NEXT_PUBLIC_SUPABASE_URL,
+        )
+        for (const cookie of expiredCookies) req.cookies.set(cookie.name, "")
+        pendingAuthCookies = [...pendingAuthCookies, ...expiredCookies]
+        const url = req.nextUrl.clone()
+        url.pathname = "/"
+        url.search = ""
+        url.searchParams.set("notice", "session-expired")
+        return withAuthState(NextResponse.redirect(url))
+    }
 
     // Beskyttede stier kræver login
     const isProtected =
@@ -85,49 +96,7 @@ export async function proxy(req: NextRequest) {
         return withAuthState(NextResponse.redirect(url))
     }
 
-    // Førstegangs-onboarding og et aktiveret gen-onboardingkrav har forrang
-    // over både medlems- og administratorroller. Et genkrav aktiveres først,
-    // når Supabase registrerer et nyt login efter kravets tidspunkt.
-    const guardsOnboarding = pathname.startsWith("/admin") || pathname.startsWith("/portal") || pathname.startsWith("/superadmin")
-    if (guardsOnboarding && user) {
-        const { data: holder } = await supabase
-            .from("rettighedshavere")
-            .select("user_id,onboarding_completed_at,onboarding_required_at")
-            .eq("user_id", user.id)
-            .limit(1)
-            .maybeSingle()
-        if (holder) {
-            const status = resolveOnboardingStatus({
-                hasPortalUser: Boolean(holder.user_id),
-                completedAt: holder.onboarding_completed_at,
-                requiredAt: holder.onboarding_required_at,
-                lastSignInAt: user.last_sign_in_at,
-            })
-            if (mustCompleteOnboarding(status)) {
-                const url = req.nextUrl.clone()
-                url.pathname = "/onboarding"
-                url.search = ""
-                return withAuthState(NextResponse.redirect(url))
-            }
-        }
-    }
-
-    // Admin- og medlemsflader bruger samme signerede organisationskontekst.
-    // En kombinationsbruger får kun den del af appen, vedkommende har adgang til
-    // i den aktive organisation.
-    const needsAppContext = (pathname.startsWith("/admin") || pathname.startsWith("/portal")) && Boolean(user)
-    const appContext = needsAppContext
-        ? await resolveAppAccessContext(supabase, readActiveOrgIdFromRequest(req), user?.id)
-        : null
-
     if (pathname.startsWith("/admin") && user) {
-        if (!appContext?.canUseAdmin) {
-            const url = req.nextUrl.clone()
-            url.pathname = appContext?.canUseMember ? "/portal" : "/"
-            url.search = ""
-            if (appContext?.canUseMember) url.searchParams.set("notice", "admin-org-required")
-            return withAuthState(NextResponse.redirect(url))
-        }
         const prototypePrefixes = [
             "/admin/indbetalinger",
             "/admin/udbetalinger",
@@ -142,31 +111,6 @@ export async function proxy(req: NextRequest) {
             url.pathname = "/admin"
             url.search = ""
             url.searchParams.set("notice", "module-not-ready")
-            return withAuthState(NextResponse.redirect(url))
-        }
-    }
-
-    if (pathname.startsWith("/portal") && user && !appContext?.canUseMember) {
-        const url = req.nextUrl.clone()
-        url.pathname = appContext?.canUseAdmin ? "/admin" : "/onboarding"
-        url.search = ""
-        if (appContext?.canUseAdmin) url.searchParams.set("notice", "member-org-required")
-        return withAuthState(NextResponse.redirect(url))
-    }
-
-    // /superadmin/* kræver superadmin-rolle fra user_org_roles
-    if (pathname.startsWith("/superadmin") && user) {
-        const { data: roleRow } = await supabase
-            .from("user_org_roles")
-            .select("role")
-            .eq("user_id", user.id)
-            .eq("role", "superadmin")
-            .limit(1)
-            .single()
-
-        if (!roleRow) {
-            const url = req.nextUrl.clone()
-            url.pathname = "/admin"
             return withAuthState(NextResponse.redirect(url))
         }
     }

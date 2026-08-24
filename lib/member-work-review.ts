@@ -1,3 +1,11 @@
+export type MemberWorkReviewCoEditor = {
+  assignmentId: string;
+  rightsHolderId: string | null;
+  name: string;
+  role: string | null;
+  sharePercent: number | null;
+};
+
 export type MemberWorkReviewTask =
   | {
       key: string;
@@ -7,6 +15,8 @@ export type MemberWorkReviewTask =
       seriesWorkId: string;
       seasonNumber: number;
       episodeScopeId: string;
+      selectedEpisodeNumbers?: number[];
+      coversWholeSeason?: boolean;
     }
   | {
       key: string;
@@ -15,9 +25,11 @@ export type MemberWorkReviewTask =
       title: string;
       workId: string;
       assignmentId: string;
+      ownSharePercent?: number | null;
       parentWorkId: string | null;
       seasonNumber: number | null;
       episodeNumber: number | null;
+      existingCoEditors: MemberWorkReviewCoEditor[];
     };
 
 export function memberWorkReviewGroupKey(params: {
