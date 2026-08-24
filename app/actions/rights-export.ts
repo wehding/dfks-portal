@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import type { PayrollExportBatch } from "@/app/actions/rights-settlements"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -336,4 +337,3 @@ export async function redownloadExport(
     }
 }
 
-export type { PayrollExportBatch } from "@/app/actions/rights-settlements"
