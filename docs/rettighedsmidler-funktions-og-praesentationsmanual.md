@@ -149,6 +149,8 @@ Ren kravshensættelse                     4.050 kr.
 
 De 450 kr. trækkes ikke fra den individuelle fordeling igen. De er allerede en del af de 4.500 kr., der blev tilbageholdt.
 
+Når sociale midler beregnes af hensættelsen, er grundlaget altid den oprindelige samlede hensættelse før dens interne opdeling. Flere sociale andele må samlet aldrig overstige hensættelsen.
+
 En lovbestemt kollektiv andel vises og registreres separat fra organisationens almindelige sociale, kulturelle og uddannelsesmæssige midler. Procentsatsen indtastes centralt i stamdata på den relevante rettighedskildes policy og kan derfor være forskellig for eksempelvis Verdens TV og KulturPlus.
 
 ## 6. Fordeling til værker
@@ -178,6 +180,8 @@ Klipper B, 40 %            8.000 kr.
 ```
 
 Samme princip gælder på episodeniveau. Systemet må ikke automatisk dele lige mellem krediterede personer, hvis der findes en godkendt fordelingsnøgle.
+
+En episode bruger sin egen godkendte fordelingsnøgle, hvis den findes. Ellers arver den først sæsonens og derefter værkets nøgle. Det gør det muligt, at en enkelt episode har andre klippere eller procenter end resten af serien, uden at de øvrige episoder ændres.
 
 Organisationen bestemmer, hvilke faggrupper den forvalter. En organisation kan eksempelvis forvalte klippere, mens en anden organisation forvalter andre faggrupper. Reglerne må ikke flyde mellem organisationerne.
 
@@ -257,6 +261,8 @@ Organisationen skal kunne offentliggøre efterlysninger af:
 
 Efterlysningen gentages og dokumenteres efter organisationens politik. Systemet gemmer, hvad der blev offentliggjort, hvornår og af hvem.
 
+Efterlysningen kan ligge på organisationens eksterne hjemmeside eller på en særskilt offentlig side i portalen. Den almindelige brugerportal forbliver bag login. Kun de oplysninger, der er nødvendige for efterlysningen, offentliggøres.
+
 For DFKS løber treårsperioden fra udgangen af det kalenderår, hvor udnyttelsen fandt sted.
 
 Eksempel:
@@ -305,6 +311,8 @@ Når der senere kommer penge på den afdødes værker, fordeles de direkte til a
 Hver organisation vælger sin egen udbetalingsgrænse i stamdata.
 
 Grænsen gælder nettobeløbet efter alle fradrag. Når personen når grænsen, medtages alle disponible tildelinger frem til afregningens skæringsdato.
+
+Skæringsdatoen fastlåses, når afregningen oprettes. Den kan komme fra organisationens afregningskalender eller vælges af en autoriseret administrator ved en manuel kørsel. Nye tildelinger efter skæringsdatoen venter til næste afregning.
 
 Eksempel:
 

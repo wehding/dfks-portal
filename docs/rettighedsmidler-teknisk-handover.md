@@ -232,6 +232,8 @@ Individuel fordeling
 
 Den sociale andel af hensættelsen må ikke trækkes fra den individuelle fordeling igen. Den er en intern klassifikation af et allerede tilbageholdt beløb.
 
+`SKU_FROM_RESERVE` beregnes altid af den oprindeligt beregnede, samlede hensættelse, før hensættelsen opdeles i SKU og ren kravshensættelse. Beregningsgrundlaget bør derfor navngives entydigt, eksempelvis `ORIGINAL_CLAIM_RESERVE`. Hvis flere SKU-komponenter beregnes af hensættelsen, bruger de samme oprindelige grundlag, og deres samlede procent må ikke overstige 100 % af hensættelsen. Rækkefølgen mellem disse interne SKU-komponenter må ikke ændre resultatet.
+
 En lovbestemt kollektiv andel er en selvstændig komponent og må ikke bogføres eller rapporteres som almindelig SKU. Procentsatsen indtastes centralt i den relevante kildes fordelingspolitik på stamdatasiden. Den kan variere mellem organisationer, kilder og perioder og skal have gyldighedsdato, policyversion og godkendelsesreference.
 
 Invariant:
@@ -282,6 +284,7 @@ En værktildeling skal derfor kunne pege på:
 - episode/sæson,
 - kilderække eller udnyttelsesreference,
 - visningsdato eller periode,
+- udnyttelsesår og den afledte fristgruppe,
 - genudsendelse,
 - point og andel,
 - bruttoandel, fradragsandele og nettobeløb.
@@ -301,6 +304,16 @@ Før bogføring skal systemet kontrollere:
 - beløb summerer præcist efter afrunding.
 
 Den anvendte fordelingsnøgle snapshot'es. Ændringer opretter nye versioner og overskriver ikke den historiske nøgle.
+
+Fordelingsnøgler kan gælde på værk-, sæson- eller episodeniveau. Den effektive nøgle vælges med denne prioritet:
+
+```text
+eksplicit episodenøgle
+→ ellers eksplicit sæsonnøgle
+→ ellers værkets nøgle
+```
+
+En episode arver altså seriens eller værkets nøgle, medmindre den har en godkendt override. Den effektive nøgle og dens scope snapshot'es på tildelingen. En tilbageholdt modtagerposition følger samme scope; en episodeoverride må derfor have sin egen tilbageholdte position uden at ændre resten af sæsonen.
 
 ## 7. Tilbageholdt modtagerandel og generel hensættelse
 
@@ -392,12 +405,14 @@ For hver publicering bevares:
 - publiceringsdato,
 - omfattede værker og positioner,
 - tekstsnapshot,
-- offentlig URL,
+- publiceringskanal og eventuel offentlig URL,
 - godkender,
 - eventuel afpublicering,
 - næste planlagte publicering.
 
 Offentlig visning må ikke indeholde CPR, bankoplysninger eller unødvendige beløb.
+
+Efterlysningen kan publiceres på en ekstern organisationsside, eksempelvis dfks.dk, eller på en særskilt offentligt tilgængelig side i portalen. Den almindelige brugerportal forbliver bag login. Publiceringsregistreringen skal derfor have en kanal, eksempelvis `external_url`, `portal_public_page` eller `other`, samt tekstsnapshot og en valgfri URL. Systemet må ikke antage, at alle organisationer hoster efterlysningen i portalen.
 
 ### Behandling af ufordelbare midler
 
@@ -454,11 +469,11 @@ Den interne fordeling mellem arvinger skal give 100 %. Nye midler beregnes forts
 Tilgodehavendet afledes af rettighedstildelinger og afregninger. Der må ikke være et frit mutérbart globalt saldofelt.
 
 ```text
-Tilgodehavende
-= tildelte rettighedsmidler
-+ positive korrektioner
-− beløb reserveret i aktive afregninger
-− udbetalte beløb
+Tilgodehavende i organisationens base currency
+= tildelte rettighedsmidler bogført i base currency
++ positive korrektioner i base currency
+− beløb reserveret i aktive afregninger i base currency
+− udbetalte beløb i base currency
 ```
 
 Beløbet kan aldrig være negativt for personen.
@@ -472,6 +487,8 @@ Udbetalingsgrænsen:
 - medfører, at hele tilgodehavendet afregnes, når grænsen nås.
 
 Kasser kan samles i én afregning inden for samme organisation, men skal forblive særskilte linjer i specifikationen.
+
+Skæringsdatoen gemmes som det immutable felt `settlement.cutoff_at` ved oprettelse af afregningen. Alle tildelinger med `available_at <= cutoff_at`, som opfylder de øvrige krav, kan medtages. Skæringsdatoen bestemmes enten af en organisationsspecifik afregningskalender eller af en autoriseret administrator ved en manuel kørsel. Standardkadence og tilladte regler kan administreres i Stamdata, men skæringsdatoen er ikke en del af fordelingspolitikken, fordi den styrer afregning og ikke beregningen af rettighedsbeløbet.
 
 ## 12. Udbetalingsklarhed
 
@@ -540,7 +557,7 @@ Beløbsgrænser og præcis anvendelse konfigureres pr. organisation.
 
 ## 15. Valuta
 
-Hver organisation har én base currency. Saldi, tærskler og payouts føres i denne valuta.
+Hver organisation har én base currency. Tilgodehavender, tærskler og payouts føres i denne valuta.
 
 Organisationen kan tillade input i eksempelvis lokal valuta og EUR. Originalt beløb, valuta, kurs, kursdato og konverteret beløb bevares. Bogføring og udbetaling sker i base currency, så tilgodehavendet ikke er en skjult blanding af valutaer.
 
@@ -576,6 +593,14 @@ Hændelser:
 Mailen må ikke indeholde CPR eller bankoplysninger. Den fulde specifikation ligger bag login.
 
 Notifikationer skal være idempotente og have status, antal forsøg og fejl. Mailfejl må ikke rulle bogføringen tilbage. Manglende e-mail skal vises som administrativ opgave.
+
+Idempotens håndhæves med en unik nøgle pr. organisation, hændelse, forretningsobjekt, modtager og kanal:
+
+```text
+(org_id, event_type, subject_type, subject_id, rights_holder_id, channel)
+```
+
+`subject` er eksempelvis en fordelingsrunde ved besked om nye tildelinger og en payout ved besked om udbetaling. Nøglen ligger ikke på den enkelte rettighedstildeling, fordi én besked kan samle mange tildelinger fra samme runde. Genforsøg genbruger samme notifikationsrække og opretter ikke en ny besked.
 
 ## 18. Audit, sikkerhed og historik
 
@@ -615,6 +640,17 @@ Navnene er konceptuelle og skal tilpasses repositoryets migrationsstil:
 - `rights_notifications`
 
 Alle økonomiske objekter skal være organisationsbundne.
+
+### Forhold til eksisterende skema
+
+Implementeringen forventes mindst at kræve:
+
+- `organisations.base_currency`,
+- udnyttelsesdato/-år og fristgruppe på den konkrete udnyttelse eller `rights_work_allocation`, ikke på det tidløse værk eller episoden,
+- en mange-til-mange-arverelation med procentfordeling; ét `inherited_from_id` på rettighedshaveren er utilstrækkeligt, fordi én afdød kan have flere arvinger,
+- de nye policy-, tildelings-, hensættelses-, afregnings- og notifikationstabeller.
+
+Den eksisterende `agreement_percentage_rules` skal ikke genbruges som `distribution_policy_components`. Tabellen er knyttet til overenskomster og bruges som struktureret kontekst for kontrakt-/lønberegning; dens oprindelige migration angiver udtrykkeligt, at den ikke er automatisk fordelingsberegning. Royalty-, SVOD- og Copydan-labels i tabellen beskriver kontraktvilkår. Fordelingspolitikker beskriver derimod organisationens faktiske behandling af modtagne rettighedsvederlag. Modellerne skal holdes adskilt og kan senere forbindes gennem eksplicitte referencer, hvis et kontraktvilkår leverer input til en rettighedsberegning.
 
 ## 20. Anbefalet implementeringsrækkefølge
 
