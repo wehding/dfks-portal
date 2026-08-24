@@ -216,13 +216,13 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     sectionHighlightsRef.current = sectionHighlights
 
     // Lag 5 og tekst-søgning er gensidigt udelukkende: hvis koordinat-boksen
-    // dækker det aktive felt, skal HVERKEN den grønne ord-markering ELLER
+    // findes for det aktive felt, skal HVERKEN den grønne ord-markering ELLER
     // sectionHighlights' gule paragraf-markering vises. Løftet til komponent-
     // niveau, så begge effekter (tekst-søgnings-navigation og highlighting)
     // bruger samme, konsistente beregning.
     const hasCoordinateBox = !!(
         activeClauseId && layout &&
-        layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)?.pdfBbox
+        layout.clauses.find(c => c.id === activeClauseId)?.pdfBbox
     )
     const effectiveActiveHighlight = hasCoordinateBox ? null : activeHighlight
     const effectiveSectionHighlights = useMemo(

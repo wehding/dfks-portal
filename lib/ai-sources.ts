@@ -98,10 +98,12 @@ export function discardIfNoDigits(s: string | null | undefined): string | null {
  */
 export function discardIfNoDkkAmount(s: string | null | undefined): string | null {
     if (!s) return null
-    // Kræver mindst ét ciffer direkte inden DKK/kr. (evt. adskilt af punktum/komma/mellemrum)
-    // men IKKE kun streger "_" inden DKK/kr.
-    // [\d.,\s-]* tillader "2500 ,-DKK" (dansk format) — \d i starten udelukker "___-DKK"
-    return /\d[\d.,\s-]*\s*(DKK|kr\.)/i.test(s) ? s : null
+    // Accepter både "1.251 kr." og den almindelige kontraktform "kr. 1.251".
+    // Beløbet skal indeholde et reelt ciffer, så tomme skabelonfelter som
+    // "kr. ___" eller "___ DKK" fortsat bliver kasseret.
+    const amountBeforeCurrency = /\d[\d.,\s-]*\s*(DKK|kr\.)/i.test(s)
+    const currencyBeforeAmount = /(DKK|kr\.)\s*\d[\d.,\s-]*/i.test(s)
+    return amountBeforeCurrency || currencyBeforeAmount ? s : null
 }
 
 /**

@@ -28,10 +28,11 @@ export const COLLECTIVE_AGREEMENT_RULE =
     "En leverandørkontrakt er ALDRIG en 'overenskomstkontrakt'. (boolean)"
 
 export const COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE =
-    "true KUN hvis kontrakten er en LEVERANDØRKONTRAKT (CVR, moms, faktura eller tydelig B2B-aftale) OG overenskomstens vilkår eksplicit er inkorporeret ved reference. " +
-    "Feltet registrerer kun formuleringen som et individuelt kontraktvilkår. Det betyder IKKE, at leverandøren er overenskomstdækket, og der må ikke udledes pension eller andre overenskomstrettigheder automatisk. " +
+    "true KUN hvis kontrakten er en LEVERANDØRKONTRAKT (CVR, moms, faktura eller tydelig B2B-aftale) OG direkte henviser til en navngiven overenskomst. " +
+    "Feltet monitorerer, at referencen findes. Det betyder IKKE, at leverandøren er overenskomstdækket, og der må ikke udledes pension, helligdagsbetaling, BETA eller andre lønmodtagervilkår automatisk. " +
+    "En afgrænset henvisning til en navngiven overenskomst i en ophavsrets-, rettigheds- eller royaltyklausul giver derfor OGSÅ true. En sådan reference må kun bruges til de rettigheder, klausulen konkret omtaler. " +
     "ALDRIG true for A-lønskontrakter — en A-lønskontrakt der nævner overenskomsten er bare en normal A-lønskontrakt, ikke en leverandørkontrakt med reference. " +
-    "Eksempel på true: leverandørkontrakt med formulering som 'the terms of the collective agreement shall apply by analogy' eller 'rettigheder overdrages i overensstemmelse med overenskomsten'. " +
+    "Eksempel på true: en leverandørkontrakt der generelt anvender en overenskomst analogt, eller som henviser til en navngiven overenskomst i en afgrænset rettighedsklausul. " +
     "Eksempel på FALSE: en A-lønskontrakt der slutter med 'I øvrigt henvises til gældende Fiktionsoverenskomst' — dette er IKKE inkorporering ved reference, det er bare en normal overenskomstreference i en A-lønskontrakt. " +
     "Sæt false hvis contractType er 'a-løn'. (boolean)"
 

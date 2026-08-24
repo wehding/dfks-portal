@@ -160,6 +160,19 @@ export interface OtherSupplement {
     clauseId: string | null
 }
 
+export interface ContractWorkPhase {
+    phase: "preproduction" | "editing" | "post_edit_finishing"
+    weeks: number | null
+    paymentType: "included_in_salary" | "separate_supplement" | "unpaid" | "unclear"
+    amount: number | null
+    amountType: "explicit" | "calculated" | null
+    note: string
+    sourceText: string | null
+    clauseId: string | null
+}
+
+export interface ContractCreditClause { title: string; sourceText: string | null; clauseId: string | null }
+
 export interface ExtractedContractData {
     productionType?: string
     salary?: number
@@ -185,6 +198,9 @@ export interface ExtractedContractData {
     pensionTag?: string
     personalSupplement?: number
     otherSupplements?: OtherSupplement[] | null
+    workPhases?: ContractWorkPhase[] | null
+    contractCredits?: ContractCreditClause[] | null
+    creditClauseStatus?: "precise" | "vague" | "role_only" | "conditional" | "absent" | "unclear"
     signatureStatus?: "yes" | "no" | "unknown"
     signatureMethod?: "handwritten" | "digital" | "none" | "unknown"
     signatureDate?: string
