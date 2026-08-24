@@ -80,7 +80,6 @@ export default function MinProfilPage() {
     const [shareStatistics, setShareStatistics] = useState(true)
     const [professionalStartYear, setProfessionalStartYear] = useState("")
     const [primaryProfessionTypeId, setPrimaryProfessionTypeId] = useState("")
-    const [secondaryProfessionTypeIds, setSecondaryProfessionTypeIds] = useState<string[]>([])
     const [usualWorkMode, setUsualWorkMode] = useState("")
     const [primaryWorkRegionCode, setPrimaryWorkRegionCode] = useState("")
 
@@ -159,7 +158,6 @@ export default function MinProfilPage() {
                 setShareStatistics(!statistics.profile.optOutStatistics)
                 setProfessionalStartYear(statistics.profile.professionalStartYear ? String(statistics.profile.professionalStartYear) : "")
                 setPrimaryProfessionTypeId(statistics.profile.primaryProfessionTypeId ?? "")
-                setSecondaryProfessionTypeIds(statistics.profile.secondaryProfessionTypeIds ?? [])
                 setUsualWorkMode(statistics.profile.usualWorkMode ?? "")
                 setPrimaryWorkRegionCode(statistics.profile.primaryWorkRegionCode ?? "")
             }
@@ -196,7 +194,7 @@ export default function MinProfilPage() {
                 optOutStatistics: statisticsOptions?.profile.isOrganisationMember ? false : !shareStatistics,
                 professionalStartYear: professionalStartYear ? Number(professionalStartYear) : null,
                 primaryProfessionTypeId: primaryProfessionTypeId || null,
-                secondaryProfessionTypeIds,
+                secondaryProfessionTypeIds: [],
                 usualWorkMode: usualWorkMode || null,
                 primaryWorkRegionCode: primaryWorkRegionCode || null,
             })
@@ -499,7 +497,6 @@ export default function MinProfilPage() {
                     )}
                     {statisticsOptions?.config.professional_start_year && <div className="space-y-1.5"><Label>Hvilket år begyndte du at arbejde professionelt som {statisticsOptions.professionLabel.toLocaleLowerCase(locale === "en" ? "en" : "da")}?</Label><Input type="number" min={1940} max={new Date().getFullYear()} value={professionalStartYear} onChange={event => setProfessionalStartYear(event.target.value)} className="max-w-48" /></div>}
                     {statisticsOptions?.config.primary_profession_type && statisticsOptions.professionTypes.length > 0 && <div className="space-y-1.5"><Label>Primær faggruppe</Label><select className="flex h-10 w-full max-w-sm rounded-md border bg-background px-3 text-sm" value={primaryProfessionTypeId} onChange={event => setPrimaryProfessionTypeId(event.target.value)}><option value="">Vælg faggruppe</option>{statisticsOptions.professionTypes.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></div>}
-                    {statisticsOptions?.config.secondary_profession_types && statisticsOptions.professionTypes.length > 0 && <div className="space-y-2"><Label>Yderligere faggrupper</Label><div className="grid gap-2 sm:grid-cols-2">{statisticsOptions.professionTypes.filter(option => option.id !== primaryProfessionTypeId).map(option => <label key={option.id} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"><input type="checkbox" checked={secondaryProfessionTypeIds.includes(option.id)} onChange={event => setSecondaryProfessionTypeIds(current => event.target.checked ? [...new Set([...current, option.id])] : current.filter(id => id !== option.id))} />{option.name}</label>)}</div></div>}
                     {statisticsOptions?.config.usual_work_mode && <div className="space-y-1.5"><Label>Typisk arbejdsform</Label><select className="flex h-10 w-full max-w-sm rounded-md border bg-background px-3 text-sm" value={usualWorkMode} onChange={event => setUsualWorkMode(event.target.value)}><option value="">Vælg arbejdsform</option><option value="employee">A-lønmodtager</option><option value="company">Gennem eget selskab</option><option value="both">Begge dele</option><option value="other">Andet</option><option value="prefer_not_to_say">Vil ikke oplyse</option></select></div>}
                     {statisticsOptions?.config.primary_work_region && statisticsOptions.workRegions.length > 0 && <div className="space-y-1.5"><Label>Primært arbejdsområde</Label><select className="flex h-10 w-full max-w-sm rounded-md border bg-background px-3 text-sm" value={primaryWorkRegionCode} onChange={event => setPrimaryWorkRegionCode(event.target.value)}><option value="">Vælg område</option>{statisticsOptions.workRegions.map(option => <option key={option.code} value={option.code}>{locale === "en" ? option.nameEn : option.nameDa}</option>)}</select></div>}
                 </div>

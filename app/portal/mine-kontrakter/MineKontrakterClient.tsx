@@ -465,7 +465,7 @@ export default function MineKontrakterClient({
         return;
       }
       if (coEditors.length && parsePercentInput(row.selfSharePercent) === null) {
-        toast.error(`Angiv din egen foreløbige procent for ${row.title}.`);
+        toast.error(`Angiv din egen vurderede arbejdsandel for ${row.title}.`);
         return;
       }
     }
@@ -1259,9 +1259,24 @@ export default function MineKontrakterClient({
 
       {/* Statistik */}
       <SummaryGrid>
-        <SummaryCard label={t("common.total")} value={total} />
-        <SummaryCard label={t("common.validated")} value={validerede} />
-        <SummaryCard label={t("common.pendingValidation")} value={afventer} />
+        <SummaryCard
+          label={t("common.total")}
+          value={total}
+          active={!search && statusFilter === "all" && typeFilter === "all"}
+          onClick={() => { setSearch(""); setStatusFilter("all"); setTypeFilter("all"); }}
+        />
+        <SummaryCard
+          label={t("common.validated")}
+          value={validerede}
+          active={!search && statusFilter === "valideret" && typeFilter === "all"}
+          onClick={() => { setSearch(""); setStatusFilter("valideret"); setTypeFilter("all"); }}
+        />
+        <SummaryCard
+          label={t("common.pendingValidation")}
+          value={afventer}
+          active={!search && statusFilter === "kladde" && typeFilter === "all"}
+          onClick={() => { setSearch(""); setStatusFilter("kladde"); setTypeFilter("all"); }}
+        />
       </SummaryGrid>
 
       {/* Toast-besked */}
@@ -1832,7 +1847,7 @@ export default function MineKontrakterClient({
 
                             {entry.coEditors.length > 0 && (
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-medium text-muted-foreground">Din foreløbige arbejdsandel (%)</Label>
+                                <Label className="text-xs font-medium text-muted-foreground">Din vurderede arbejdsandel (%)</Label>
                                 <Input
                                   type="text"
                                   inputMode="decimal"

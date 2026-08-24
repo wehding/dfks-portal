@@ -26,6 +26,34 @@ import { assertRightsHolderInOrg, assertUserInOrg, getRightsHolderInOrg } from "
 import { buildAccountAccessUrl } from "@/lib/auth/account-access"
 import { invitationAccessType, inviteSentAtAfterMail, isNewUserLimitReached } from "@/lib/auth/invitation-policy"
 import { requireConfiguredSiteUrl } from "@/lib/site-url"
+import {
+    MEMBER_WORK_INVITE_SUBJECT,
+    MEMBER_WORK_INVITE_TEXT,
+    NON_MEMBER_WORK_INVITE_SUBJECT,
+    NON_MEMBER_WORK_INVITE_TEXT,
+} from "@/lib/rights-holder-invitation-templates"
+import { renderInvitationTemplate } from "@/lib/work-share-reconciliation"
+
+async function invitationWorkList(admin: ReturnType<typeof getAdmin>, orgId: string, rightsHolderId: string, preferredWorkId?: string | null) {
+    const [{ data: assignments }, { data: participants }] = await Promise.all([
+        admin.from("work_assignments").select("work_id,works(title,year)").eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).limit(100),
+        admin.from("work_share_participants").select("work_id,source_tags,work_share_cases!inner(org_id),works(title,year)").eq("rights_holder_id", rightsHolderId).eq("work_share_cases.org_id", orgId).is("excluded_at", null).limit(100),
+    ])
+    const rows = [
+      ...(assignments ?? []).map(row => ({ ...row, sources: ["Portal"] })),
+      ...(participants ?? []).map(row => ({ ...row, sources: Array.isArray(row.source_tags) && row.source_tags.length ? row.source_tags.map(source => source === "dfi" ? "DFI" : source === "tmdb" ? "TMDb" : source === "member" ? "Indtastet" : "Portal") : ["Portal"] })),
+    ].flatMap(row => {
+        const work = row.works as unknown as { title?: string | null; year?: number | null } | null
+        return work?.title ? [{ id: row.work_id as string, title: work.title, year: work.year ?? null, sources: row.sources }] : []
+    })
+    const unique = [...rows.reduce((map, row) => {
+      const existing = map.get(row.id)
+      map.set(row.id, existing ? { ...existing, sources: [...new Set([...existing.sources, ...row.sources])] } : row)
+      return map
+    }, new Map<string, typeof rows[number]>()).values()]
+      .sort((left, right) => Number(right.id === preferredWorkId) - Number(left.id === preferredWorkId) || (right.year ?? 0) - (left.year ?? 0) || left.title.localeCompare(right.title, "da"))
+    return unique
+}
 
 function getAdmin(audit?: AuditContext) {
     return createServiceClient({ audit })
@@ -108,6 +136,42 @@ export async function POST(req: NextRequest) {
         }
         const admin = getAdmin(auditContext)
 
+        if (body.action === "preview_invite") {
+            const rhId = typeof body.rhId === "string" ? body.rhId : ""
+            if (!rhId) return NextResponse.json({ error: "rhId er påkrævet" }, { status: 400 })
+            const orgId = caller.orgId ?? (caller.role === "superadmin" ? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5" : null)
+            if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 })
+            const holder = await getRightsHolderInOrg(admin, rhId, orgId)
+            if (!holder) return NextResponse.json({ error: "Rettighedshaveren tilhører ikke din organisation" }, { status: 403 })
+            const [{ data: org }, { data: affiliation }, allWorks] = await Promise.all([
+                admin.from("organisations").select("name,branding,member_work_invite_subject,member_work_invite_text,non_member_work_invite_subject,non_member_work_invite_text").eq("id", orgId).single(),
+                admin.from("org_affiliations").select("is_member").eq("org_id", orgId).eq("rights_holder_id", rhId).maybeSingle(),
+                invitationWorkList(admin, orgId, rhId, typeof body.workId === "string" ? body.workId : null),
+            ])
+            const works = allWorks.slice(0, 10)
+            const brand = resolveBranding(org as never)
+            const isMember = affiliation?.is_member === true
+            const subjectTemplate = isMember
+                ? org?.member_work_invite_subject ?? MEMBER_WORK_INVITE_SUBJECT
+                : org?.non_member_work_invite_subject ?? NON_MEMBER_WORK_INVITE_SUBJECT
+            const bodyTemplate = isMember
+                ? org?.member_work_invite_text ?? MEMBER_WORK_INVITE_TEXT
+                : org?.non_member_work_invite_text ?? NON_MEMBER_WORK_INVITE_TEXT
+            const worksText = works.length
+                ? `${works.map(work => `• ${work.title}${work.year ? ` (${work.year})` : ""} · ${work.sources.join(" · ")}`).join("\n")}${allWorks.length > works.length ? `\n• ${allWorks.length - works.length} øvrige titler kan ses i portalen` : ""}`
+                : "Vi har endnu ikke en sikker værksliste. Du kan gennemgå og tilføje dine værker i portalen."
+            const values = { name: holder.full_name ?? "", organisation: org?.name ?? brand.long_name, worksText, primaryWork: works[0]?.title ?? "et værk" }
+            return NextResponse.json({
+                ok: true,
+                name: holder.full_name,
+                email: holder.email,
+                membership: isMember ? "member" : "non_member",
+                subject: renderInvitationTemplate(subjectTemplate, values),
+                bodyText: renderInvitationTemplate(bodyTemplate, values),
+                works,
+            })
+        }
+
         // ── Invite / reminder: opret eller gensend link ──────────
         if (body.action === "invite" || body.action === "reminder") {
             const { rhId, role: inviteRole, title } = body
@@ -152,7 +216,7 @@ export async function POST(req: NextRequest) {
             // Tjek max_users-grænse for den aktuelle org
             const [{ count: userCount }, { data: org }] = await Promise.all([
                 admin.from("user_org_roles").select("*", { count: "exact", head: true }).eq("org_id", orgId),
-                admin.from("organisations").select("max_users, name, from_email, branding, invite_email_text, invite_reminder_text").eq("id", orgId).single(),
+                admin.from("organisations").select("max_users, name, from_email, branding, invite_email_text, invite_reminder_text, member_work_invite_subject, member_work_invite_text, non_member_work_invite_subject, non_member_work_invite_text").eq("id", orgId).single(),
             ])
             const existingAuthUser = await findAuthUserByEmail(admin, email)
             if (org && isNewUserLimitReached({ existingUserId: existingAuthUser?.id, currentUsers: userCount ?? 0, maxUsers: org.max_users })) {
@@ -213,6 +277,23 @@ export async function POST(req: NextRequest) {
             // Gmail-afsenderen er serverstyret; organisationen styrer navn og Reply-To.
             const orgForMail = org as { name?: string | null; from_email?: string | null; branding?: Record<string, unknown> | null } | null
             const brand = resolveBranding(orgForMail as never)
+            const { data: affiliation } = !isStaff
+                ? await admin.from("org_affiliations").select("is_member").eq("org_id", orgId).eq("rights_holder_id", rhId).maybeSingle()
+                : { data: null }
+            const allWorks = !isStaff ? await invitationWorkList(admin, orgId, rhId, typeof body.workId === "string" ? body.workId : null) : []
+            const works = allWorks.slice(0, 10)
+            const worksText = works.length
+                ? `${works.map(work => `• ${work.title}${work.year ? ` (${work.year})` : ""} · ${work.sources.join(" · ")}`).join("\n")}${allWorks.length > works.length ? `\n• ${allWorks.length - works.length} øvrige titler kan ses i portalen` : ""}`
+                : "Vi har endnu ikke en sikker værksliste. Du kan gennemgå og tilføje dine værker i portalen."
+            const isWorkInvitation = !isStaff && body.includeWorks !== false && body.action !== "reminder"
+            const isMember = affiliation?.is_member === true
+            const workSubjectTemplate = isMember
+                ? ((org as { member_work_invite_subject?: string | null } | null)?.member_work_invite_subject ?? MEMBER_WORK_INVITE_SUBJECT)
+                : ((org as { non_member_work_invite_subject?: string | null } | null)?.non_member_work_invite_subject ?? NON_MEMBER_WORK_INVITE_SUBJECT)
+            const workBodyTemplate = isMember
+                ? ((org as { member_work_invite_text?: string | null } | null)?.member_work_invite_text ?? MEMBER_WORK_INVITE_TEXT)
+                : ((org as { non_member_work_invite_text?: string | null } | null)?.non_member_work_invite_text ?? NON_MEMBER_WORK_INVITE_TEXT)
+            const templateValues = { name: name || "", organisation: org?.name ?? brand.long_name, worksText, primaryWork: works[0]?.title ?? "et værk" }
             const accessType = invitationAccessType(existingAuthUser?.id)
             const inviteUrl = buildAccountAccessUrl(
                 siteUrl,
@@ -223,7 +304,9 @@ export async function POST(req: NextRequest) {
                 to: email,
                 fromName: resolveEmailSenderName(orgForMail as never),
                 replyTo: resolveReplyToEmail(orgForMail as never),
-                subject: body.action === "reminder"
+                subject: isWorkInvitation
+                    ? renderInvitationTemplate(workSubjectTemplate, templateValues)
+                    : body.action === "reminder"
                     ? `2. invitation til ${brand.long_name}s portal`
                     : `Invitation til ${brand.long_name}s portal`,
                 html: inviteEmailHtml({
@@ -231,9 +314,12 @@ export async function POST(req: NextRequest) {
                     inviteUrl,
                     orgName: brand.long_name,
                     primaryColor: brand.primary_color,
-                    bodyText: body.action === "reminder"
+                    bodyText: isWorkInvitation
+                        ? renderInvitationTemplate(workBodyTemplate, templateValues)
+                        : body.action === "reminder"
                         ? ((org as { invite_reminder_text?: string | null } | null)?.invite_reminder_text ?? null)
                         : ((org as { invite_email_text?: string | null } | null)?.invite_email_text ?? null),
+                    bodyIncludesGreeting: isWorkInvitation,
                     variant: body.action === "reminder" ? "reminder" : "invite",
                     accessType,
                 }),
@@ -269,6 +355,7 @@ export async function POST(req: NextRequest) {
                 link_type: accessType,
                 email_sent: mail.ok,
                 email_error: mail.ok ? undefined : mail.error,
+                works,
             })
         }
 

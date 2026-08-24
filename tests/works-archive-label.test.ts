@@ -8,7 +8,7 @@ const visibleAdminFiles = [
   "app/admin/vaerker/WorkArchiveClient.tsx",
   "app/actions/work-identity.ts",
   "app/actions/work-collaboration-reviews.ts",
-  "components/admin/work-share-case-panel.tsx",
+  "components/admin/work-share-reconciliation-wizard.tsx",
 ];
 
 test("viser Værksarkiv uden gamle adminbetegnelser", () => {

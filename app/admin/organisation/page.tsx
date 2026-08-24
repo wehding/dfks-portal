@@ -12,6 +12,13 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImportConnectionsSettings } from "@/components/admin/import-connections-settings";
 import { LegalDocumentSettings } from "@/components/admin/legal-document-settings";
+import {
+  MEMBER_WORK_INVITE_SUBJECT,
+  MEMBER_WORK_INVITE_TEXT,
+  NON_MEMBER_WORK_INVITE_SUBJECT,
+  NON_MEMBER_WORK_INVITE_TEXT,
+} from "@/lib/rights-holder-invitation-templates";
+import { renderInvitationTemplate } from "@/lib/work-share-reconciliation";
 
 type FormState = {
   org_id: string;
@@ -22,6 +29,10 @@ type FormState = {
   from_email: string;
   invite_email_text: string;
   invite_reminder_text: string;
+  member_work_invite_subject: string;
+  member_work_invite_text: string;
+  non_member_work_invite_subject: string;
+  non_member_work_invite_text: string;
   welcome_message_text: string;
   coeditor_word: string;
   role_labels: string[];
@@ -59,6 +70,10 @@ const emptyForm: FormState = {
   from_email: "",
   invite_email_text: "",
   invite_reminder_text: "",
+  member_work_invite_subject: MEMBER_WORK_INVITE_SUBJECT,
+  member_work_invite_text: MEMBER_WORK_INVITE_TEXT,
+  non_member_work_invite_subject: NON_MEMBER_WORK_INVITE_SUBJECT,
+  non_member_work_invite_text: NON_MEMBER_WORK_INVITE_TEXT,
   welcome_message_text: "",
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
@@ -67,7 +82,7 @@ const emptyForm: FormState = {
   statistics_contract_scope: "validated_only",
   statistics_minimum_group_size: 5,
   statistics_dominance_limit: 0.8,
-  statistics_profile_config: { professional_start_year: true, primary_profession_type: false, secondary_profession_types: false, usual_work_mode: false, primary_work_region: false },
+  statistics_profile_config: { professional_start_year: true, primary_profession_type: false, secondary_profession_types: false, usual_work_mode: true, primary_work_region: false },
   statistics_work_regions: [],
   onboarding_keywords: ["klip", "edit"],
   contract_review_retention_months: 24,
@@ -106,6 +121,10 @@ export default function OrganisationSettingsPage() {
           from_email: settings.from_email ?? "",
           invite_email_text: settings.invite_email_text ?? "",
           invite_reminder_text: settings.invite_reminder_text ?? "",
+          member_work_invite_subject: settings.member_work_invite_subject ?? MEMBER_WORK_INVITE_SUBJECT,
+          member_work_invite_text: settings.member_work_invite_text ?? MEMBER_WORK_INVITE_TEXT,
+          non_member_work_invite_subject: settings.non_member_work_invite_subject ?? NON_MEMBER_WORK_INVITE_SUBJECT,
+          non_member_work_invite_text: settings.non_member_work_invite_text ?? NON_MEMBER_WORK_INVITE_TEXT,
           welcome_message_text: settings.welcome_message_text ?? "",
           coeditor_word: settings.coeditor_word,
           role_labels: settings.role_labels,
@@ -205,6 +224,10 @@ export default function OrganisationSettingsPage() {
           from_email: form.from_email || null,
           invite_email_text: form.invite_email_text || null,
           invite_reminder_text: form.invite_reminder_text || null,
+          member_work_invite_subject: form.member_work_invite_subject || null,
+          member_work_invite_text: form.member_work_invite_text || null,
+          non_member_work_invite_subject: form.non_member_work_invite_subject || null,
+          non_member_work_invite_text: form.non_member_work_invite_text || null,
           welcome_message_text: form.welcome_message_text || null,
           coeditor_word: form.coeditor_word,
           role_labels: form.role_labels,
@@ -302,6 +325,9 @@ export default function OrganisationSettingsPage() {
             Opsætning
           </div>
           <h1 className="text-2xl font-semibold">Opsætning</h1>
+          <p className="mt-1 text-base font-medium text-foreground">
+            {form.long_name || form.short_name || "Organisation"}
+          </p>
           <p className="mt-1 text-sm text-muted-foreground">
             Tilpas navn, logo, afsender-mail og de fagord organisationens brugere ser i portalen.
           </p>
@@ -475,12 +501,11 @@ export default function OrganisationSettingsPage() {
           {([
             ["professional_start_year", "Professionelt startår"],
             ["primary_profession_type", "Primær faggruppe"],
-            ["secondary_profession_types", "Yderligere faggrupper"],
             ["usual_work_mode", "Typisk arbejdsform"],
             ["primary_work_region", "Primært arbejdsområde"],
           ] as const).map(([key, label]) => <div key={key} className="flex items-center justify-between gap-4 rounded-md border px-3 py-2">
             <Label htmlFor={`statistics-profile-${key}`}>{label}</Label>
-            <Switch id={`statistics-profile-${key}`} checked={form.statistics_profile_config[key]} disabled={key === "secondary_profession_types" && !form.statistics_profile_config.primary_profession_type} onCheckedChange={checked => setForm(current => ({ ...current, statistics_profile_config: { ...current.statistics_profile_config, [key]: checked } }))} />
+            <Switch id={`statistics-profile-${key}`} checked={form.statistics_profile_config[key]} onCheckedChange={checked => setForm(current => ({ ...current, statistics_profile_config: { ...current.statistics_profile_config, [key]: checked } }))} />
           </div>)}
           {form.statistics_profile_config.primary_work_region && <div className="space-y-2 rounded-md border p-3">
             <Label>Valgbare arbejdsområder</Label>
@@ -516,6 +541,32 @@ export default function OrganisationSettingsPage() {
               placeholder="Skriv den tekst, der skal bruges, når en invitation gensendes som rykker."
               rows={4}
             />
+          </div>
+          <div className="space-y-3 rounded-md border p-3">
+            <div>
+              <Label>Invitation til medlem med værksliste</Label>
+              <p className="mt-1 text-xs text-muted-foreground">Tilladte pladsholdere: {'{navn}'}, {'{værk}'}, {'{værker}'} og {'{organisation}'}.</p>
+            </div>
+            <Input aria-label="Emne til medlemsinvitation" value={form.member_work_invite_subject} onChange={event => setForm(current => ({ ...current, member_work_invite_subject: event.target.value }))} />
+            <Textarea rows={12} value={form.member_work_invite_text} onChange={event => setForm(current => ({ ...current, member_work_invite_text: event.target.value }))} />
+            <details className="rounded-md bg-muted/40 p-3 text-sm">
+              <summary className="cursor-pointer font-medium">Forhåndsvisning</summary>
+              <p className="mt-3 font-semibold">{renderInvitationTemplate(form.member_work_invite_subject, { name: "Anna Jensen", organisation: form.long_name || form.short_name || "Organisationen", worksText: "• Eksempelværk (2025)", primaryWork: "Eksempelværk" })}</p>
+              <p className="mt-2 whitespace-pre-line text-muted-foreground">{renderInvitationTemplate(form.member_work_invite_text, { name: "Anna Jensen", organisation: form.long_name || form.short_name || "Organisationen", worksText: "• Eksempelværk (2025)", primaryWork: "Eksempelværk" })}</p>
+            </details>
+          </div>
+          <div className="space-y-3 rounded-md border p-3">
+            <div>
+              <Label>Invitation til ikke-medlem med værksliste</Label>
+              <p className="mt-1 text-xs text-muted-foreground">Skabelonen forklarer, at kontrakter skal uploades som dokumentation for rettighedspengene.</p>
+            </div>
+            <Input aria-label="Emne til ikke-medlemsinvitation" value={form.non_member_work_invite_subject} onChange={event => setForm(current => ({ ...current, non_member_work_invite_subject: event.target.value }))} />
+            <Textarea rows={12} value={form.non_member_work_invite_text} onChange={event => setForm(current => ({ ...current, non_member_work_invite_text: event.target.value }))} />
+            <details className="rounded-md bg-muted/40 p-3 text-sm">
+              <summary className="cursor-pointer font-medium">Forhåndsvisning</summary>
+              <p className="mt-3 font-semibold">{renderInvitationTemplate(form.non_member_work_invite_subject, { name: "Bo Hansen", organisation: form.long_name || form.short_name || "Organisationen", worksText: "• Eksempelværk (2025)", primaryWork: "Eksempelværk" })}</p>
+              <p className="mt-2 whitespace-pre-line text-muted-foreground">{renderInvitationTemplate(form.non_member_work_invite_text, { name: "Bo Hansen", organisation: form.long_name || form.short_name || "Organisationen", worksText: "• Eksempelværk (2025)", primaryWork: "Eksempelværk" })}</p>
+            </details>
           </div>
           <div className="space-y-2">
             <Label>Velkomstbesked</Label>

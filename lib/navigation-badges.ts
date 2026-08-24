@@ -3,6 +3,7 @@ export type NavigationBadgeCounts = {
   adminContractMessages: number;
   adminWorks: number;
   adminWorkMessages: number;
+  adminWorkShareTasks: number;
   adminReviews: number;
   adminScreenings: number;
   memberWorkMessages: number;
@@ -16,6 +17,7 @@ export const EMPTY_NAVIGATION_BADGES: NavigationBadgeCounts = {
   adminContractMessages: 0,
   adminWorks: 0,
   adminWorkMessages: 0,
+  adminWorkShareTasks: 0,
   adminReviews: 0,
   adminScreenings: 0,
   memberWorkMessages: 0,
@@ -31,6 +33,7 @@ export function normalizeNavigationBadgeCounts(row: Record<string, unknown> | nu
     adminContractMessages: count("admin_contract_messages"),
     adminWorks: count("admin_works"),
     adminWorkMessages: count("admin_work_messages"),
+    adminWorkShareTasks: count("admin_work_share_tasks"),
     adminReviews: count("admin_reviews"),
     adminScreenings: count("admin_screenings"),
     memberWorkMessages: count("member_work_messages"),

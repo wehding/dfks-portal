@@ -6,11 +6,39 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOrgId } from "@/lib/org";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
-import { ensureWorkShareCase } from "@/lib/server/work-share-cases";
+import { ensureWorkShareCase, saveKnownShareParticipant } from "@/lib/server/work-share-cases";
 import { isCompleteShareResolution, normalizeSharePercent } from "@/lib/work-share-distribution";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { markCollaborationReviewsCoeditorsReported } from "@/lib/server/work-collaboration-reviews";
+import { buildReconciledWorkCredits, getWorkCreditSourceStates, matchWorkCreditsToRightsHolders, refreshWorkCreditEvidence } from "@/lib/server/work-credit-evidence";
+import { normalizeCreditName, proposeWorkShareCompromise } from "@/lib/work-share-reconciliation";
+import { normalizeSingleEmail } from "@/lib/email/mime";
+import { countUniqueWorkShareTasks } from "@/lib/work-share-task-count";
+
+const ADMIN_SHARE_CASE_SELECT = "id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,source_tags,source_details,excluded_at,last_reminder_sent_at,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name,email,user_id,invite_sent_at))";
+type AdminShareCaseRecord = Record<string, unknown> & { work_id: string; season_number: number | null; episode_number: number | null };
+
+async function attachCreditSourceStates(db: ReturnType<typeof createServiceClient>, orgId: string, cases: AdminShareCaseRecord[]) {
+  const workIds = [...new Set(cases.map(row => String(row.work_id ?? "")).filter(Boolean))];
+  const states = await getWorkCreditSourceStates(db, { orgId, workIds });
+  return cases.map(row => ({ ...row, credit_source_states: states.get(row.work_id) ?? [] }));
+}
+
+async function fetchAdminShareCase(db: ReturnType<typeof createServiceClient>, orgId: string, caseId: string) {
+  const { data, error } = await db.from("work_share_cases").select(ADMIN_SHARE_CASE_SELECT)
+    .eq("id", caseId).eq("org_id", orgId).maybeSingle();
+  if (error || !data) throw new Error(error?.message ?? "Fordelingssagen findes ikke.");
+  return (await attachCreditSourceStates(db, orgId, [data as unknown as AdminShareCaseRecord]))[0];
+}
+
+async function shareAdminContext() {
+  const session = await createClient();
+  const { data: { user } } = await session.auth.getUser();
+  const admin = await assertAdminRole(session, USER_ADMIN_ROLES);
+  if (!admin || !user) throw new Error("Mangler adminrettigheder.");
+  return { admin, user, db: createServiceClient() };
+}
 
 async function ownContext(rightsHolderId: string) {
   const session = await createClient();
@@ -59,11 +87,15 @@ export async function fetchMemberShareTask(params: {
       orgId, workId, seasonNumber, episodeNumber: params.episodeNumber,
       episodeNumbers: targetWorks.map(row => row.episode_number).filter((number): number is number => number != null),
     });
-    await db.from("work_share_participants").upsert(knownHolderIds.map(rightsHolderId => ({
-      case_id: shareCase.id, org_id: orgId, work_id: workId, rights_holder_id: rightsHolderId,
+    await Promise.all(knownHolderIds.map(rightsHolderId => saveKnownShareParticipant(db, {
+      case_id: shareCase.id,
+      org_id: orgId,
+      work_id: workId,
+      rights_holder_id: rightsHolderId,
       role: knownAssignments?.find(row => row.rights_holder_id === rightsHolderId)?.role ?? "Klipper",
-      relationship_status: rightsHolderId === holder.id ? "pending" : "pending",
-    })), { onConflict: "case_id,rights_holder_id" });
+      relationship_status: "pending",
+      updated_at: new Date().toISOString(),
+    })));
   }
   if (!shareCase) return { success: true as const, task: null, knownRightsHolderCount: knownHolderIds.length };
 
@@ -167,11 +199,189 @@ export async function fetchAdminShareCases() {
   const admin = await assertAdminRole(session, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
   const db = createServiceClient();
-  const { data, error } = await db.from("work_share_cases")
-    .select("id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name))")
-    .eq("org_id", admin.orgId).neq("status", "resolved").order("created_at");
-  if (error) throw new Error(error.message);
-  return { success: true as const, cases: data ?? [] };
+  const [{ data, error }, { data: disputes, error: disputeError }] = await Promise.all([
+    db.from("work_share_cases").select(ADMIN_SHARE_CASE_SELECT)
+      .eq("org_id", admin.orgId).neq("status", "resolved").order("created_at"),
+    db.from("member_work_collaboration_reviews")
+      .select("id,work_id,works(title,season_number,episode_number),rettighedshavere(full_name)")
+      .eq("org_id", admin.orgId).eq("status", "disputed"),
+  ]);
+  if (error || disputeError) throw new Error(error?.message ?? disputeError?.message ?? "Arbejdsandelene kunne ikke hentes.");
+  const cases = await attachCreditSourceStates(db, admin.orgId, (data ?? []) as unknown as AdminShareCaseRecord[]);
+  const references = cases.map(row => ({
+    work_id: String(row.work_id), season_number: row.season_number as number | null, episode_number: row.episode_number as number | null,
+  }));
+  for (const row of disputes ?? []) {
+    const work = row.works as unknown as { season_number?: number | null; episode_number?: number | null } | null;
+    references.push({ work_id: row.work_id, season_number: work?.season_number ?? null, episode_number: work?.episode_number ?? null });
+  }
+  return { success: true as const, cases, disputes: disputes ?? [], count: countUniqueWorkShareTasks(references) };
+}
+
+export async function countAdminShareTasks() {
+  const { admin, db } = await shareAdminContext();
+  const [{ data: cases, error: caseError }, { data: disputes, error: disputeError }] = await Promise.all([
+    db.from("work_share_cases").select("id,work_id,season_number,episode_number").eq("org_id", admin.orgId).neq("status", "resolved"),
+    db.from("member_work_collaboration_reviews").select("id,work_id,works(season_number,episode_number)").eq("org_id", admin.orgId).eq("status", "disputed"),
+  ]);
+  if (caseError || disputeError) throw new Error(caseError?.message ?? disputeError?.message ?? "Opgaverne kunne ikke tælles.");
+  const references = (cases ?? []).map(row => ({
+    work_id: row.work_id,
+    season_number: row.season_number,
+    episode_number: row.episode_number,
+  }));
+  for (const row of disputes ?? []) {
+    const work = row.works as unknown as { season_number?: number | null; episode_number?: number | null } | null;
+    references.push({ work_id: row.work_id, season_number: work?.season_number, episode_number: work?.episode_number });
+  }
+  return { success: true as const, count: countUniqueWorkShareTasks(references), shareCaseCount: cases?.length ?? 0, disputeCount: disputes?.length ?? 0 };
+}
+
+export async function refreshAdminShareCaseCredits(caseId: string, force = false) {
+  const { admin, db } = await shareAdminContext();
+  const { data: shareCase } = await db.from("work_share_cases").select("id,work_id").eq("id", caseId).eq("org_id", admin.orgId).maybeSingle();
+  if (!shareCase) throw new Error("Fordelingssagen findes ikke.");
+  const refresh = await refreshWorkCreditEvidence(db, { orgId: admin.orgId, workId: shareCase.work_id, force });
+  const credits = await matchWorkCreditsToRightsHolders(db, {
+    orgId: admin.orgId,
+    credits: await buildReconciledWorkCredits(db, { orgId: admin.orgId, workId: shareCase.work_id, caseId }),
+  });
+  const { data: participants } = await db.from("work_share_participants")
+    .select("id,proposed_name,rights_holder_id,source_tags,source_details").eq("case_id", caseId).is("excluded_at", null);
+  const participantByHolder = new Map((participants ?? []).filter(row => row.rights_holder_id).map(row => [row.rights_holder_id, row]));
+  const participantByName = new Map((participants ?? []).filter(row => row.proposed_name).map(row => [normalizeCreditName(row.proposed_name ?? ""), row]));
+  for (const credit of credits) {
+    const holderParticipant = credit.rightsHolderId ? participantByHolder.get(credit.rightsHolderId) : null;
+    const nameParticipant = participantByName.get(normalizeCreditName(credit.name));
+    const matchedParticipant = holderParticipant ?? nameParticipant;
+    const sourceTags = [...new Set([...(matchedParticipant?.source_tags ?? []), ...credit.sources])];
+    const details = { externalPersonIds: credit.externalPersonIds, roles: credit.roles, matchType: credit.matchType };
+    if (matchedParticipant) {
+      if (holderParticipant && nameParticipant && holderParticipant.id !== nameParticipant.id && !nameParticipant.rights_holder_id) {
+        const { error: mergeError } = await db.from("work_share_participants").update({
+          source_tags: sourceTags, source_details: details, updated_at: new Date().toISOString(),
+        }).eq("id", holderParticipant.id).eq("org_id", admin.orgId);
+        if (mergeError) throw new Error(mergeError.message);
+        const { error: excludeError } = await db.from("work_share_participants").update({
+          excluded_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq("id", nameParticipant.id).eq("org_id", admin.orgId);
+        if (excludeError) throw new Error(excludeError.message);
+        continue;
+      }
+      const matchUpdate = matchedParticipant.rights_holder_id || !credit.rightsHolderId || credit.matchType === "conflict"
+        ? {}
+        : { rights_holder_id: credit.rightsHolderId, relationship_status: "pending" };
+      const { error: updateError } = await db.from("work_share_participants").update({
+        ...matchUpdate,
+        source_tags: sourceTags,
+        source_details: details,
+        updated_at: new Date().toISOString(),
+      }).eq("id", matchedParticipant.id).eq("org_id", admin.orgId);
+      if (updateError) throw new Error(updateError.message);
+      continue;
+    }
+    const { data: insertedParticipant, error } = await db.from("work_share_participants").insert({
+      case_id: caseId,
+      org_id: admin.orgId,
+      work_id: shareCase.work_id,
+      rights_holder_id: credit.matchType === "conflict" ? null : credit.rightsHolderId,
+      proposed_name: credit.name,
+      role: normalizeWorkEditorRole(credit.roles[0] ?? "Klipper"),
+      relationship_status: credit.rightsHolderId && credit.matchType !== "conflict" ? "pending" : "pending_match",
+      source_tags: credit.sources,
+      source_details: details,
+    }).select("id,proposed_name,rights_holder_id,source_tags,source_details").single();
+    if (error) throw new Error(error.message);
+    if (insertedParticipant.rights_holder_id) {
+      participantByHolder.set(insertedParticipant.rights_holder_id, insertedParticipant);
+    }
+    if (insertedParticipant.proposed_name) {
+      participantByName.set(normalizeCreditName(insertedParticipant.proposed_name), insertedParticipant);
+    }
+  }
+  return { success: true as const, refresh, case: await fetchAdminShareCase(db, admin.orgId, caseId) };
+}
+
+export async function excludeShareParticipant(participantId: string) {
+  const { admin, user, db } = await shareAdminContext();
+  const { data, error } = await db.from("work_share_participants").update({
+    excluded_at: new Date().toISOString(), excluded_by_user_id: user.id, updated_at: new Date().toISOString(),
+  }).eq("id", participantId).eq("org_id", admin.orgId).select("id").maybeSingle();
+  if (error || !data) throw new Error(error?.message ?? "Deltageren findes ikke.");
+  revalidatePath("/admin/vaerker");
+  return { success: true as const };
+}
+
+export async function createRightsHolderFromShareParticipant(params: { participantId: string; name: string; email?: string | null; phone?: string | null }) {
+  const { admin, db } = await shareAdminContext();
+  const name = params.name.trim();
+  const email = params.email?.trim() ? normalizeSingleEmail(params.email).toLocaleLowerCase("da-DK") : null;
+  if (!name) throw new Error("Navnet skal udfyldes.");
+  const { data: participant } = await db.from("work_share_participants").select("id,case_id,work_id,source_details").eq("id", params.participantId).eq("org_id", admin.orgId).maybeSingle();
+  if (!participant) throw new Error("Deltageren findes ikke.");
+  const normalized = normalizeCreditName(name);
+  const details = participant.source_details as { externalPersonIds?: string[] } | null;
+  const externalIdentities = (details?.externalPersonIds ?? []).flatMap(externalId => {
+    const [source, value] = externalId.includes(":") ? externalId.split(":", 2) : [null, externalId];
+    return source === "dfi" || source === "tmdb" ? [{ source, value }] : [];
+  });
+  const [{ data: nameClaims }, { data: emailMatches }, externalMatchResults] = await Promise.all([
+    db.from("rights_holder_name_claims").select("rights_holder_id,display_name").eq("normalized_name", normalized).limit(5),
+    email ? db.from("rettighedshavere").select("id,full_name").ilike("email", email).limit(5) : Promise.resolve({ data: [] }),
+    Promise.all(externalIdentities.map(identity => db.from("rights_holder_external_identities")
+      .select("rights_holder_id,source,external_id")
+      .eq("source", identity.source)
+      .eq("external_id", identity.value)
+      .limit(5))),
+  ]);
+  const externalMatches = externalMatchResults.flatMap(result => result.data ?? []);
+  const duplicateIds = new Set([...(nameClaims ?? []).map(row => row.rights_holder_id), ...(emailMatches ?? []).map(row => row.id), ...externalMatches.map(row => row.rights_holder_id)]);
+  if (duplicateIds.size) throw new Error("Der findes allerede en mulig rettighedshaver. Forbind personen med den eksisterende profil i stedet.");
+  const { data: defaultProfession } = await db.from("organisation_profession_types").select("profession_type_id").eq("org_id", admin.orgId).order("display_order").limit(1).maybeSingle();
+  const { data: holder, error: holderError } = await db.from("rettighedshavere").insert({ full_name: name, email, phone: params.phone?.trim() || null, primary_profession_type_id: defaultProfession?.profession_type_id ?? null }).select("id").single();
+  if (holderError || !holder) throw new Error(holderError?.message ?? "Rettighedshaveren kunne ikke oprettes.");
+  const { error: affiliationError } = await db.from("org_affiliations").insert({ org_id: admin.orgId, rights_holder_id: holder.id, is_member: false });
+  if (affiliationError) { await db.from("rettighedshavere").delete().eq("id", holder.id); throw new Error(affiliationError.message); }
+  for (const externalId of details?.externalPersonIds ?? []) {
+    const [source, value] = externalId.includes(":") ? externalId.split(":", 2) : [null, externalId];
+    if (source === "dfi" || source === "tmdb") await db.from("rights_holder_external_identities").upsert({ rights_holder_id: holder.id, source, external_id: value, display_name: name }, { onConflict: "source,external_id" });
+  }
+  await matchShareParticipant({ participantId: params.participantId, rightsHolderId: holder.id });
+  revalidatePath("/admin/rettighedshavere");
+  return { success: true as const, rightsHolderId: holder.id };
+}
+
+export async function remindShareParticipant(participantId: string) {
+  const { admin, db } = await shareAdminContext();
+  const { data: participant } = await db.from("work_share_participants")
+    .select("id,case_id,rights_holder_id,last_reminder_sent_at,work_share_cases!inner(org_id)")
+    .eq("id", participantId).eq("work_share_cases.org_id", admin.orgId).maybeSingle();
+  if (!participant?.rights_holder_id) throw new Error("Deltageren har endnu ingen portalprofil.");
+  const lastSent = participant.last_reminder_sent_at ? new Date(participant.last_reminder_sent_at).getTime() : 0;
+  if (Date.now() - lastSent < 3 * 24 * 60 * 60 * 1000) throw new Error("Der kan højst sendes én påmindelse pr. person og sag inden for tre dage.");
+  const eventKey = `work-share-reminder:${participant.case_id}:${participant.rights_holder_id}:${Math.floor(Date.now() / (3 * 24 * 60 * 60 * 1000))}`;
+  const result = await sendMemberNotification({
+    eventKey, eventType: "work_share_reminder", orgId: admin.orgId, rightsHolderId: participant.rights_holder_id,
+    category: "transactional", subject: "Husk at angive din arbejdsandel", bodyText: "Åbn Mine værker og angiv din procentandel på produktionen.",
+    path: `/portal/mine-vaerker?shareTask=${participant.case_id}`, entityType: "work_share_case", entityId: participant.case_id,
+  });
+  const skipped = "skipped" in result && result.skipped === true;
+  const deliveryError = "error" in result && typeof result.error === "string" ? result.error : null;
+  if (!result.ok || skipped) {
+    if (!result.ok) await db.from("notification_deliveries").delete().eq("org_id", admin.orgId).eq("event_key", eventKey).eq("status", "failed");
+    throw new Error(deliveryError ?? "Påmindelsen kunne ikke sendes.");
+  }
+  const { data: reminderRow } = await db.from("work_share_participants").select("reminder_count").eq("id", participantId).single();
+  await db.from("work_share_participants").update({ last_reminder_sent_at: new Date().toISOString(), reminder_count: Number(reminderRow?.reminder_count ?? 0) + 1, updated_at: new Date().toISOString() }).eq("id", participantId);
+  return { success: true as const };
+}
+
+export async function proposeAdminShareCompromise(caseId: string, reservePercent: number) {
+  const { admin, db } = await shareAdminContext();
+  const { data: shareCase } = await db.from("work_share_cases").select("id").eq("id", caseId).eq("org_id", admin.orgId).maybeSingle();
+  if (!shareCase) throw new Error("Fordelingssagen findes ikke.");
+  const { data: rows } = await db.from("work_share_participants").select("id,proposed_percent").eq("case_id", caseId).is("excluded_at", null);
+  return { success: true as const, participants: proposeWorkShareCompromise(rows ?? [], reservePercent) };
 }
 
 export async function matchShareParticipant(params: { participantId: string; rightsHolderId: string }) {
@@ -179,20 +389,15 @@ export async function matchShareParticipant(params: { participantId: string; rig
   const admin = await assertAdminRole(session, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
   const db = createServiceClient();
-  const { data: participant } = await db.from("work_share_participants").select("id,case_id,proposed_name,role").eq("id", params.participantId).eq("org_id", admin.orgId).maybeSingle();
+  const { data: participant } = await db.from("work_share_participants").select("id").eq("id", params.participantId).eq("org_id", admin.orgId).maybeSingle();
   if (!participant) throw new Error("Deltageren findes ikke.");
   const { data: affiliation } = await db.from("org_affiliations").select("rights_holder_id")
     .eq("org_id", admin.orgId).eq("rights_holder_id", params.rightsHolderId).maybeSingle();
   if (!affiliation) throw new Error("Rettighedshaveren er ikke tilknyttet organisationen.");
   const { error } = await db.from("work_share_participants").update({ rights_holder_id: params.rightsHolderId, relationship_status: "pending", updated_at: new Date().toISOString() }).eq("id", participant.id);
   if (error) throw new Error(error.message);
-  await import("@/lib/member-notifications").then(({ sendMemberNotification }) => sendMemberNotification({
-    eventKey: `work-share-request:${participant.case_id}:${params.rightsHolderId}`,
-    eventType: "work_share_request", orgId: admin.orgId, rightsHolderId: params.rightsHolderId,
-    category: "transactional", subject: "Angiv din arbejdsandel på et værk",
-    bodyText: "Du er blevet angivet som medklipper. Åbn Mine værker og angiv din arbejdsandel eller afvis tilknytningen.",
-    path: `/portal/mine-vaerker?shareTask=${participant.case_id}`, entityType: "work_share_case", entityId: participant.case_id,
-  }));
+  // Matching is deliberately silent. Admin must actively use the invitation
+  // or reminder action before any message or e-mail is sent.
   revalidatePath("/admin/vaerker");
   return { success: true as const };
 }
@@ -201,49 +406,24 @@ export async function resolveAdminShareCase(params: {
   caseId: string;
   reservePercent: number;
   participants: Array<{ participantId: string; finalPercent: number | null }>;
+  allowMissingResponses?: boolean;
 }) {
   const session = await createClient();
   const { data: { user } } = await session.auth.getUser();
   const admin = await assertAdminRole(session, USER_ADMIN_ROLES);
   if (!admin || !user) throw new Error("Mangler adminrettigheder.");
   const db = createServiceClient();
-  const { data: shareCase } = await db.from("work_share_cases").select("*").eq("id", params.caseId).eq("org_id", admin.orgId).maybeSingle();
+  const { data: shareCase } = await db.from("work_share_cases").select("id").eq("id", params.caseId).eq("org_id", admin.orgId).maybeSingle();
   if (!shareCase) throw new Error("Fordelingssagen findes ikke.");
-  const { data: participantRows } = await db.from("work_share_participants").select("id,rights_holder_id,role,final_percent").eq("case_id", shareCase.id);
+  const { data: participantRows } = await db.from("work_share_participants").select("id").eq("case_id", shareCase.id).is("excluded_at", null);
   const finalById = new Map(params.participants.map(row => [row.participantId, normalizeSharePercent(row.finalPercent)]));
   if (!isCompleteShareResolution((participantRows ?? []).map(row => finalById.get(row.id) ?? null), params.reservePercent)) {
     throw new Error("De endelige andele og reserven skal tilsammen være 100 %. ");
   }
-  for (const participant of participantRows ?? []) {
-    const finalPercent = finalById.get(participant.id) ?? null;
-    await db.from("work_share_participants").update({ final_percent: finalPercent, updated_at: new Date().toISOString() }).eq("id", participant.id);
-  }
-  let targetWorkIds = [shareCase.work_id as string];
-  if (shareCase.season_number) {
-    const { data: episodes } = await db.from("works").select("id,episode_number").eq("parent_work_id", shareCase.work_id).eq("season_number", shareCase.season_number);
-    const scopedNumbers = new Set<number>((shareCase.episode_numbers ?? []) as number[]);
-    targetWorkIds = shareCase.episode_number
-      ? (episodes ?? []).filter(row => row.episode_number === shareCase.episode_number).map(row => row.id)
-      : scopedNumbers.size
-        ? (episodes ?? []).filter(row => row.episode_number != null && scopedNumbers.has(row.episode_number)).map(row => row.id)
-        : (episodes ?? []).map(row => row.id);
-    if (!targetWorkIds.length) targetWorkIds = [shareCase.work_id];
-  }
-  for (const participant of participantRows ?? []) {
-    if (!participant.rights_holder_id) continue;
-    const finalPercent = finalById.get(participant.id);
-    if (finalPercent === null || finalPercent === undefined) continue;
-    await db.from("work_assignments").upsert(targetWorkIds.map(workId => ({
-      org_id: admin.orgId, work_id: workId, rights_holder_id: participant.rights_holder_id,
-      role: normalizeWorkEditorRole(participant.role), share_percent: finalPercent,
-    })), { onConflict: "work_id,rights_holder_id,role" });
-  }
-  const snapshot = { resolvedAt: new Date().toISOString(), reservePercent: params.reservePercent, participants: params.participants };
-  const history = Array.isArray(shareCase.resolution_history) ? shareCase.resolution_history : [];
-  const { error } = await db.from("work_share_cases").update({
-    status: "resolved", reserve_percent: params.reservePercent, resolved_by_user_id: user.id,
-    resolved_at: snapshot.resolvedAt, resolution_history: [...history, snapshot], updated_at: snapshot.resolvedAt,
-  }).eq("id", shareCase.id);
+  const { error } = await db.rpc("resolve_work_share_case", {
+    p_case_id: params.caseId, p_org_id: admin.orgId, p_actor_user_id: user.id, p_reserve_percent: params.reservePercent,
+    p_participants: params.participants, p_allow_missing_responses: params.allowMissingResponses === true,
+  });
   if (error) throw new Error(error.message);
   revalidatePath("/admin/vaerker");
   revalidatePath("/portal/mine-vaerker");

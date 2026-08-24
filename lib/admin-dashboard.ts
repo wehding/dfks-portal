@@ -22,6 +22,7 @@ export type AdminDashboardMetrics = {
   tasks: {
     contractValidationsPending: number;
     workRequests: number;
+    workShareCases: number;
     screeningClaims: number;
     contractReviews: number;
   };

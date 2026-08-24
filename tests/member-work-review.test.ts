@@ -23,6 +23,7 @@ test("a series season is counted once across episode and co-editor tasks", () =>
       parentWorkId: "series",
       seasonNumber: 4,
       episodeNumber: 1,
+      existingCoEditors: [],
     },
     {
       key: "episode-2",
@@ -34,6 +35,7 @@ test("a series season is counted once across episode and co-editor tasks", () =>
       parentWorkId: "series",
       seasonNumber: 4,
       episodeNumber: 2,
+      existingCoEditors: [],
     },
   ];
   assert.equal(uniqueMemberWorkReviewCount(tasks), 1);
@@ -47,4 +49,20 @@ test("separate films and seasons count as separate works", () => {
   ];
   assert.deepEqual(groupKeys, ["work:film", "season:series:1", "season:series:2"]);
   assert.equal(new Set(groupKeys).size, 3);
+});
+
+test("episode tasks share the same season key as their episode selection", () => {
+  const episodeSelectionKey = memberWorkReviewGroupKey({
+    workId: "series",
+    parentWorkId: "series",
+    seasonNumber: 2,
+  });
+  const episodeReviewKey = memberWorkReviewGroupKey({
+    workId: "episode-4",
+    parentWorkId: "series",
+    seasonNumber: 2,
+  });
+
+  assert.equal(episodeSelectionKey, "season:series:2");
+  assert.equal(episodeReviewKey, episodeSelectionKey);
 });

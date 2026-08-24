@@ -8,12 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Modal } from "./Modal";
 import { linkContractToWork } from "@/app/actions/member-contracts";
-import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, linkExistingWorkForMember, searchRightsHoldersForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { useI18n } from "@/lib/i18n";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { SeasonStepper } from "@/components/works/season-stepper";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
+import { LocalRightsHolderAutocomplete } from "@/components/works/local-rights-holder-autocomplete";
 import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormSeed, type ManualWorkFormValue } from "@/lib/manual-work";
 import { createClientId } from "@/lib/client-id";
 
@@ -153,7 +154,6 @@ export function AddWorkModal({
   const [selfSharePercent, setSelfSharePercent] = useState("");
 
   const [addCoEditors, setAddCoEditors]       = useState<CoEditorDraft[]>([]);
-  const [coEditorSuggestions, setCoEditorSuggestions] = useState<Record<string, Array<{ id: string; full_name: string }>>>({});
   const [unifiedResults, setUnifiedResults]   = useState<UnifiedSearchWorkResult[]>([]);
   const [pickedUnifiedResult, setPickedUnifiedResult] = useState<UnifiedSearchWorkResult | null>(null);
   const [isSearching, setIsSearching]         = useState(false);
@@ -223,7 +223,6 @@ export function AddWorkModal({
     setAddComment("");
     setSelfSharePercent("");
     setAddCoEditors([]);
-    setCoEditorSuggestions({});
     setUnifiedResults([]);
     setPickedUnifiedResult(null);
     setAddSeason("");
@@ -270,15 +269,6 @@ export function AddWorkModal({
     } finally {
       setIsSearching(false);
     }
-  };
-
-  const searchCoEditors = async (editorId: string, query: string) => {
-    const result = await searchRightsHoldersForMember(query.trim());
-    const existingIds = new Set(addCoEditors.map(editor => editor.rightsHolderId).filter(Boolean));
-    setCoEditorSuggestions(current => ({
-      ...current,
-      [editorId]: (result.success ? result.results ?? [] : []).filter(holder => !existingIds.has(holder.id)),
-    }));
   };
 
   useEffect(() => {
@@ -681,27 +671,18 @@ export function AddWorkModal({
               {addCoEditors.map(editor => (
                 <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
                   <div className="relative">
-                    <Input
+                    <LocalRightsHolderAutocomplete
                       value={editor.name}
                       disabled={editor.locked}
-                      onFocus={() => { if (!editor.locked) void searchCoEditors(editor.id, editor.name); }}
-                      onChange={e => {
-                        const name = e.target.value;
-                        setAddCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, name, rightsHolderId: null } : item));
-                        void searchCoEditors(editor.id, name);
-                      }}
                       placeholder={t("works.namePlaceholder")}
+                      excludedIds={[rightsHolderId, ...addCoEditors.map(item => item.id === editor.id ? null : item.rightsHolderId)]}
+                      onValueChange={name => {
+                        setAddCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, name, rightsHolderId: null } : item));
+                      }}
+                      onSelect={holder => {
+                        setAddCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, name: holder.full_name, rightsHolderId: holder.id } : item));
+                      }}
                     />
-                    {!editor.locked && (coEditorSuggestions[editor.id] ?? []).length > 0 && (
-                      <div className="absolute z-20 mt-1 w-full rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
-                        {(coEditorSuggestions[editor.id] ?? []).map(holder => (
-                          <button key={holder.id} type="button" className="block w-full rounded px-2 py-2 text-left text-sm hover:bg-accent" onClick={() => {
-                            setAddCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, name: holder.full_name, rightsHolderId: holder.id } : item));
-                            setCoEditorSuggestions(current => ({ ...current, [editor.id]: [] }));
-                          }}>{holder.full_name}</button>
-                        ))}
-                      </div>
-                    )}
                   </div>
                   <select
                     value={editor.role}

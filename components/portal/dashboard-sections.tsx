@@ -10,7 +10,7 @@ import { uniqueMemberWorkReviewCount } from "@/lib/member-work-review";
 import { salaryDataToWeekly } from "@/lib/statistics-calculations";
 import { EXPERIENCE_GROUPS, experienceGroupAt, type ExperienceGroup } from "@/lib/experience-groups";
 import { normalizeStatisticsMinimumGroupSize } from "@/lib/statistics-privacy";
-import { memberSalaryBenchmark } from "@/lib/member-statistics";
+import { medianWeeklySalary, memberSalaryBenchmark, salaryProductionGroup, type SalaryProductionGroup } from "@/lib/member-statistics";
 import { createListLoadTimer } from "@/lib/server/list-load-timing";
 
 type ContractRow = { id: string; working_title: string | null; work_id: string | null; contract_comments: Array<{ author_role: string; member_read_at: string | null }> | null };
@@ -89,7 +89,7 @@ export async function DashboardSalarySection({ orgId, rightsHolderId, optedOut }
     ? await db.from("contract_validations").select("contract_id,extracted_data").in("contract_id", ownIds).order("created_at", { ascending: true })
     : { data: [] as Array<{ contract_id: string; extracted_data: Record<string, unknown> | null }> };
   timer.mark("facts");
-  const salaryRows: Array<{ year: number; weekly: number; mine: boolean; contributes: boolean; holderId: string | null; professionalStartYear: number | null }> = [];
+  const salaryRows: Array<{ year: number; weekly: number; mine: boolean; contributes: boolean; holderId: string | null; professionalStartYear: number | null; productionGroup: SalaryProductionGroup | null }> = [];
   for (const fact of facts ?? []) {
     const data = fact.statistics_data as Record<string, unknown> | null;
     if (!data?.salary || fact.contract_type === "leverandør") continue;
@@ -102,6 +102,7 @@ export async function DashboardSalarySection({ orgId, rightsHolderId, optedOut }
       contributes: true,
       holderId: fact.rights_holder_id,
       professionalStartYear: fact.professional_start_year == null ? null : Number(fact.professional_start_year),
+      productionGroup: salaryProductionGroup(fact.production_type),
     });
   }
   if (optedOut) {
@@ -121,20 +122,33 @@ export async function DashboardSalarySection({ orgId, rightsHolderId, optedOut }
         contributes: false,
         holderId: rightsHolderId,
         professionalStartYear: holderRow?.professional_start_year ?? null,
+        productionGroup: salaryProductionGroup(extracted.productionType ?? extracted.category),
       });
     }
   }
-  const avg = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
   const minimum = normalizeStatisticsMinimumGroupSize(organisation?.statistics_minimum_group_size);
   const benchmark = (rows: typeof salaryRows) => memberSalaryBenchmark(rows, minimum);
   let points: SalaryStatPoint[] = [...new Set(salaryRows.map(row => row.year))].sort((a, b) => a - b).map(year => {
     const rows = salaryRows.filter(row => row.year === year);
-    return { year, egen: avg(rows.filter(row => row.mine).map(row => row.weekly)), gennemsnit: benchmark(rows) };
+    return {
+      year,
+      ownFiction: medianWeeklySalary(rows.filter(row => row.mine && row.productionGroup === "fiction").map(row => row.weekly)),
+      ownDocumentary: medianWeeklySalary(rows.filter(row => row.mine && row.productionGroup === "documentary").map(row => row.weekly)),
+      benchmarkFiction: benchmark(rows.filter(row => row.productionGroup === "fiction")),
+      benchmarkDocumentary: benchmark(rows.filter(row => row.productionGroup === "documentary")),
+    };
   });
   let benchmarkPointsByExperience: Partial<Record<ExperienceGroup, SalaryStatPoint[]>> = {};
-  if (!optedOut) benchmarkPointsByExperience = Object.fromEntries(EXPERIENCE_GROUPS.map(group => [group.value, points.map(point => ({ ...point, gennemsnit: benchmark(salaryRows.filter(row => row.year === point.year && experienceGroupAt(row.professionalStartYear, row.year) === group.value)) }))])) as Partial<Record<ExperienceGroup, SalaryStatPoint[]>>;
-  else points = points.map(point => ({ ...point, gennemsnit: null }));
-  const benchmarkAvailable = points.some(point => point.gennemsnit != null);
+  if (!optedOut) benchmarkPointsByExperience = Object.fromEntries(EXPERIENCE_GROUPS.map(group => [group.value, points.map(point => {
+    const rows = salaryRows.filter(row => row.year === point.year && experienceGroupAt(row.professionalStartYear, row.year) === group.value);
+    return {
+      ...point,
+      benchmarkFiction: benchmark(rows.filter(row => row.productionGroup === "fiction")),
+      benchmarkDocumentary: benchmark(rows.filter(row => row.productionGroup === "documentary")),
+    };
+  })])) as Partial<Record<ExperienceGroup, SalaryStatPoint[]>>;
+  else points = points.map(point => ({ ...point, benchmarkFiction: null, benchmarkDocumentary: null }));
+  const benchmarkAvailable = points.some(point => point.benchmarkFiction != null || point.benchmarkDocumentary != null);
   timer.finish({ factCount: facts?.length ?? 0, pointCount: points.length });
   return <><SalaryStatsCard points={points} benchmarkPointsByExperience={benchmarkPointsByExperience} optedOut={optedOut} benchmarkAvailable={benchmarkAvailable} /><ListReadinessMarker route="member-dashboard" stage="secondary" /></>;
 }

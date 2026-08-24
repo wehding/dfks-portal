@@ -5,6 +5,7 @@ import { normalizeNavigationBadgeCounts } from "@/lib/navigation-badges";
 import { createRequestClient } from "@/lib/supabase/request-client";
 import { verifyRequestUser } from "@/lib/supabase/request-auth";
 import { createServiceClient } from "@/lib/supabase/service";
+import { countUniqueWorkShareTasks } from "@/lib/work-share-task-count";
 
 export const dynamic = "force-dynamic";
 
@@ -27,5 +28,29 @@ export async function GET(request: NextRequest) {
     return applyAuthResponse(NextResponse.json({ error: "Navigationstællere kunne ikke hentes" }, { status: 500 }));
   }
   const row = Array.isArray(data) ? data[0] : data;
-  return applyAuthResponse(NextResponse.json(normalizeNavigationBadgeCounts(row as Record<string, unknown> | null)));
+  const [shareCases, collaborationDisputes] = context.canUseAdmin
+    ? await Promise.all([
+        db.from("work_share_cases").select("work_id,season_number,episode_number").eq("org_id", context.orgId).neq("status", "resolved"),
+        db.from("member_work_collaboration_reviews").select("work_id,works(season_number,episode_number)").eq("org_id", context.orgId).eq("status", "disputed"),
+      ])
+    : [{ data: [], error: null }, { data: [], error: null }];
+  const taskError = shareCases.error ?? collaborationDisputes.error;
+  if (taskError) {
+    console.error("[navigation-badges] work_share_count_failed", { code: taskError.code });
+    return applyAuthResponse(NextResponse.json({ error: "Navigationstællere kunne ikke hentes" }, { status: 500 }));
+  }
+  const taskReferences = (shareCases.data ?? []).map(item => ({
+    work_id: item.work_id,
+    season_number: item.season_number,
+    episode_number: item.episode_number,
+  }));
+  for (const item of collaborationDisputes.data ?? []) {
+    const work = item.works as unknown as { season_number?: number | null; episode_number?: number | null } | null;
+    taskReferences.push({ work_id: item.work_id, season_number: work?.season_number, episode_number: work?.episode_number });
+  }
+  const badgeRow = {
+    ...((row as Record<string, unknown> | null) ?? {}),
+    admin_work_share_tasks: countUniqueWorkShareTasks(taskReferences),
+  };
+  return applyAuthResponse(NextResponse.json(normalizeNavigationBadgeCounts(badgeRow)));
 }
