@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import {
     ArrowLeft, Plus, CheckCircle2, Clock, Ban, Wallet,
-    AlertTriangle, Settings, RotateCcw, ChevronDown, ChevronUp
+    AlertTriangle, Settings, RotateCcw, ChevronDown, ChevronUp,
+    Download, ExternalLink
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -31,12 +32,13 @@ import { toast } from "sonner"
 import {
     getSettlements, createSettlement, advanceSettlementStatus,
     getSettlementItems, getOrgPayoutThreshold, setOrgPayoutThreshold,
-    getPayrollExportBatches, getPayrollReferences,
+    getPayrollReferences,
     type Settlement, type SettlementItem, type SettlementStatus,
     type PayrollExportBatch, type PayrollRecipientReference,
 } from "@/app/actions/rights-settlements"
 import { getRightsFunds } from "@/app/actions/rights-funds"
 import { getCalculationRuns } from "@/app/actions/rights-calculation"
+import { getExportBatches } from "@/app/actions/rights-export"
 import type { RightsFund } from "@/app/actions/rights-funds"
 import type { CalculationRun } from "@/app/actions/rights-calculation"
 
@@ -296,6 +298,14 @@ function SettlementRow({
         setAdvancing(false)
     }
 
+    const handleExport = (e: React.MouseEvent) => {
+        e.stopPropagation()
+        window.location.href = `/api/rettighedsmidler/eksport?settlement_id=${settlement.id}&system=datalon`
+        toast.success("Download starter…")
+        // Giv siden et øjeblik til at opdatere eksporthistorik
+        setTimeout(() => onRefresh(), 2000)
+    }
+
     const aboveThreshold = items.filter(i => !i.below_threshold)
     const belowThreshold = items.filter(i => i.below_threshold)
 
@@ -326,6 +336,12 @@ function SettlementRow({
                             {cfg.label}
                         </Badge>
                         <div className="flex gap-1" onClick={e => e.stopPropagation()}>
+                            {["approved", "paid_out"].includes(settlement.status) && (
+                                <Button size="sm" variant="outline" onClick={handleExport}>
+                                    <Download className="h-3.5 w-3.5 mr-1" />
+                                    DataLøn CSV
+                                </Button>
+                            )}
                             {next && settlement.status !== "cancelled" && (
                                 <Button size="sm" variant="outline" onClick={handleAdvance} disabled={advancing}>
                                     {advancing ? "…" : NEXT_LABEL[next] ?? next}
@@ -432,7 +448,7 @@ export default function AfregningPage() {
         setLoading(true)
         const [sRes, bRes, rRes, tRes] = await Promise.all([
             getSettlements(),
-            getPayrollExportBatches(),
+            getExportBatches(),
             getPayrollReferences(),
             getOrgPayoutThreshold(),
         ])
@@ -564,12 +580,13 @@ export default function AfregningPage() {
                                     <TableHead className="text-right">Rækker</TableHead>
                                     <TableHead>Filreference</TableHead>
                                     <TableHead>Status</TableHead>
+                                    <TableHead />
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {batches.map(b => (
                                     <TableRow key={b.id}>
-                                        <TableCell className="text-sm">{b.settlement_label ?? "—"}</TableCell>
+                                        <TableCell className="text-sm">{(b as any).settlement_label ?? "—"}</TableCell>
                                         <TableCell className="text-sm font-mono">{b.export_system}</TableCell>
                                         <TableCell className="text-sm">{fmtDate(b.exported_at)}</TableCell>
                                         <TableCell className="text-right">{b.row_count}</TableCell>
@@ -578,6 +595,19 @@ export default function AfregningPage() {
                                             <Badge variant={b.status === "exported" ? "default" : b.status === "error" ? "destructive" : "secondary"}>
                                                 {b.status === "exported" ? "Eksporteret" : b.status === "error" ? "Fejl" : "Afventer"}
                                             </Badge>
+                                        </TableCell>
+                                        <TableCell>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 px-2 text-xs"
+                                                onClick={() => {
+                                                    window.location.href = `/api/rettighedsmidler/eksport?batch_id=${b.id}`
+                                                }}
+                                            >
+                                                <Download className="mr-1 h-3 w-3" />
+                                                Download
+                                            </Button>
                                         </TableCell>
                                     </TableRow>
                                 ))}
