@@ -132,6 +132,33 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     }, "Invitationen er sendt.");
   }
 
+  async function createParticipant(participant: Participant, draft: { name: string; email: string; phone: string }, withInvitation: boolean) {
+    if (!active) return;
+    if (withInvitation && !draft.email.trim()) {
+      setMessage("Angiv en e-mailadresse for at oprette med invitation.");
+      return;
+    }
+    if (withInvitation && !window.confirm(`Opret ${draft.name || "rettighedshaveren"} og send invitation til ${draft.email}?`)) return;
+    setBusy(`create:${participant.id}`);
+    setMessage(null);
+    try {
+      const created = await createRightsHolderFromShareParticipant({ participantId: participant.id, ...draft });
+      if (withInvitation) {
+        const response = await fetch("/api/admin/user", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "invite", rhId: created.rightsHolderId, workId: active.work_id, includeWorks: true }) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? "Invitationen kunne ikke sendes.");
+        if (!result.email_sent) throw new Error("Rettighedshaveren er oprettet, men mailen kunne ikke sendes. Invitationslinket kan deles manuelt fra Rettighedshavere.");
+      }
+      setMessage(withInvitation ? "Rettighedshaveren er oprettet, og invitationen er sendt." : "Rettighedshaveren er oprettet uden invitation.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Rettighedshaveren kunne ikke oprettes.");
+      await load().catch(() => undefined);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (loading && !active && !disputes.length) return <p className="rounded-md border p-4 text-sm text-muted-foreground">Henter arbejdsandele…</p>;
   if (loadError && !active && !disputes.length) return <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/5 p-4"><p className="text-sm font-medium text-destructive">Arbejdsandelene kunne ikke hentes.</p><p className="text-sm text-muted-foreground">{loadError}</p><Button size="sm" variant="outline" onClick={() => void load().catch(() => undefined)}>Prøv igen</Button></div>;
   if (!active && !disputes.length) return <p className="rounded-md border p-4 text-sm text-muted-foreground">Der er ingen arbejdsandele, der venter på afstemning.</p>;
@@ -154,7 +181,7 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
       <h3 className="text-lg font-semibold">{active.works?.title ?? "Ukendt værk"}{active.season_number ? ` · sæson ${active.season_number}` : ""}</h3>
       <div className="flex items-center gap-2" aria-label="Navigér mellem værker"><Button size="icon-xs" variant="outline" aria-label="Forrige værk" title="Forrige værk" disabled={index === 0} onClick={() => setIndex(value => value - 1)}><ChevronLeft /></Button><span className="min-w-12 text-center text-xs text-muted-foreground">{index + 1} af {cases.length}</span><Button size="icon-xs" variant="outline" aria-label="Spring til næste værk" title="Spring over" disabled={index >= cases.length - 1} onClick={() => setIndex(value => value + 1)}><ChevronRight /></Button></div>
     </div>
-    <p className="text-sm text-muted-foreground">Bekræft personerne og angiv deres arbejdsandel direkte på samme linje.</p>
+    <p className="text-sm text-muted-foreground">Bekræft personerne og angiv deres arbejdsandel.</p>
 
     <section className="space-y-3 rounded-lg border p-4" aria-labelledby="share-participants-heading">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -166,16 +193,15 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
         const create = createDraft[participant.id] ?? { name: participant.proposed_name ?? "", email: "", phone: "" };
         return <div key={participant.id} className="space-y-2 rounded-md border p-3">
           <div className="grid grid-cols-[minmax(0,1fr)_124px] items-start gap-3 sm:grid-cols-[minmax(0,1fr)_148px]">
-            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate font-medium">{holder?.full_name ?? participant.proposed_name ?? "Ukendt"}</p><Badge variant={participant.rights_holder_id ? "secondary" : "outline"}>{participant.rights_holder_id ? holder?.invite_sent_at ? "Inviteret" : "Ikke inviteret" : "Ikke i systemet"}</Badge></div><div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground"><span>{[...new Set(participant.source_details?.roles?.length ? participant.source_details.roles : [participant.role])].join(" · ")}</span>{[...new Set(participant.source_tags ?? [])].map(source => <Badge key={source} variant="outline" className="h-5 px-1.5 text-[10px]">{SOURCE_LABELS[source] ?? source}</Badge>)}</div></div>
+            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2">{participant.rights_holder_id ? <Link href={`/admin/rettighedshavere?edit=${encodeURIComponent(participant.rights_holder_id)}`} className="truncate font-medium underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{holder?.full_name ?? participant.proposed_name ?? "Ukendt"}</Link> : <p className="truncate font-medium">{participant.proposed_name ?? "Ukendt"}</p>}<Badge variant={participant.rights_holder_id ? "secondary" : "outline"}>{participant.rights_holder_id ? holder?.invite_sent_at ? "Inviteret" : "Ikke inviteret" : "Ikke i systemet"}</Badge></div><div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground"><span>{[...new Set(participant.source_details?.roles?.length ? participant.source_details.roles : [participant.role])].join(" · ")}</span>{[...new Set(participant.source_tags ?? [])].map(source => <Badge key={source} variant="outline" className="h-5 px-1.5 text-[10px]">{SOURCE_LABELS[source] ?? source}</Badge>)}</div></div>
             <Label className="min-w-0 space-y-1 text-xs">%<Input aria-label="Arbejdsandel i procent" className="h-9 w-full" inputMode="decimal" value={drafts[participant.id] ?? ""} onChange={event => setDrafts(current => ({ ...current, [participant.id]: event.target.value }))} /><span className="block max-w-full whitespace-normal break-words text-[10px] font-normal leading-tight text-muted-foreground">Indsendt: {participant.proposed_percent ?? "mangler"} %</span></Label>
           </div>
           {!participant.rights_holder_id && <>
             <RightsHolderAutocomplete options={[]} searchEndpoint="/api/admin/rettighedshavere-search?scope=all" onChange={rightsHolderId => rightsHolderId && void run(`match:${participant.id}`, () => matchShareParticipant({ participantId: participant.id, rightsHolderId }), "Personen er forbundet.")} placeholder="Forbind med eksisterende rettighedshaver" />
-            <details><summary className="cursor-pointer text-sm font-medium">Opret ny rettighedshaver</summary><div className="mt-2 grid gap-2 sm:grid-cols-3"><Input aria-label="Navn" value={create.name} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, name: event.target.value } }))} /><Input aria-label="E-mail" type="email" placeholder="E-mail (valgfri)" value={create.email} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, email: event.target.value } }))} /><Input aria-label="Telefon" placeholder="Telefon (valgfri)" value={create.phone} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, phone: event.target.value } }))} /></div><Button className="mt-2" size="sm" onClick={() => void run(`create:${participant.id}`, () => createRightsHolderFromShareParticipant({ participantId: participant.id, ...create }), "Rettighedshaveren er oprettet uden invitation.")}>Opret uden at invitere</Button></details>
+            <details><summary className="cursor-pointer text-sm font-medium">Opret ny rettighedshaver</summary><div className="mt-2 grid gap-2 sm:grid-cols-3"><Input aria-label="Navn" value={create.name} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, name: event.target.value } }))} /><Input aria-label="E-mail" type="email" placeholder="E-mail (valgfri)" value={create.email} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, email: event.target.value } }))} /><Input aria-label="Telefon" placeholder="Telefon (valgfri)" value={create.phone} onChange={event => setCreateDraft(current => ({ ...current, [participant.id]: { ...create, phone: event.target.value } }))} /></div><div className="mt-2 flex flex-wrap gap-2"><Button size="sm" disabled={busy === `create:${participant.id}`} onClick={() => void createParticipant(participant, create, false)}>Opret uden at invitere</Button><Button size="sm" variant="outline" disabled={busy === `create:${participant.id}` || !create.email.trim()} onClick={() => void createParticipant(participant, create, true)}>Opret med invitation</Button></div></details>
             <Button size="sm" variant="ghost" onClick={() => void run(`exclude:${participant.id}`, () => excludeShareParticipant(participant.id), "Krediteringen er markeret som ikke relevant.")}>Markér som ikke relevant</Button>
           </>}
-          {participant.rights_holder_id && <div className="grid grid-cols-3 gap-1.5">
-            <Button asChild size="sm" variant="ghost" className="h-auto min-h-8 whitespace-normal px-2 py-1 text-xs leading-tight"><Link href={`/admin/rettighedshavere?edit=${encodeURIComponent(participant.rights_holder_id)}`}>Åbn rettighedshaver</Link></Button>
+          {participant.rights_holder_id && <div className="grid grid-cols-2 gap-1.5">
             {!holder?.invite_sent_at && holder?.email && <Button size="sm" variant="outline" className="h-auto min-h-8 whitespace-normal px-2 py-1 text-xs leading-tight" disabled={busy === `invite:${participant.id}`} onClick={() => void invite(participant)}>Inviter rettighedshaver</Button>}
             {participant.proposed_percent == null && <Button size="sm" variant="outline" className="h-auto min-h-8 whitespace-normal px-2 py-1 text-xs leading-tight" disabled={Boolean(participant.last_reminder_sent_at && Date.now() - new Date(participant.last_reminder_sent_at).getTime() < 3 * 86400000)} onClick={() => void run(`remind:${participant.id}`, () => remindShareParticipant(participant.id), "Påmindelsen er sendt.")}>Send påmindelse</Button>}
           </div>}

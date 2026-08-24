@@ -4,6 +4,8 @@ import test from "node:test";
 
 const wizard = readFileSync("components/admin/work-share-reconciliation-wizard.tsx", "utf8");
 const actions = readFileSync("app/actions/work-share-cases.ts", "utf8");
+const memberEditor = readFileSync("app/portal/mine-vaerker/components/EditWorkModal.tsx", "utf8");
+const adminArchive = readFileSync("app/admin/vaerker/WorkArchiveClient.tsx", "utf8");
 const migration = readFileSync("supabase/migrations/20260823230302_cache_work_credit_sources.sql", "utf8");
 
 test("arbejdsandelsdialogen henter ikke hele rettighedshaverlisten", () => {
@@ -27,13 +29,33 @@ test("sæsonssager samler klippere fra seriens afsnit", () => {
 test("klipper og arbejdsandel vises samlet i en kompakt dialog", () => {
   assert.match(wizard, /1\. Klippere og arbejdsandele/);
   assert.match(wizard, /Arbejdsandel i procent/);
-  assert.match(wizard, /grid grid-cols-3/);
+  assert.match(wizard, /grid grid-cols-2/);
   assert.match(wizard, /Forrige værk/);
   assert.match(wizard, /Spring til næste værk/);
   assert.doesNotMatch(wizard, /Portalens oplysninger samles med krediteringer/);
   assert.match(wizard, /2\. Kontrollér og godkend/);
   assert.doesNotMatch(wizard, /3\. Kontrollér og godkend/);
   assert.doesNotMatch(wizard, /setStep\(/);
+});
+
+test("rettighedshaverens navn åbner profilen og oprettelse kan sende invitation", () => {
+  assert.match(wizard, /href={`\/admin\/rettighedshavere\?edit=/);
+  assert.doesNotMatch(wizard, />Åbn rettighedshaver</);
+  assert.match(wizard, />Opret uden at invitere</);
+  assert.match(wizard, />Opret med invitation</);
+});
+
+test("værkeditorerne samler registrerede medklippere under rettighedshavere", () => {
+  assert.match(actions, /registeredCoEditors/);
+  assert.match(memberEditor, /result\.registeredCoEditors/);
+  assert.match(memberEditor, />Rettighedshavere</);
+  assert.match(adminArchive, /InfoPanel title="Rettighedshavere"/);
+  assert.match(adminArchive, /replaceAssignments: !editingSeasonGroup/);
+});
+
+test("arbejdsandelsdialogen forbliver øverst ved sagsnavigation", () => {
+  assert.match(adminArchive, /top-\[max\(1rem,env\(safe-area-inset-top\)\)\]/);
+  assert.match(adminArchive, /translate-y-0/);
 });
 
 test("værksmenuen adskiller almindelige opgaver fra arbejdsandele", () => {

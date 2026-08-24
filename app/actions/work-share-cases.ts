@@ -77,11 +77,22 @@ export async function fetchMemberShareTask(params: {
   // not reveal participants/cases until the caller's own assignment is proven.
   const assignmentIds = [...new Set([workId, ...(targetIds.length ? targetIds : [workId])])];
   const { data: knownAssignments } = await db.from("work_assignments")
-    .select("rights_holder_id,role").eq("org_id", orgId).in("work_id", assignmentIds).not("rights_holder_id", "is", null);
+    .select("id,rights_holder_id,role,rettighedshavere(id,full_name)").eq("org_id", orgId).in("work_id", assignmentIds).not("rights_holder_id", "is", null);
   const knownHolderIds = [...new Set((knownAssignments ?? []).map(row => row.rights_holder_id).filter(Boolean))];
   if (!knownHolderIds.includes(holder.id)) {
     return { success: false as const, error: "Værket er ikke tilknyttet din profil." };
   }
+  const registeredCoEditors = [...new Map((knownAssignments ?? [])
+    .filter(row => row.rights_holder_id && row.rights_holder_id !== holder.id)
+    .map(row => {
+      const related = Array.isArray(row.rettighedshavere) ? row.rettighedshavere[0] : row.rettighedshavere;
+      return [`${row.rights_holder_id}:${row.role}`, {
+        assignmentId: row.id,
+        rightsHolderId: row.rights_holder_id as string,
+        name: related?.full_name ?? "Ukendt medklipper",
+        role: row.role ?? "Klipper",
+      }] as const;
+    })).values()];
   if (!shareCase && knownHolderIds.length > 1) {
     shareCase = await ensureWorkShareCase(db, {
       orgId, workId, seasonNumber, episodeNumber: params.episodeNumber,
@@ -97,7 +108,7 @@ export async function fetchMemberShareTask(params: {
       updated_at: new Date().toISOString(),
     })));
   }
-  if (!shareCase) return { success: true as const, task: null, knownRightsHolderCount: knownHolderIds.length };
+  if (!shareCase) return { success: true as const, task: null, knownRightsHolderCount: knownHolderIds.length, registeredCoEditors };
 
   const { data: ownParticipant } = await db.from("work_share_participants").select("id,relationship_status,response_scope,proposed_percent,responded_at")
     .eq("case_id", shareCase.id).eq("rights_holder_id", holder.id).maybeSingle();
@@ -112,6 +123,7 @@ export async function fetchMemberShareTask(params: {
   return {
     success: true as const,
     knownRightsHolderCount: knownHolderIds.length,
+    registeredCoEditors,
     task: {
       id: shareCase.id,
       status: shareCase.status,
