@@ -835,6 +835,246 @@ CREATE INDEX IF NOT EXISTS undistributable_actions_run_idx ON public.undistribut
 
 CREATE INDEX IF NOT EXISTS withheld_positions_work_allocation_idx ON public.withheld_beneficiary_positions USING btree (work_allocation_id, status);
 
+-- Triggerfunktioner fra det autoritative produktionsskema
++CREATE OR REPLACE FUNCTION public.check_calculation_run_invariant()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+declare
+  total bigint;
+begin
+  total := new.admin_amount
+         + new.individual_amount
+         + new.net_claim_reserve_amount
+         + new.sku_direct_amount
+         + new.sku_from_reserve_amount
+         + new.statutory_collective_amount;
+
+  if total != new.gross_amount then
+    raise exception
+      'Beregningsinvariant brudt: admin + individuel + hensættelse + SKU = % øre, forventet % øre.',
+      total, new.gross_amount;
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.check_policy_period_overlap()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  if exists (
+    select 1 from public.distribution_policies
+    where org_id  = new.org_id
+      and fund_id = new.fund_id
+      and id     != coalesce(new.id, '00000000-0000-0000-0000-000000000000'::uuid)
+      and valid_from < coalesce(new.valid_to, 'infinity'::date)
+      and coalesce(valid_to, 'infinity'::date) > new.valid_from
+  ) then
+    raise exception
+      'Fordelingspolitik overlapper med en eksisterende politik for samme kasse og periode.';
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.check_work_allocation_dates()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  if new.claim_period_start != (make_date(new.usage_year, 12, 31)) then
+    raise exception
+      'claim_period_start skal være 31. december i usage_year (%).',
+      new.usage_year;
+  end if;
+  if new.eligible_for_undistributable_at != new.claim_deadline + interval '1 day' then
+    raise exception
+      'eligible_for_undistributable_at skal være dagen efter claim_deadline.';
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.guard_allocation_immutability()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  if old.status in ('settled', 'paid') then
+    raise exception
+      'Rettighedstildeling % er % og kan ikke ændres. Brug rights_adjustments.',
+      old.id, old.status;
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.guard_calculation_run_immutability()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  if old.status = 'booked' then
+    raise exception
+      'Beregningsrunde % er booket og kan ikke ændres. Opret en ny runde.', old.id;
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.guard_notification_sent_immutability()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  if old.status = 'sent' and new.status != 'sent' then
+    raise exception
+      'Notifikation % er allerede sendt og kan ikke ændre status.', old.id;
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.guard_policy_version_immutability()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  if old.used_in_calculation = true then
+    raise exception
+      'Policyversion % er brugt i en beregningsrunde og er read-only.', old.id;
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.guard_settlement_cutoff_immutability()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  if old.cutoff_at != new.cutoff_at then
+    raise exception
+      'cutoff_at på afregning % kan ikke ændres efter oprettelse.', old.id;
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.guard_settlement_paid_immutability()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  if old.status = 'paid' then
+    raise exception
+      'Afregning % er betalt og kan ikke ændres.', old.id;
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.release_allocation_on_settlement_item_delete()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  update public.rights_allocations
+  set status = 'pending',
+      updated_at = now()
+  where id = old.allocation_id
+    and status = 'reserved';
+  return old;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.reserve_allocation_on_settlement_item()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  update public.rights_allocations
+  set status = 'reserved',
+      updated_at = now()
+  where id = new.allocation_id
+    and status = 'pending';
+
+  if not found then
+    raise exception
+      'Rettighedstildeling % er ikke i status pending og kan ikke reserveres.',
+      new.allocation_id;
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.update_claim_timely_flags()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  new.is_timely :=
+    (new.submitted_at at time zone 'UTC')::date <= new.claim_deadline;
+  new.blocks_undistributable :=
+    (new.submitted_at at time zone 'UTC')::date <= new.claim_deadline
+    and new.status not in ('rejected', 'reversed', 'paid');
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.validate_inheritance_share_total()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+declare
+  total numeric;
+begin
+  if new.status = 'approved' then
+    select coalesce(sum(share_percent), 0) into total
+    from public.inheritance_relations
+    where org_id                    = new.org_id
+      and deceased_rights_holder_id = new.deceased_rights_holder_id
+      and status                    = 'approved'
+      and id                       != coalesce(new.id, '00000000-0000-0000-0000-000000000000'::uuid);
+
+    if abs((total + new.share_percent) - 100) > 0.001 and (total + new.share_percent) > 100 then
+      raise exception
+        'Arveandele for rettighedshaver % overstiger 100 %% (nuværende: % %%, ny: % %%).',
+        new.deceased_rights_holder_id, total, new.share_percent;
+    end if;
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.validate_sku_from_reserve_total()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+declare
+  total_bps int;
+begin
+  if new.component_type = 'SKU_FROM_RESERVE' then
+    select coalesce(sum(rate_bps), 0) into total_bps
+    from public.distribution_policy_components
+    where policy_version_id = new.policy_version_id
+      and component_type = 'SKU_FROM_RESERVE'
+      and id != coalesce(new.id, '00000000-0000-0000-0000-000000000000'::uuid)
+      and active = true;
+
+    if total_bps + new.rate_bps > 10000 then
+      raise exception
+        'SKU_FROM_RESERVE-komponenter oversiger samlet 100 %% af hensættelsen '
+        '(% bps + % bps = % bps > 10000).',
+        total_bps, new.rate_bps, total_bps + new.rate_bps;
+    end if;
+  end if;
+  return new;
+end;
+$function$;
+
 drop trigger if exists "trg_check_policy_period_overlap" on public."distribution_policies";
 CREATE TRIGGER trg_check_policy_period_overlap BEFORE INSERT OR UPDATE ON distribution_policies FOR EACH ROW EXECUTE FUNCTION check_policy_period_overlap();
 
