@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isEligibleWorkShareRole,
   normalizeCreditName,
   isMissingWorkCreditCacheSchemaError,
   proposeWorkShareCompromise,
@@ -8,6 +9,15 @@ import {
   resolveRightsHolderCreditMatch,
   renderInvitationTemplate,
 } from "../lib/work-share-reconciliation";
+
+test("kun egentlige klipperkrediteringer indgår i arbejdsandele", () => {
+  for (const role of ["Klipper", "Klip", "Editor", "Film Editor", "Konceptuerende klipper"]) {
+    assert.equal(isEligibleWorkShareRole(role), true, role);
+  }
+  for (const role of ["B-klipper", "Klipperassistent", "Assistant Editor", "Trailer klipper", "Pilotklip", "Klippekonsulent", "Supplerende klipper"]) {
+    assert.equal(isEligibleWorkShareRole(role), false, role);
+  }
+});
 
 test("manglende kildecache genkendes uden at skjule andre databasefejl", () => {
   assert.equal(isMissingWorkCreditCacheSchemaError({
@@ -85,6 +95,24 @@ test("ligelig fordeling er deterministisk ved manglende svar", () => {
   const input = [{ id: "a", proposedPercent: null }, { id: "b", proposedPercent: null }, { id: "c", proposedPercent: null }];
   assert.deepEqual(proposeWorkShareCompromise(input, 0), proposeWorkShareCompromise(input, 0));
   assert.deepEqual(proposeWorkShareCompromise(input, 0).map(row => row.finalPercent), [33.4, 33.3, 33.3]);
+});
+
+test("kendte andele bevares og resten fordeles ligeligt", () => {
+  const result = proposeWorkShareCompromise([
+    { id: "a", proposedPercent: 50 },
+    { id: "b", proposedPercent: null },
+    { id: "c", proposedPercent: null },
+  ], 0);
+  assert.deepEqual(result.map(row => row.finalPercent), [50, 25, 25]);
+});
+
+test("reserve trækkes fra før manglende andele fordeles", () => {
+  const result = proposeWorkShareCompromise([
+    { id: "a", proposedPercent: 40 },
+    { id: "b", proposedPercent: null },
+    { id: "c", proposedPercent: null },
+  ], 10);
+  assert.deepEqual(result.map(row => row.finalPercent), [40, 25, 25]);
 });
 
 test("invitationens pladsholdere udfyldes", () => {

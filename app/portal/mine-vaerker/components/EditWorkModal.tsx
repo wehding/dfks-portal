@@ -329,6 +329,21 @@ export function EditWorkModal({
     }).then(result => {
       if (!cancelled && result.success) {
         setShareTask(result.task as unknown as MemberShareTask | null);
+        setEditCoEditors(current => {
+          const existing = new Set(current.map(editor => `${editor.rightsHolderId}:${displayRole(editor.role)}`));
+          const additions = (result.registeredCoEditors ?? [])
+            .filter(editor => !existing.has(`${editor.rightsHolderId}:${displayRole(editor.role)}`))
+            .map(editor => ({
+              id: editor.assignmentId,
+              name: editor.name,
+              role: displayRole(editor.role),
+              assignmentId: editor.assignmentId,
+              rightsHolderId: editor.rightsHolderId,
+              originalRightsHolderId: editor.rightsHolderId,
+              locked: true,
+            } satisfies CoEditorDraft));
+          return [...current, ...additions];
+        });
         const ownPercent = result.task?.ownParticipant?.proposed_percent;
         setSelfSharePercent(ownPercent == null ? "" : String(ownPercent));
       }
@@ -588,17 +603,6 @@ export function EditWorkModal({
           />
         </div>
       )}
-      <div className="space-y-1.5 mb-6">
-        <Label className="text-sm font-medium text-muted-foreground">{t("works.yourRole")}</Label>
-        <select value={editRole} onChange={e => setEditRole(e.target.value)} className={selectCls}>
-          {ROLES.map(r => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-      </div>
-
       {editScope === "season" && (directSeriesEpisodeCount > 0 || directSeriesEpisodeOptions.length > 0 || initialEpisodeScope?.status === "pending") && (
         <div className="mb-6 rounded-lg border p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -650,7 +654,13 @@ export function EditWorkModal({
 
       {/* MEDKLIPPERE SEKTION (Altid synlig på side 1) */}
       <div className="rounded-lg border p-4 mb-6">
-        <p className="mb-3 text-sm font-semibold text-foreground">{t("works.coEditors")}</p>
+        <p className="mb-3 text-sm font-semibold text-foreground">Rettighedshavere</p>
+        <div className="mb-4 space-y-1.5">
+          <Label className="text-sm font-medium text-muted-foreground">{t("works.yourRole")}</Label>
+          <select value={editRole} onChange={e => setEditRole(e.target.value)} className={selectCls}>
+            {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
         <div className="mb-4 rounded-md bg-blue-50 p-3 text-sm text-blue-950 dark:bg-blue-500/10 dark:text-blue-100">
           <p className="font-medium">Hvad skal du gøre?</p>
           <p className="mt-1 text-xs leading-relaxed">
