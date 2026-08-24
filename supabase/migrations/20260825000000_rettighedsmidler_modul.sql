@@ -836,7 +836,7 @@ CREATE INDEX IF NOT EXISTS undistributable_actions_run_idx ON public.undistribut
 CREATE INDEX IF NOT EXISTS withheld_positions_work_allocation_idx ON public.withheld_beneficiary_positions USING btree (work_allocation_id, status);
 
 -- Triggerfunktioner fra det autoritative produktionsskema
-+CREATE OR REPLACE FUNCTION public.check_calculation_run_invariant()
+CREATE OR REPLACE FUNCTION public.check_calculation_run_invariant()
  RETURNS trigger
  LANGUAGE plpgsql
 AS $function$
