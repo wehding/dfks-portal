@@ -31,6 +31,7 @@ import { resolveOtherSupplements } from "@/lib/contract-supplements"
 import { resolvePensionSupplement } from "@/lib/contract-pension"
 import { resolveContractSalary } from "@/lib/contract-salary"
 import { resolveContractCredit } from "@/lib/contract-credit"
+import { resolveContractProlongation } from "@/lib/contract-prolongation"
 
 const OTHER_SUPPLEMENT_LABELS: Record<string, string> = {
     overtidstillaeg: "Overtidstillæg",
@@ -434,6 +435,7 @@ function AdminValideringPageInner() {
             const normalizedSalary = resolveContractSalary(ed)
             const pensionSupplement = resolvePensionSupplement(normalizedSalary)
             const contractCredit = resolveContractCredit(ed)
+            const prolongation = resolveContractProlongation(ed)
 
             setFormData({
                 producerName: ed.producerName ?? ed.employerName ?? "",
@@ -465,8 +467,11 @@ function AdminValideringPageInner() {
                 otherSupplements: resolveOtherSupplements(ed),
                 workPhases: Array.isArray(ed.workPhases) ? ed.workPhases : [],
                 workingWeeks: ed.workingWeeks ?? "",
-                prolongationWeeks: ed.prolongationWeeks ?? "",
-                prolongationNote: ed.prolongationNote ?? "",
+                prolongationWeeks: prolongation.prolongationWeeks ?? "",
+                prolongationTotalWeeks: prolongation.prolongationTotalWeeks ?? "",
+                prolongationInterpretation: prolongation.prolongationInterpretation,
+                needsManualProlongationReview: prolongation.needsManualProlongationReview,
+                prolongationNote: prolongation.prolongationNote ?? "",
                 svod: impliedBySvod,
                 copydan: impliedByCopydan,
                 royalty: impliedByRoyalty,
@@ -560,6 +565,9 @@ function AdminValideringPageInner() {
                 workPhases: Array.isArray(formData.workPhases) && formData.workPhases.length > 0 ? formData.workPhases : undefined,
                 workingWeeks: formData.workingWeeks ? Number(formData.workingWeeks) : undefined,
                 prolongationWeeks: formData.prolongationWeeks ? Number(formData.prolongationWeeks) : undefined,
+                prolongationTotalWeeks: formData.prolongationTotalWeeks ? Number(formData.prolongationTotalWeeks) : undefined,
+                prolongationInterpretation: formData.prolongationInterpretation || undefined,
+                needsManualProlongationReview: !!formData.needsManualProlongationReview,
                 prolongationNote: formData.prolongationNote || undefined,
                 svod: !!formData.svod,
                 copydan: !!formData.copydan,
@@ -702,6 +710,7 @@ function AdminValideringPageInner() {
         const normalizedSalary = resolveContractSalary(ed)
         const pensionSupplement = resolvePensionSupplement(normalizedSalary)
         const contractCredit = resolveContractCredit(ed)
+        const prolongation = resolveContractProlongation(ed)
 
         return {
             producerName: (() => {
@@ -737,8 +746,11 @@ function AdminValideringPageInner() {
             otherSupplements:              resolveOtherSupplements(ed),
             workPhases:                    Array.isArray(ed.workPhases) ? ed.workPhases : [],
             workingWeeks:                  ed.workingWeeks ?? "",
-            prolongationWeeks:             ed.prolongationWeeks ?? "",
-            prolongationNote:              ed.prolongationNote ?? "",
+            prolongationWeeks:             prolongation.prolongationWeeks ?? "",
+            prolongationTotalWeeks:        prolongation.prolongationTotalWeeks ?? "",
+            prolongationInterpretation:    prolongation.prolongationInterpretation,
+            needsManualProlongationReview: prolongation.needsManualProlongationReview,
+            prolongationNote:              prolongation.prolongationNote ?? "",
             // SVOD og Copydan: kun fra AI-udtræk — ingen hardcoded overenskomst-lister
             svod:                          !!ed.svod,
             copydan:                       !!ed.copydan,
@@ -1528,12 +1540,18 @@ setActiveField(fieldId)
                                 )}
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <F src={fieldSrc("prolongationWeeks")} label={<>Prolongationsuger{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
-                                        <Input type="number" value={String(formData.prolongationWeeks ?? "")} onChange={(e) => setField("prolongationWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
+                                        <Input type="number" value={String(formData.prolongationWeeks ?? "")} onChange={(e) => { setField("prolongationWeeks", e.target.value); setField("needsManualProlongationReview", false) }} placeholder="0" className="max-w-[120px]" />
                                     </F>
                                     <F src={fieldSrc("prolongationNote")} label={<>Prolongation — vilkår{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
                                         <Input value={String(formData.prolongationNote ?? "")} onChange={(e) => setField("prolongationNote", e.target.value)} placeholder="fx juleferie 21.12–07.01" />
                                     </F>
                                 </div>
+                                {formData.needsManualProlongationReview && (
+                                    <p className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                        Kræver manuel kontrol: AI har fortolket {formData.prolongationTotalWeeks} uger som en samlet maksimumsramme og beregnet {formData.prolongationWeeks} ekstra prolongationsuger.
+                                    </p>
+                                )}
                                 <Separator />
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <F src={fieldSrc("pensionPercent")} label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={pensionNavigation} active={activeField === "pension"} onClick={() => activateSource("pension", pensionNavigation)} /></>}>
