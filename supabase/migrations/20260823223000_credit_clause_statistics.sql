@@ -126,5 +126,3 @@ revoke all on function public.get_statistics_facts(uuid, boolean)
   from public, anon, authenticated;
 grant execute on function public.get_statistics_facts(uuid, boolean)
   to service_role;
-
-
