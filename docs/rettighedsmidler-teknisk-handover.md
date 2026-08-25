@@ -612,6 +612,25 @@ Idempotens håndhæves med en unik nøgle pr. organisation, hændelse, forretnin
 - Historiske tildelinger og beregninger er immutable; rettelser sker gennem nye poster.
 - Bogføring og reservation af tildelinger skal ske atomisk og idempotent.
 
+### Registreret hærdningsopgave: skrivning uden generel `service_role`
+
+Stamdatahandlingerne anvender aktuelt en server-side Supabase-klient med `service_role`. Rollen kan omgå RLS. Sikkerheden afhænger derfor både af, at service-nøglen aldrig sendes til browseren, og at hver serverhandling udleder `org_id` fra den autoriserede brugers aktive organisationskontekst. Klienten må aldrig acceptere et vilkårligt `org_id` fra formularen.
+
+Den midlertidige tabeladgang skal følge princippet om mindst mulige rettigheder: kun navngivne tabeller og kun de nødvendige operationer. Der må ikke gives `GRANT ALL` til hele rettighedsmodulet. Ændringer i grants skal gennemgås som sikkerhedsændringer.
+
+Før modulet håndterer endelige økonomiske posteringer eller udbetalinger, skal skrivninger hærdes med organisationskontrollerede databasefunktioner eller en tilsvarende databasehåndhævet mekanisme. Målet er, at databasen selv afviser en operation, hvis den autoriserede aktørs organisation, inputrækker og relaterede objekter ikke har samme `org_id`.
+
+Hærdningen er først afsluttet, når:
+
+- skrivefunktionerne har et fast `search_path` og mindst mulige `EXECUTE`-rettigheder,
+- klientleveret `org_id` ignoreres eller kontrolleres mod en betroet serverkontekst,
+- sammensatte fremmednøgler fortsat forhindrer relationer på tværs af organisationer,
+- automatiske tests beviser, at læsning, oprettelse og ændring på tværs af organisationer afvises,
+- direkte tabelrettigheder for `service_role` tilbagekaldes, hvor de er erstattet af de kontrollerede funktioner,
+- service-nøglen fortsat kun findes i servermiljøet og aldrig logges eller eksponeres til browseren.
+
+Opgaven er en sikkerhedsmæssig forudsætning for produktionsklar bogføring og udbetaling, men blokerer ikke isoleret administration af rettighedskasser og fordelingspolitikker med de begrænsede grants.
+
 ## 19. Foreslåede domæneobjekter
 
 Navnene er konceptuelle og skal tilpasses repositoryets migrationsstil:
