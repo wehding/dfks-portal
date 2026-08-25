@@ -15,9 +15,15 @@ import { buildReconciledWorkCredits, getWorkCreditSourceStates, matchWorkCredits
 import { normalizeCreditName, proposeWorkShareCompromise } from "@/lib/work-share-reconciliation";
 import { normalizeSingleEmail } from "@/lib/email/mime";
 import { countUniqueWorkShareTasks } from "@/lib/work-share-task-count";
+import { isActionableAdminWorkShareCase, type WorkShareAdminParticipantSummary } from "@/lib/work-share-admin";
 
-const ADMIN_SHARE_CASE_SELECT = "id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,source_tags,source_details,excluded_at,last_reminder_sent_at,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name,email,user_id,invite_sent_at))";
-type AdminShareCaseRecord = Record<string, unknown> & { work_id: string; season_number: number | null; episode_number: number | null };
+const ADMIN_SHARE_CASE_SELECT = "id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,source_tags,source_details,invited_by_rights_holder_id,excluded_at,last_reminder_sent_at,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name,email,user_id,invite_sent_at),reported_by:rettighedshavere!work_share_participants_invited_by_rights_holder_id_fkey(full_name))";
+type AdminShareCaseRecord = Record<string, unknown> & {
+  work_id: string;
+  season_number: number | null;
+  episode_number: number | null;
+  work_share_participants?: WorkShareAdminParticipantSummary[] | null;
+};
 
 async function attachCreditSourceStates(db: ReturnType<typeof createServiceClient>, orgId: string, cases: AdminShareCaseRecord[]) {
   const workIds = [...new Set(cases.map(row => String(row.work_id ?? "")).filter(Boolean))];
@@ -275,7 +281,8 @@ export async function fetchAdminShareCases() {
       .eq("org_id", admin.orgId).eq("status", "disputed"),
   ]);
   if (error || disputeError) throw new Error(error?.message ?? disputeError?.message ?? "Arbejdsandelene kunne ikke hentes.");
-  const cases = await attachCreditSourceStates(db, admin.orgId, (data ?? []) as unknown as AdminShareCaseRecord[]);
+  const actionableCases = ((data ?? []) as unknown as AdminShareCaseRecord[]).filter(isActionableAdminWorkShareCase);
+  const cases = await attachCreditSourceStates(db, admin.orgId, actionableCases);
   const references = cases.map(row => ({
     work_id: String(row.work_id), season_number: row.season_number as number | null, episode_number: row.episode_number as number | null,
   }));
@@ -289,11 +296,12 @@ export async function fetchAdminShareCases() {
 export async function countAdminShareTasks() {
   const { admin, db } = await shareAdminContext();
   const [{ data: cases, error: caseError }, { data: disputes, error: disputeError }] = await Promise.all([
-    db.from("work_share_cases").select("id,work_id,season_number,episode_number").eq("org_id", admin.orgId).neq("status", "resolved"),
+    db.from("work_share_cases").select("id,work_id,season_number,episode_number,work_share_participants(rights_holder_id,invited_by_rights_holder_id,source_tags,excluded_at)").eq("org_id", admin.orgId).neq("status", "resolved"),
     db.from("member_work_collaboration_reviews").select("id,work_id,works(season_number,episode_number)").eq("org_id", admin.orgId).eq("status", "disputed"),
   ]);
   if (caseError || disputeError) throw new Error(caseError?.message ?? disputeError?.message ?? "Opgaverne kunne ikke tælles.");
-  const references = (cases ?? []).map(row => ({
+  const actionableCases = (cases ?? []).filter(row => isActionableAdminWorkShareCase(row));
+  const references = actionableCases.map(row => ({
     work_id: row.work_id,
     season_number: row.season_number,
     episode_number: row.episode_number,
@@ -302,7 +310,7 @@ export async function countAdminShareTasks() {
     const work = row.works as unknown as { season_number?: number | null; episode_number?: number | null } | null;
     references.push({ work_id: row.work_id, season_number: work?.season_number, episode_number: work?.episode_number });
   }
-  return { success: true as const, count: countUniqueWorkShareTasks(references), shareCaseCount: cases?.length ?? 0, disputeCount: disputes?.length ?? 0 };
+  return { success: true as const, count: countUniqueWorkShareTasks(references), shareCaseCount: actionableCases.length, disputeCount: disputes?.length ?? 0 };
 }
 
 export async function refreshAdminShareCaseCredits(caseId: string, force = false) {
@@ -328,7 +336,16 @@ export async function refreshAdminShareCaseCredits(caseId: string, force = false
     const nameParticipant = participantByName.get(normalizeCreditName(credit.name));
     const matchedParticipant = holderParticipant ?? nameParticipant;
     const sourceTags = [...new Set([...(matchedParticipant?.source_tags ?? []), ...credit.sources])];
-    const details = { externalPersonIds: credit.externalPersonIds, roles: credit.roles, matchType: credit.matchType };
+    const previousDetails = matchedParticipant?.source_details && typeof matchedParticipant.source_details === "object"
+      ? matchedParticipant.source_details as Record<string, unknown>
+      : {};
+    const previousRoles = Array.isArray(previousDetails.roles) ? previousDetails.roles.filter((role): role is string => typeof role === "string") : [];
+    const details = {
+      ...previousDetails,
+      externalPersonIds: credit.externalPersonIds,
+      roles: [...new Set([...previousRoles, ...credit.roles])],
+      matchType: credit.matchType,
+    };
     if (matchedParticipant) {
       if (holderParticipant && nameParticipant && holderParticipant.id !== nameParticipant.id && !nameParticipant.rights_holder_id) {
         const { error: mergeError } = await db.from("work_share_participants").update({

@@ -23,6 +23,8 @@ type KnownShareParticipantInput = {
   role: string;
   relationship_status: "pending" | "confirmed";
   invited_by_rights_holder_id?: string | null;
+  source_tags?: string[];
+  source_details?: Record<string, unknown>;
   response_scope?: ShareScope | null;
   proposed_percent?: number | null;
   responded_at?: string | null;
@@ -31,13 +33,21 @@ type KnownShareParticipantInput = {
 
 export async function saveKnownShareParticipant(db: ServiceClient, input: KnownShareParticipantInput) {
   const { data: existing, error: findError } = await db.from("work_share_participants")
-    .select("id")
+    .select("id,source_tags,source_details")
     .eq("case_id", input.case_id)
     .eq("rights_holder_id", input.rights_holder_id)
     .maybeSingle();
   if (findError) throw new Error(findError.message);
   if (existing) {
-    const result = await db.from("work_share_participants").update(input).eq("id", existing.id).select("id").single();
+    const mergedInput = {
+      ...input,
+      source_tags: [...new Set([...(existing.source_tags ?? []), ...(input.source_tags ?? [])])],
+      source_details: {
+        ...((existing.source_details && typeof existing.source_details === "object") ? existing.source_details : {}),
+        ...(input.source_details ?? {}),
+      },
+    };
+    const result = await db.from("work_share_participants").update(mergedInput).eq("id", existing.id).select("id").single();
     if (result.error || !result.data) throw new Error(result.error?.message ?? "Medklipperopgaven kunne ikke gemmes.");
     return result.data;
   }
@@ -143,6 +153,7 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
     rights_holder_id: params.actorRightsHolderId,
     role: normalizeWorkEditorRole(params.actorRole),
     relationship_status: "confirmed",
+    source_tags: ["local"],
     response_scope: shareCase.resolution_scope,
     proposed_percent: actorPercent,
     responded_at: new Date().toISOString(),
@@ -162,6 +173,8 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
         role: normalizeWorkEditorRole(suggestion.role || "Klipper"),
         relationship_status: "pending",
         invited_by_rights_holder_id: params.actorRightsHolderId,
+        source_tags: ["member"],
+        source_details: { reportedByRightsHolderId: params.actorRightsHolderId },
         updated_at: new Date().toISOString(),
       });
       await sendMemberNotification({
@@ -185,6 +198,8 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
         role: normalizeWorkEditorRole(suggestion.role || "Klipper"),
         relationship_status: "pending_match",
         invited_by_rights_holder_id: params.actorRightsHolderId,
+        source_tags: ["member"],
+        source_details: { reportedByRightsHolderId: params.actorRightsHolderId },
       });
       if (error) throw new Error(error.message);
     }
