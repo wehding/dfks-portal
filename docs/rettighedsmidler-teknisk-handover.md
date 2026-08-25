@@ -6,6 +6,8 @@ Dette dokument samler det aftalte systemdesign for DFKS Portals kommende modul t
 
 Dokumentet beskriver designet før implementering. Det er ikke en beskrivelse af færdig produktionsfunktionalitet og ikke en juridisk vurdering.
 
+Det samlede testforløb og kravene til oprydning findes i [Testguide: Rettighedsmidler uden efterladte testdata](./rettighedsmidler-testforloeb.md).
+
 ## Status
 
 Følgende er fastlagt:
