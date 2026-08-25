@@ -10,6 +10,33 @@ export type { PolicyComponent } from "@/lib/rights-policy-preview"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
+type DatabaseError = {
+    code?: unknown
+    message?: unknown
+    details?: unknown
+    hint?: unknown
+    constraint?: unknown
+}
+
+function rightsFundErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message
+    if (typeof error === "string") return error
+    if (!error || typeof error !== "object") return "Ukendt fejl"
+
+    const databaseError = error as DatabaseError
+    const code = typeof databaseError.code === "string" ? databaseError.code : ""
+    const constraint = typeof databaseError.constraint === "string" ? databaseError.constraint : ""
+    const message = typeof databaseError.message === "string" ? databaseError.message : ""
+    const details = typeof databaseError.details === "string" ? databaseError.details : ""
+    const hint = typeof databaseError.hint === "string" ? databaseError.hint : ""
+
+    if (code === "23505" && (constraint === "rights_funds_org_id_code_key" || /rights_funds_org_id_code_key/i.test(message + details))) {
+        return "Der findes allerede en rettighedskasse med denne kode i organisationen."
+    }
+
+    return [message, details, hint].filter(Boolean).join(" — ") || `Databasefejl${code ? ` (${code})` : ""}`
+}
+
 // ── Typer ────────────────────────────────────────────────────────────────────
 
 export type RightsFund = {
@@ -88,7 +115,7 @@ export async function getRightsFunds(): Promise<{ success: boolean; funds: Right
         return { success: true, funds: (data ?? []) as RightsFund[] }
     } catch (err) {
         console.error("[rights-funds] getRightsFunds fejlede:", err)
-        return { success: false, funds: [], error: String(err) }
+        return { success: false, funds: [], error: rightsFundErrorMessage(err) }
     }
 }
 
@@ -116,12 +143,20 @@ export async function createRightsFund(payload: {
             .select()
             .single()
 
-        if (error) throw error
+        if (error) {
+            console.error("[rights-funds] createRightsFund databasefejl:", {
+                code: error.code,
+                message: error.message,
+                details: error.details,
+                hint: error.hint,
+            })
+            return { success: false, error: rightsFundErrorMessage(error) }
+        }
         revalidatePath("/admin/stamdata")
         return { success: true, fund: data as RightsFund }
     } catch (err) {
         console.error("[rights-funds] createRightsFund fejlede:", err)
-        return { success: false, error: String(err) }
+        return { success: false, error: rightsFundErrorMessage(err) }
     }
 }
 
@@ -147,7 +182,7 @@ export async function updateRightsFund(
         return { success: true }
     } catch (err) {
         console.error("[rights-funds] updateRightsFund fejlede:", err)
-        return { success: false, error: String(err) }
+        return { success: false, error: rightsFundErrorMessage(err) }
     }
 }
 
