@@ -12,17 +12,19 @@ CREATE OR REPLACE FUNCTION public.current_user_org_id()
  RETURNS uuid
  LANGUAGE sql
  STABLE
+ SET search_path TO ''
 AS $function$
-  select org_id from user_org_roles where user_id = auth.uid() limit 1;
+  select org_id from public.user_org_roles where user_id = auth.uid() limit 1;
 $function$;
 
 CREATE OR REPLACE FUNCTION public.is_org_admin()
  RETURNS boolean
  LANGUAGE sql
  STABLE
+ SET search_path TO ''
 AS $function$
   select exists (
-    select 1 from user_org_roles
+    select 1 from public.user_org_roles
     where user_id = auth.uid()
       and role in ('admin','org-admin','superadmin')
   );
