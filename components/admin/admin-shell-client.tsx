@@ -26,6 +26,7 @@ import {
     Home,
     FileClock,
     BadgeCheck,
+    Coins,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -77,6 +78,7 @@ const SETUP_NAV_ITEMS = [
 
 const RETTIGHEDS_NAV_ITEMS = [
     { key: "aftalelicens",        href: "/admin/aftalelicens",        icon: SHARED_NAV_ICONS.screenings,  labelKey: "nav.visningsadmin"    },
+    { key: "rettighedsmidler",    href: "/admin/rettighedsmidler",    icon: Coins,       labelKey: "nav.rettighedsmidler" },
     { key: "udbetalinger",        href: "/admin/udbetalinger",        icon: Wallet,      labelKey: "nav.payouts"          },
     { key: "streaming",           href: "/admin/streaming",           icon: Play,        labelKey: "nav.streaming"        },
     { key: "stamdata",            href: "/admin/stamdata",            icon: Database,    labelKey: "nav.masterData"       },

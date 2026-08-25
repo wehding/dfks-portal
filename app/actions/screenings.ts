@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { resolveOrgId } from "@/lib/org";
 import { normalizeScreeningTitle } from "@/lib/screening-utils";
+import type { FilterRule } from "@/lib/streaming-types";
 
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
 
@@ -479,7 +480,7 @@ export async function fetchScreeningSourceRowsForBatch(batchKey: string) {
   const db = createServiceClient();
   const { data, error } = await db
     .from("screening_source_rows")
-    .select("id, title, normalized_title, channel, screening_date, duration_minutes, view_count, season, episode, production_year, category, genre, description, production_countries, directors, actors, sort_status, vaerk_type, sorted_by, sorted_at")
+    .select("id, title, normalized_title, channel, screening_date, broadcast_time, duration_minutes, view_count, season, episode, episode_id, episode_title, production_year, category, genre, description, production_countries, directors, actors, sort_status, vaerk_type, sorted_by, sorted_at")
     .eq("org_id", orgId)
     .eq("batch_key", batchKey)
     .order("screening_date")
@@ -490,6 +491,61 @@ export async function fetchScreeningSourceRowsForBatch(batchKey: string) {
   }
 
   return { success: true, rows: data ?? [] };
+}
+
+type BatchFilterConfig = { localRules: FilterRule[]; disabledGlobalRuleIds: string[] };
+
+function normalizeBatchFilterConfig(value: unknown): BatchFilterConfig {
+  const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const localRules = Array.isArray(raw.localRules) ? raw.localRules.flatMap((row): FilterRule[] => {
+    if (!row || typeof row !== "object") return [];
+    const rule = row as Record<string, unknown>;
+    const type = rule.type;
+    if (typeof rule.id !== "string" || typeof rule.name !== "string" || typeof rule.value !== "string"
+      || !["title_keyword", "title_regex", "channel"].includes(String(type))) return [];
+    return [{
+      id: rule.id,
+      name: rule.name.trim(),
+      type: type as FilterRule["type"],
+      value: rule.value.trim(),
+      active: rule.active !== false,
+      createdAt: typeof rule.createdAt === "string" ? rule.createdAt : new Date().toISOString(),
+      scope: "local",
+    }];
+  }).filter(rule => rule.name && rule.value).slice(0, 500) : [];
+  const disabledGlobalRuleIds = Array.isArray(raw.disabledGlobalRuleIds)
+    ? Array.from(new Set(raw.disabledGlobalRuleIds.filter((id): id is string => typeof id === "string"))).slice(0, 500)
+    : [];
+  return { localRules, disabledGlobalRuleIds };
+}
+
+export async function getAftalelicensBatchFilterConfig(batchKey: string) {
+  const user = await currentUser();
+  if (!user || !(await isUserAdmin(user.id))) return { success: false, error: "Ikke autoriseret", config: normalizeBatchFilterConfig(null) };
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation", config: normalizeBatchFilterConfig(null) };
+  const db = createServiceClient();
+  const { data, error } = await db.from("aftalelicens_batches").select("filter_config").eq("id", batchKey).eq("org_id", orgId).maybeSingle();
+  if (error || !data) return { success: false, error: error?.message ?? "Datasættet blev ikke fundet", config: normalizeBatchFilterConfig(null) };
+  return { success: true, config: normalizeBatchFilterConfig(data.filter_config) };
+}
+
+export async function updateAftalelicensBatchFilterConfig(batchKey: string, config: BatchFilterConfig) {
+  const user = await currentUser();
+  if (!user || !(await isUserAdmin(user.id))) return { success: false, error: "Ikke autoriseret" };
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation" };
+  const normalized = normalizeBatchFilterConfig(config);
+  const db = createServiceClient();
+  const { data, error } = await db.from("aftalelicens_batches")
+    .update({ filter_config: normalized })
+    .eq("id", batchKey)
+    .eq("org_id", orgId)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) return { success: false, error: error?.message ?? "Datasættet blev ikke fundet" };
+  revalidatePath(`/admin/aftalelicens/${batchKey}`);
+  return { success: true, config: normalized };
 }
 
 export type ScreeningSourceRowSortUpdate = {

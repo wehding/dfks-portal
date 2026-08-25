@@ -296,6 +296,7 @@ export interface FilterRule {
     value: string           // Nøgleord, regex eller kanalnavn
     active: boolean
     createdAt: string
+    scope?: "global" | "local" // Global fra Stamdata eller lokal for én batch
 }
 
 // Vægt-konfiguration per værktype — point pr. værk
@@ -351,10 +352,13 @@ export interface AftalelicensVaerk {
     normalizedTitle?: string // Normaliseret/renset titel
     channel?: string
     broadcastDate?: string
+    broadcastTime?: string
     duration?: number       // Minutter
     viewCount?: number      // TV2 Play: antal visninger
     season?: number         // Sæsonnummer (fx 3)
     episode?: number        // Afsnitsnummer (fx 7)
+    episodeId?: string      // Stabilt indholds-ID fra EPG-kilden
+    episodeTitle?: string   // Afsnittets titel fra EPG-kilden
     productionYear?: number // Produktionsår
     // Berigende kontekst fra Simply.TV — vigtig for korrekt AI-sortering af
     // titler, der ikke er umiddelbart genkendelige på titel/kanal/varighed

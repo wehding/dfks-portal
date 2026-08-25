@@ -1,0 +1,3 @@
+-- Rettighedsmidler-deltaen er indarbejdet i den autoritative baseline
+-- i 20260825000000_rettighedsmidler_modul.sql. Filen bevares som markør,
+-- fordi migrationsversionen allerede kan være registreret i eksisterende miljøer.

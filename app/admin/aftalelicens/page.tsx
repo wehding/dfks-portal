@@ -35,10 +35,12 @@ import Link from "next/link"
 import { toast } from "sonner"
 import type { AftalelicensBatch, AftalelicensKilde, AftalelicensVaerk, FilterRule, SortStatus } from "@/lib/streaming-types"
 import { addScreeningClaimComment, createAftalelicensBatch, fetchAdminScreeningClaims, fetchAftalelicensBatches, importScreeningSourceRows, markScreeningClaimCommentsRead, updateScreeningClaimStatus } from "@/app/actions/screenings"
+import { getAftalelicensFilterRules } from "@/app/actions/organisation-settings"
 import { MessageThread } from "@/components/messages/message-thread"
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
 import { WORK_TYPES } from "@/lib/work-types"
 import { readFirstWorksheetRows } from "@/lib/excel/read-workbook"
+import { parseScreeningDate, parseScreeningTime } from "@/lib/screening-date-time"
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -57,14 +59,6 @@ const STATUS_CONFIG = {
     sorting:   { label: "Sorteres",           variant: "secondary" as const, icon: Clock },
     weighted:  { label: "Klar til beregning", variant: "default"   as const, icon: CheckCircle2 },
     completed: { label: "Afsluttet",          variant: "outline"   as const, icon: CheckCircle2 },
-}
-
-function loadFilterRules(): FilterRule[] {
-    if (typeof window === "undefined") return []
-    try {
-        const stored = localStorage.getItem("dfks_filter_rules")
-        return stored ? JSON.parse(stored) : []
-    } catch { return [] }
 }
 
 // saveBatches/loadBatches (localStorage) er fjernet — batch-historik hentes/gemmes
@@ -264,25 +258,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                 const rawTitle = cm.titleCol !== null ? String(row[cm.titleCol] ?? "").trim() : ""
                 if (!rawTitle) return null
                 const channel = cm.channelCol !== null ? String(row[cm.channelCol] ?? "").trim() || undefined : undefined
-                let broadcastDate: string | undefined
-                if (cm.dateCol !== null) {
-                    const d = row[cm.dateCol]
-                    if (d instanceof Date) broadcastDate = d.toISOString().slice(0, 10)
-                    else if (typeof d === "string" && d) broadcastDate = d.slice(0, 10)
-                    else if (typeof d === "number") {
-                        // Excel serial date — dage siden 1899-12-30 (Excels epoke, inkl. dens
-                        // kendte "1900 var skudår"-fejl). Gyldige sendedatoer i praksis ligger
-                        // et godt stykke over 25569 (svarer til 1970-01-01) — en langt lavere
-                        // værdi er sandsynligvis IKKE en fuld dato (fx et klokkeslæt gemt som
-                        // decimalbrøk, eller en kolonne-fejlplacering), og bør IKKE stille
-                        // omregnes til en meningsløs 1900-dato. Sæt null i stedet, så det er
-                        // synligt som manglende, ikke forkert.
-                        if (d >= 25569) {
-                            const jsDate = new Date(Math.round((d - 25569) * 86400 * 1000))
-                            broadcastDate = jsDate.toISOString().slice(0, 10)
-                        }
-                    }
-                }
+                const broadcastDate = cm.dateCol !== null ? parseScreeningDate(row[cm.dateCol]) : undefined
                 const durRaw = cm.durationCol !== null ? row[cm.durationCol] : undefined
                 const duration = durRaw !== undefined && durRaw !== "" ? Math.round(Number(durRaw)) || undefined : undefined
                 const viewRaw = cm.viewsCol !== null ? row[cm.viewsCol] : undefined
@@ -311,7 +287,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                     ? cm.productionCompanyCols.map(i => String(row[i] ?? "").trim()).filter(Boolean)
                     : undefined
                 const imdbId = cm.imdbIdCol !== null ? String(row[cm.imdbIdCol] ?? "").trim() || undefined : undefined
-                const broadcastTime = cm.broadcastTimeCol !== null ? String(row[cm.broadcastTimeCol] ?? "").trim() || undefined : undefined
+                const broadcastTime = cm.broadcastTimeCol !== null ? parseScreeningTime(row[cm.broadcastTimeCol]) : undefined
                 const listingId = cm.listingIdCol !== null ? String(row[cm.listingIdCol] ?? "").trim() || undefined : undefined
                 const seriesId = cm.seriesIdCol !== null ? String(row[cm.seriesIdCol] ?? "").trim() || undefined : undefined
                 const episodeId = cm.episodeIdCol !== null ? String(row[cm.episodeIdCol] ?? "").trim() || undefined : undefined
@@ -335,6 +311,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                 const obj: Record<string, string> = { Titel: r.rawTitle }
                 if (r.channel) obj["Kanal"] = r.channel
                 if (r.broadcastDate) obj["Dato"] = r.broadcastDate
+                if (r.broadcastTime) obj["Klokkeslæt"] = r.broadcastTime.slice(0, 5)
                 if (r.duration != null) obj["Varighed"] = `${r.duration} min`
                 if (r.viewCount != null) obj["Visninger"] = r.viewCount.toLocaleString("da-DK")
                 return obj
@@ -342,7 +319,8 @@ function ImportDialog({ open, onOpenChange, onImport }: {
             setPreviewRows(prev)
 
             // Beregn filter-preview (kun informativt — intet fjernes ved import)
-            const rules = loadFilterRules().filter(r => r.active)
+            const filterResult = await getAftalelicensFilterRules()
+            const rules = filterResult.rules.filter(r => r.active)
             const ruleCounts = new Map<string, number>(rules.map(r => [r.id, 0]))
             let removedCount = 0
             for (const row of parsed) {
@@ -377,6 +355,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
             rawTitle: r.rawTitle,
             channel: r.channel,
             broadcastDate: r.broadcastDate,
+            broadcastTime: r.broadcastTime,
             duration: r.duration,
             viewCount: r.viewCount,
             season: r.season,

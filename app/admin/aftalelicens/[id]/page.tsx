@@ -13,11 +13,18 @@ import {
     fetchAftalelicensBatch,
     fetchScreeningSourceRowsForBatch,
     fetchWorksAndContractsForMatching,
+    getAftalelicensBatchFilterConfig,
     updateScreeningSourceRowSortStates,
+    updateAftalelicensBatchFilterConfig,
     type ScreeningSourceRowSortUpdate,
 } from "@/app/actions/screenings"
-import { getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
+import { getAftalelicensFilterRules, getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
+import { formatAftalelicensWorkTitle } from "@/lib/aftalelicens-work-title"
+import { applyAftalelicensRerunFactor, markAftalelicensReruns } from "@/lib/aftalelicens-reruns"
+import { resolveAftalelicensWorkType } from "@/lib/aftalelicens-work-type"
+import { buildAftalelicensBatchFilterConfig, combineAftalelicensFilterRules } from "@/lib/aftalelicens-filter-rules"
+import { formatScreeningDateTime, parseScreeningDate } from "@/lib/screening-date-time"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -287,26 +294,10 @@ function QuickFilterButton({ vaerk, onAddRule }: {
 
 // ── Filter rules (shared with stamdata) ──────────────────────
 
-const DEFAULT_FILTER_RULES: FilterRule[] = [
-    { id: "fr1", name: "Sport", type: "title_keyword", value: "sport", active: true, createdAt: "2024-01-01" },
-    { id: "fr2", name: "Nyheder", type: "title_keyword", value: "nyhed", active: true, createdAt: "2024-01-01" },
-    { id: "fr3", name: "TV Avisen", type: "title_keyword", value: "tv avisen", active: true, createdAt: "2024-01-01" },
-    { id: "fr4", name: "Sporten", type: "title_keyword", value: "sporten", active: true, createdAt: "2024-01-01" },
-    { id: "fr5", name: "Vejret", type: "title_keyword", value: "vejret", active: true, createdAt: "2024-01-01" },
-]
-
 const FILTER_RULE_TYPE_LABELS: Record<FilterRule["type"], string> = {
     title_keyword: "Nøgleord i titel",
     title_regex: "Regex-mønster",
     channel: "Kanalnavn",
-}
-
-function loadFilterRulesLocal(): FilterRule[] {
-    if (typeof window === "undefined") return DEFAULT_FILTER_RULES
-    try {
-        const stored = localStorage.getItem("dfks_filter_rules")
-        return stored ? JSON.parse(stored) : DEFAULT_FILTER_RULES
-    } catch { return DEFAULT_FILTER_RULES }
 }
 
 function matchesAnyRule(title: string, channel: string | undefined, rules: FilterRule[]): boolean {
@@ -320,73 +311,90 @@ function matchesAnyRule(title: string, channel: string | undefined, rules: Filte
     })
 }
 
-function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rules: FilterRule[]) => void; onAddRuleRef?: React.MutableRefObject<((rule: Omit<FilterRule, "id" | "createdAt">) => void) | null> }) {
+function FilterRulesPanel({ batchId, onRulesChange, onAddRuleRef }: { batchId: string; onRulesChange: (rules: FilterRule[]) => void; onAddRuleRef?: React.MutableRefObject<((rule: Omit<FilterRule, "id" | "createdAt">) => void) | null> }) {
     const [open, setOpen] = useState(false)
-    const [rules, setRules] = useState<FilterRule[]>(DEFAULT_FILTER_RULES)
+    const [rules, setRules] = useState<FilterRule[]>([])
+    const rulesRef = useRef<FilterRule[]>([])
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
     const [ruleSearch, setRuleSearch] = useState("")
     const [newName, setNewName] = useState("")
     const [newType, setNewType] = useState<FilterRule["type"]>("title_keyword")
     const [newValue, setNewValue] = useState("")
     const [adding, setAdding] = useState(false)
 
-    const applyRules = (next: FilterRule[]) => {
-        localStorage.setItem("dfks_filter_rules", JSON.stringify(next))
+    const setEffectiveRules = (next: FilterRule[]) => {
+        rulesRef.current = next
+        setRules(next)
         onRulesChange(next)
     }
 
-    // Hydrate from localStorage after mount to avoid SSR/client mismatch
     useEffect(() => {
-        const stored = loadFilterRulesLocal()
-        setRules(stored)
-        onRulesChange(stored)
+        Promise.all([getAftalelicensFilterRules(), getAftalelicensBatchFilterConfig(batchId)])
+            .then(([globalResult, batchResult]) => {
+                if (!batchResult.success) throw new Error(batchResult.error)
+                const effective = combineAftalelicensFilterRules(globalResult.rules, batchResult.config)
+                setEffectiveRules(effective)
+            })
+            .catch(error => toast.error(error instanceof Error ? error.message : "Kunne ikke hente filtreringsregler"))
+            .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [batchId])
+
+    const persistRules = async (next: FilterRule[]) => {
+        const previous = rulesRef.current
+        setEffectiveRules(next)
+        setSaving(true)
+        const config = buildAftalelicensBatchFilterConfig(next)
+        try {
+            const result = await updateAftalelicensBatchFilterConfig(batchId, config)
+            if (!result.success) throw new Error(result.error)
+            return true
+        } catch (error) {
+            setEffectiveRules(previous)
+            toast.error(error instanceof Error ? error.message : "Kunne ikke gemme filtreringsregler")
+            return false
+        } finally {
+            setSaving(false)
+        }
+    }
 
     useEffect(() => {
         if (onAddRuleRef) {
             onAddRuleRef.current = (rule: Omit<FilterRule, "id" | "createdAt">) => {
-                setRules(prev => {
-                    const next = [...prev, { ...rule, id: `fr_${Date.now()}`, createdAt: new Date().toISOString() }]
-                    applyRules(next)
-                    return next
-                })
+                const next = [...rulesRef.current, { ...rule, id: crypto.randomUUID(), createdAt: new Date().toISOString(), scope: "local" as const }]
+                void persistRules(next)
                 toast.success(`Filterregel tilføjet: "${rule.value}"`)
             }
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [onAddRuleRef])
 
-    const toggleActive = (id: string) => {
-        setRules(prev => {
-            const next = prev.map(r => r.id === id ? { ...r, active: !r.active } : r)
-            applyRules(next)
-            return next
-        })
+    const toggleActive = async (id: string) => {
+        await persistRules(rulesRef.current.map(r => r.id === id ? { ...r, active: !r.active } : r))
     }
 
-    const handleDelete = (id: string) => {
-        setRules(prev => {
-            const next = prev.filter(r => r.id !== id)
-            applyRules(next)
-            return next
-        })
-        toast.success("Regel slettet")
+    const handleDelete = async (rule: FilterRule) => {
+        const next = rule.scope === "global"
+            ? rulesRef.current.map(item => item.id === rule.id ? { ...item, active: false } : item)
+            : rulesRef.current.filter(item => item.id !== rule.id)
+        const saved = await persistRules(next)
+        if (saved) toast.success(rule.scope === "global" ? "Stamdataregel slået fra for dette datasæt" : "Lokal regel slettet")
     }
 
-    const handleAdd = () => {
+    const handleAdd = async () => {
         if (!newName.trim() || !newValue.trim()) return
-        setRules(prev => {
-            const next = [...prev, {
-                id: `fr_${Date.now()}`,
+        const next = [...rulesRef.current, {
+                id: crypto.randomUUID(),
                 name: newName.trim(),
                 type: newType,
                 value: newValue.trim(),
                 active: true,
                 createdAt: new Date().toISOString(),
+                scope: "local" as const,
             }]
-            applyRules(next)
-            return next
-        })
+        const saved = await persistRules(next)
+        if (!saved) return
         setNewName("")
         setNewValue("")
         setNewType("title_keyword")
@@ -420,7 +428,7 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
             {open && (
                 <div className="border-t px-4 pb-4 pt-3 space-y-3">
                     <div className="flex items-center gap-3">
-                        <p className="text-xs text-muted-foreground flex-1">Titler der matcher aktive regler fjernes automatisk. Ændringer gælder globalt (deles med stamdata).</p>
+                        <p className="text-xs text-muted-foreground flex-1">Stamdataregler gælder automatisk. Her kan de slås fra for dette datasæt, og lokale regler kan tilføjes.</p>
                         <div className="relative w-52 shrink-0">
                             <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
                             <Input
@@ -445,6 +453,7 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
                                 <TableHead>Navn</TableHead>
                                 <TableHead>Type</TableHead>
                                 <TableHead>Værdi</TableHead>
+                                <TableHead className="w-[90px]">Omfang</TableHead>
                                 <TableHead className="w-[80px]">Aktiv</TableHead>
                                 <TableHead className="w-[48px]" />
                             </TableRow>
@@ -458,10 +467,15 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
                                     </TableCell>
                                     <TableCell className="font-mono text-xs text-muted-foreground">{rule.value}</TableCell>
                                     <TableCell>
-                                        <Switch checked={rule.active} onCheckedChange={() => toggleActive(rule.id)} />
+                                        <Badge variant={rule.scope === "local" ? "secondary" : "outline"} className="text-xs font-normal">
+                                            {rule.scope === "local" ? "Dette datasæt" : "Stamdata"}
+                                        </Badge>
                                     </TableCell>
                                     <TableCell>
-                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(rule.id)}>
+                                        <Switch checked={rule.active} disabled={saving} onCheckedChange={() => void toggleActive(rule.id)} />
+                                    </TableCell>
+                                    <TableCell>
+                                        <Button variant="ghost" size="icon" disabled={saving} title={rule.scope === "global" ? "Slå fra for dette datasæt" : "Slet lokal regel"} className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => void handleDelete(rule)}>
                                             <Trash2 className="h-3.5 w-3.5" />
                                         </Button>
                                     </TableCell>
@@ -469,8 +483,8 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
                             ))}
                             {visibleRules.length === 0 && (
                                 <TableRow>
-                                    <TableCell colSpan={5} className="text-center text-xs text-muted-foreground py-4">
-                                        {ruleSearch ? `Ingen regler matcher "${ruleSearch}"` : "Ingen filtre defineret"}
+                                    <TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-4">
+                                        {loading ? "Henter filtre…" : ruleSearch ? `Ingen regler matcher "${ruleSearch}"` : "Ingen filtre defineret"}
                                     </TableCell>
                                 </TableRow>
                             )}
@@ -497,13 +511,13 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
                                 <Label className="text-xs">Værdi</Label>
                                 <Input value={newValue} onChange={e => setNewValue(e.target.value)} placeholder="f.eks. reklame" className="h-8 text-sm" />
                             </div>
-                            <Button size="sm" onClick={handleAdd} className="h-8">Tilføj</Button>
+                            <Button size="sm" disabled={saving} onClick={() => void handleAdd()} className="h-8">Tilføj lokalt filter</Button>
                             <Button size="sm" variant="ghost" className="h-8" onClick={() => { setAdding(false); setNewName(""); setNewValue("") }}>Annuller</Button>
                         </div>
                     ) : (
                         <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setAdding(true)}>
                             <Plus className="h-3.5 w-3.5" />
-                            Tilføj regel
+                            Tilføj lokalt filter
                         </Button>
                     )}
 
@@ -513,13 +527,14 @@ function FilterRulesPanel({ onRulesChange, onAddRuleRef }: { onRulesChange: (rul
     )
 }
 
-function SortTable({ vaerker, onUpdate }: {
+function SortTable({ batchId, vaerker, onUpdate }: {
+    batchId: string
     vaerker: AftalelicensVaerk[]
     onUpdate: (id: string, patch: Partial<AftalelicensVaerk>) => void
 }) {
     const addRuleRef = useRef<((rule: Omit<FilterRule, "id" | "createdAt">) => void) | null>(null)
-    const autoRejectedRef = useRef<Set<string>>(new Set())
-    const currentRulesRef = useRef<FilterRule[]>(loadFilterRulesLocal())
+    const autoRejectedRef = useRef<Set<string>>(new Set(vaerker.filter(v => v.sortedBy === "filter").map(v => v.id)))
+    const currentRulesRef = useRef<FilterRule[]>([])
     const [dbWorks, setDbWorks] = useState<MatchingWork[]>([])
 
     // Hent egne, registrerede værker til DB-match-trinnet nedenfor — erstatter
@@ -560,7 +575,7 @@ function SortTable({ vaerker, onUpdate }: {
 
     useEffect(() => {
         if (vaerker.length > 0 && currentRulesRef.current.some(r => r.active)) {
-            autoRejectedRef.current = new Set()
+            autoRejectedRef.current = new Set(vaerker.filter(v => v.sortedBy === "filter").map(v => v.id))
             handleRulesChange(currentRulesRef.current)
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -660,16 +675,23 @@ function SortTable({ vaerker, onUpdate }: {
             if (works.length > 1) { unmatched.push(v); continue }
             const work = works[0]
             if (work) {
-                // vaerkType sættes bevidst ikke her — den fastlægges i den
-                // eksisterende, dedikerede sorterings-UI, ikke gættet ud fra
-                // et endnu ikke fuldt afklaret works.type-vokabular.
+                const vaerkType = resolveAftalelicensWorkType({
+                    storedType: v.vaerkType,
+                    matchedWorkType: work.type,
+                    sourceCategory: v.category,
+                    duration: v.duration,
+                    season: v.season,
+                    episode: v.episode,
+                })
                 onUpdate(v.id, {
                     sortStatus: "approved",
+                    vaerkType,
                     sortedAt: new Date().toISOString(),
                     sortedBy: "db",
                 })
                 allSuggestions.set(v.id, {
                     status: "godkend",
+                    type: vaerkType,
                     reason: "Match i værksdatabase",
                 })
                 dbMatch++
@@ -947,7 +969,7 @@ function SortTable({ vaerker, onUpdate }: {
     return (
         <div className="space-y-4">
             {/* Filter rules panel */}
-            <FilterRulesPanel onRulesChange={handleRulesChange} onAddRuleRef={addRuleRef} />
+            <FilterRulesPanel batchId={batchId} onRulesChange={handleRulesChange} onAddRuleRef={addRuleRef} />
 
             {/* Progress */}
             <div className="rounded-lg border p-4 space-y-3">
@@ -1108,7 +1130,7 @@ function SortTable({ vaerker, onUpdate }: {
                     <TableHeader>
                         <TableRow>
                             <SortableHead col="title"    label="Titel"    current={{ col: sortCol, dir: sortDir }} onSort={handleSort} />
-                            <SortableHead col="date"     label="Dato"     current={{ col: sortCol, dir: sortDir }} onSort={handleSort} className="w-[100px]" />
+                            <SortableHead col="date"     label="Dato og tid" current={{ col: sortCol, dir: sortDir }} onSort={handleSort} className="w-[145px]" />
                             <SortableHead col="channel"  label="Kanal"    current={{ col: sortCol, dir: sortDir }} onSort={handleSort} />
                             <SortableHead col="duration" label="Min."     current={{ col: sortCol, dir: sortDir }} onSort={handleSort} className="w-[80px]" />
                             <SortableHead col="vaerkType" label="Værktype" current={{ col: sortCol, dir: sortDir }} onSort={handleSort} className="w-[160px]" />
@@ -1148,9 +1170,9 @@ function SortTable({ vaerker, onUpdate }: {
                                         )}
                                     </div>
                                 </TableCell>
-                                <TableCell className="text-xs text-muted-foreground tabular-nums">
-                                    {v.broadcastDate
-                                        ? new Date(v.broadcastDate).toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit", year: "2-digit" })
+                                <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                                    {v.broadcastDate || v.broadcastTime
+                                        ? formatScreeningDateTime(v.broadcastDate, v.broadcastTime)
                                         : "—"}
                                 </TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{v.channel ?? "—"}</TableCell>
@@ -1520,8 +1542,11 @@ interface VaerkMatch {
     rawTitle: string
     vaerkType?: VaerkType
     duration?: number
+    broadcastDate?: string
+    broadcastTime?: string
     season?: number
     episode?: number
+    episodeTitle?: string
     productionYear?: number
     matchedWorkId?: string   // Work.id fra DB
     matchedWorkTitle?: string
@@ -1594,7 +1619,8 @@ function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contract
     return vaerker
         .filter(v => v.sortStatus === "approved")
         .map(v => {
-            const key = normalizeTitle(v.rawTitle)
+            const workTitle = formatAftalelicensWorkTitle(v)
+            const key = normalizeTitle(workTitle)
             const contracts = contractIdx.get(key) ?? []
             const works = workIdx.get(key) ?? []
 
@@ -1606,7 +1632,7 @@ function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contract
                 sharePercent: equalShare,
             }))
 
-            const identifiers = { season: v.season, episode: v.episode, productionYear: v.productionYear }
+            const identifiers = { season: v.season, episode: v.episode, episodeTitle: v.episodeTitle, broadcastDate: v.broadcastDate, broadcastTime: v.broadcastTime, productionYear: v.productionYear }
 
             // Duplikate titler — kræver manuel valg af det rigtige værk
             if (works.length > 1) {
@@ -1645,7 +1671,7 @@ function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contract
             }
 
             // Ingen eksakt match — kør fuzzy
-            const fuzzyMatches = findFuzzyMatches(v.rawTitle, works)
+            const fuzzyMatches = findFuzzyMatches(workTitle, works)
             return {
                 vaerkId: v.id,
                 rawTitle: v.rawTitle,
@@ -1653,6 +1679,9 @@ function autoMatch(vaerker: AftalelicensVaerk[], works: MatchingWork[], contract
                 duration: v.duration,
                 season: v.season,
                 episode: v.episode,
+                episodeTitle: v.episodeTitle,
+                broadcastDate: v.broadcastDate,
+                broadcastTime: v.broadcastTime,
                 productionYear: v.productionYear,
                 matchedWorkId: undefined,
                 matchedWorkTitle: undefined,
@@ -1698,13 +1727,18 @@ interface MatchGroup {
     hasDuplicates?: boolean
 }
 
+function getMatchGroupKey(match: VaerkMatch) {
+    const season = match.season ?? getSeasonFromTitle(match.rawTitle)
+    if (match.episode != null || match.episodeTitle) {
+        return `${normalizeTitle(stripSeriesId(match.rawTitle))}:s${season ?? ""}:e${match.episode ?? ""}:${normalizeTitle(match.episodeTitle ?? "")}`
+    }
+    return match.vaerkId
+}
+
 function buildGroups(matches: VaerkMatch[]): MatchGroup[] {
     const buckets = new Map<string, VaerkMatch[]>()
     for (const m of matches) {
-        const season = m.season ?? getSeasonFromTitle(m.rawTitle)
-        const key = season != null
-            ? `${normalizeTitle(stripSeriesId(m.rawTitle))}:s${season}`
-            : m.vaerkId
+        const key = getMatchGroupKey(m)
         if (!buckets.has(key)) buckets.set(key, [])
         buckets.get(key)!.push(m)
     }
@@ -1712,8 +1746,10 @@ function buildGroups(matches: VaerkMatch[]): MatchGroup[] {
     return Array.from(buckets.entries()).map(([key, episodes]) => {
         const first = episodes[0]
         const season = first.season ?? getSeasonFromTitle(first.rawTitle) ?? undefined
-        const isGrouped = episodes.length > 1 || season != null
-        const baseTitle = season != null ? (stripSeriesId(first.rawTitle) || first.rawTitle) : first.rawTitle
+        // Flere visninger af samme afsnit er stadig ét værk. Forskellige
+        // afsnit grupperes aldrig sammen, da hvert afsnit er et selvstændigt værk.
+        const isGrouped = episodes.length > 1
+        const baseTitle = formatAftalelicensWorkTitle(first)
 
         const allWorkId = first.matchedWorkId
         const allSameWork = episodes.every(e => e.matchedWorkId === allWorkId)
@@ -1850,10 +1886,7 @@ function ParringTab({ vaerker, onConfirmed }: {
         setExtraWorks(prev => [...prev, ...newWorks])
         setMatches(prev => prev.map(m => {
             // Find which group this match belongs to
-            const season = m.season ?? getSeasonFromTitle(m.rawTitle)
-            const groupKey = season != null
-                ? `${normalizeTitle(stripSeriesId(m.rawTitle))}:s${season}`
-                : m.vaerkId
+            const groupKey = getMatchGroupKey(m)
             const nw = newWorks.find(w => w.groupKey === groupKey)
             if (!nw) return m
             return { ...m, matchedWorkId: nw.id, matchedWorkTitle: nw.title, matchScore: "manual" as const, newWorkCreated: true, confirmed: true }
@@ -2066,15 +2099,14 @@ function ParringTab({ vaerker, onConfirmed }: {
                                                 <button
                                                     onClick={toggleExpand}
                                                     className="mt-0.5 text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                                                    title={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
+                                                    title={isExpanded ? "Skjul visninger" : "Vis visninger"}
                                                 >
                                                     <ChevronDown className={`h-4 w-4 transition-transform ${isExpanded ? "" : "-rotate-90"}`} />
                                                 </button>
                                                 <div>
                                                     <p className="text-sm font-medium">{g.baseTitle}</p>
                                                     <p className="text-xs text-muted-foreground">
-                                                        {g.season != null && `Sæson ${g.season} · `}
-                                                        {g.episodes.length} afsnit
+                                                        {g.episodes.length} visninger
                                                         {g.episodes[0]?.productionYear != null && ` · ${g.episodes[0].productionYear}`}
                                                     </p>
                                                 </div>
@@ -2084,6 +2116,7 @@ function ParringTab({ vaerker, onConfirmed }: {
                                                 <p className="text-sm font-medium">{g.baseTitle}</p>
                                                 <p className="text-xs text-muted-foreground">
                                                     {g.episodes[0]?.duration ? `${g.episodes[0].duration} min` : ""}
+                                                    {` · ${formatScreeningDateTime(g.episodes[0]?.broadcastDate, g.episodes[0]?.broadcastTime)}`}
                                                     {g.episodes[0]?.productionYear != null && ` · ${g.episodes[0].productionYear}`}
                                                 </p>
                                             </div>
@@ -2190,7 +2223,7 @@ function ParringTab({ vaerker, onConfirmed }: {
                                                     className="h-7 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400"
                                                     onClick={() => {
                                                         setNewWorkDialog(g.key)
-                                                        setNewWorkTitle(g.baseTitle + (g.season != null ? ` Sæson ${g.season}` : ""))
+                                                        setNewWorkTitle(g.baseTitle)
                                                         setNewWorkType(g.vaerkType ?? "dokumentarfilm")
                                                     }}
                                                 >
@@ -2229,15 +2262,14 @@ function ParringTab({ vaerker, onConfirmed }: {
                                         </div>
                                     </TableCell>
                                 </TableRow>
-                                {/* Episode sub-rows for series groups */}
+                                {/* Flere visninger af det samme episodeværk */}
                                 {g.isGrouped && isExpanded && g.episodes.map(ep => {
-                                    const epLabel = ep.rawTitle.match(/[Ss]\d+[Ee]\d+/)?.[0]
-                                        ?? (ep.episode != null ? `E${ep.episode}` : ep.rawTitle)
+                                    const screeningDateTime = formatScreeningDateTime(ep.broadcastDate, ep.broadcastTime)
                                     return (
                                         <TableRow key={ep.vaerkId} className="bg-muted/20 dark:bg-muted/10">
                                             <TableCell className="pl-9 py-2">
                                                 <p className="text-xs text-muted-foreground">
-                                                    ↳ <span className="font-mono">{epLabel}</span>
+                                                    ↳ Visning {screeningDateTime}
                                                     {ep.duration ? ` · ${ep.duration} min` : ""}
                                                 </p>
                                             </TableCell>
@@ -2265,7 +2297,7 @@ function ParringTab({ vaerker, onConfirmed }: {
                         onClick={() => {
                             setBulkEditItems(noneGroups.map(g => ({
                                 vaerkId: g.key,
-                                title: g.baseTitle + (g.season != null ? ` Sæson ${g.season}` : ""),
+                                title: g.baseTitle,
                                 vaerkType: g.vaerkType ?? "dokumentarfilm",
                             })))
                             setBulkCreateDialog(true)
@@ -2791,7 +2823,9 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     confirmedMatches: VaerkMatch[]
     batchLabel: string
 }) {
-    const approved = vaerker.filter(v => v.sortStatus === "approved" && v.vaerkType)
+    const approvedRows = vaerker.filter(v => v.sortStatus === "approved")
+    const approved = approvedRows.filter(v => v.vaerkType)
+    const missingType = approvedRows.filter(v => !v.vaerkType)
     const [vaegte, setVaegte] = useState<Record<VaerkType, number>>(DEFAULT_VAEGTE)
     const [extra, setExtra] = useState<AftalelicensVaegtExtra>(DEFAULT_VAEGT_EXTRA)
 
@@ -2822,7 +2856,12 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     })
 
     const handleBeregn = () => {
-        const items: WeightedItem[] = approved.map(v => {
+        if (missingType.length > 0) {
+            toast.error("Beregningen er blokeret: Alle godkendte værker skal have en værktype")
+            return
+        }
+        const rerunMarked = markAftalelicensReruns(approved, extra.genudsendelseMaaneder)
+        const items: WeightedItem[] = rerunMarked.map(v => {
             const { points, base, tierLabel } = beregnPoints(v.vaerkType!, v.duration, vaegte, extra)
             return {
                 vaerkId: v.id,
@@ -2830,42 +2869,14 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                 vaerkType: v.vaerkType!,
                 duration: v.duration ?? 0,
                 viewCount: v.viewCount,
-                isGenudsendelse: false, // beregnes nedenfor
-                points,
+                isGenudsendelse: v.isGenudsendelse ?? false,
+                points: applyAftalelicensRerunFactor(points, v.isGenudsendelse ?? false, extra.genudsendelseFaktor),
                 shareOfTotal: 0,
                 tierLabel,
                 base,
                 broadcastDate: v.broadcastDate,
             }
         })
-
-        // Detektér genudsendelser ud fra stamdata-indstillinger:
-        // samme titel genudsendt inden for genudsendelseMaaneder måneder af seneste premiere = genudsendelse
-        const monthDiff = (a: string, b: string) => {
-            const da = new Date(a), db = new Date(b)
-            return (db.getFullYear() - da.getFullYear()) * 12 + (db.getMonth() - da.getMonth())
-        }
-        const byTitle = new Map<string, WeightedItem[]>()
-        for (const item of items) {
-            const key = normalizeTitle(item.rawTitle)
-            if (!byTitle.has(key)) byTitle.set(key, [])
-            byTitle.get(key)!.push(item)
-        }
-        for (const group of byTitle.values()) {
-            if (group.length <= 1) continue
-            group.sort((a, b) => (a.broadcastDate ?? "").localeCompare(b.broadcastDate ?? ""))
-            let refDate = group[0].broadcastDate ?? ""
-            group.forEach((item, idx) => {
-                if (idx === 0) return
-                const diff = refDate ? monthDiff(refDate, item.broadcastDate ?? refDate) : 0
-                if (diff < extra.genudsendelseMaaneder) {
-                    item.isGenudsendelse = true
-                    item.points = Math.round(item.points * extra.genudsendelseFaktor)
-                } else {
-                    refDate = item.broadcastDate ?? refDate
-                }
-            })
-        }
 
         const totalPoints = items.reduce((s, i) => s + i.points, 0)
         items.forEach(i => { i.shareOfTotal = totalPoints > 0 ? i.points / totalPoints : 0 })
@@ -2889,14 +2900,24 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
 
     if (approved.length === 0) {
         return (
-            <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-                Sorter og godkend værker med en værktype for at beregne point
+            <div className="rounded-lg border border-red-400 bg-red-50 p-6 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200">
+                {missingType.length > 0
+                    ? `Beregningen er blokeret. ${missingType.length} godkendt${missingType.length === 1 ? " værk mangler" : "e værker mangler"} værktype: ${missingType.map(v => v.rawTitle).join(", ")}. Gå tilbage til Sortering og vælg en type.`
+                    : "Sorter og godkend værker med en værktype for at beregne point."}
             </div>
         )
     }
 
     return (
         <div className="space-y-6">
+            {missingType.length > 0 && (
+                <div className="flex items-start gap-2 rounded-lg border border-red-400 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                        Beregningen er blokeret. {missingType.length} godkendt{missingType.length === 1 ? " værk mangler" : "e værker mangler"} værktype: {missingType.map(v => v.rawTitle).join(", ")}. Ret typen under Sortering.
+                    </span>
+                </div>
+            )}
             {/* Weighting */}
             <div className="flex items-center justify-between">
                 <div>
@@ -2905,7 +2926,12 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                         Formel: <span className="font-mono">base-point(type) × minutter</span> — dokumentarfilm: tier bestemmer base-point ud fra varighed
                     </p>
                 </div>
-                <Button onClick={handleBeregn} className="gap-2">
+                <Button
+                    onClick={handleBeregn}
+                    className="gap-2"
+                    disabled={missingType.length > 0}
+                    title={missingType.length > 0 ? "Alle godkendte værker skal have en værktype før beregning" : undefined}
+                >
                     <Calculator className="h-4 w-4" />
                     Beregn point
                 </Button>
@@ -3490,7 +3516,10 @@ export default function AftalelicensDetailPage() {
     // Hent vaerker fra DB
     useEffect(() => {
         if (!id) return
-        fetchScreeningSourceRowsForBatch(id).then(res => {
+        Promise.all([
+            fetchScreeningSourceRowsForBatch(id),
+            getAftalelicensWeightConfig().catch(() => ({ config: null })),
+        ]).then(([res, weightResult]) => {
             if (!res.success) {
                 setLoadError(res.error ?? "Kunne ikke hente de importerede rækker")
                 return
@@ -3502,16 +3531,25 @@ export default function AftalelicensDetailPage() {
                 rawTitle: r.title ?? "",
                 normalizedTitle: r.normalized_title ?? undefined,
                 channel: r.channel ?? "",
-                broadcastDate: r.screening_date ?? undefined,
+                broadcastDate: parseScreeningDate(r.screening_date),
+                broadcastTime: r.broadcast_time ?? undefined,
                 duration: r.duration_minutes ?? undefined,
                 productionYear: r.production_year ?? undefined,
                 sortStatus: (r.sort_status ?? "pending") as AftalelicensVaerk["sortStatus"],
-                vaerkType: (r.vaerk_type as VaerkType | null) ?? undefined,
+                vaerkType: resolveAftalelicensWorkType({
+                    storedType: r.vaerk_type,
+                    sourceCategory: r.category,
+                    duration: r.duration_minutes ?? undefined,
+                    season: r.season ?? undefined,
+                    episode: r.episode ?? undefined,
+                }),
                 sortedBy: r.sorted_by ?? undefined,
                 sortedAt: r.sorted_at ?? undefined,
                 viewCount: r.view_count ?? undefined,
                 season: r.season ?? undefined,
                 episode: r.episode ?? undefined,
+                episodeId: r.episode_id ?? undefined,
+                episodeTitle: r.episode_title ?? undefined,
                 category: r.category ?? undefined,
                 genre: r.genre ?? undefined,
                 description: r.description ?? undefined,
@@ -3519,8 +3557,11 @@ export default function AftalelicensDetailPage() {
                 directors: r.directors ?? undefined,
                 actors: r.actors ?? undefined,
             }))
-            vaerkerRef.current = mapped
-            setVaerker(mapped)
+            const rerunMonths = weightResult.config?.extra?.genudsendelseMaaneder
+                ?? DEFAULT_VAEGT_EXTRA.genudsendelseMaaneder
+            const marked = markAftalelicensReruns(mapped, rerunMonths)
+            vaerkerRef.current = marked
+            setVaerker(marked)
         }).catch(() => {
             setLoadError("Kunne ikke hente de importerede rækker")
         }).finally(() => setRowsLoading(false))
@@ -3723,7 +3764,7 @@ export default function AftalelicensDetailPage() {
                 </TabsList>
 
                 <TabsContent value="sortering" className="mt-4">
-                    <SortTable vaerker={vaerker} onUpdate={updateVaerk} />
+                    <SortTable batchId={id} vaerker={vaerker} onUpdate={updateVaerk} />
                 </TabsContent>
 
                 <TabsContent value="parring" className="mt-4">

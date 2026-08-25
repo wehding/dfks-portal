@@ -37,7 +37,9 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import NextLink from "next/link"
-import { getAftalelicensWeightConfig, updateAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
+import { getAftalelicensFilterRules, getAftalelicensWeightConfig, updateAftalelicensFilterRules, updateAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
+import { RightsFundsTab } from "@/components/admin/rights-funds-tab"
+import { DistributionPoliciesTab } from "@/components/admin/distribution-policies-tab"
 
 function MasterDataTable({
     type,
@@ -309,14 +311,6 @@ const FEE_LABELS: { key: keyof Omit<AdminFees, "linked">; label: string }[] = [
 
 // ── Filtreringsregler ─────────────────────────────────────────
 
-const DEFAULT_FILTER_RULES: FilterRule[] = [
-    { id: "fr1", name: "Sport", type: "title_keyword", value: "sport", active: true, createdAt: "2024-01-01" },
-    { id: "fr2", name: "Nyheder", type: "title_keyword", value: "nyhed", active: true, createdAt: "2024-01-01" },
-    { id: "fr3", name: "TV Avisen", type: "title_keyword", value: "tv avisen", active: true, createdAt: "2024-01-01" },
-    { id: "fr4", name: "Sporten", type: "title_keyword", value: "sporten", active: true, createdAt: "2024-01-01" },
-    { id: "fr5", name: "Vejret", type: "title_keyword", value: "vejret", active: true, createdAt: "2024-01-01" },
-]
-
 const RULE_TYPE_LABELS: Record<FilterRule["type"], string> = {
     title_keyword: "Nøgleord i titel",
     title_regex: "Regex-mønster",
@@ -324,13 +318,9 @@ const RULE_TYPE_LABELS: Record<FilterRule["type"], string> = {
 }
 
 function FilterRulesTab() {
-    const [rules, setRules] = useState<FilterRule[]>(() => {
-        if (typeof window === "undefined") return DEFAULT_FILTER_RULES
-        try {
-            const stored = localStorage.getItem("dfks_filter_rules")
-            return stored ? JSON.parse(stored) : DEFAULT_FILTER_RULES
-        } catch { return DEFAULT_FILTER_RULES }
-    })
+    const [rules, setRules] = useState<FilterRule[]>([])
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
     const [addOpen, setAddOpen] = useState(false)
     const [newName, setNewName] = useState("")
     const [newType, setNewType] = useState<FilterRule["type"]>("title_keyword")
@@ -338,10 +328,29 @@ function FilterRulesTab() {
     const [deleteId, setDeleteId] = useState<string | null>(null)
 
     useEffect(() => {
-        localStorage.setItem("dfks_filter_rules", JSON.stringify(rules))
-    }, [rules])
+        getAftalelicensFilterRules()
+            .then(result => setRules(result.rules))
+            .catch(error => toast.error(error instanceof Error ? error.message : "Kunne ikke hente filtreringsregler"))
+            .finally(() => setLoading(false))
+    }, [])
 
-    const handleAdd = () => {
+    const persistRules = async (next: FilterRule[], previous: FilterRule[]) => {
+        setRules(next)
+        setSaving(true)
+        try {
+            const result = await updateAftalelicensFilterRules(next)
+            setRules(result.rules)
+            return true
+        } catch (error) {
+            setRules(previous)
+            toast.error(error instanceof Error ? error.message : "Kunne ikke gemme filtreringsregler")
+            return false
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    const handleAdd = async () => {
         if (!newName.trim() || !newValue.trim()) return
         const rule: FilterRule = {
             id: `fr_${Date.now()}`,
@@ -351,7 +360,8 @@ function FilterRulesTab() {
             active: true,
             createdAt: new Date().toISOString(),
         }
-        setRules(prev => [...prev, rule])
+        const saved = await persistRules([...rules, rule], rules)
+        if (!saved) return
         setNewName("")
         setNewValue("")
         setNewType("title_keyword")
@@ -359,13 +369,14 @@ function FilterRulesTab() {
         toast.success("Regel tilføjet")
     }
 
-    const toggleActive = (id: string) => {
-        setRules(prev => prev.map(r => r.id === id ? { ...r, active: !r.active } : r))
+    const toggleActive = async (id: string) => {
+        await persistRules(rules.map(r => r.id === id ? { ...r, active: !r.active } : r), rules)
     }
 
-    const handleDelete = () => {
+    const handleDelete = async () => {
         if (!deleteId) return
-        setRules(prev => prev.filter(r => r.id !== deleteId))
+        const saved = await persistRules(rules.filter(r => r.id !== deleteId), rules)
+        if (!saved) return
         setDeleteId(null)
         toast.success("Regel slettet")
     }
@@ -396,7 +407,9 @@ function FilterRulesTab() {
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {rules.map(rule => (
+                        {loading ? (
+                            <TableRow><TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">Henter filtreringsregler…</TableCell></TableRow>
+                        ) : rules.map(rule => (
                             <TableRow key={rule.id}>
                                 <TableCell className={!rule.active ? "text-muted-foreground" : ""}>{rule.name}</TableCell>
                                 <TableCell>
@@ -406,13 +419,14 @@ function FilterRulesTab() {
                                 </TableCell>
                                 <TableCell className="font-mono text-xs text-muted-foreground">{rule.value}</TableCell>
                                 <TableCell>
-                                    <Switch checked={rule.active} onCheckedChange={() => toggleActive(rule.id)} />
+                                    <Switch checked={rule.active} disabled={saving} onCheckedChange={() => void toggleActive(rule.id)} />
                                 </TableCell>
                                 <TableCell>
                                     <Button
                                         variant="ghost"
                                         size="icon"
                                         className="h-7 w-7 text-destructive hover:text-destructive"
+                                        disabled={saving}
                                         onClick={() => setDeleteId(rule.id)}
                                     >
                                         <Trash2 className="h-3 w-3" />
@@ -420,7 +434,7 @@ function FilterRulesTab() {
                                 </TableCell>
                             </TableRow>
                         ))}
-                        {rules.length === 0 && (
+                        {!loading && rules.length === 0 && (
                             <TableRow>
                                 <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
                                     Ingen filtreringsregler endnu
@@ -468,7 +482,7 @@ function FilterRulesTab() {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setAddOpen(false)}>Annuller</Button>
-                        <Button onClick={handleAdd} disabled={!newName.trim() || !newValue.trim()}>Tilføj regel</Button>
+                        <Button onClick={() => void handleAdd()} disabled={saving || !newName.trim() || !newValue.trim()}>Tilføj regel</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
@@ -482,7 +496,7 @@ function FilterRulesTab() {
                     </DialogHeader>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setDeleteId(null)}>Annuller</Button>
-                        <Button variant="destructive" onClick={handleDelete}>
+                        <Button variant="destructive" disabled={saving} onClick={() => void handleDelete()}>
                             <Trash2 className="mr-2 h-4 w-4" />
                             Slet
                         </Button>
@@ -1071,6 +1085,8 @@ export default function AdminStamdataPage() {
                     <TabsTrigger value="filtreringsregler">Filtreringsregler</TabsTrigger>
                     <TabsTrigger value="vaegt">Vægte og hensættelser</TabsTrigger>
                     <TabsTrigger value="eksport">Eksportkolonner</TabsTrigger>
+                    <TabsTrigger value="rettighedskasser">Rettighedskasser</TabsTrigger>
+                    <TabsTrigger value="fordelingspolitikker">Fordelingspolitikker</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="roles" className="mt-4">
@@ -1119,6 +1135,14 @@ export default function AdminStamdataPage() {
 
                 <TabsContent value="eksport" className="mt-4">
                     <ExportKolonnerTab />
+                </TabsContent>
+
+                <TabsContent value="rettighedskasser" className="mt-4">
+                    <RightsFundsTab />
+                </TabsContent>
+
+                <TabsContent value="fordelingspolitikker" className="mt-4">
+                    <DistributionPoliciesTab />
                 </TabsContent>
             </Tabs>
         </div>
