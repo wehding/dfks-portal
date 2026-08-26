@@ -8,6 +8,8 @@ Dokumentet beskriver designet før implementering. Det er ikke en beskrivelse af
 
 Det samlede testforløb og kravene til oprydning findes i [Testguide: Rettighedsmidler uden efterladte testdata](./rettighedsmidler-testforloeb.md).
 
+Forbindelsen fra Visningsadmins pointgrundlag til rettighedsbetaling samt dokumentation af kontraktforbehold er beskrevet i [Handover: Visningsadmin, rettighedsforbehold og tilbageholdte positioner](./handover-visningsadmin-rettighedsforbehold.md).
+
 ## Status
 
 Følgende er fastlagt:
