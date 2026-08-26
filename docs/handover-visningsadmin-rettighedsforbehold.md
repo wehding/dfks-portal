@@ -245,6 +245,8 @@ Et vist beløb skal betegnes som en mulig eller tilbageholdt rettighedsandel. De
 
 Den eksisterende `withheld_beneficiary_positions` er det økonomiske lavniveauobjekt. Den ejer det tilbageholdte beløb, positionens restbeløb, værkallokeringen og den økonomiske livscyklus.
 
+Det kanoniske og allerede implementerede tabelnavn er `withheld_beneficiary_positions`, og tabellen skal ikke omdøbes. Betegnelsen `withheld_positions` forekommer kun som en forkortelse i enkelte eksisterende indeks- og policynavne; der findes ikke en separat tabel med dette navn.
+
 `rights_entitlement_cases` er workflow- og dokumentationslaget oven på positionen. Sagen må ikke indeholde en parallel økonomisk saldo. Der er præcis én sag pr. tilbageholdt position, håndhævet med `UNIQUE (org_id, withheld_position_id)`. Genåbning sker gennem status- og hændelseshistorik på samme sag, ikke ved at oprette en konkurrerende sag.
 
 En rettighedssag har reference til:
@@ -258,6 +260,8 @@ En rettighedssag har reference til:
 - status og afgørelse.
 
 `withheld_beneficiary_positions` skal udvides med den manglende rettighedshaverreference, rettighedstype og nødvendige organisationsbundne constraints. Den nuværende serverkode og tabeldefinition skal afstemmes før nye handlinger bygges; kode må ikke skrive kolonner, som skemaet ikke indeholder.
+
+Når manglende dokumentation opdages, oprettes den tilbageholdte position først og rettighedssagen umiddelbart derefter i samme databasetransaktion. `rights_entitlement_cases.withheld_position_id` er `NOT NULL`. Fejler en af oprettelserne, rulles begge tilbage. Eventuelle eksisterende positioner uden sag migreres idempotent ved at oprette højst én sag pr. position.
 
 Kommunikationen implementeres ved at udvide den eksisterende `member_message_threads`/`member_messages`-model. Der oprettes ikke en parallel beskedtabel.
 
@@ -363,6 +367,8 @@ Treårsfristen løber tre år efter udgangen af det år, hvor udnyttelsen fandt 
 
 Dette er den bekræftede forretningsregel for systemet. Den konkrete juridiske hjemmel er endnu ikke dokumenteret i projektet og må ikke angives som eksempelvis ophavsretslovens § 65 uden juristens bekræftelse. Fordelingspolitikken skal kunne gemme en `legal_basis_reference`, og den korrekte henvisning skal være registreret før treårsflowet aktiveres i produktion. Manglende paragrafhenvisning blokerer ikke skema- og testimplementering, men blokerer produktionsaktivering af automatisk fristbehandling.
 
+Organisationens jurist er ansvarlig for at levere den skriftlige hjemmel og fortolkning. Produktejeren, aktuelt Martin, er ansvarlig for at få svaret indhentet, registrere den godkendte henvisning i fordelingspolitikken og sikre godkendelse før feature-flaget for automatisk treårsbehandling slås til for rigtige data. Det skal senest være afsluttet før den første produktionsrunde kan nå sin frist.
+
 Efter fristen:
 
 ```text
@@ -420,9 +426,13 @@ Navnene er konceptuelle og skal tilpasses migrationsstilen:
 - `resolved_by`
 - `resolution_type`
 - `resolution_reason`
-- `financial_effect`
+- `financial_effect_type`
+- `resolution_revision_id`
+- `resolution_adjustment_id`
 
 `withheld_position_id` er obligatorisk og indgår sammen med `org_id` i en unik constraint. Beløbsfelter hører fortsat til `withheld_beneficiary_positions`.
+
+`financial_effect_type` er alene en rapporterings- og workflowklassifikation, ikke et beløb eller et frit JSON-felt. Den har et lukket værdisæt, eksempelvis `none`, `release_to_rights_holder`, `reallocate_within_work`, `return_to_run_pool`, `supplemental_allocation` og `hold_until_claim_deadline`. Den faktiske økonomiske virkning ligger i den tilbageholdte position og i den uforanderlige beregningsrevision eller positive justering, som sagen refererer til via `resolution_revision_id` eller `resolution_adjustment_id`. Kun den relevante reference må være udfyldt, håndhævet med en databaseconstraint.
 
 ### `rights_entitlement_evidence`
 
@@ -483,6 +493,8 @@ En afgørelse med økonomisk konsekvens udføres atomisk i databasen. Transaktio
 2. den tilbageholdte position,
 3. den berørte beregningsrunde,
 4. de berørte værk- og personrækker.
+
+Alle id'er, der kan blive berørt, identificeres før beregning og skrivning. For hver objekttype hentes og låses hele mængden med eksplicit `SELECT ... ORDER BY id FOR UPDATE` i den viste tabelrækkefølge; implementeringen må ikke låse rækker enkeltvis i en vilkårlig loop-rækkefølge. Transaktionen skal kunne genforsøges sikkert ved en database-detekteret deadlock eller serialiseringskonflikt ved hjælp af den samme idempotensnøgle.
 
 Sagen og runden har et versionsfelt til optimistisk låsning. Opdateringen kræver den version, administratoren har set; ved konflikt afvises handlingen, data genindlæses, og administratoren skal bekræfte igen. En unik afgørelses-/idempotensnøgle forhindrer, at samme godkendelse udføres to gange. To administratorer må derfor ikke kunne omfordele den samme position parallelt.
 
