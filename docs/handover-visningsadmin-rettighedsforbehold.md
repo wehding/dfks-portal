@@ -107,7 +107,11 @@ En godkendt overførsel fra Visningsadmin skal levere:
 - værkets andel af pointpuljen,
 - snapshot af samtlige anvendte vægte og grænseværdier.
 
-Batchen må kun overføres én gang til samme rettighedsrunde. Genforsøg skal være idempotente.
+Batchen må kun overføres én gang til den autoritative rettighedsrunde for samme organisation og rettighedskasse. Det håndhæves med en partiel unik databaseconstraint på `(org_id, source_batch_id, fund_id)`, hvor `source_batch_id is not null`.
+
+Overførslen udføres i én databasetransaktion. Et genforsøg med samme nøgle returnerer den eksisterende runde og opretter ikke nye værkrækker. Parallelle kald serialiseres ved at låse kilderækken/batchen under transaktionen; en kontrol alene i serverhandlingen er ikke tilstrækkelig.
+
+En annulleret import genbruges eller genåbnes gennem en eksplicit administratorhandling. En beregningsrevision er en afledning af den eksisterende runde og må ikke omgå batchens unikke importnøgle ved at importere kilden igen.
 
 Når en overførsel er godkendt, må senere ændringer i Visningsadmins stamdata ikke ændre den historiske runde.
 
@@ -141,7 +145,11 @@ Det individuelle fordelingsbeløb fordeles til værker efter point.
 
 Et nettobeløb fra Visningsadmin må ikke sendes ind som brutto og få fradragene beregnet igen. Det ville medføre dobbelt fradrag.
 
-Alle rundens økonomiske komponenter fordeles og afrundes kontrolleret, så summen af værkrækkerne stemmer præcist med rundens totaler i øre. En dokumenteret largest-remainder-metode eller tilsvarende deterministisk metode skal anvendes.
+Alle rundens økonomiske komponenter fordeles med **largest remainder-metoden** i hele valutaens mindste enhed, eksempelvis øre. Der må ikke vælges en anden afrundingsmetode.
+
+For hver komponent beregnes først den eksakte forholdsmæssige andel. Hver række får heltalsdelen, hvorefter de resterende øre tildeles efter faldende decimalrest. Ved identiske decimalrester er tie-breaker stigende stabilt kilde-id: først `source_row_id`, derefter `work_allocation_id` eller værkets UUID. Samme input og snapshot skal derfor altid give samme resultat.
+
+Metoden anvendes separat på de komponenter, der fordeles til værker, og på efterfølgende personfordeling. Efter hver fordeling kontrolleres en databaseinvariant om, at rækkerne summerer præcist til komponentens autoritative rundetotal.
 
 ## 6. Rettighedspositionens identitet
 
@@ -158,11 +166,13 @@ organisation
 
 En person kan derfor være dokumenteret for ét værk og uafklaret for et andet.
 
-Rettighedstyperne er mindst:
+Rettighedstyperne i denne handover er:
 
 - `copydan` — sekundær udnyttelse,
 - `svod` — primær streamingudnyttelse,
 - `royalty` — løbende royalty.
+
+`beta_pulje`, `helligdagsbetaling` og `feriepenge` i `agreement_percentage_rules` er kontrakt- og lønelementer og er eksplicit uden for dette rettighedsbetalingsflow. Tabellen kan levere struktureret kontekst til kontraktvalidering, men er ikke en rettighedskasse og må ikke anvendes som fordelingspolitik. Nye rettighedstyper tilføjes senere gennem en versioneret domæneudvidelse, ikke ved at genbruge lønlabels.
 
 Organisationens tilladte faggrupper kontrolleres separat. Et dokumenteret forbehold gør ikke en faggruppe betalingsberettiget i en organisation, som ikke forvalter den.
 
@@ -231,9 +241,13 @@ Brugeren skal kunne:
 
 Et vist beløb skal betegnes som en mulig eller tilbageholdt rettighedsandel. Det må ikke indgå i “til udbetaling” eller brugerens udbetalingsgrænse.
 
-## 10. Rettighedssag og kommunikation
+## 10. Rettighedssag, tilbageholdt position og kommunikation
 
-Der indføres en selvstændig rettighedssag, eksempelvis `rights_entitlement_case`, med reference til:
+Den eksisterende `withheld_beneficiary_positions` er det økonomiske lavniveauobjekt. Den ejer det tilbageholdte beløb, positionens restbeløb, værkallokeringen og den økonomiske livscyklus.
+
+`rights_entitlement_cases` er workflow- og dokumentationslaget oven på positionen. Sagen må ikke indeholde en parallel økonomisk saldo. Der er præcis én sag pr. tilbageholdt position, håndhævet med `UNIQUE (org_id, withheld_position_id)`. Genåbning sker gennem status- og hændelseshistorik på samme sag, ikke ved at oprette en konkurrerende sag.
+
+En rettighedssag har reference til:
 
 - `org_id`,
 - rettighedshaver,
@@ -243,7 +257,13 @@ Der indføres en selvstændig rettighedssag, eksempelvis `rights_entitlement_cas
 - eventuel kontrakt,
 - status og afgørelse.
 
-Kommunikationen vises gennem den eksisterende samlede indbakke som en ny konteksttype. En rettighedstråd skal kunne åbnes fra:
+`withheld_beneficiary_positions` skal udvides med den manglende rettighedshaverreference, rettighedstype og nødvendige organisationsbundne constraints. Den nuværende serverkode og tabeldefinition skal afstemmes før nye handlinger bygges; kode må ikke skrive kolonner, som skemaet ikke indeholder.
+
+Kommunikationen implementeres ved at udvide den eksisterende `member_message_threads`/`member_messages`-model. Der oprettes ikke en parallel beskedtabel.
+
+`member_message_threads` udvides med en organisationsbundet, nullable `rights_entitlement_case_id` og en konteksttype. Der må højst findes én aktiv tråd pr. sag og rettighedshaver. En unik constraint og sammensat fremmednøgle sikrer, at tråd, sag og rettighedshaver tilhører samme organisation. Eksisterende kontraktkommentarer forbliver uændrede; rettighedstråden linker til en eventuel kontrakt gennem sagen.
+
+Rettighedstråden vises gennem den eksisterende samlede indbakke og skal kunne åbnes fra:
 
 - værket,
 - kontrakten, hvis den findes,
@@ -294,7 +314,7 @@ En betaling er i denne sammenhæng ikke kørt, når rundens berørte beløb stad
 
 ### Andre dokumenterede klippere findes på værket
 
-Den afviste andel fordeles straks mellem de resterende dokumenterede klippere på værket. Deres eksisterende fordelingsnøgle normaliseres forholdsmæssigt til 100 %.
+Den afviste andel udløser straks en ny beregningsrevision mellem de resterende dokumenterede klippere på værket. Deres eksisterende fordelingsnøgle normaliseres forholdsmæssigt til 100 %. “Straks” betyder, at revisionsflowet startes uden at afvente treårsfristen; eksisterende beregnings- eller tildelingsrækker ændres ikke direkte.
 
 ```text
 A: 50 % — dokumenteret
@@ -315,6 +335,8 @@ Hvis værkets eneste position afvises før betalingen er kørt:
 - værkets individuelle nettobeløb går tilbage til rundens individuelle pulje,
 - beløbet fordeles mellem de øvrige værker efter deres oprindelige point,
 - de øvrige værkers pointandele normaliseres til 100 %.
+
+Også dette sker gennem en ny beregningsrevision med ny godkendelse, ikke ved direkte opdatering af den oprindelige runde.
 
 Administration, hensættelse, sociale formål og kollektiv andel beregnes ikke igen. Kun det individuelle nettobeløb returneres til den individuelle pulje.
 
@@ -338,6 +360,8 @@ Hvis den eneste position afvises efter betalingen er kørt:
 - beløbet følger treårsreglen, hvis ingen berettiget rettighedshaver findes.
 
 Treårsfristen løber tre år efter udgangen af det år, hvor udnyttelsen fandt sted.
+
+Dette er den bekræftede forretningsregel for systemet. Den konkrete juridiske hjemmel er endnu ikke dokumenteret i projektet og må ikke angives som eksempelvis ophavsretslovens § 65 uden juristens bekræftelse. Fordelingspolitikken skal kunne gemme en `legal_basis_reference`, og den korrekte henvisning skal være registreret før treårsflowet aktiveres i produktion. Manglende paragrafhenvisning blokerer ikke skema- og testimplementering, men blokerer produktionsaktivering af automatisk fristbehandling.
 
 Efter fristen:
 
@@ -398,6 +422,8 @@ Navnene er konceptuelle og skal tilpasses migrationsstilen:
 - `resolution_reason`
 - `financial_effect`
 
+`withheld_position_id` er obligatorisk og indgår sammen med `org_id` i en unik constraint. Beløbsfelter hører fortsat til `withheld_beneficiary_positions`.
+
 ### `rights_entitlement_evidence`
 
 - `id`
@@ -413,22 +439,24 @@ Navnene er konceptuelle og skal tilpasses migrationsstilen:
 - `evidence_snapshot`
 - `review_status`
 
-### `rights_entitlement_case_messages`
+`evidence_snapshot` er et immutable JSON-snapshot af det beslutningsgrundlag, administratoren så. Det indeholder kun de relevante rettighedsfelter fra den godkendte `contract_validations.extracted_data`, validerings-id og version, rettighedstype, resultat, kildehenvisninger såsom side/tekstposition, korte nødvendige kildeudsnit, regelkilde, filens SHA-256 samt tidspunkt og aktør for manuel bekræftelse. Den fulde kontrakt eller bilagsfil ligger i privat storage og kopieres ikke ind i JSON. CPR, bankoplysninger og uvedkommende kontraktindhold må ikke indgå.
 
-- `id`
-- `org_id`
-- `case_id`
-- `author_user_id`
-- `author_role`
-- `body`
-- `created_at`
-- læsemarkeringer for bruger og administrator
+### Udvidelse af eksisterende beskedmodel
 
-Alternativt kan den eksisterende indbakkemodel udvides med en organisationsbundet rettighedssagskontekst. Beskederne må ikke gemmes som almindelige kontraktkommentarer, når sagen ikke har en kontrakt.
+`member_message_threads` udvides med:
+
+- `context_type`, inklusive værdien `rights_entitlement_case`,
+- `rights_entitlement_case_id`,
+- sammensat organisationsbundet fremmednøgle til sagen,
+- unik constraint for én tråd pr. rettighedssag og rettighedshaver.
+
+Selve beskederne gemmes fortsat i `member_messages`, og læsestatus fortsat i `member_message_participants`.
 
 ### Beregningsrevision
 
-Eksisterende beregnings- og justeringsobjekter skal udvides eller anvendes, så en revision kan referere til den oprindelige runde og den afgørelse, der udløste revisionen.
+Før en betaling er kørt, sker omfordeling som en ny beregningsrevision med reference til den oprindelige runde og den afgørelse, der udløste revisionen. Historiske beregningsrækker opdateres ikke direkte.
+
+Efter bogføring eller kørt betaling anvendes nye positive `rights_adjustments`/efterbetalingstildelinger med reference til oprindelig tildeling, sag og afgørelse. `rights_adjustments` skal udvides, så de faktiske typer og felter i serverkoden stemmer med databaseconstrainten. Negative personjusteringer er ikke tilladt.
 
 ## 17. Sikkerhed og organisationsvægge
 
@@ -447,6 +475,17 @@ Upload skal anvende private storage-stier med organisations- og sagsafgrænsning
 
 Serveroperationer skal udlede organisationen fra den autoriserede kontekst og må ikke stole på et klientleveret `org_id`.
 
+### Samtidige afgørelser og transaktioner
+
+En afgørelse med økonomisk konsekvens udføres atomisk i databasen. Transaktionen låser i stabil UUID-rækkefølge:
+
+1. rettighedssagen,
+2. den tilbageholdte position,
+3. den berørte beregningsrunde,
+4. de berørte værk- og personrækker.
+
+Sagen og runden har et versionsfelt til optimistisk låsning. Opdateringen kræver den version, administratoren har set; ved konflikt afvises handlingen, data genindlæses, og administratoren skal bekræfte igen. En unik afgørelses-/idempotensnøgle forhindrer, at samme godkendelse udføres to gange. To administratorer må derfor ikke kunne omfordele den samme position parallelt.
+
 ## 18. Notifikationer
 
 Følgende hændelser kan udløse portalbesked og e-mail:
@@ -464,7 +503,7 @@ Notifikationerne skal være idempotente pr. organisation, sag, hændelse, modtag
 
 ## 19. Implementeringsrækkefølge
 
-1. Bevar Visningsadmins testberegning, men fjern den økonomiske `localStorage`-overførsel som autoritativ bogføring.
+1. Bevar Visningsadmins testberegning. Introducér den nye databaseoverførsel bag et organisationsspecifikt feature flag. Mens den bygges, mærkes det eksisterende resultat tydeligt “Prøveberegning — ikke bogført”; den gamle `localStorage`-overførsel må ikke fjernes eller ændres til autoritativ bogføring, før databaseflowet er verificeret og aktiveret.
 2. Opret idempotent overførsel af godkendt pointgrundlag til en rettighedsrunde.
 3. Indfør deterministisk fordeling og afrundingsafstemning mod rundens totaler.
 4. Opret rettighedssag, dokumentationsstatus og organisationsbundne relationer.
@@ -479,19 +518,20 @@ Notifikationerne skal være idempotente pr. organisation, sag, hændelse, modtag
 
 ## 20. Acceptkriterier
 
-Implementeringen er ikke færdig, før følgende er bevist:
+Implementeringen er ikke færdig, før følgende er bevist.
+
+### Automatiserede tests
 
 - En godkendt aftalelicensbatch kan kun overføres én gang til samme runde.
+- To samtidige overførsler eller afgørelser giver kun én økonomisk effekt.
+- En stale versionsopdatering afvises og kræver genindlæsning.
 - Pointberegningssiden kan fortsat lave gentagne prøveberegninger uden at oprette økonomiske posteringer.
-- Det fremgår tydeligt, om en beregning er en prøve eller en godkendt overførsel.
 - Den autoritative beregning afstemmes mod den seneste godkendte prøveberegning.
-- Point, vægte og kildevisninger kan forklares fra runde til værk.
 - Fradrag foretages præcist én gang.
 - Værkbeløbene summerer i øre til rundens totaler.
+- Largest remainder og den faste tie-breaker giver samme resultat ved gentagelse og parallel kørsel.
 - En person uden dokumentation får ingen udbetalingsklar tildeling.
 - Brugeren kan indsende dokumentation uden at have en kontrakt.
-- En producenterklæring kan godkendes som dokumentation.
-- Kommunikation vises ved den konkrete rettighedssag i begge indbakker.
 - En administrator kan ikke lukke en økonomisk sag uden begrundelse.
 - Afvist position før betaling følger den korrekte værk-/puljeregel.
 - Afvist position efter betaling følger efterbetalings-/treårsreglen.
@@ -499,7 +539,17 @@ Implementeringen er ikke færdig, før følgende er bevist:
 - Alle rettidige krav er afgjort før ufordelbare midler omfordeles.
 - Ingen person får negativt tilgodehavende.
 - Organisation A kan ikke læse eller påvirke organisation B's sager, dokumenter, beskeder eller beløb.
+
+### Manuelle end-to-end- og reviewkontroller
+
+- Det fremgår tydeligt i UI, om en beregning er en prøve eller en godkendt overførsel.
+- Point, vægte og kildevisninger kan forklares fra runde til værk.
+- En producenterklæring kan indsendes, vurderes og godkendes som dokumentation.
+- Kommunikation vises med korrekt værk-, kontrakt- og sagskontekst i begge indbakker.
+- Bilag kan åbnes af rette bruger og administrator, men ikke af en anden organisation.
+- Administratorens afgørelsesvisning viser dokumentationssnapshot, økonomisk effekt og anden godkender.
 - Auditsporet kan forklare hele forløbet fra visningsrække til endelig personbetaling eller omfordeling.
+- Den isolerede testdatabase kan nulstilles uden efterladte testdata.
 
 ## 21. Afgrænsning
 
