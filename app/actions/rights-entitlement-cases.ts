@@ -12,6 +12,19 @@ const BUCKET = "kontrakter"
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 const ALLOWED_EXTENSIONS = new Set(["pdf", "doc", "docx", "txt", "jpg", "jpeg", "png"])
 
+export type MemberEntitlementCaseDetail = {
+  id: string
+  status: string
+  rightType: string
+  workTitle: string
+  episodeTitle: string | null
+  openedAt: string
+  resolutionReason: string | null
+  position: { withheldAmount: number; remainingAmount: number; currency: string; claimDeadline: string | null }
+  evidence: Array<{ id: string; attachmentType: string; originalFilename: string; uploadedAt: string; reviewStatus: string }>
+  messages: Array<{ id: string; authorRole: string; body: string; createdAt: string }>
+}
+
 async function memberCaseContext(caseId: string) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -32,7 +45,44 @@ async function memberCaseContext(caseId: string) {
 export async function getMemberEntitlementCase(caseId: string) {
   try {
     const { entitlementCase } = await memberCaseContext(caseId)
-    return { success: true, entitlementCase }
+    const raw = entitlementCase as any
+    const work = Array.isArray(raw.works) ? raw.works[0] : raw.works
+    const episode = Array.isArray(raw.episodes) ? raw.episodes[0] : raw.episodes
+    const position = Array.isArray(raw.withheld_beneficiary_positions)
+      ? raw.withheld_beneficiary_positions[0] : raw.withheld_beneficiary_positions
+    const workAllocation = Array.isArray(position?.rights_work_allocations)
+      ? position.rights_work_allocations[0] : position?.rights_work_allocations
+    const thread = Array.isArray(raw.member_message_threads)
+      ? raw.member_message_threads[0] : raw.member_message_threads
+    const detail: MemberEntitlementCaseDetail = {
+      id: raw.id,
+      status: raw.status,
+      rightType: raw.right_type,
+      workTitle: work?.title ?? "Værk",
+      episodeTitle: episode?.title ?? null,
+      openedAt: raw.opened_at,
+      resolutionReason: raw.resolution_reason ?? null,
+      position: {
+        withheldAmount: Number(position?.withheld_amount ?? 0),
+        remainingAmount: Number(position?.remaining_amount ?? 0),
+        currency: position?.currency ?? "DKK",
+        claimDeadline: workAllocation?.claim_deadline ?? null,
+      },
+      evidence: (raw.rights_entitlement_evidence ?? []).map((entry: any) => ({
+        id: entry.id,
+        attachmentType: entry.attachment_type,
+        originalFilename: entry.original_filename,
+        uploadedAt: entry.uploaded_at,
+        reviewStatus: entry.review_status,
+      })),
+      messages: (thread?.member_messages ?? []).map((entry: any) => ({
+        id: entry.id,
+        authorRole: entry.author_role,
+        body: entry.body,
+        createdAt: entry.created_at,
+      })).sort((a: { createdAt: string }, b: { createdAt: string }) => a.createdAt.localeCompare(b.createdAt)),
+    }
+    return { success: true, entitlementCase: detail }
   } catch (error) {
     return { success: false, error: errorMessage(error), entitlementCase: null }
   }
