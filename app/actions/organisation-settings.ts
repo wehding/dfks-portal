@@ -479,6 +479,29 @@ export async function updateAftalelicensWeightConfig(config: AftalelicensWeightC
   return { success: true };
 }
 
+export async function getRightsCalculationTransferEnabled() {
+  const orgId = await currentAdminOrg();
+  const { data, error } = await createServiceClient()
+    .from("organisations")
+    .select("rights_calculation_transfer_enabled")
+    .eq("id", orgId)
+    .single();
+  if (error) throw new Error(error.message);
+  return { success: true, enabled: data?.rights_calculation_transfer_enabled === true };
+}
+
+export async function updateRightsCalculationTransferEnabled(enabled: boolean) {
+  const orgId = await currentAdminOrg();
+  const { error } = await createServiceClient()
+    .from("organisations")
+    .update({ rights_calculation_transfer_enabled: enabled, updated_at: new Date().toISOString() })
+    .eq("id", orgId);
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/stamdata");
+  revalidatePath("/admin/aftalelicens");
+  return { success: true };
+}
+
 const FILTER_RULE_TYPES = new Set<FilterRule["type"]>(["title_keyword", "title_regex", "channel"]);
 
 function normalizeFilterRules(value: unknown, scope: FilterRule["scope"]): FilterRule[] {

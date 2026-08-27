@@ -37,7 +37,14 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import NextLink from "next/link"
-import { getAftalelicensFilterRules, getAftalelicensWeightConfig, updateAftalelicensFilterRules, updateAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
+import {
+    getAftalelicensFilterRules,
+    getAftalelicensWeightConfig,
+    getRightsCalculationTransferEnabled,
+    updateAftalelicensFilterRules,
+    updateAftalelicensWeightConfig,
+    updateRightsCalculationTransferEnabled,
+} from "@/app/actions/organisation-settings"
 import { RightsFundsTab } from "@/components/admin/rights-funds-tab"
 import { DistributionPoliciesTab } from "@/components/admin/distribution-policies-tab"
 
@@ -538,17 +545,20 @@ function VaegteTab() {
     const [fees, setFees] = useState<AdminFees>(loadFees)
     const [hensaettelserPct, setHensaettelserPct] = useState(10)
     const [socialPct, setSocialPct] = useState(0)
+    const [rightsTransferEnabled, setRightsTransferEnabled] = useState(false)
 
     // Hent konfiguration fra DB
     useEffect(() => {
-        getAftalelicensWeightConfig().then(res => {
+        Promise.all([getAftalelicensWeightConfig(), getRightsCalculationTransferEnabled()]).then(([res, transfer]) => {
             const cfg = res.config
-            if (!cfg) return
-            const weightsMap = cfg.weights ?? {}
-            setVaegte(DEFAULT_VAEGTE.map(v => ({ ...v, weight: weightsMap[v.type] ?? v.weight })))
-            setExtra({ ...DEFAULT_VAEGT_EXTRA, ...cfg.extra })
-            if (cfg.reservePercent != null) setHensaettelserPct(cfg.reservePercent)
-            if (cfg.socialPercent != null) setSocialPct(cfg.socialPercent)
+            if (cfg) {
+                const weightsMap = cfg.weights ?? {}
+                setVaegte(DEFAULT_VAEGTE.map(v => ({ ...v, weight: weightsMap[v.type] ?? v.weight })))
+                setExtra({ ...DEFAULT_VAEGT_EXTRA, ...cfg.extra })
+                if (cfg.reservePercent != null) setHensaettelserPct(cfg.reservePercent)
+                if (cfg.socialPercent != null) setSocialPct(cfg.socialPercent)
+            }
+            setRightsTransferEnabled(transfer.enabled)
         }).catch(() => { /* keep defaults */ })
     }, [])
 
@@ -582,12 +592,22 @@ function VaegteTab() {
             reservePercent: hensaettelserPct,
             socialPercent: socialPct,
         })
+        await updateRightsCalculationTransferEnabled(rightsTransferEnabled)
         localStorage.setItem("streaming_admin_fees", JSON.stringify(fees))
         toast.success("Vægte og hensættelser gemt")
     }
 
     return (
         <div className="space-y-6 max-w-2xl">
+            <div className="flex items-start justify-between gap-4 rounded-lg border p-4">
+                <div>
+                    <p className="text-sm font-medium">Autoritativ overførsel til rettighedsmodulet</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        Når funktionen er slået til, kan en godkendt pointberegning låses og overføres én gang til en rettighedsrunde. Prøveberegninger bogføres aldrig.
+                    </p>
+                </div>
+                <Switch checked={rightsTransferEnabled} onCheckedChange={setRightsTransferEnabled} aria-label="Aktivér autoritativ rettighedsoverførsel" />
+            </div>
             <div className="flex items-start gap-2 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-xs text-blue-800 dark:text-blue-300">
                 <Save className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                 <div className="space-y-1">

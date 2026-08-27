@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { allocateByLargestRemainder } from "@/lib/rights-largest-remainder"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -51,6 +52,22 @@ export type AllocationInput = {
     rights_holder_id: string
     role_label?: string | null
     share_bps: number        // andel i bps, fx 5000 = 50%
+}
+
+function validationConfirmsRight(extracted: unknown, rightType: "copydan" | "svod" | "royalty"): boolean {
+    if (!extracted || typeof extracted !== "object") return false
+    const data = extracted as Record<string, unknown>
+    const overview = data.rightsOverview && typeof data.rightsOverview === "object"
+        ? data.rightsOverview as Record<string, unknown>
+        : {}
+    const value = rightType === "copydan"
+        ? data.copydan ?? overview.copydanforbehold
+        : rightType === "svod"
+            ? data.svod ?? overview.streamingforbehold
+            : data.royalty
+    if (value === true) return true
+    if (typeof value !== "string") return false
+    return ["ja", "yes", "true", "fundet", "confirmed", "bekræftet"].includes(value.trim().toLowerCase())
 }
 
 export type RightsAdjustment = {
@@ -102,21 +119,24 @@ export async function getRightsAllocations(run_id: string): Promise<{
             .select(`
                 *,
                 rettighedshavere ( full_name, member_number ),
-                works ( title ),
-                episodes ( title )
+                rights_work_allocations ( works ( title ), episodes ( title ) )
             `)
             .eq("run_id", run_id)
             .eq("org_id", caller.orgId)
-            .order("individual_net", { ascending: false })
+            .order("individual_amount", { ascending: false })
 
         if (error) throw error
 
         const allocations: RightsAllocation[] = (data ?? []).map((r: any) => ({
             ...r,
+            role_label: r.role_code,
+            share_percent: r.share_percent,
+            individual_net: Number(r.individual_amount),
+            withheld_reason: r.blocked_reason,
             rights_holder_name: r.rettighedshavere?.full_name,
             rights_holder_member_number: r.rettighedshavere?.member_number,
-            work_title: r.works?.title,
-            episode_title: r.episodes?.title,
+            work_title: r.rights_work_allocations?.works?.title,
+            episode_title: r.rights_work_allocations?.episodes?.title,
         }))
 
         return { success: true, allocations }
@@ -132,7 +152,7 @@ export async function createRightsAllocations(
     run_id: string,
     work_allocation_id: string,
     items: AllocationInput[]
-): Promise<{ success: boolean; count: number; error?: string }> {
+): Promise<{ success: boolean; count: number; withheldCount?: number; error?: string }> {
     try {
         const supabase = await createClient()
         const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES)
@@ -147,49 +167,91 @@ export async function createRightsAllocations(
             )
         }
 
-        // Hent værkbeløb for at fordele summer
         const { data: wa, error: waErr } = await db
             .from("rights_work_allocations")
-            .select("*")
+            .select(`*, rights_calculation_runs!inner(
+                id, rights_funds!inner(id, rights_category, allowed_roles)
+            )`)
             .eq("id", work_allocation_id)
             .eq("org_id", caller.orgId)
+            .eq("run_id", run_id)
             .single()
 
         if (waErr) throw waErr
 
-        const rows = items.map(item => {
-            const factor = item.share_bps / 10000
-            const applyShare = (amount: number) => Math.round(amount * factor)
-
-            return {
-                org_id: caller.orgId,
-                run_id,
-                work_allocation_id,
-                rights_holder_id: item.rights_holder_id,
-                work_id: wa.work_id,
-                episode_id: wa.episode_id,
-                role_label: item.role_label ?? null,
-                share_bps: item.share_bps,
-                gross_share: applyShare(wa.gross_share),
-                admin_share: applyShare(wa.admin_share),
-                claim_reserve_share: applyShare(wa.claim_reserve_share),
-                sku_direct_share: applyShare(wa.sku_direct_share),
-                sku_from_reserve_share: applyShare(wa.sku_from_reserve_share),
-                statutory_collective_share: applyShare(wa.statutory_collective_share),
-                net_claim_reserve_share: applyShare(wa.net_claim_reserve_share),
-                individual_net: applyShare(wa.individual_net),
-                status: "pending",
+        const run = Array.isArray((wa as any).rights_calculation_runs)
+            ? (wa as any).rights_calculation_runs[0]
+            : (wa as any).rights_calculation_runs
+        const fund = Array.isArray(run?.rights_funds) ? run.rights_funds[0] : run?.rights_funds
+        const category = String(fund?.rights_category ?? "copydan").toLowerCase()
+        const rightType: "copydan" | "svod" | "royalty" = category.includes("royalt")
+            ? "royalty" : category.includes("svod") || category.includes("stream") ? "svod" : "copydan"
+        const allowedRoles = (fund?.allowed_roles ?? []).map((role: string) => role.trim().toLowerCase())
+        for (const item of items) {
+            if (allowedRoles.length > 0 && !allowedRoles.includes((item.role_label ?? "").trim().toLowerCase())) {
+                throw new Error(`Rollen ${item.role_label ?? "(mangler)"} forvaltes ikke af denne organisations rettighedskasse.`)
             }
+        }
+
+        const holderIds = items.map(item => item.rights_holder_id)
+        const { data: contracts, error: contractsError } = await db.from("contracts")
+            .select("id,rights_holder_id,status,contract_validations(extracted_data,validated_by,validated_at)")
+            .eq("org_id", caller.orgId).eq("work_id", wa.work_id).in("rights_holder_id", holderIds)
+            .in("status", ["valideret", "arkiveret"])
+        if (contractsError) throw contractsError
+
+        const evidenceByHolder = new Map<string, { documented: boolean; contractId: string | null }>()
+        for (const item of items) {
+            const candidates = (contracts ?? []).filter(contract => contract.rights_holder_id === item.rights_holder_id)
+            const documentedContract = candidates.find(contract => {
+                const validation = Array.isArray(contract.contract_validations)
+                    ? contract.contract_validations[0] : contract.contract_validations
+                return Boolean(validation?.validated_by && validation?.validated_at)
+                    && validationConfirmsRight(validation?.extracted_data, rightType)
+            })
+            evidenceByHolder.set(item.rights_holder_id, {
+                documented: Boolean(documentedContract),
+                contractId: documentedContract?.id ?? candidates[0]?.id ?? null,
+            })
+        }
+
+        const distributionWeights = items.map(item => ({ id: item.rights_holder_id, weight: item.share_bps }))
+        const distribute = (amount: number) => new Map(
+            allocateByLargestRemainder(Number(amount), distributionWeights).map(row => [row.id, row.amount]),
+        )
+        const allocated = {
+            gross: distribute(wa.gross_share), admin: distribute(wa.admin_share),
+            reserve: distribute(wa.claim_reserve_share), skuDirect: distribute(wa.sku_direct_share),
+            skuReserve: distribute(wa.sku_from_reserve_share), collective: distribute(wa.statutory_collective_share),
+            individual: distribute(wa.individual_net),
+        }
+        const rows = items.map(item => ({
+            rights_holder_id: item.rights_holder_id,
+            role_code: item.role_label ?? null,
+            share_bps: item.share_bps,
+            distribution_key_scope: wa.episode_id ? "episode" : "work",
+            distribution_key_snapshot: { items: items.map(entry => ({ rights_holder_id: entry.rights_holder_id, role: entry.role_label, share_bps: entry.share_bps })) },
+            documented: evidenceByHolder.get(item.rights_holder_id)?.documented === true,
+            contract_id: evidenceByHolder.get(item.rights_holder_id)?.contractId,
+            gross_share: allocated.gross.get(item.rights_holder_id),
+            admin_share: allocated.admin.get(item.rights_holder_id),
+            claim_reserve_share: allocated.reserve.get(item.rights_holder_id),
+            sku_direct_share: allocated.skuDirect.get(item.rights_holder_id),
+            sku_from_reserve_share: allocated.skuReserve.get(item.rights_holder_id),
+            statutory_collective_share: allocated.collective.get(item.rights_holder_id),
+            net_amount: allocated.individual.get(item.rights_holder_id),
+        }))
+
+        const { data, error } = await db.rpc("distribute_rights_work_allocation", {
+            p_org_id: caller.orgId, p_run_id: run_id, p_work_allocation_id: work_allocation_id,
+            p_right_type: rightType, p_items: rows, p_actor: caller.userId,
         })
-
-        const { error } = await db
-            .from("rights_allocations")
-            .insert(rows)
-
         if (error) throw error
+        const result = Array.isArray(data) ? data[0] : data
 
         revalidatePath("/admin/rettighedsmidler")
-        return { success: true, count: rows.length }
+        revalidatePath("/portal/okonomi")
+        return { success: true, count: Number(result?.allocation_count ?? 0), withheldCount: Number(result?.withheld_count ?? 0) }
     } catch (err) {
         console.error("[rights-allocations] createRightsAllocations fejlede:", err)
         return { success: false, count: 0, error: String(err) }
@@ -279,31 +341,13 @@ export async function getWithheldPositions(run_id: string): Promise<{
 
 export async function resolveWithheldPosition(
     id: string,
-    resolution_notes: string
+    resolutionNotes: string
 ): Promise<{ success: boolean; error?: string }> {
-    try {
-        const supabase = await createClient()
-        const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES)
-        if (!caller) throw new Error("Ingen adgang")
-        const db = createServiceClient()
-
-        const { error } = await db
-            .from("withheld_beneficiary_positions")
-            .update({
-                resolved_at: new Date().toISOString(),
-                resolved_by: caller.userId,
-                resolution_notes,
-            })
-            .eq("id", id)
-            .eq("org_id", caller.orgId)
-
-        if (error) throw error
-
-        revalidatePath("/admin/rettighedsmidler")
-        return { success: true }
-    } catch (err) {
-        console.error("[rights-allocations] resolveWithheldPosition fejlede:", err)
-        return { success: false, error: String(err) }
+    void id
+    void resolutionNotes
+    return {
+        success: false,
+        error: "Positionen kan kun afgøres gennem den tilknyttede rettighedssag og fire-øjne-flowet.",
     }
 }
 

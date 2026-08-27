@@ -96,7 +96,12 @@ function QuickAllocateDialog({
         setSaving(true)
         const items: AllocationInput[] = [{ work_allocation_id: workAllocation.id, rights_holder_id: rhId, role_label: roleLabel, share_bps: 10000 }]
         const res = await createRightsAllocations(runId, workAllocation.id, items)
-        if (res.success) { toast.success("Fordeling gemt"); onSaved(); onClose() }
+        if (res.success) {
+            toast.success(res.withheldCount
+                ? "Positionen er tilbageholdt, indtil rettighedsforbeholdet er dokumenteret"
+                : "Fordeling gemt")
+            onSaved(); onClose()
+        }
         else toast.error(res.error ?? "Fejl")
         setSaving(false)
     }

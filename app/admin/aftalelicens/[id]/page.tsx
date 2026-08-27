@@ -19,10 +19,20 @@ import {
     type ScreeningSourceRowSortUpdate,
 } from "@/app/actions/screenings"
 import { getAftalelicensFilterRules, getAftalelicensWeightConfig } from "@/app/actions/organisation-settings"
+import {
+    getAftalelicensTransferOptions,
+    transferAftalelicensBatchToRights,
+    type AftalelicensTransferOption,
+} from "@/app/actions/aftalelicens-rights-transfer"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { formatAftalelicensWorkTitle } from "@/lib/aftalelicens-work-title"
 import { applyAftalelicensRerunFactor, markAftalelicensReruns } from "@/lib/aftalelicens-reruns"
 import { resolveAftalelicensWorkType } from "@/lib/aftalelicens-work-type"
+import {
+    calculateAftalelicensPoints,
+    DEFAULT_AFTALELICENS_WEIGHT_EXTRA,
+    DEFAULT_AFTALELICENS_WEIGHTS,
+} from "@/lib/aftalelicens-points"
 import { buildAftalelicensBatchFilterConfig, combineAftalelicensFilterRules } from "@/lib/aftalelicens-filter-rules"
 import { formatScreeningDateTime, parseScreeningDate } from "@/lib/screening-date-time"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -2767,61 +2777,20 @@ function buildWeightGroups(weighted: WeightedItem[]): WeightGroup[] {
     })
 }
 
-const DEFAULT_VAEGTE: Record<VaerkType, number> = {
-    spillefilm:      200,
-    tv_serie_lang:   100,
-    tv_serie_kort:   50,
-    kortfilm:        150,
-    dokumentarfilm:  200,  // overridden by dok-tier logic
-    dokumentarserie: 100,
-    dokuDrama:       200,
-    kort_dokumentar: 100,
-    ikke_relevant:   0,
-}
-
-const DEFAULT_VAEGT_EXTRA: AftalelicensVaegtExtra = {
-    dokLangPoints:   200,
-    dokMellemPoints: 150,
-    dokKortPoints:   100,
-    dokLangMin:      61,
-    dokMellemMin:    21,
-    dokSerieLangMin: 38,
-    dokSerieKortPoints: 50,
-    supplerendeKlipFaktor: 0.3,
-    genudsendelseFaktor: 0.5,
-    genudsendelseMaaneder: 1,
-}
+const DEFAULT_VAEGTE = DEFAULT_AFTALELICENS_WEIGHTS
+const DEFAULT_VAEGT_EXTRA = DEFAULT_AFTALELICENS_WEIGHT_EXTRA
 
 // loadVaegte/loadVaegtExtra (localStorage) er fjernet — erstattet af
 // getAftalelicensWeightConfig() (rigtig, org-specifik databasekonfiguration).
 
 // Beregn point for et enkelt værk: base_point × minutter
 // For dokumentarfilm afgør varighed base-point-niveauet (tier), minutter multipliceres herefter
-function beregnPoints(vaerkType: VaerkType, duration: number | undefined, vaegte: Record<VaerkType, number>, extra: AftalelicensVaegtExtra): { points: number; base: number; tierLabel?: string } {
-    const min = duration ?? 0
-    if (vaerkType === "dokumentarfilm") {
-        let base: number
-        let tierLabel: string
-        if (min >= extra.dokLangMin)        { base = extra.dokLangPoints;   tierLabel = `≥${extra.dokLangMin} min` }
-        else if (min >= extra.dokMellemMin) { base = extra.dokMellemPoints; tierLabel = `${extra.dokMellemMin}–${extra.dokLangMin} min` }
-        else                               { base = extra.dokKortPoints;   tierLabel = `<${extra.dokMellemMin} min` }
-        return { points: base * min, base, tierLabel }
-    }
-    if (vaerkType === "dokumentarserie") {
-        const base = min >= extra.dokSerieLangMin ? vaegte["dokumentarserie"] : extra.dokSerieKortPoints
-        const tierLabel = min >= extra.dokSerieLangMin
-            ? `≥${extra.dokSerieLangMin} min`
-            : `<${extra.dokSerieLangMin} min`
-        return { points: base * min, base, tierLabel }
-    }
-    const base = vaegte[vaerkType]
-    return { points: base * min, base }
-}
+const beregnPoints = calculateAftalelicensPoints
 
-function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
+function WeightingTab({ vaerker, confirmedMatches, batchId }: {
     vaerker: AftalelicensVaerk[]
     confirmedMatches: VaerkMatch[]
-    batchLabel: string
+    batchId: string
 }) {
     const approvedRows = vaerker.filter(v => v.sortStatus === "approved")
     const approved = approvedRows.filter(v => v.vaerkType)
@@ -2837,6 +2806,11 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     const [hensaettelserPct, setHensaettelserPct] = useState("10")
     const [socialPct, setSocialPct] = useState("0")
     const [locked, setLocked] = useState(false)
+    const [transferring, setTransferring] = useState(false)
+    const [transferEnabled, setTransferEnabled] = useState(false)
+    const [transferOptions, setTransferOptions] = useState<AftalelicensTransferOption[]>([])
+    const [selectedTransferOption, setSelectedTransferOption] = useState("")
+    const [transferredRunId, setTransferredRunId] = useState<string | null>(null)
     const [dbTransfer, setDbTransfer] = useState<{ workId?: string; workTitle: string; vaerkType: VaerkType; totalPoints?: number; totalAmount: number; adminFeeAmount?: number; klippere?: { name: string; userId?: string; sharePercent: number; amount: number }[]; episodes?: { episodeLabel: string; broadcastDate?: string; isGenudsendelse: boolean; points: number; amount: number; klippere?: { name: string; userId?: string; sharePercent: number; amount: number }[] }[] }[] | null>(null)
 
     // Load stamdata defaults from DB
@@ -2850,10 +2824,78 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
             if (cfg.socialPercent != null) setSocialPct(String(cfg.socialPercent))
         }).catch(() => { /* keep defaults */ })
     }, [])
-    const [hensaettelsesKonto, setHensaettelsesKonto] = useState<{ id: string; batchLabel: string; amount: number; lockedAt: string; brugt: number }[]>(() => {
-        if (typeof window === "undefined") return []
-        try { return JSON.parse(localStorage.getItem("dfks_hensaettelser") ?? "[]") } catch { return [] }
-    })
+
+    useEffect(() => {
+        getAftalelicensTransferOptions().then(result => {
+            if (!result.success) {
+                toast.error(result.error ?? "Kunne ikke hente rettighedskasser")
+                return
+            }
+            setTransferEnabled(result.enabled)
+            setTransferOptions(result.options)
+            if (result.options.length === 1) {
+                setSelectedTransferOption(`${result.options[0].fundId}|${result.options[0].policyVersionId}`)
+            }
+        })
+    }, [])
+
+    const handleAuthoritativeTransfer = async () => {
+        if (locked || transferring || !weighted) return
+        const [fundId, policyVersionId] = selectedTransferOption.split("|")
+        if (!fundId || !policyVersionId) {
+            toast.error("Vælg en rettighedskasse og en aktiv fordelingspolitik")
+            return
+        }
+        const confirmedBySource = new Map(
+            confirmedMatches.filter(match => match.confirmed && match.matchedWorkId).map(match => [match.vaerkId, match]),
+        )
+        const approvedIds = new Set(approved.map(row => row.id))
+        if (confirmedBySource.size !== approvedIds.size || Array.from(approvedIds).some(id => !confirmedBySource.has(id))) {
+            toast.error("Alle godkendte visningsrækker skal være bekræftet matchet med et værk")
+            return
+        }
+        if (!weighted.every(row => row.estimatedAmount !== undefined)) {
+            toast.error("Kør prøveberegningen per titel før godkendelse")
+            return
+        }
+
+        setTransferring(true)
+        const result = await transferAftalelicensBatchToRights({
+            batchId,
+            fundId,
+            policyVersionId,
+            grossAmountMinor: Math.round(Number(klumpBeloeb) * 100),
+            expectedPreview: {
+                admin: Math.round(Number(klumpBeloeb) * Number(adminPct) / 100 * 100),
+                claimReserve: Math.round(hensaettelserBeloeb * 100),
+                social: Math.round(socialtBeloeb * 100),
+                individual: Math.round(tilFordeling * 100),
+            },
+            matches: Array.from(confirmedBySource.values()).map(match => ({
+                sourceRowId: match.vaerkId,
+                workId: match.matchedWorkId!,
+                episodeId: null,
+            })),
+        })
+        setTransferring(false)
+        if (!result.success || !result.runId) {
+            toast.error(result.error ?? "Kunne ikke overføre beregningen")
+            return
+        }
+
+        setLocked(true)
+        setTransferredRunId(result.runId)
+        setDbTransfer(weightGroups.filter(group => group.totalEstimated !== undefined).map(group => ({
+            workId: confirmedBySource.get(group.items[0].vaerkId)?.matchedWorkId,
+            workTitle: confirmedBySource.get(group.items[0].vaerkId)?.matchedWorkTitle ?? group.baseTitle,
+            vaerkType: group.vaerkType,
+            totalPoints: group.totalPoints,
+            totalAmount: Math.round(group.totalEstimated ?? 0),
+        })))
+        toast.success(result.created
+            ? "Beregningen er låst og overført til rettighedsmodulet"
+            : "Batchen var allerede overført; den eksisterende rettighedsrunde er åbnet")
+    }
 
     const handleBeregn = () => {
         if (missingType.length > 0) {
@@ -3193,97 +3235,35 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                             <Button
                                 className="gap-2 ml-auto"
                                 variant={locked ? "secondary" : "default"}
-                                onClick={() => {
-                                    if (!locked) {
-                                        setLocked(true)
-
-                                        // Registrer hensættelse på kontoen
-                                        const entry = {
-                                            id: `h_${Date.now()}`,
-                                            batchLabel: batchLabel,
-                                            amount: Math.round(hensaettelserBeloeb),
-                                            lockedAt: new Date().toISOString(),
-                                            brugt: 0,
-                                        }
-                                        const updated = [...hensaettelsesKonto, entry]
-                                        setHensaettelsesKonto(updated)
-                                        localStorage.setItem("dfks_hensaettelser", JSON.stringify(updated))
-
-                                        // Overfør betalinger til værksdatabasen (localStorage)
-                                        const gross = Number(klumpBeloeb)
-                                        const batchAdminFee = gross * Number(adminPct) / 100
-                                        const vaerkRecords = weightGroups
-                                            .filter(g => g.totalEstimated !== undefined && g.totalEstimated > 0)
-                                            .map(g => {
-                                                const match = confirmedMatches.find(m => m.vaerkId === g.items[0].vaerkId)
-                                                const workId = match?.matchedWorkId
-                                                const workTitle = match?.matchedWorkTitle ?? g.baseTitle
-                                                const workShare = tilFordeling > 0 ? g.totalEstimated! / tilFordeling : 0
-                                                return {
-                                                    workId,
-                                                    workTitle,
-                                                    vaerkType: g.vaerkType,
-                                                    totalPoints: g.totalPoints,
-                                                    totalAmount: Math.round(g.totalEstimated!),
-                                                    adminFeeAmount: Math.round(workShare * batchAdminFee),
-                                                    klippere: !g.isGrouped ? (() => {
-                                                        // Brug fordelingsnøgle fra værksdatabasen for enkeltstående værker
-                                                        const distKeys: Record<string, { shares: { name: string; userId?: string; sharePercent: number }[] }> =
-                                                            JSON.parse(localStorage.getItem("dfks_distribution_keys") ?? "{}")
-                                                        const distKey = workId ? distKeys[workId] : undefined
-                                                        const shares = distKey?.shares ?? (match?.rettighedshavere ?? []).map(r => ({
-                                                            name: r.name, userId: r.userId, sharePercent: r.sharePercent,
-                                                        }))
-                                                        return shares.map(s => ({
-                                                            name: s.name,
-                                                            userId: s.userId,
-                                                            sharePercent: s.sharePercent,
-                                                            amount: Math.round(g.totalEstimated! * s.sharePercent / 100),
-                                                        }))
-                                                    })() : undefined,
-                                                    episodes: g.isGrouped ? g.items.map(ep => {
-                                                        const epMatch = confirmedMatches.find(m => m.vaerkId === ep.vaerkId)
-                                                        const epAmount = Math.round(ep.estimatedAmount ?? 0)
-                                                        // Ligeligt fordelt mellem krediterede klippere på afsnittet
-                                                        const credited = epMatch?.rettighedshavere ?? []
-                                                        const n = credited.length || 1
-                                                        const equalShare = Math.round(100 / n)
-                                                        return {
-                                                            episodeLabel: ep.rawTitle.match(/[Ss]\d+[Ee]\d+/)?.[0] ?? ep.rawTitle,
-                                                            broadcastDate: ep.broadcastDate,
-                                                            isGenudsendelse: ep.isGenudsendelse,
-                                                            points: ep.points,
-                                                            amount: epAmount,
-                                                            klippere: credited.map((r, i) => ({
-                                                                name: r.name,
-                                                                userId: r.userId,
-                                                                sharePercent: i === credited.length - 1 ? 100 - equalShare * (n - 1) : equalShare,
-                                                                amount: Math.round(epAmount / n),
-                                                            })),
-                                                        }
-                                                    }) : undefined,
-                                                }
-                                            })
-
-                                        const dbEntry = {
-                                            id: `al_${Date.now()}`,
-                                            batchLabel,
-                                            lockedAt: new Date().toISOString(),
-                                            totalAmount: Math.round(tilFordeling),
-                                            vaerker: vaerkRecords,
-                                        }
-                                        const existingDb: typeof dbEntry[] = JSON.parse(localStorage.getItem("dfks_al_udbetalinger") ?? "[]")
-                                        localStorage.setItem("dfks_al_udbetalinger", JSON.stringify([...existingDb, dbEntry]))
-                                        setDbTransfer(vaerkRecords)
-
-                                        toast.success(`Beregning låst — betalinger overført til ${vaerkRecords.length} værker`)
-                                    }
-                                }}
-                                disabled={locked}
+                                onClick={handleAuthoritativeTransfer}
+                                disabled={locked || transferring || !transferEnabled || !selectedTransferOption}
                             >
-                                <Lock className="h-4 w-4" />
-                                {locked ? "Beregning låst" : "Godkend og lås beregning"}
+                                {transferring ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+                                {locked ? "Beregning låst" : transferring ? "Overfører…" : "Godkend og overfør"}
                             </Button>
+                        </div>
+                        <div className="max-w-xl space-y-2 rounded-lg border p-3">
+                            <Label className="text-xs">Autoritativ rettighedskasse og fordelingspolitik</Label>
+                            <Select value={selectedTransferOption} onValueChange={setSelectedTransferOption} disabled={locked || transferring}>
+                                <SelectTrigger><SelectValue placeholder="Vælg rettighedskasse" /></SelectTrigger>
+                                <SelectContent>
+                                    {transferOptions.map(option => (
+                                        <SelectItem key={`${option.fundId}|${option.policyVersionId}`} value={`${option.fundId}|${option.policyVersionId}`}>
+                                            {option.fundName} · {option.policyName} v{option.policyVersionNumber} ({option.currency})
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">
+                                {!transferEnabled
+                                    ? "Databaseoverførsel er ikke aktiveret for organisationen. Resultatet ovenfor er kun en prøveberegning."
+                                    : "Ved overførsel genberegner serveren point og beløb og blokerer ved enhver afvigelse."}
+                            </p>
+                            {transferredRunId && (
+                                <Link className="text-xs font-medium text-primary underline" href={`/admin/rettighedsmidler/${transferredRunId}`}>
+                                    Åbn rettighedsrunden
+                                </Link>
+                            )}
                         </div>
                     </div>
 
@@ -3346,71 +3326,6 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                                                     ))}
                                                 </React.Fragment>
                                             ))}
-                                        </TableBody>
-                                    </Table>
-                                </div>
-                            </div>
-                        </>
-                    )}
-
-                    {/* Hensættelseskonto */}
-                    {hensaettelsesKonto.length > 0 && (
-                        <>
-                            <Separator />
-                            <div className="space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <p className="text-sm font-medium">Hensættelseskonto</p>
-                                        <p className="text-xs text-muted-foreground">Akkumulerede hensættelser til udefrakommende krav</p>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className="text-xs text-muted-foreground">Disponibel saldo</p>
-                                        <p className="text-lg font-semibold text-amber-600 dark:text-amber-400 tabular-nums">
-                                            {hensaettelsesKonto.reduce((s, e) => s + e.amount - e.brugt, 0).toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="rounded-lg border overflow-hidden">
-                                    <Table>
-                                        <TableHeader>
-                                            <TableRow>
-                                                <TableHead>Batch</TableHead>
-                                                <TableHead>Dato</TableHead>
-                                                <TableHead className="text-right">Hensat</TableHead>
-                                                <TableHead className="text-right">Brugt</TableHead>
-                                                <TableHead className="text-right">Rest</TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {hensaettelsesKonto.map(e => (
-                                                <TableRow key={e.id}>
-                                                    <TableCell className="text-sm">{e.batchLabel}</TableCell>
-                                                    <TableCell className="text-xs text-muted-foreground">{new Date(e.lockedAt).toLocaleDateString("da-DK")}</TableCell>
-                                                    <TableCell className="text-right font-mono text-sm tabular-nums">
-                                                        {e.amount.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
-                                                    </TableCell>
-                                                    <TableCell className="text-right font-mono text-sm tabular-nums text-destructive">
-                                                        {e.brugt > 0 ? `−${e.brugt.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}` : "—"}
-                                                    </TableCell>
-                                                    <TableCell className="text-right font-mono text-sm font-medium tabular-nums">
-                                                        {(e.amount - e.brugt).toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
-                                                    </TableCell>
-                                                </TableRow>
-                                            ))}
-                                            <TableRow className="bg-muted/30 font-medium">
-                                                <TableCell colSpan={2}>I alt</TableCell>
-                                                <TableCell className="text-right font-mono tabular-nums">
-                                                    {hensaettelsesKonto.reduce((s, e) => s + e.amount, 0).toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
-                                                </TableCell>
-                                                <TableCell className="text-right font-mono tabular-nums text-destructive">
-                                                    {hensaettelsesKonto.reduce((s, e) => s + e.brugt, 0) > 0
-                                                        ? `−${hensaettelsesKonto.reduce((s, e) => s + e.brugt, 0).toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}`
-                                                        : "—"}
-                                                </TableCell>
-                                                <TableCell className="text-right font-mono tabular-nums text-amber-600 dark:text-amber-400">
-                                                    {hensaettelsesKonto.reduce((s, e) => s + e.amount - e.brugt, 0).toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
-                                                </TableCell>
-                                            </TableRow>
                                         </TableBody>
                                     </Table>
                                 </div>
@@ -3772,7 +3687,7 @@ export default function AftalelicensDetailPage() {
                 </TabsContent>
 
                 <TabsContent value="beregning" className="mt-4">
-                    <WeightingTab vaerker={vaerker} confirmedMatches={confirmedMatches} batchLabel={`${KILDE_LABELS_PAGE[batch.kilde]} ${batch.year}`} />
+                    <WeightingTab vaerker={vaerker} confirmedMatches={confirmedMatches} batchId={batch.id} />
                 </TabsContent>
 
                 <TabsContent value="krav" className="mt-4">

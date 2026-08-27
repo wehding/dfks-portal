@@ -1,7 +1,6 @@
 "use client"
 
-import { useState } from "react"
-import { Wallet, AlertTriangle, CheckCircle2, Clock, CoinsIcon } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Clock, CoinsIcon } from "lucide-react"
 import { PortalPageHeader } from "@/components/portal/portal-page-header"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,7 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
     Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
-import type { MemberAllocation } from "@/app/actions/member-rights"
+import type { MemberAllocation, MemberEntitlementCase } from "@/app/actions/member-rights"
+import Link from "next/link"
 
 function formatMinor(amount: number, currency = "DKK"): string {
     return (amount / 100).toLocaleString("da-DK", {
@@ -35,12 +35,10 @@ function StatusBadge({ status, runStatus }: { status: string; runStatus: string 
     return <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" />Under behandling</Badge>
 }
 
-export function OkonomiClient({ allocations }: { allocations: MemberAllocation[] }) {
+export function OkonomiClient({ allocations, entitlementCases }: { allocations: MemberAllocation[]; entitlementCases: MemberEntitlementCase[] }) {
     const booked = allocations.filter(a => a.run_status === "booked")
     const pending = allocations.filter(a => a.run_status !== "booked" && a.run_status !== "cancelled")
-    const withheld = allocations.filter(a =>
-        ["partially_withheld", "fully_withheld"].includes(a.status) && !a.booked_at
-    )
+    const withheld = entitlementCases.filter(item => !["confirmed", "rejected", "administratively_closed"].includes(item.status))
 
     const totalBooked = booked.reduce((s, a) => s + a.individual_net, 0)
     const totalPending = pending.reduce((s, a) => s + a.individual_net, 0)
@@ -104,7 +102,7 @@ export function OkonomiClient({ allocations }: { allocations: MemberAllocation[]
                     <CardContent className="pb-4">
                         <div className={`text-2xl font-bold ${withheld.length > 0 ? "text-amber-500" : ""}`}>
                             {withheld.length > 0
-                                ? formatMinor(withheld.reduce((s, a) => s + a.individual_net, 0))
+                                ? formatMinor(withheld.reduce((s, item) => s + item.withheld_amount, 0), withheld[0]?.currency)
                                 : "—"}
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
@@ -116,7 +114,7 @@ export function OkonomiClient({ allocations }: { allocations: MemberAllocation[]
                 </Card>
             </div>
 
-            {allocations.length === 0 ? (
+            {allocations.length === 0 && entitlementCases.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-10 text-center">
                     <CoinsIcon className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
                     <p className="text-sm font-medium">Ingen rettighedsmidler endnu</p>
@@ -125,7 +123,7 @@ export function OkonomiClient({ allocations }: { allocations: MemberAllocation[]
                     </p>
                 </div>
             ) : (
-                <Tabs defaultValue={booked.length > 0 ? "bogforte" : "under-behandling"}>
+                <Tabs defaultValue={booked.length > 0 ? "bogforte" : pending.length > 0 ? "under-behandling" : "tilbageholdt"}>
                     <TabsList>
                         <TabsTrigger value="bogforte">
                             Bogførte ({booked.length})
@@ -247,8 +245,8 @@ export function OkonomiClient({ allocations }: { allocations: MemberAllocation[]
                                 <div className="flex gap-2 text-sm text-amber-700 dark:text-amber-400">
                                     <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                                     <p>
-                                        Disse midler er midlertidigt tilbageholdt. Kontakt DFKS for at afklare årsagen
-                                        og få beløbene frigivet.
+                                        Dokumentation for rettighedsforbehold mangler. Åbn den konkrete sag for at
+                                        uploade kontrakt, allonge, producenterklæring eller anden dokumentation og skrive til administrator.
                                     </p>
                                 </div>
                             </div>
@@ -259,20 +257,26 @@ export function OkonomiClient({ allocations }: { allocations: MemberAllocation[]
                                         <TableHead>Værk / afsnit</TableHead>
                                         <TableHead>Årsag</TableHead>
                                         <TableHead className="text-right">Beløb</TableHead>
+                                        <TableHead className="text-right">Handling</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                     {withheld.map(a => (
                                         <TableRow key={a.id}>
-                                            <TableCell className="text-sm">{a.period_label}</TableCell>
+                                            <TableCell className="text-sm">{formatDate(a.opened_at)}</TableCell>
                                             <TableCell className="text-sm">
                                                 {a.episode_title ?? a.work_title ?? "—"}
                                             </TableCell>
                                             <TableCell className="text-xs text-muted-foreground">
-                                                {a.withheld_reason ?? "—"}
+                                                Dokumentation for {a.right_type.toUpperCase()}-forbehold mangler
                                             </TableCell>
                                             <TableCell className="text-right font-mono text-sm">
-                                                {formatMinor(a.individual_net, a.currency)}
+                                                {formatMinor(a.withheld_amount, a.currency)}
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                <Link className="text-xs font-medium text-primary underline" href={`/portal/okonomi/rettighedssager/${a.id}`}>
+                                                    Se sag og dokumentér
+                                                </Link>
                                             </TableCell>
                                         </TableRow>
                                     ))}
