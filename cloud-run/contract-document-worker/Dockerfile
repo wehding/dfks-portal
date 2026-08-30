@@ -3,7 +3,6 @@ FROM node:22-bookworm-slim AS runtime
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     poppler-utils \
-    qpdf \
     python3-pil \
     python3-pikepdf \
     python3-reportlab \
@@ -13,7 +12,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
-COPY server.mjs processor.mjs backfill.mjs google-secure-api.mjs spatial-ocr.mjs vision_overlay.py mask_sensitive_image.py ./
+COPY server.mjs processor.mjs backfill.mjs google-secure-api.mjs spatial-ocr.mjs vision_overlay.py ./
 
 ENV NODE_ENV=production PORT=8080
 USER node

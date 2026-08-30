@@ -184,26 +184,16 @@ export async function processPdfSpatially({
   if (!pageCount || pageCount > 10_000) throw new Error("invalid_page_count");
 
   const pageStates = [];
-  const pagesForOcr = [];
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     const textPath = join(workDir, `native-${pageNumber}.txt`);
     await commandRunner("pdftotext", ["-f", String(pageNumber), "-l", String(pageNumber), inputPath, textPath], 60_000);
     const nativeText = await readFile(textPath, "utf8").catch(() => "");
     const classification = classifyPageText(nativeText);
     pageStates.push({ pageNumber, ...classification });
-    if (classification.classification === "native_text") continue;
-
-    const prefix = join(workDir, `page-${pageNumber}`);
-    await commandRunner("pdftoppm", [
-      "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
-      "-jpeg", "-jpegopt", "quality=95", "-r", "300", "-gray", inputPath, prefix,
-    ], 120_000);
-    const imageBytes = await readFile(`${prefix}.jpg`);
-    if (imageBytes.length > 6 * 1024 * 1024) throw new Error("vision_page_too_large");
-    pagesForOcr.push({ pageNumber, imageBytes });
   }
 
-  if (pagesForOcr.length === 0) {
+  const pagesNeedingOcr = pageStates.filter((page) => page.classification !== "native_text");
+  if (pagesNeedingOcr.length === 0) {
     return {
       status: "not_required",
       classification: "native_text",
@@ -215,28 +205,52 @@ export async function processPdfSpatially({
     };
   }
 
-  const { responses, redactionCounts } = await googleClient.redactAndAnnotate(pagesForOcr);
+  // A document that needs OCR is rebuilt consistently from DLP-redacted pages.
+  // Processing every page prevents a mixed PDF from retaining unredacted native
+  // pages next to redacted scan pages in the derivative.
+  const pagesForOcr = [];
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    const prefix = join(workDir, `page-${pageNumber}`);
+    await commandRunner("pdftoppm", [
+      "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
+      "-jpeg", "-jpegopt", "quality=95", "-r", "300", "-gray", inputPath, prefix,
+    ], 120_000);
+    const imageBytes = await readFile(`${prefix}.jpg`);
+    if (imageBytes.length > 6 * 1024 * 1024) throw new Error("vision_page_too_large");
+    pagesForOcr.push({ pageNumber, imageBytes });
+  }
+
+  const { responses, redactionCounts, redactionRegions, redactedPages } = await googleClient.redactAndAnnotate(pagesForOcr);
   const geometryPages = responses.map((response, index) => extractVisionPage(response, pagesForOcr[index].pageNumber));
   const unreadablePageCount = geometryPages.filter((page) => page.words.length === 0).length;
   if (unreadablePageCount > 0) {
     return {
       status: "needs_review", classification: "unreadable", pageCount,
-      nativePageCount: pageCount - pagesForOcr.length, ocrPageCount: pagesForOcr.length,
+      nativePageCount: pageStates.filter((page) => page.classification === "native_text").length,
+      ocrPageCount: pagesForOcr.length,
       unreadablePageCount, redactionCounts,
+      redactionProfile: "dfks-contract-redaction-v1",
+      spatialSchemaVersion: "google-vision-spatial-v2",
     };
   }
 
   const geometry = {
-    schemaVersion: "google-vision-spatial-v1",
+    schemaVersion: "google-vision-spatial-v2",
     engine: "google-vision-document-text-detection",
+    redactionEngine: "google-sensitive-data-protection-image-redact",
+    redactionProfile: "dfks-contract-redaction-v1",
+    redactions: redactionRegions,
     pages: geometryPages,
   };
   await writeFile(geometryPath, await gzipAsync(Buffer.from(JSON.stringify(geometry))), { mode: 0o600 });
   const plainGeometryPath = join(workDir, "vision-geometry.json");
   await writeFile(plainGeometryPath, JSON.stringify(geometry), { mode: 0o600 });
-  const rotationNormalisedPath = join(workDir, "rotation-normalised.pdf");
-  await commandRunner("qpdf", ["--flatten-rotation", inputPath, rotationNormalisedPath], 180_000);
-  await commandRunner("python3", [join(process.cwd(), "vision_overlay.py"), rotationNormalisedPath, plainGeometryPath, outputPath], 180_000);
+  for (const page of redactedPages) {
+    await writeFile(join(workDir, `redacted-${page.pageNumber}.jpg`), page.imageBytes, { mode: 0o600 });
+  }
+  await commandRunner("python3", [
+    join(process.cwd(), "vision_overlay.py"), inputPath, plainGeometryPath, workDir, outputPath,
+  ], 180_000);
 
   const bboxPath = join(workDir, "output-bbox.html");
   await commandRunner("pdftotext", ["-cropbox", "-bbox-layout", outputPath, bboxPath], 120_000);
@@ -246,7 +260,7 @@ export async function processPdfSpatially({
   await commandRunner("pdftotext", [outputPath, finalTextPath], 120_000);
   const finalText = await readFile(finalTextPath, "utf8").catch(() => "");
   const textCharCount = finalText.replace(/\s/g, "").length;
-  const nativePageCount = pageCount - pagesForOcr.length;
+  const nativePageCount = pageStates.filter((page) => page.classification === "native_text").length;
   const classification = nativePageCount === 0 && pageStates.every((page) => page.classification === "image_only")
     ? "image_only" : "mixed";
   return {
@@ -257,6 +271,8 @@ export async function processPdfSpatially({
     ocrPageCount: pagesForOcr.length,
     unreadablePageCount,
     redactionCounts,
+    redactionProfile: "dfks-contract-redaction-v1",
+    spatialSchemaVersion: "google-vision-spatial-v2",
     spatial,
     textCharCount,
   };

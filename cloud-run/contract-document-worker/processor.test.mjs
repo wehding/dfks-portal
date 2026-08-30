@@ -127,6 +127,8 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
         nativePageCount: 0, ocrPageCount: 2, unreadablePageCount: 0,
         textCharCount: 300, redactionCounts: { DENMARK_CPR_NUMBER: 1 },
         spatial: { score: 0.99, medianIou: 0.9, centerInsideRatio: 1 },
+        redactionProfile: "dfks-contract-redaction-v1",
+        spatialSchemaVersion: "google-vision-spatial-v2",
       };
     },
     fetchImpl: async (url, init) => {
@@ -146,6 +148,8 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
   assert.equal(uploads[1].path, job.spatialUploadPath);
   assert.equal(completions[0].status, "completed");
   assert.equal(completions[0].pageCount, 2);
+  assert.equal(completions[0].redactionProfile, "dfks-contract-redaction-v1");
+  assert.equal(completions[0].spatialSchemaVersion, "google-vision-spatial-v2");
   assert.match(completions[0].originalSha256, /^[0-9a-f]{64}$/);
   assert.match(completions[0].processedSha256, /^[0-9a-f]{64}$/);
 });

@@ -1,9 +1,12 @@
 # Privat PDF-normalisering på Cloud Run
 
-PDF-sider med et brugbart eksisterende tekstlag bevares urørte. Kun billedsider eller
-ulæselige sider sendes først gennem regional Google Sensitive Data Protection (DLP)
-og derefter synkron Google Cloud Vision OCR på EU-endpointet. Vision-koordinaterne
-bruges til et usynligt, søgbart tekstlag; originalfilen overskrives aldrig.
+PDF-filer med et fuldt brugbart tekstlag markeres som `not_required`. Hvis en PDF har
+billedsider eller ulæselige sider, rasteriseres alle dens sider. Hver side sendes først
+til regional Google Sensitive Data Protection (DLP) `image:redact`, som maskerer CPR,
+personnavne og bankdata inklusive IBAN og SWIFT i selve billedets pixels. Kun Googles
+maskerede retur-billede sendes derefter til synkron Google Cloud Vision OCR på
+EU-endpointet. Den søgbare afledte PDF genopbygges udelukkende af de maskerede billeder
+og Visions ordkoordinater; originalfilen overskrives aldrig.
 
 Tjenesten må kun deployes som en privat Cloud Run-service. Cloud Scheduler får rollen
 `Cloud Run Invoker`; `allUsers` og `allAuthenticatedUsers` må ikke tilføjes.
@@ -40,9 +43,9 @@ Google-nøgler må aldrig tilføjes. Produktionsprocessen afviser opstart, hvis
 `OCR_TMP_DIR` ikke peger på den monterede memory volume `/mnt/ramdisk`.
 
 Google-adgang sker med Cloud Run-servicens kortlivede metadata-token. Der bruges ingen
-API-nøgle eller permanent service-account-fil. Vision og DLP kaldes synkront over TLS 1.3;
+API-nøgle eller permanent service-account-fil. Vision og DLP kaldes synkront over TLS;
 globale eller asynkrone endpoints afvises af klienten. Hvert råt sidebillede sendes kun
-én gang til DLP. DLP returnerer pixelkoordinater for CPR- og finansdata, som maskeres
-lokalt i workerens RAM, før det maskerede billede sendes til Vision. Personnavne maskeres
-ikke. Kun fundtyper og antal gemmes; fundet tekst og råbilleder gemmes aldrig i logs eller
-databasen.
+én gang til DLP. Workeren accepterer kun DLP's returnerede pixelmaskerede billede og
+afviser et fund, hvis Google returnerer uændrede billedbytes. Kun fundtyper, antal og
+ufølsomme regioner gemmes; fundet tekst og råbilleder gemmes aldrig i logs eller
+databasen. Geometrien gemmes privat med skemaet `google-vision-spatial-v2`.

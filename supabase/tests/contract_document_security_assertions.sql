@@ -22,7 +22,8 @@ begin
     or has_table_privilege('authenticated', 'public.contract_document_jobs', 'SELECT')
     or has_function_privilege('authenticated', 'public.claim_next_contract_document_job(integer)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.finish_contract_document_job(uuid,text,jsonb,boolean,integer,integer,text,text)', 'EXECUTE')
-    or has_function_privilege('authenticated', 'public.finish_contract_document_job_v2(uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text)', 'EXECUTE') then
+    or has_function_privilege('authenticated', 'public.finish_contract_document_job_v2(uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.finish_contract_document_job_v3(uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text,text,text)', 'EXECUTE') then
     raise exception 'Document queue regression: browser roles can access the server-only queue';
   end if;
 
@@ -63,10 +64,11 @@ begin
   if position('for update skip locked' in lower(pg_get_functiondef('public.claim_next_contract_document_job(integer)'::regprocedure))) = 0 then
     raise exception 'Document queue regression: parallel claims are not protected by SKIP LOCKED';
   end if;
-  perform public.finish_contract_document_job_v2(
+  perform public.finish_contract_document_job_v3(
     job_id, 'completed', 'image_only', 'google-vision-eu-v1', '[]'::jsonb,
     true, 2, 1000, 0, 2, 0, '{"DENMARK_CPR_NUMBER": 1}'::jsonb,
-    0.99, 0.90, 1.0, repeat('a', 64), repeat('b', 64), null, null
+    0.99, 0.90, 1.0, repeat('a', 64), repeat('b', 64),
+    'dfks-contract-redaction-v1', 'google-vision-spatial-v2', null, null
   );
   if not exists (
     select 1 from public.contracts
@@ -75,6 +77,8 @@ begin
       and document_processing_status = 'ready'
       and document_ocr_engine = 'google-vision-eu-v1'
       and document_spatial_data_path = test_org || '/processed/vision-layout.json.gz'
+      and document_redaction_profile = 'dfks-contract-redaction-v1'
+      and document_spatial_schema_version = 'google-vision-spatial-v2'
       and status = 'kladde'
   ) then
     raise exception 'Document queue regression: original or derivative state is incorrect';
@@ -89,10 +93,10 @@ begin
       where contract_id = current_id and attachment_id is null and status = 'queued') <> 1 then
     raise exception 'Document queue regression: completed OCR did not create exactly one active AI job';
   end if;
-  perform public.finish_contract_document_job_v2(
+  perform public.finish_contract_document_job_v3(
     second_job_id, 'not_required', 'native_text', null, '[]'::jsonb,
     false, 1, 750, 1, 0, 0, '{}'::jsonb,
-    null, null, null, repeat('c', 64), null, null, null
+    null, null, null, repeat('c', 64), null, null, null, null, null
   );
   if not exists (
     select 1 from public.contracts

@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { maskSensitiveImageBytes } from "./google-secure-api.mjs";
 import {
   computeSpatialAccuracy,
   parsePdftotextBbox,
@@ -14,13 +13,6 @@ import {
 } from "./spatial-ocr.mjs";
 
 const runtimeOnly = { skip: process.env.DFKS_CONTAINER_RUNTIME_TEST !== "1" };
-
-test("containeren maskerer følsomme billedområder med Pillow", runtimeOnly, async () => {
-  const source = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAKAAoDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q==", "base64");
-  const output = await maskSensitiveImageBytes(source, [{ top: 1, left: 1, width: 5, height: 5 }]);
-  assert.equal(output.subarray(0, 2).toString("hex"), "ffd8");
-  assert.notDeepEqual(output, source);
-});
 
 function run(command, args, { input } = {}) {
   return new Promise((resolve, reject) => {
@@ -53,7 +45,9 @@ test("containeren bevarer sider, rotation og cropbox ved geometrisk overlay", ru
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 import pikepdf, sys
+from PIL import Image
 path = sys.argv[1]
+image_dir = sys.argv[2]
 c = canvas.Canvas(path, pagesize=letter)
 for index in range(4):
     c.rect(30, 30, 10, 10, stroke=1, fill=0)
@@ -64,11 +58,14 @@ with pikepdf.open(path, allow_overwriting_input=True) as pdf:
         pdf.pages[index].Rotate = rotation
         pdf.pages[index].CropBox = pikepdf.Array([10, 20, 602, 772])
     pdf.save(path)
+for index, (width, height) in enumerate(((592, 752), (752, 592), (592, 752), (752, 592)), start=1):
+    color = (12, 34, 56) if index == 1 else (255, 255, 255)
+    Image.new("RGB", (width, height), color).save(f"{image_dir}/redacted-{index}.jpg", "JPEG", quality=100)
 `;
-    await run("python3", ["-c", generator, inputPath]);
+    await run("python3", ["-c", generator, inputPath, workDir]);
     const pdfInfo = (await run("pdfinfo", ["-f", "1", "-l", "4", "-box", inputPath])).toString("utf8");
     const geometry = {
-      schemaVersion: "google-vision-spatial-v1",
+      schemaVersion: "google-vision-spatial-v2",
       engine: "google-vision-document-text-detection",
       pages: [0, 90, 180, 270].map((rotation, index) => {
         const imageWidth = rotation % 180 === 0 ? 592 : 752;
@@ -92,9 +89,7 @@ with pikepdf.open(path, allow_overwriting_input=True) as pdf:
       }),
     };
     await writeFile(geometryPath, JSON.stringify(geometry));
-    const normalisedPath = join(workDir, "normalised.pdf");
-    await run("qpdf", ["--flatten-rotation", inputPath, normalisedPath]);
-    await run("python3", ["vision_overlay.py", normalisedPath, geometryPath, outputPath]);
+    await run("python3", ["vision_overlay.py", inputPath, geometryPath, workDir, outputPath]);
     const inspection = await run("python3", ["-c", `
 import json, pikepdf, sys
 with pikepdf.open(sys.argv[1]) as pdf:
@@ -109,6 +104,17 @@ with pikepdf.open(sys.argv[1]) as pdf:
     const text = (await run("pdftotext", [outputPath, "-"])).toString("utf8");
     for (let index = 1; index <= 4; index += 1) assert.match(text, new RegExp(`Test${index}`));
 
+    const renderedPrefix = join(workDir, "rendered");
+    await run("pdftoppm", ["-f", "1", "-singlefile", "-png", "-r", "72", outputPath, renderedPrefix]);
+    const visiblePixel = await run("python3", ["-c", `
+from PIL import Image
+import json, sys
+image = Image.open(sys.argv[1]).convert("RGB")
+print(json.dumps(image.getpixel((image.width // 2, image.height // 2))))
+`, `${renderedPrefix}.png`]);
+    const renderedColor = JSON.parse(visiblePixel.toString("utf8"));
+    assert.equal(renderedColor.every((value, index) => Math.abs(value - [12, 34, 56][index]) <= 4), true);
+
     const bboxPath = join(workDir, "bbox.html");
     await run("pdftotext", ["-cropbox", "-bbox-layout", outputPath, bboxPath]);
     const extracted = parsePdftotextBbox(await readFile(bboxPath, "utf8"));
@@ -120,7 +126,7 @@ with pikepdf.open(sys.argv[1]) as pdf:
   }
 });
 
-test("blandet PDF OCR-behandler kun billedsiden og bevarer originalen", runtimeOnly, async () => {
+test("blandet PDF genopbygges konsekvent af DLP-sider og bevarer originalen", runtimeOnly, async () => {
   const workDir = await mkdtemp(join(tmpdir(), "dfks-mixed-pdf-"));
   try {
     const inputPath = join(workDir, "input.pdf");
@@ -141,33 +147,43 @@ c.save()
     const original = await readFile(inputPath);
     const googleClient = {
       async redactAndAnnotate(pages) {
-        assert.equal(pages.length, 1);
-        assert.equal(pages[0].pageNumber, 2);
+        assert.equal(pages.length, 2);
         return {
           redactionCounts: { IBAN_CODE: 1 },
-          responses: [{ fullTextAnnotation: { pages: [{
-            width: 2550,
-            height: 3300,
-            blocks: [{ paragraphs: [{ words: [{
-              confidence: 0.99,
-              boundingBox: { vertices: [{ x: 200, y: 200 }, { x: 800, y: 200 }, { x: 800, y: 300 }, { x: 200, y: 300 }] },
-              symbols: "Kontraktgrundlag".split("").map((text) => ({ text })),
-            }] }] }],
-          }] } }],
+          redactionRegions: [{ pageNumber: 2, top: 1, left: 1, width: 10, height: 10, infoType: "IBAN_CODE" }],
+          redactedPages: pages,
+          responses: [1, 2].map((pageNumber) => ({
+            fullTextAnnotation: { pages: [{
+              width: 2550,
+              height: 3300,
+              blocks: [{ paragraphs: [{ words: Array.from({ length: 10 }, (_, wordIndex) => {
+                const value = `KontraktOrd${pageNumber}${wordIndex}Lang`;
+                const top = 200 + wordIndex * 220;
+                return {
+                  confidence: 0.99,
+                  boundingBox: { vertices: [
+                    { x: 200, y: top }, { x: 800, y: top },
+                    { x: 800, y: top + 100 }, { x: 200, y: top + 100 },
+                  ] },
+                  symbols: value.split("").map((text) => ({ text })),
+                };
+              }) }] }],
+            }] },
+          })),
         };
       },
     };
     const result = await processPdfSpatially({
       inputPath, outputPath, geometryPath, workDir, commandRunner, googleClient,
     });
-    assert.equal(result.status, "completed");
+    assert.equal(result.status, "completed", JSON.stringify(result));
     assert.equal(result.nativePageCount, 1);
-    assert.equal(result.ocrPageCount, 1);
+    assert.equal(result.ocrPageCount, 2);
     assert.deepEqual(result.redactionCounts, { IBAN_CODE: 1 });
     assert.equal(sha256(await readFile(inputPath)), sha256(original));
     const text = (await run("pdftotext", [outputPath, "-"])).toString("utf8");
-    assert.match(text, /almindelig kontraktside/);
-    assert.match(text, /Kontraktgrundlag/);
+    assert.match(text, /KontraktOrd10Lang/);
+    assert.match(text, /KontraktOrd29Lang/);
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

@@ -13,10 +13,14 @@ bruges ikke `gcloud` til oprettelse eller ændring af Cloud Run, IAM eller Sched
    upload-token, begrænset til én tilfældig outputsti for netop det pågældende job.
    Supabase-upload-tokenet er gyldigt i to timer, men kan ikke overskrive en allerede
    færdig upload. Ved et kontrolleret genforsøg slettes kun den afledte outputfil først.
-6. Cloud Run retter sideretning, deskewer og OCR-behandler lokalt i den midlertidige
-   container. Midlertidige filer slettes i `finally`.
-7. Den behandlede kopi uploades til en separat sti. Originalen overskrives aldrig.
-8. Først efter afsluttet behandling oprettes AI-jobbet. AI bruger den behandlede kopi.
+6. Cloud Run rasteriserer billedbaserede PDF'er i RAM og sender hver side til Google
+   Sensitive Data Protection `image:redact` i EU. Google maskerer CPR, personnavne og
+   bankdata inklusive IBAN og SWIFT i de faktiske pixels.
+7. Kun de maskerede sider sendes til Google Vision EU. En søgbar PDF genopbygges af
+   disse sider og Visions ordkoordinater, så kilder senere kan markeres præcist.
+8. Den behandlede kopi og et privat geometrisk artefakt uploades til separate stier.
+   Originalen overskrives aldrig.
+9. Først efter afsluttet behandling oprettes AI-jobbet. AI bruger den behandlede kopi.
 
 Cloud Run modtager aldrig Supabase service-role, refresh-tokens eller AI-nøgler.
 
@@ -39,12 +43,15 @@ I **APIs & Services → Library** aktiveres:
 - Artifact Registry API
 - Cloud Scheduler API
 - IAM Service Account Credentials API
+- Sensitive Data Protection (DLP) API
+- Cloud Vision API
 
 ### 3. Opret servicekonti
 
 I **IAM & Admin → Service Accounts**:
 
-- `dfks-pdf-worker`: identitet for selve containeren. Ingen projektroller tildeles.
+- `dfks-pdf-worker`: identitet for selve containeren. Tildel kun de nødvendige roller
+  til at kalde Sensitive Data Protection og Vision. Kontoen får ingen Storage-adgang.
 - `dfks-pdf-scheduler`: må kun få `Cloud Run Invoker` på den konkrete service.
 
 Der oprettes ingen JSON-nøgler. Identitet leveres af Cloud Run og Scheduler.
@@ -82,6 +89,13 @@ Miljøvariabler:
 - `OCR_CLOUD_RUN_AUDIENCE=<fast audience, identisk med Vercel>`
 - `SUPABASE_URL=<projektets offentlige URL>`
 - `SUPABASE_ANON_KEY=<projektets offentlige anon/publishable key>`
+- `GOOGLE_CLOUD_PROJECT=dfks-portal`
+- `GOOGLE_VISION_LOCATION=eu`
+- `GOOGLE_DLP_LOCATION=eu`
+- `OCR_TMP_DIR=/mnt/ramdisk`
+
+Montér `/mnt/ramdisk` som en memory volume. Dokumentbytes må ikke skrives til et
+vedvarende containerfilsystem.
 
 Ingen af disse er en service-role. Den faste audience er ikke en hemmelighed.
 

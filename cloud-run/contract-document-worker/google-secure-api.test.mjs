@@ -4,10 +4,10 @@ import test from "node:test";
 
 import {
   createGoogleOcrClient,
+  decodeDlpRedactedImage,
   extractDlpFindings,
   GOOGLE_OCR_INFO_TYPES,
   GoogleOcrOperationalError,
-  maskSensitiveImageBytes,
   readGoogleConfig,
   secureJsonPost,
 } from "./google-secure-api.mjs";
@@ -18,7 +18,9 @@ test("kun regionale EU-endpoints konfigureres", () => {
   assert.equal(config.dlpEndpoint, "https://dlp.eu.rep.googleapis.com");
   assert.throws(() => readGoogleConfig({ GOOGLE_CLOUD_PROJECT: "dfks", GOOGLE_VISION_LOCATION: "global" }));
   assert.throws(() => readGoogleConfig({ GOOGLE_CLOUD_PROJECT: "dfks\r\nx-evil: true" }));
-  assert.equal(GOOGLE_OCR_INFO_TYPES.includes("PERSON_NAME"), false);
+  assert.equal(GOOGLE_OCR_INFO_TYPES.includes("PERSON_NAME"), true);
+  assert.equal(GOOGLE_OCR_INFO_TYPES.includes("SWIFT_CODE"), true);
+  assert.equal(GOOGLE_OCR_INFO_TYPES.includes("DFKS_DANISH_CPR_OCR"), true);
 });
 
 test("globale og asynkrone endpoints afvises før netværkskald", async () => {
@@ -38,7 +40,7 @@ test("DLP-fejl stopper siden før Vision", async () => {
     },
     accessTokenProvider: async () => "short-lived",
     jsonPost: async (url) => {
-      if (url.includes("content:inspect")) throw new Error("dlp_unavailable");
+      if (url.includes("image:redact")) throw new Error("dlp_unavailable");
       visionCalled = true;
       return { responses: [] };
     },
@@ -47,25 +49,20 @@ test("DLP-fejl stopper siden før Vision", async () => {
   assert.equal(visionCalled, false);
 });
 
-test("DLP-koordinater maskeres lokalt, og råbilledet sendes kun én gang til DLP", async () => {
+test("Google DLP returnerer den maskerede side, som alene sendes videre til Vision", async () => {
   const calls = [];
-  const raw = Buffer.from("raw-sensitive-image");
-  const masked = Buffer.from("locally-masked-image");
+  const raw = Buffer.from([0xff, 0xd8, 0x01, 0xff, 0xd9]);
+  const masked = Buffer.from([0xff, 0xd8, 0x02, 0xff, 0xd9]);
   const client = createGoogleOcrClient({
     config: {
       projectId: "dfks", visionLocation: "eu", dlpLocation: "eu",
       visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
     },
     accessTokenProvider: async () => "short-lived",
-    imageMasker: async (bytes, boxes) => {
-      assert.equal(bytes, raw);
-      assert.deepEqual(boxes, [{ top: 2, left: 3, width: 4, height: 5 }]);
-      return masked;
-    },
     jsonPost: async (url, _token, payload) => {
       calls.push({ url, payload });
-      if (url.includes("content:inspect")) {
-        return { result: { findings: [{
+      if (url.includes("image:redact")) {
+        return { redactedImage: masked.toString("base64"), inspectResult: { findings: [{
           infoType: { name: "DENMARK_CPR_NUMBER" },
           location: { contentLocations: [{ imageLocation: { boundingBoxes: [{ top: 2, left: 3, width: 4, height: 5 }] } }] },
         }] } };
@@ -75,9 +72,19 @@ test("DLP-koordinater maskeres lokalt, og råbilledet sendes kun én gang til DL
   });
   const result = await client.redactAndAnnotate([{ pageNumber: 1, imageBytes: raw }]);
   assert.equal(calls.filter(({ url }) => url.includes("dlp.eu.rep.googleapis.com")).length, 1);
-  assert.equal(calls.some(({ url }) => url.includes("image:redact")), false);
+  assert.equal(calls.some(({ url }) => url.includes("image:redact")), true);
+  assert.equal("parent" in calls[0].payload, false);
+  assert.equal(calls[0].payload.inspectConfig.includeQuote, false);
+  assert.equal("limits" in calls[0].payload.inspectConfig, false);
+  assert.equal(calls[0].payload.imageRedactionConfigs.some(({ infoType }) => infoType.name === "PERSON_NAME"), true);
+  assert.equal(calls[0].payload.imageRedactionConfigs.some(({ infoType }) => infoType.name === "SWIFT_CODE"), true);
   assert.equal(calls[1].payload.requests[0].image.content, masked.toString("base64"));
+  assert.equal("parent" in calls[1].payload, false);
   assert.deepEqual(result.redactionCounts, { DENMARK_CPR_NUMBER: 1 });
+  assert.deepEqual(result.redactionRegions, [{
+    pageNumber: 1, top: 2, left: 3, width: 4, height: 5, infoType: "DENMARK_CPR_NUMBER",
+  }]);
+  assert.deepEqual(result.redactedPages[0].imageBytes, masked);
 });
 
 test("kendt DLP-fund uden koordinater stopper før Vision", async () => {
@@ -89,8 +96,11 @@ test("kendt DLP-fund uden koordinater stopper før Vision", async () => {
     },
     accessTokenProvider: async () => "short-lived",
     jsonPost: async (url) => {
-      if (url.includes("content:inspect")) {
-        return { result: { findings: [{ infoType: { name: "IBAN_CODE" }, location: {} }] } };
+      if (url.includes("image:redact")) {
+        return {
+          redactedImage: Buffer.from([0xff, 0xd8, 0x02, 0xff, 0xd9]).toString("base64"),
+          inspectResult: { findings: [{ infoType: { name: "IBAN_CODE" }, location: {} }] },
+        };
       }
       visionCalled = true;
       return { responses: [] };
@@ -100,44 +110,24 @@ test("kendt DLP-fund uden koordinater stopper før Vision", async () => {
   assert.equal(visionCalled, false);
 });
 
-test("DLP-fund returnerer kun tællinger og ikke fundet tekst", () => {
-  const result = extractDlpFindings({ result: { findings: [{
+test("DLP-fund returnerer kun tællinger og geometri, aldrig fundet tekst", () => {
+  const result = extractDlpFindings({ inspectResult: { findings: [{
     quote: "hemmeligt-cpr",
     infoType: { name: "DENMARK_CPR_NUMBER" },
     location: { contentLocations: [{ imageLocation: { boundingBoxes: [{ top: 1, left: 2, width: 3, height: 4 }] } }] },
   }] } });
   assert.deepEqual(result, {
     counts: { DENMARK_CPR_NUMBER: 1 },
-    boxes: [{ top: 1, left: 2, width: 3, height: 4 }],
+    boxes: [{ top: 1, left: 2, width: 3, height: 4, infoType: "DENMARK_CPR_NUMBER" }],
   });
   assert.equal(JSON.stringify(result).includes("hemmeligt-cpr"), false);
 });
 
-test("lokal maskering ændrer billedet uden at skrive rådata til argumenter", async () => {
-  const source = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAKAAoDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q==", "base64");
-  const masked = Buffer.from("locally-masked-image");
-  const output = await maskSensitiveImageBytes(source, [{ top: 1, left: 1, width: 5, height: 5 }], {
-    spawnImpl(command, args, options) {
-      assert.equal(command, "python3");
-      assert.equal(args.length, 2);
-      assert.equal(args.some((argument) => argument.includes(source.toString("base64"))), false);
-      assert.deepEqual(options.stdio, ["pipe", "pipe", "pipe"]);
-      const child = new EventEmitter();
-      child.stdout = new EventEmitter();
-      child.stderr = new EventEmitter();
-      child.kill = () => {};
-      child.stdin = new EventEmitter();
-      child.stdin.end = (bytes) => {
-        assert.equal(bytes, source);
-        queueMicrotask(() => {
-          child.stdout.emit("data", masked);
-          child.emit("close", 0);
-        });
-      };
-      return child;
-    },
-  });
-  assert.deepEqual(output, masked);
+test("DLP-svar uden gyldigt ændret JPEG-billede afvises", () => {
+  const source = Buffer.from([0xff, 0xd8, 0x01, 0xff, 0xd9]);
+  assert.throws(() => decodeDlpRedactedImage({}, source, 0), /dlp_redacted_image_missing/);
+  assert.throws(() => decodeDlpRedactedImage({ redactedImage: Buffer.from("png").toString("base64") }, source, 0), /dlp_redacted_image_invalid/);
+  assert.throws(() => decodeDlpRedactedImage({ redactedImage: source.toString("base64") }, source, 1), /dlp_redaction_not_applied/);
 });
 
 test("Google-kald kræver TLS 1.3", async () => {
@@ -203,11 +193,14 @@ test("midlertidig Google-fejl prøves igen med afgrænset antal forsøg", async 
     jsonPost: async (url) => {
       attempts += 1;
       if (attempts < 3) throw new GoogleOcrOperationalError("google_api_503");
-      if (url.includes("content:inspect")) return {};
+      if (url.includes("image:redact")) return {
+        redactedImage: Buffer.from([0xff, 0xd8, 0x01, 0xff, 0xd9]).toString("base64"),
+        inspectResult: { findings: [] },
+      };
       return { responses: [{ fullTextAnnotation: { pages: [] } }] };
     },
   });
-  await client.redactAndAnnotate([{ pageNumber: 1, imageBytes: Buffer.from("raw") }]);
+  await client.redactAndAnnotate([{ pageNumber: 1, imageBytes: Buffer.from([0xff, 0xd8, 0x01, 0xff, 0xd9]) }]);
   assert.equal(attempts, 4);
   assert.deepEqual(delays, [250, 500]);
 });

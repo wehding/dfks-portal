@@ -221,6 +221,8 @@ export function createProcessor(options = {}) {
         ocrPageCount: result.ocrPageCount,
         unreadablePageCount: result.unreadablePageCount,
         redactionCounts: result.redactionCounts ?? {},
+        redactionProfile: result.redactionProfile ?? null,
+        spatialSchemaVersion: result.spatialSchemaVersion ?? null,
         spatialAccuracyScore: result.spatial?.score ?? null,
         spatialMedianIou: result.spatial?.medianIou ?? null,
         spatialCenterInsideRatio: result.spatial?.centerInsideRatio ?? null,

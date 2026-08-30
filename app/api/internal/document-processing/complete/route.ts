@@ -18,6 +18,8 @@ type Completion = {
   ocrPageCount?: number;
   unreadablePageCount?: number;
   redactionCounts?: Record<string, number>;
+  redactionProfile?: string | null;
+  spatialSchemaVersion?: string | null;
   spatialAccuracyScore?: number | null;
   spatialMedianIou?: number | null;
   spatialCenterInsideRatio?: number | null;
@@ -55,7 +57,9 @@ export async function POST(request: Request) {
   const redactionCounts = Object.fromEntries(Object.entries(body.redactionCounts ?? {})
     .filter(([key, value]) => /^[A-Z_]{2,60}$/.test(key) && Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 100_000)
     .slice(0, 20));
-  const { data: finished, error } = await db.rpc("finish_contract_document_job_v2", {
+  const safeProfile = (value: unknown) => typeof value === "string"
+    && /^[a-z0-9][a-z0-9._-]{2,79}$/.test(value) ? value : null;
+  const { data: finished, error } = await db.rpc("finish_contract_document_job_v3", {
     p_job_id: body.jobId,
     p_status: body.status,
     p_document_classification: body.documentClassification ?? null,
@@ -73,6 +77,8 @@ export async function POST(request: Request) {
     p_spatial_center_inside_ratio: safeRatio(body.spatialCenterInsideRatio),
     p_original_sha256: safeHash(body.originalSha256),
     p_processed_sha256: safeHash(body.processedSha256),
+    p_redaction_profile: safeProfile(body.redactionProfile),
+    p_spatial_schema_version: safeProfile(body.spatialSchemaVersion),
     p_error_code: body.errorCode?.slice(0, 80) || null,
     p_safe_error_message: body.safeErrorMessage?.slice(0, 500) || null,
   });
