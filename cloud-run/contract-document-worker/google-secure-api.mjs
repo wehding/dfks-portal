@@ -1,20 +1,40 @@
 import https from "node:https";
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const VISION_HOST = "eu-vision.googleapis.com";
 const DLP_HOST = "dlp.eu.rep.googleapis.com";
 const MAX_VISION_IMAGES = 16;
 const MAX_VISION_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_DLP_BOXES_PER_PAGE = 2_000;
-const LOCAL_MASK_SCRIPT = fileURLToPath(new URL("./mask_sensitive_image.py", import.meta.url));
 const DLP_INFO_TYPES = [
   "DENMARK_CPR_NUMBER",
+  "PERSON_NAME",
   "FINANCIAL_ACCOUNT_NUMBER",
   "IBAN_CODE",
+  "SWIFT_CODE",
   "CREDIT_CARD_NUMBER",
   "CREDIT_CARD_TRACK_NUMBER",
   "CVV_NUMBER",
+];
+const DLP_CUSTOM_INFO_TYPES = [
+  {
+    infoType: { name: "DFKS_DANISH_CPR_OCR" },
+    likelihood: "POSSIBLE",
+    regex: {
+      pattern: "(?:0[1-9]|[12][0-9]|3[01])[ .-]?(?:0[1-9]|1[0-2])[ .-]?[0-9]{2}[ -]?[0-9]{4}",
+    },
+  },
+  {
+    infoType: { name: "DFKS_DANISH_BANK_ACCOUNT" },
+    likelihood: "POSSIBLE",
+    regex: {
+      pattern: "(?i)(?:reg(?:istrerings)?[ .]*(?:nr[.]?)?|konto(?:nummer)?|bankkonto)[ :#.-]*[0-9]{4}(?:[ -]+)[0-9][0-9 -]{5,13}[0-9]",
+    },
+  },
+];
+const DLP_REDACTION_INFO_TYPES = [
+  ...DLP_INFO_TYPES,
+  ...DLP_CUSTOM_INFO_TYPES.map((entry) => entry.infoType.name),
 ];
 
 export class GoogleOcrOperationalError extends Error {
@@ -125,9 +145,10 @@ export async function secureJsonPost(urlValue, token, payload, {
 export function extractDlpFindings(response) {
   const counts = {};
   const boxes = [];
-  for (const finding of response?.result?.findings ?? []) {
+  const findings = response?.inspectResult?.findings ?? response?.result?.findings ?? [];
+  for (const finding of findings) {
     const name = finding?.infoType?.name;
-    if (!DLP_INFO_TYPES.includes(name)) continue;
+    if (!DLP_REDACTION_INFO_TYPES.includes(name)) continue;
     counts[name] = (counts[name] ?? 0) + 1;
     for (const location of finding?.location?.contentLocations ?? []) {
       for (const box of location?.imageLocation?.boundingBoxes ?? []) {
@@ -139,7 +160,7 @@ export function extractDlpFindings(response) {
         };
         if (Object.values(parsed).every(Number.isFinite)
           && parsed.top >= 0 && parsed.left >= 0 && parsed.width > 0 && parsed.height > 0) {
-          boxes.push(parsed);
+          boxes.push({ ...parsed, infoType: name });
         }
       }
     }
@@ -150,54 +171,29 @@ export function extractDlpFindings(response) {
   return { counts, boxes };
 }
 
-export async function maskSensitiveImageBytes(imageBytes, boxes, {
-  spawnImpl = spawn,
-  scriptPath = LOCAL_MASK_SCRIPT,
-} = {}) {
-  if (!boxes.length) return imageBytes;
-  return new Promise((resolve, reject) => {
-    const child = spawnImpl("python3", [scriptPath, JSON.stringify(boxes)], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const output = [];
-    let outputBytes = 0;
-    let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
-    child.stdout.on("data", (chunk) => {
-      outputBytes += chunk.length;
-      if (outputBytes > 16 * 1024 * 1024) {
-        child.kill("SIGKILL");
-        return;
-      }
-      output.push(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr = (stderr + chunk.toString()).slice(-1_000);
-    });
-    child.once("error", (error) => {
-      clearTimeout(timer);
-      reject(new GoogleOcrOperationalError("local_redaction_failed", { cause: error }));
-    });
-    child.once("close", (code) => {
-      clearTimeout(timer);
-      if (code !== 0 || outputBytes === 0 || outputBytes > 16 * 1024 * 1024) {
-        reject(new GoogleOcrOperationalError("local_redaction_failed", {
-          cause: stderr ? new Error("redaction_process_failed") : undefined,
-        }));
-        return;
-      }
-      resolve(Buffer.concat(output, outputBytes));
-    });
-    child.stdin.once("error", () => {});
-    child.stdin.end(imageBytes);
-  });
+function digest(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+export function decodeDlpRedactedImage(response, originalImage, findingCount) {
+  if (typeof response?.redactedImage !== "string" || !response.redactedImage) {
+    throw new GoogleOcrOperationalError("dlp_redacted_image_missing");
+  }
+  const image = Buffer.from(response.redactedImage, "base64");
+  if (!image.length || image.length > 16 * 1024 * 1024
+    || image[0] !== 0xff || image[1] !== 0xd8) {
+    throw new GoogleOcrOperationalError("dlp_redacted_image_invalid");
+  }
+  if (findingCount > 0 && digest(image) === digest(originalImage)) {
+    throw new GoogleOcrOperationalError("dlp_redaction_not_applied");
+  }
+  return image;
 }
 
 export function createGoogleOcrClient({
   config = readGoogleConfig(),
   accessTokenProvider = fetchGoogleAccessToken,
   jsonPost = secureJsonPost,
-  imageMasker = maskSensitiveImageBytes,
   retryDelay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   async function post(url, token, payload) {
@@ -221,29 +217,42 @@ export function createGoogleOcrClient({
     const byteItem = { type: "IMAGE_JPEG", data: imageBytes.toString("base64") };
     const inspectConfig = {
       infoTypes: DLP_INFO_TYPES.map((name) => ({ name })),
+      customInfoTypes: DLP_CUSTOM_INFO_TYPES,
       minLikelihood: "POSSIBLE",
       includeQuote: false,
-      limits: { maxFindingsPerRequest: 500 },
     };
     const parent = `projects/${config.projectId}/locations/${config.dlpLocation}`;
-    const inspect = await post(
-      `${config.dlpEndpoint}/v2/${parent}/content:inspect`,
+    const redacted = await post(
+      `${config.dlpEndpoint}/v2/${parent}/image:redact`,
       token,
-      { parent, inspectConfig, item: { byteItem } },
+      {
+        inspectConfig,
+        imageRedactionConfigs: DLP_REDACTION_INFO_TYPES.map((name) => ({ infoType: { name } })),
+        includeFindings: true,
+        byteItem,
+      },
     );
-    const { counts, boxes } = extractDlpFindings(inspect);
+    const { counts, boxes } = extractDlpFindings(redacted);
     if (Object.keys(counts).length > 0 && boxes.length === 0) {
-      // Fail closed rather than sending a known sensitive, unmasked page to Vision.
+      // Fail closed rather than sending a known sensitive page to Vision without
+      // auditable redaction geometry.
       throw new GoogleOcrOperationalError("dlp_location_missing");
     }
-    return { imageBytes: await imageMasker(imageBytes, boxes), counts };
+    return {
+      imageBytes: decodeDlpRedactedImage(
+        redacted,
+        imageBytes,
+        Object.values(counts).reduce((sum, count) => sum + count, 0),
+      ),
+      counts,
+      boxes,
+    };
   }
 
   async function annotateBatch(pages) {
     const token = await accessTokenProvider();
     const parent = `projects/${config.projectId}/locations/${config.visionLocation}`;
     const payload = {
-      parent,
       requests: pages.map((page) => ({
         image: { content: page.imageBytes.toString("base64") },
         features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
@@ -267,12 +276,14 @@ export function createGoogleOcrClient({
   async function redactAndAnnotate(pages) {
     const redactedPages = [];
     const totalCounts = {};
+    const redactionRegions = [];
     for (const page of pages) {
       // Fail closed: a DLP error prevents the page from reaching Vision.
       const redacted = await inspectAndRedact(page.imageBytes);
       for (const [name, count] of Object.entries(redacted.counts)) {
         totalCounts[name] = (totalCounts[name] ?? 0) + count;
       }
+      redactionRegions.push(...redacted.boxes.map((box) => ({ pageNumber: page.pageNumber, ...box })));
       redactedPages.push({ ...page, imageBytes: redacted.imageBytes });
     }
 
@@ -291,10 +302,10 @@ export function createGoogleOcrClient({
       estimatedBytes += pageBytes;
     }
     if (batch.length) responses.push(...await annotateBatch(batch));
-    return { responses, redactionCounts: totalCounts };
+    return { responses, redactionCounts: totalCounts, redactionRegions, redactedPages };
   }
 
   return { inspectAndRedact, annotateBatch, redactAndAnnotate };
 }
 
-export const GOOGLE_OCR_INFO_TYPES = Object.freeze([...DLP_INFO_TYPES]);
+export const GOOGLE_OCR_INFO_TYPES = Object.freeze([...DLP_REDACTION_INFO_TYPES]);
