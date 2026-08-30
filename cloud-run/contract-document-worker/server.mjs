@@ -18,6 +18,12 @@ createServer(async (request, response) => {
       response.writeHead(204, { "Cache-Control": "no-store" }).end();
       return;
     }
+    if (result.outcome === "handled_failure" && result.diagnosticCode) {
+      console.warn(JSON.stringify({
+        event: "document_job_handled_failure",
+        code: result.diagnosticCode,
+      }));
+    }
     response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     response.end(JSON.stringify({ outcome: result.outcome }));
   } catch (error) {
