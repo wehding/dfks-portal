@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { writeFile } from "node:fs/promises";
 import test from "node:test";
 
-import { createProcessor, FatalProcessingError, readRuntimeConfig } from "./processor.mjs";
+import { GoogleOcrOperationalError } from "./google-secure-api.mjs";
+import {
+  createProcessor,
+  FatalProcessingError,
+  readRuntimeConfig,
+  safeGoogleErrorCode,
+} from "./processor.mjs";
 
 const config = {
   portalBaseUrl: "https://portal.example",
@@ -86,6 +92,84 @@ test("callbackfejl er fatal", async () => {
     },
   });
   await assert.rejects(processor, (error) => error instanceof FatalProcessingError && error.code === "completion_callback_failed");
+});
+
+test("dokumentrelateret Google OCR-fejl registreres og batchen kan fortsætte", async () => {
+  const completions = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_location_missing"); },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), {
+    outcome: "handled_failure",
+    diagnosticCode: "dlp_location_missing",
+  });
+  assert.deepEqual(completions[0], {
+    jobId: claimJob().jobId,
+    status: "failed",
+    errorCode: "dlp_location_missing",
+    safeErrorMessage: "Google OCR-tjenesten kunne ikke behandle dokumentet. Fejlen er registreret.",
+  });
+});
+
+test("Google IAM-fejl frigiver claim og stopper tasken", async () => {
+  const completions = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("google_api_403"); },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  await assert.rejects(processor, (error) =>
+    error instanceof FatalProcessingError && error.code === "google_api_403");
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].status, "failed");
+  assert.equal(completions[0].errorCode, "google_api_403");
+});
+
+test("callbackfejl efter Google-fejl er fatal", async () => {
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_location_missing"); },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) return response("{}", { status: 503 });
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  await assert.rejects(processor, (error) =>
+    error instanceof FatalProcessingError && error.code === "completion_callback_failed");
+});
+
+test("ukendt Google-fejlkode bliver sanitiseret", () => {
+  assert.equal(safeGoogleErrorCode("CPR 010101-1234"), "google_ocr_service_failed");
+  assert.equal(safeGoogleErrorCode("google_api_503"), "google_api_503");
 });
 
 test("fatal identitetsfejl stopper før claim", async () => {

@@ -9,6 +9,26 @@ import { processPdfSpatially, sha256 } from "./spatial-ocr.mjs";
 
 const REQUIRED_ENV = ["PORTAL_BASE_URL", "OCR_CLOUD_RUN_AUDIENCE", "SUPABASE_URL", "SUPABASE_ANON_KEY", "GOOGLE_CLOUD_PROJECT"];
 const MAX_BYTES = 25 * 1024 * 1024;
+const DOCUMENT_GOOGLE_ERROR_CODES = new Set([
+  "dlp_location_missing",
+  "dlp_redacted_image_invalid",
+  "dlp_redacted_image_missing",
+  "dlp_redaction_not_applied",
+  "dlp_too_many_locations",
+  "vision_page_too_large",
+  "vision_request_too_large",
+  "vision_response_invalid",
+]);
+const SAFE_GOOGLE_ERROR_CODES = new Set([
+  ...DOCUMENT_GOOGLE_ERROR_CODES,
+  "google_access_token_failed",
+  "google_endpoint_rejected",
+  "google_request_failed",
+  "google_request_timeout",
+  "google_response_invalid",
+  "google_tls_version_rejected",
+  "invalid_google_ocr_configuration",
+]);
 
 export class FatalProcessingError extends Error {
   constructor(code, options) {
@@ -148,6 +168,17 @@ function safeDocumentError(error) {
   return new DocumentProcessingError("document_processing_failed");
 }
 
+export function safeGoogleErrorCode(value) {
+  if (SAFE_GOOGLE_ERROR_CODES.has(value) || /^google_api_[1-5][0-9]{2}$/.test(value)) {
+    return value;
+  }
+  return "google_ocr_service_failed";
+}
+
+function isDocumentGoogleError(value) {
+  return DOCUMENT_GOOGLE_ERROR_CODES.has(value);
+}
+
 export function createProcessor(options = {}) {
   const env = options.env ?? process.env;
   const config = options.config ?? readRuntimeConfig(env);
@@ -262,7 +293,21 @@ export function createProcessor(options = {}) {
     } catch (error) {
       if (error instanceof FatalProcessingError) throw error;
       if (error instanceof GoogleOcrOperationalError) {
-        throw new FatalProcessingError("google_ocr_service_failed", { cause: error });
+        const errorCode = safeGoogleErrorCode(error.code);
+        // Google failures happen after a job has been claimed. Always complete
+        // the claim first so it is never left locked in `processing`. Only
+        // explicitly classified document-quality failures may let a batch
+        // continue; IAM, identity, endpoint and service failures stop the task.
+        await sendCompletion(config, token, {
+          jobId: job.jobId,
+          status: "failed",
+          errorCode,
+          safeErrorMessage: "Google OCR-tjenesten kunne ikke behandle dokumentet. Fejlen er registreret.",
+        }, fetchImpl);
+        if (!isDocumentGoogleError(errorCode)) {
+          throw new FatalProcessingError(errorCode, { cause: error });
+        }
+        return { outcome: "handled_failure", diagnosticCode: errorCode };
       }
       const documentError = safeDocumentError(error);
       await sendCompletion(config, token, {
