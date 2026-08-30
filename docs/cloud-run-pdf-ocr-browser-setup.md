@@ -63,6 +63,14 @@ vælges repository og mappen `cloud-run/contract-document-worker` med dens Docke
 Artifact Registry placeres i `europe-north1`. Buildlogs må ikke indeholde kontrakter,
 miljøvariabler eller filnavne.
 
+Den eksisterende produktionsservice bruger Cloud Build-konfigurationen
+`cloudbuild.contract-document-worker.yaml`. Triggeren skal kun køre ved push til
+`master`, når filer under `cloud-run/contract-document-worker/**` eller selve
+Cloud Build-konfigurationen er ændret. Build-servicekontoen skal være en separat,
+brugerstyret servicekonto med mindst mulige roller til build, Artifact Registry og
+deploy af den konkrete Cloud Run-service. Runtime-identiteten forbliver
+`dfks-pdf-worker`; den må ikke bruges som build-servicekonto.
+
 ### 5. Opret privat Cloud Run-service
 
 Anbefalede indstillinger:
