@@ -362,6 +362,7 @@ export async function extractPdfBboxPages(pdfBytes) {
       });
       const chunks = [];
       let length = 0;
+      let terminalError = null;
       let settled = false;
       const finish = (error, value) => {
         if (settled) return;
@@ -370,22 +371,30 @@ export async function extractPdfBboxPages(pdfBytes) {
         if (error) reject(error);
         else resolve(value);
       };
-      const timer = setTimeout(() => {
+      const failAfterTermination = () => {
+        if (settled) return;
+        terminalError ??= new AuditOperationalError("spatial_bbox_failed");
+        if (child.pid == null) {
+          finish(terminalError);
+          return;
+        }
         child.kill("SIGKILL");
-        finish(new AuditOperationalError("spatial_bbox_failed"));
-      }, PDFTOTEXT_TIMEOUT_MS);
+      };
+      const timer = setTimeout(failAfterTermination, PDFTOTEXT_TIMEOUT_MS);
       child.stdout.on("data", (chunk) => {
         length += chunk.length;
         if (length > MAX_BBOX_BYTES) {
-          child.kill("SIGKILL");
-          finish(new AuditOperationalError("spatial_bbox_failed"));
+          failAfterTermination();
           return;
         }
         chunks.push(chunk);
       });
-      child.once("error", () => finish(new AuditOperationalError("spatial_bbox_failed")));
+      child.stdout.once("error", failAfterTermination);
+      child.once("error", failAfterTermination);
       child.once("close", (code) => {
-        if (code !== 0) finish(new AuditOperationalError("spatial_bbox_failed"));
+        if (terminalError || code !== 0) {
+          finish(terminalError ?? new AuditOperationalError("spatial_bbox_failed"));
+        }
         else finish(null, Buffer.concat(chunks).toString("utf8"));
       });
     });
@@ -429,6 +438,10 @@ export async function extractPdfPageCount(pdfBytes) {
     const failAfterTermination = () => {
       if (settled) return;
       terminalError ??= new AuditOperationalError("pdf_page_count_failed");
+      if (child.pid == null) {
+        finish(terminalError);
+        return;
+      }
       child.kill("SIGKILL");
     };
     const finish = (error, value) => {
@@ -447,8 +460,9 @@ export async function extractPdfPageCount(pdfBytes) {
       }
       chunks.push(chunk);
     });
+    child.stdout.once("error", failAfterTermination);
     child.stdin.once("error", failAfterTermination);
-    child.once("error", () => finish(new AuditOperationalError("pdf_page_count_failed")));
+    child.once("error", failAfterTermination);
     child.once("close", (code) => {
       if (terminalError || code !== 0) {
         finish(terminalError ?? new AuditOperationalError("pdf_page_count_failed"));
@@ -591,7 +605,16 @@ async function inspectCompletedJob({
       if (!original.hashMatches) violations.originalHashMismatch += 1;
       if (original.invalidPdf) {
         let independentlyVerifiedPageCount = null;
-        if (original.hashMatches && baselineOriginal?.originalPdfReadable === false) {
+        const originalStoragePathDigest = sha256(Buffer.from(job.original_storage_path, "utf8"));
+        const matchesKnownUnparseableBaseline = original.hashMatches
+          && baselineOriginal?.jobId === job.id
+          && baselineOriginal.contractId === job.contract_id
+          && baselineOriginal?.originalSha256 === original.sha256
+          && baselineOriginal.originalSha256 === job.original_sha256
+          && baselineOriginal?.originalStoragePathDigest === originalStoragePathDigest
+          && baselineOriginal?.originalPdfReadable === false
+          && baselineOriginal?.originalPageCount === null;
+        if (matchesKnownUnparseableBaseline) {
           try {
             independentlyVerifiedPageCount = await extractOriginalPageCount(original.bytes);
           } catch {
@@ -1188,6 +1211,10 @@ export async function runAudit({ db, concurrency = DEFAULT_CONCURRENCY, baseline
   );
   const baselineOriginalByJob = new Map(
     baseline?.records.map((record) => [record.jobId, {
+      jobId: record.jobId,
+      contractId: record.contractId,
+      originalSha256: record.originalSha256,
+      originalStoragePathDigest: record.originalStoragePathSha256,
       originalPdfReadable: record.originalPdfReadable,
       originalPageCount: record.originalPageCount,
     }]) ?? [],
@@ -1216,6 +1243,7 @@ export async function runAudit({ db, concurrency = DEFAULT_CONCURRENCY, baseline
     });
     summary.baselineJobsExamined = baselineSummary.baselineJobsExamined;
     summary.baselineDocumentsPassingAllChecks = baselineSummary.baselineDocumentsPassingAllChecks;
+    summary.baselineSourceState = { ...baselineSummary.baselineSourceState };
     for (const [key, value] of Object.entries(baselineSummary.violations)) {
       summary.violations[key] += value;
     }
