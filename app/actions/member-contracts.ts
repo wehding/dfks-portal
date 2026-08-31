@@ -27,6 +27,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { requireMemberContext, requireOrgId } from "@/lib/org";
 import { getContractImportStatesForOrg } from "@/lib/server/contract-import-state";
 import { createListLoadTimer } from "@/lib/server/list-load-timing";
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
 import type { ListPageResult } from "@/lib/list-query";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
 const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -1120,6 +1121,36 @@ export async function fetchMemberContractsList() {
     metadata: { resultCount: data?.length ?? 0 },
   });
   return { success: true, contracts: data ?? [] };
+}
+
+export async function fetchMemberContractsForWorks(params: { rightsHolderId: string; workIds: string[] }) {
+  const context = await getRequestAppAccessContext();
+  if (!context?.rightsHolderId || context.rightsHolderId !== params.rightsHolderId) {
+    return { success: false as const, error: "Du kan kun se dine egne kontrakter.", contracts: [] };
+  }
+  const workIds = [...new Set(params.workIds.filter(isUuid))].slice(0, 100);
+  if (!workIds.length) return { success: true as const, contracts: [] };
+
+  const db = createServiceClient();
+  const { data, error } = await db.from("contracts")
+    .select("id,type,overenskomst,status,contract_date,start_date,end_date,pdf_url,processed_pdf_url,work_id,working_title,season_number,episode_numbers,created_at,works(id,title,year,type),employers(id,name),contract_validations(has_credit_clause,has_overenskomst_incorporation,validated_at)")
+    .eq("org_id", context.orgId)
+    .eq("rights_holder_id", context.rightsHolderId)
+    .is("superseded_by_contract_id", null)
+    .in("work_id", workIds)
+    .order("created_at", { ascending: false });
+  if (error) return { success: false as const, error: error.message, contracts: [] };
+
+  return {
+    success: true as const,
+    contracts: (data ?? []).map(contract => ({
+      ...contract,
+      works: Array.isArray(contract.works) ? contract.works[0] ?? null : contract.works,
+      employers: Array.isArray(contract.employers) ? contract.employers[0] ?? null : contract.employers,
+      contract_attachments: [],
+      contract_comments: [],
+    })),
+  };
 }
 
 export type MemberContractsPageParams = {

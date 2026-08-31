@@ -16,6 +16,7 @@ import { normalizeCreditName, proposeWorkShareCompromise } from "@/lib/work-shar
 import { normalizeSingleEmail } from "@/lib/email/mime";
 import { countUniqueWorkShareTasks } from "@/lib/work-share-task-count";
 import { isActionableAdminWorkShareCase, type WorkShareAdminParticipantSummary } from "@/lib/work-share-admin";
+import { mergeWorkShareSourceEvidence } from "@/lib/work-share-source-evidence";
 
 const ADMIN_SHARE_CASE_SELECT = "id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,source_tags,source_details,invited_by_rights_holder_id,excluded_at,last_reminder_sent_at,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name,email,user_id,invite_sent_at),reported_by:rettighedshavere!work_share_participants_invited_by_rights_holder_id_fkey(full_name))";
 type AdminShareCaseRecord = Record<string, unknown> & {
@@ -335,17 +336,20 @@ export async function refreshAdminShareCaseCredits(caseId: string, force = false
     const holderParticipant = credit.rightsHolderId ? participantByHolder.get(credit.rightsHolderId) : null;
     const nameParticipant = participantByName.get(normalizeCreditName(credit.name));
     const matchedParticipant = holderParticipant ?? nameParticipant;
-    const sourceTags = [...new Set([...(matchedParticipant?.source_tags ?? []), ...credit.sources])];
-    const previousDetails = matchedParticipant?.source_details && typeof matchedParticipant.source_details === "object"
-      ? matchedParticipant.source_details as Record<string, unknown>
-      : {};
-    const previousRoles = Array.isArray(previousDetails.roles) ? previousDetails.roles.filter((role): role is string => typeof role === "string") : [];
-    const details = {
-      ...previousDetails,
-      externalPersonIds: credit.externalPersonIds,
-      roles: [...new Set([...previousRoles, ...credit.roles])],
-      matchType: credit.matchType,
-    };
+    const matchedEvidence = mergeWorkShareSourceEvidence({
+      existingTags: holderParticipant?.source_tags,
+      existingDetails: holderParticipant?.source_details,
+      incomingTags: nameParticipant?.source_tags,
+      incomingDetails: nameParticipant?.source_details,
+    });
+    const evidence = mergeWorkShareSourceEvidence({
+      existingTags: matchedEvidence.sourceTags,
+      existingDetails: matchedEvidence.sourceDetails,
+      incomingTags: credit.sources,
+      incomingDetails: { externalPersonIds: credit.externalPersonIds, roles: credit.roles, matchType: credit.matchType },
+    });
+    const sourceTags = evidence.sourceTags;
+    const details = evidence.sourceDetails;
     if (matchedParticipant) {
       if (holderParticipant && nameParticipant && holderParticipant.id !== nameParticipant.id && !nameParticipant.rights_holder_id) {
         const { error: mergeError } = await db.from("work_share_participants").update({

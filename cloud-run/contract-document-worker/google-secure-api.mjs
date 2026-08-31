@@ -2,6 +2,7 @@ import https from "node:https";
 import sharp from "sharp";
 
 import {
+  MAX_VISION_REQUEST_BODY_BYTES,
   MAX_VISION_RESPONSE_BYTES_PER_BATCH,
   resolveDocumentResourceLimits,
 } from "./resource-limits.mjs";
@@ -9,7 +10,10 @@ import {
 const VISION_HOST = "eu-vision.googleapis.com";
 const DLP_HOST = "dlp.eu.rep.googleapis.com";
 const MAX_VISION_IMAGES = 16;
-const MAX_VISION_BODY_BYTES = 8 * 1024 * 1024;
+const VISION_BODY_MARGIN_BYTES = 128_000;
+const MIN_VISION_LONG_EDGE = 1_600;
+const MAX_VISION_DOWNSCALE_ATTEMPTS = 6;
+const VISION_RESPONSE_FIELDS = "responses(error,fullTextAnnotation/pages)";
 // Google documents a 4 MB limit for image:redact requests. Keep a small
 // margin for service-side framing changes and measure the complete JSON body,
 // not only the JPEG before base64 expansion.
@@ -87,6 +91,20 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw abortReason(signal);
 }
 
+async function awaitWithAbort(promise, signal) {
+  throwIfAborted(signal);
+  let onAbort;
+  const aborted = new Promise((resolve, reject) => {
+    onAbort = () => reject(abortReason(signal));
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
 function waitForRetry(milliseconds, { signal } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -105,29 +123,48 @@ function waitForRetry(milliseconds, { signal } = {}) {
   });
 }
 
-export async function fetchGoogleAccessToken(fetchImpl = fetch, { signal } = {}) {
-  let response;
+export async function fetchGoogleAccessToken(fetchImpl = fetch, { signal, timeoutMs = 10_000 } = {}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) {
+    throw new GoogleOcrOperationalError("google_access_token_failed");
+  }
+  throwIfAborted(signal);
+  const requestController = new AbortController();
+  const onAbort = () => requestController.abort(abortReason(signal));
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const timeout = setTimeout(() => {
+    requestController.abort(new GoogleOcrOperationalError("google_access_token_failed"));
+  }, timeoutMs);
   try {
-    response = await fetchImpl(
+    const response = await fetchImpl(
       "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
       {
         headers: { "Metadata-Flavor": "Google" },
         redirect: "error",
-        signal: signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-          : AbortSignal.timeout(10_000),
+        signal: requestController.signal,
       },
     );
+    if (!response.ok) throw new GoogleOcrOperationalError("google_access_token_failed");
+    throwIfAborted(requestController.signal);
+    let body;
+    try {
+      body = await awaitWithAbort(Promise.resolve().then(() => response.json()), requestController.signal);
+      throwIfAborted(requestController.signal);
+    } catch (error) {
+      if (signal?.aborted) throw abortReason(signal);
+      throw new GoogleOcrOperationalError("google_access_token_failed", { cause: error });
+    }
+    if (typeof body.access_token !== "string" || !body.access_token) {
+      throw new GoogleOcrOperationalError("google_access_token_failed");
+    }
+    return body.access_token;
   } catch (error) {
     if (signal?.aborted) throw abortReason(signal);
+    if (error instanceof GoogleOcrOperationalError) throw error;
     throw new GoogleOcrOperationalError("google_access_token_failed", { cause: error });
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
   }
-  if (!response.ok) throw new GoogleOcrOperationalError("google_access_token_failed");
-  const body = await response.json();
-  if (typeof body.access_token !== "string" || !body.access_token) {
-    throw new GoogleOcrOperationalError("google_access_token_failed");
-  }
-  return body.access_token;
 }
 
 export async function secureJsonPost(urlValue, token, payload, {
@@ -223,25 +260,41 @@ export function extractDlpFindings(response) {
     const name = finding?.infoType?.name;
     if (!DLP_REDACTION_INFO_TYPES.includes(name)) continue;
     counts[name] = (counts[name] ?? 0) + 1;
-    let findingHasLocation = false;
-    for (const location of finding?.location?.contentLocations ?? []) {
-      for (const box of location?.imageLocation?.boundingBoxes ?? []) {
+    const contentLocations = finding?.location?.contentLocations;
+    if (!Array.isArray(contentLocations) || contentLocations.length === 0) {
+      unlocatedFindings += 1;
+      continue;
+    }
+    for (const location of contentLocations) {
+      const boundingBoxes = location?.imageLocation?.boundingBoxes;
+      if (!Array.isArray(boundingBoxes) || boundingBoxes.length === 0) {
+        unlocatedFindings += 1;
+        continue;
+      }
+      let locationHasBox = false;
+      for (const box of boundingBoxes) {
+        // ProtoJSON may omit scalar fields whose value is the default zero.
+        // A DLP box at the top or left image edge is therefore valid even when
+        // `top` or `left` is absent from the JSON response. Width and height,
+        // however, must always be present and strictly positive.
+        const top = box?.top == null ? 0 : box.top;
+        const left = box?.left == null ? 0 : box.left;
         const parsed = {
-          top: Number(box?.top),
-          left: Number(box?.left),
-          width: Number(box?.width),
-          height: Number(box?.height),
+          top,
+          left,
+          width: box?.width,
+          height: box?.height,
         };
-        if (Object.values(parsed).every(Number.isFinite)
+        if (Object.values(parsed).every(Number.isSafeInteger)
           && parsed.top >= 0 && parsed.left >= 0 && parsed.width > 0 && parsed.height > 0) {
           boxes.push({ ...parsed, infoType: name });
-          findingHasLocation = true;
+          locationHasBox = true;
         } else {
           throw new GoogleOcrOperationalError("dlp_location_invalid");
         }
       }
+      if (!locationHasBox) unlocatedFindings += 1;
     }
-    if (!findingHasLocation) unlocatedFindings += 1;
   }
   if (boxes.length > MAX_DLP_BOXES_PER_PAGE) {
     throw new GoogleOcrOperationalError("dlp_too_many_locations");
@@ -400,6 +453,175 @@ export async function canonicaliseDlpRedactedImage(response, originalImage, boxe
   return { imageBytes: canonicalPng, boxes: safeBoxes };
 }
 
+function buildVisionPayload(pages) {
+  return {
+    requests: pages.map((page) => ({
+      image: { content: page.imageBytes.toString("base64") },
+      features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+      imageContext: { languageHints: ["da", "en"] },
+    })),
+  };
+}
+
+export function visionRequestBodySize(pages) {
+  return Buffer.byteLength(JSON.stringify(buildVisionPayload(pages)));
+}
+
+function scaleBoxesForImage(boxes, sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  const scaleX = targetWidth / sourceWidth;
+  const scaleY = targetHeight / sourceHeight;
+  return boxes.map((box) => {
+    const left = Math.max(0, Math.floor(box.left * scaleX));
+    const top = Math.max(0, Math.floor(box.top * scaleY));
+    const right = Math.min(targetWidth, Math.ceil((box.left + box.width) * scaleX));
+    const bottom = Math.min(targetHeight, Math.ceil((box.top + box.height) * scaleY));
+    if (right <= left || bottom <= top) {
+      throw new GoogleOcrOperationalError("dlp_location_invalid");
+    }
+    return {
+      ...box,
+      left,
+      top,
+      width: right - left,
+      height: bottom - top,
+    };
+  });
+}
+
+async function resizeAndVerifyRedactedImage(
+  imageBytes,
+  boxes,
+  sourceWidth,
+  sourceHeight,
+  targetWidth,
+  targetHeight,
+) {
+  let raw;
+  try {
+    raw = await imageReader(imageBytes)
+      .resize({
+        width: targetWidth,
+        height: targetHeight,
+        fit: "fill",
+        kernel: sharp.kernel.lanczos3,
+        withoutEnlargement: true,
+      })
+      .removeAlpha()
+      .toColourspace("srgb")
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+  } catch (error) {
+    throw new GoogleOcrOperationalError("vision_page_too_large", { cause: error });
+  }
+  if (raw.info.width !== targetWidth || raw.info.height !== targetHeight || raw.info.channels < 3) {
+    throw new GoogleOcrOperationalError("vision_page_too_large");
+  }
+  const scaledBoxes = scaleBoxesForImage(
+    boxes,
+    sourceWidth,
+    sourceHeight,
+    targetWidth,
+    targetHeight,
+  );
+  // Resampling may blend pixels along a mask edge. Reapply every DLP mask to
+  // the resized raster and verify exact black pixels before Vision can receive
+  // it. This keeps the DLP-first, fail-closed security boundary intact.
+  overwriteAndVerifyBlackPixels(
+    raw.data,
+    raw.info.channels,
+    raw.info.width,
+    scaledBoxes,
+  );
+  let resizedPng;
+  try {
+    resizedPng = await sharp(raw.data, {
+      raw: {
+        width: raw.info.width,
+        height: raw.info.height,
+        channels: raw.info.channels,
+      },
+    }).png({ compressionLevel: 9, palette: false }).toBuffer();
+  } catch (error) {
+    throw new GoogleOcrOperationalError("vision_page_too_large", { cause: error });
+  }
+  if (!resizedPng.length || resizedPng.length > MAX_DLP_REDACTED_IMAGE_BYTES
+    || resizedPng[0] !== 0x89 || resizedPng.subarray(1, 4).toString("ascii") !== "PNG") {
+    throw new GoogleOcrOperationalError("vision_page_too_large");
+  }
+  return { imageBytes: resizedPng, boxes: scaledBoxes };
+}
+
+/**
+ * DLP always sees the higher-resolution source first. Only the already
+ * redacted, canonical PNG may be reduced for Vision. Coordinates are mapped
+ * outwards and masks are reapplied after resampling, so no sensitive pixels
+ * can reappear through interpolation.
+ */
+export async function prepareRedactedImageForVision(imageBytes, boxes, {
+  maxRequestBodyBytes = MAX_VISION_REQUEST_BODY_BYTES,
+} = {}) {
+  if (!Number.isSafeInteger(maxRequestBodyBytes) || maxRequestBodyBytes < 1
+    || maxRequestBodyBytes > MAX_VISION_REQUEST_BODY_BYTES) {
+    throw new GoogleOcrOperationalError("invalid_vision_request_limit");
+  }
+  const sourceMetadata = await readImageMetadata(imageBytes);
+  const safeBoxes = normaliseAndValidateBoxes(
+    boxes,
+    sourceMetadata.width,
+    sourceMetadata.height,
+  );
+  let currentBodySize = visionRequestBodySize([{ imageBytes }]);
+  if (currentBodySize <= maxRequestBodyBytes) {
+    return {
+      imageBytes,
+      boxes: safeBoxes,
+      downscaled: false,
+      sourceWidth: sourceMetadata.width,
+      sourceHeight: sourceMetadata.height,
+      visionWidth: sourceMetadata.width,
+      visionHeight: sourceMetadata.height,
+    };
+  }
+
+  const sourceLongEdge = Math.max(sourceMetadata.width, sourceMetadata.height);
+  const minimumLongEdge = Math.min(sourceLongEdge, MIN_VISION_LONG_EDGE);
+  const minimumScale = minimumLongEdge / sourceLongEdge;
+  let scale = 1;
+  for (let attempt = 0; attempt < MAX_VISION_DOWNSCALE_ATTEMPTS; attempt += 1) {
+    const usableBytes = Math.max(1, maxRequestBodyBytes - VISION_BODY_MARGIN_BYTES);
+    const estimatedStep = Math.sqrt(usableBytes / currentBodySize) * 0.9;
+    const nextScale = Math.max(
+      minimumScale,
+      scale * Math.min(0.82, Math.max(0.5, estimatedStep)),
+    );
+    if (nextScale >= scale) break;
+    scale = nextScale;
+    const targetWidth = Math.max(1, Math.floor(sourceMetadata.width * scale));
+    const targetHeight = Math.max(1, Math.floor(sourceMetadata.height * scale));
+    const resized = await resizeAndVerifyRedactedImage(
+      imageBytes,
+      safeBoxes,
+      sourceMetadata.width,
+      sourceMetadata.height,
+      targetWidth,
+      targetHeight,
+    );
+    currentBodySize = visionRequestBodySize([{ imageBytes: resized.imageBytes }]);
+    if (currentBodySize <= maxRequestBodyBytes) {
+      return {
+        ...resized,
+        downscaled: true,
+        sourceWidth: sourceMetadata.width,
+        sourceHeight: sourceMetadata.height,
+        visionWidth: targetWidth,
+        visionHeight: targetHeight,
+      };
+    }
+    if (scale <= minimumScale) break;
+  }
+  throw new GoogleOcrOperationalError("vision_page_too_large");
+}
+
 export function createGoogleOcrClient({
   config = readGoogleConfig(),
   accessTokenProvider = ({ signal } = {}) => fetchGoogleAccessToken(fetch, { signal }),
@@ -426,7 +648,7 @@ export function createGoogleOcrClient({
     throw lastError;
   }
 
-  async function inspectAndRedact(imageBytes, { signal } = {}) {
+  async function inspectAndRedact(imageBytes, { resourceLimits, signal } = {}) {
     throwIfAborted(signal);
     if (!isDlpRequestBodyWithinLimit(imageBytes)) {
       throw new GoogleOcrOperationalError("dlp_request_too_large");
@@ -448,10 +670,28 @@ export function createGoogleOcrClient({
       throw new GoogleOcrOperationalError("dlp_location_missing");
     }
     const canonical = await canonicaliseDlpRedactedImage(redacted, imageBytes, boxes);
+    // The source has already passed DLP at full render resolution. A large,
+    // lossless canonical PNG can now be safely reduced to fit the synchronous
+    // Vision request while preserving outward-rounded redaction geometry.
+    const visionSafe = await prepareRedactedImageForVision(
+      canonical.imageBytes,
+      canonical.boxes,
+      { maxRequestBodyBytes: resolveDocumentResourceLimits(resourceLimits).maxVisionRequestBodyBytes },
+    );
     return {
-      imageBytes: canonical.imageBytes,
+      // The canonical full-resolution DLP result is the immutable derivative
+      // source. A smaller transport copy may be sent to Vision, but must never
+      // replace the page persisted in the searchable PDF.
+      canonicalImageBytes: canonical.imageBytes,
+      visionImageBytes: visionSafe.imageBytes,
       counts,
-      boxes: canonical.boxes,
+      canonicalBoxes: canonical.boxes,
+      visionBoxes: visionSafe.boxes,
+      downscaledForVision: visionSafe.downscaled,
+      sourceWidth: visionSafe.sourceWidth,
+      sourceHeight: visionSafe.sourceHeight,
+      visionWidth: visionSafe.visionWidth,
+      visionHeight: visionSafe.visionHeight,
     };
   }
 
@@ -465,21 +705,16 @@ export function createGoogleOcrClient({
 
   async function annotateBatch(pages, { signal, resourceLimits } = {}) {
     throwIfAborted(signal);
-    const token = await accessTokenProvider({ signal });
-    throwIfAborted(signal);
+    const limits = resolveDocumentResourceLimits(resourceLimits);
     const parent = `projects/${config.projectId}/locations/${config.visionLocation}`;
-    const payload = {
-      requests: pages.map((page) => ({
-        image: { content: page.imageBytes.toString("base64") },
-        features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
-        imageContext: { languageHints: ["da", "en"] },
-      })),
-    };
-    if (Buffer.byteLength(JSON.stringify(payload)) > MAX_VISION_BODY_BYTES) {
+    const payload = buildVisionPayload(pages);
+    if (Buffer.byteLength(JSON.stringify(payload)) > limits.maxVisionRequestBodyBytes) {
       throw new GoogleOcrOperationalError("vision_request_too_large");
     }
+    const token = await accessTokenProvider({ signal });
+    throwIfAborted(signal);
     const result = await post(
-      `${config.visionEndpoint}/v1/${parent}/images:annotate`,
+      `${config.visionEndpoint}/v1/${parent}/images:annotate?fields=${encodeURIComponent(VISION_RESPONSE_FIELDS)}`,
       token,
       payload,
       { signal },
@@ -487,7 +722,6 @@ export function createGoogleOcrClient({
     if (!Array.isArray(result.responses) || result.responses.length !== pages.length) {
       throw new GoogleOcrOperationalError("vision_response_invalid");
     }
-    const limits = resolveDocumentResourceLimits(resourceLimits);
     if (visionResponseByteSize(result.responses) > limits.maxVisionResponseBytesPerBatch) {
       throw new GoogleOcrOperationalError("vision_response_too_large");
     }
@@ -518,22 +752,38 @@ export function createGoogleOcrClient({
       }
     }
     const redactedPages = [];
+    const visionPages = [];
+    const visionPageTransforms = [];
     const totalCounts = {};
     const redactionRegions = [];
     for (const page of pages) {
       checkHealthy();
       // Fail closed: a DLP error prevents the page from reaching Vision.
-      const redacted = await inspectAndRedact(page.imageBytes, { signal });
+      const redacted = await inspectAndRedact(page.imageBytes, { resourceLimits: limits, signal });
       checkHealthy();
-      retainedRasterBytes += redacted.imageBytes.length;
+      retainedRasterBytes += redacted.canonicalImageBytes.length;
+      if (redacted.downscaledForVision) {
+        retainedRasterBytes += redacted.visionImageBytes.length;
+      }
       if (retainedRasterBytes > limits.maxDocumentTotalRasterBytes) {
         throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
       }
       for (const [name, count] of Object.entries(redacted.counts)) {
         totalCounts[name] = (totalCounts[name] ?? 0) + count;
       }
-      redactionRegions.push(...redacted.boxes.map((box) => ({ pageNumber: page.pageNumber, ...box })));
-      redactedPages.push({ ...page, imageBytes: redacted.imageBytes });
+      redactionRegions.push(...redacted.canonicalBoxes.map((box) => ({
+        pageNumber: page.pageNumber,
+        ...box,
+      })));
+      redactedPages.push({ ...page, imageBytes: redacted.canonicalImageBytes });
+      visionPages.push({ ...page, imageBytes: redacted.visionImageBytes });
+      visionPageTransforms.push({
+        pageNumber: page.pageNumber,
+        sourceWidth: redacted.sourceWidth,
+        sourceHeight: redacted.sourceHeight,
+        visionWidth: redacted.visionWidth,
+        visionHeight: redacted.visionHeight,
+      });
     }
 
     const responses = [];
@@ -545,26 +795,60 @@ export function createGoogleOcrClient({
       }
       responses.push(...batchResponses);
     };
+    const annotateAdaptive = async (pagesInBatch) => {
+      checkHealthy();
+      try {
+        const batchResponses = await annotateBatch(pagesInBatch, { signal, resourceLimits: limits });
+        checkHealthy();
+        // Account for each successful leaf immediately. Returning recursively
+        // concatenated arrays would temporarily retain a second copy of a
+        // potentially large Vision response before the document-wide budget
+        // was enforced.
+        appendResponses(batchResponses);
+        return;
+      } catch (error) {
+        if (!(error instanceof GoogleOcrOperationalError)
+          || error.code !== "vision_response_too_large"
+          || pagesInBatch.length <= 1) throw error;
+        // A dense group may exceed Google's or our bounded response body even
+        // though each page is valid. Split deterministically, keep order, and
+        // retain the document-wide response budget.
+        const middle = Math.ceil(pagesInBatch.length / 2);
+        await annotateAdaptive(pagesInBatch.slice(0, middle));
+        checkHealthy();
+        await annotateAdaptive(pagesInBatch.slice(middle));
+        checkHealthy();
+      }
+    };
     let batch = [];
     let estimatedBytes = 0;
-    for (const page of redactedPages) {
-      const pageBytes = Math.ceil(page.imageBytes.length * 4 / 3) + 1024;
-      if (batch.length && (batch.length >= MAX_VISION_IMAGES || estimatedBytes + pageBytes > MAX_VISION_BODY_BYTES - 128_000)) {
+    for (const page of visionPages) {
+      const pageBytes = visionRequestBodySize([page]);
+      if (pageBytes > limits.maxVisionRequestBodyBytes) {
+        throw new GoogleOcrOperationalError("vision_page_too_large");
+      }
+      if (batch.length && (batch.length >= MAX_VISION_IMAGES
+        || estimatedBytes + pageBytes > limits.maxVisionRequestBodyBytes - VISION_BODY_MARGIN_BYTES)) {
         checkHealthy();
-        appendResponses(await annotateBatch(batch, { signal, resourceLimits: limits }));
+        await annotateAdaptive(batch);
         batch = [];
         estimatedBytes = 0;
       }
-      if (pageBytes > MAX_VISION_BODY_BYTES - 128_000) throw new GoogleOcrOperationalError("vision_page_too_large");
       batch.push(page);
       estimatedBytes += pageBytes;
     }
     if (batch.length) {
       checkHealthy();
-      appendResponses(await annotateBatch(batch, { signal, resourceLimits: limits }));
+      await annotateAdaptive(batch);
       checkHealthy();
     }
-    return { responses, redactionCounts: totalCounts, redactionRegions, redactedPages };
+    return {
+      responses,
+      redactionCounts: totalCounts,
+      redactionRegions,
+      redactedPages,
+      visionPageTransforms,
+    };
   }
 
   return { inspectAndRedact, annotateBatch, redactAndAnnotate };

@@ -2,27 +2,23 @@ export const dynamic = "force-dynamic";
 
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { OrgContextNotice } from "@/components/navigation/org-context-notice";
-import { requireMemberContext } from "@/lib/org";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 import { DashboardInboxSection, DashboardSalarySection, DashboardTasksSection } from "@/components/portal/dashboard-sections";
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
 
 function SectionSkeleton({ className = "h-52" }: { className?: string }) {
   return <div className={`${className} animate-pulse rounded-lg border bg-muted/30`} />;
 }
 
 export default async function PortalDashboardPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/");
+  const memberContext = await getRequestAppAccessContext();
+  if (!memberContext) redirect("/");
   const db = createServiceClient();
-  const memberContext = await requireMemberContext(db, user.id).catch(() => null);
   if (!memberContext?.rightsHolderId) {
-    const { data: staffRole } = await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
-    if (staffRole) redirect("/admin?notice=member-org-required");
+    if (memberContext.canUseAdmin) redirect("/admin?notice=member-org-required");
     redirect("/onboarding");
   }
   const { data: holder } = await db.from("rettighedshavere")
@@ -43,7 +39,7 @@ export default async function PortalDashboardPage({ searchParams }: { searchPara
     <OrgContextNotice notice={notice} />
     <ListReadinessMarker route="member-dashboard" stage="access" />
     <Suspense fallback={<SectionSkeleton />}>
-      <DashboardTasksSection orgId={memberContext.orgId} rightsHolderId={holder.id} userId={user.id} />
+      <DashboardTasksSection orgId={memberContext.orgId} rightsHolderId={holder.id} userId={memberContext.userId} />
     </Suspense>
     <Suspense fallback={<SectionSkeleton className="h-80" />}>
       <DashboardSalarySection orgId={memberContext.orgId} rightsHolderId={holder.id} optedOut={optedOut} />

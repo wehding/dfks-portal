@@ -5,6 +5,7 @@ import { sendMemberNotification } from "@/lib/member-notifications";
 import { normalizeSharePercent, type ShareScope } from "@/lib/work-share-distribution";
 import { markCollaborationReviewsCoeditorsReported } from "@/lib/server/work-collaboration-reviews";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
+import { mergeWorkShareSourceEvidence, type WorkShareSourceDetails } from "@/lib/work-share-source-evidence";
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
 
@@ -23,13 +24,27 @@ type KnownShareParticipantInput = {
   role: string;
   relationship_status: "pending" | "confirmed";
   invited_by_rights_holder_id?: string | null;
-  source_tags?: string[];
-  source_details?: Record<string, unknown>;
   response_scope?: ShareScope | null;
   proposed_percent?: number | null;
   responded_at?: string | null;
+  source_tags?: string[];
+  source_details?: WorkShareSourceDetails;
   updated_at: string;
 };
+
+function participantWritePayload(
+  input: KnownShareParticipantInput,
+  existing?: { source_tags?: string[] | null; source_details?: unknown } | null,
+) {
+  if (!input.source_tags && !input.source_details) return input;
+  const evidence = mergeWorkShareSourceEvidence({
+    existingTags: existing?.source_tags,
+    existingDetails: existing?.source_details,
+    incomingTags: input.source_tags,
+    incomingDetails: input.source_details,
+  });
+  return { ...input, source_tags: evidence.sourceTags, source_details: evidence.sourceDetails };
+}
 
 export async function saveKnownShareParticipant(db: ServiceClient, input: KnownShareParticipantInput) {
   const { data: existing, error: findError } = await db.from("work_share_participants")
@@ -39,28 +54,20 @@ export async function saveKnownShareParticipant(db: ServiceClient, input: KnownS
     .maybeSingle();
   if (findError) throw new Error(findError.message);
   if (existing) {
-    const mergedInput = {
-      ...input,
-      source_tags: [...new Set([...(existing.source_tags ?? []), ...(input.source_tags ?? [])])],
-      source_details: {
-        ...((existing.source_details && typeof existing.source_details === "object") ? existing.source_details : {}),
-        ...(input.source_details ?? {}),
-      },
-    };
-    const result = await db.from("work_share_participants").update(mergedInput).eq("id", existing.id).select("id").single();
+    const result = await db.from("work_share_participants").update(participantWritePayload(input, existing)).eq("id", existing.id).select("id").single();
     if (result.error || !result.data) throw new Error(result.error?.message ?? "Medklipperopgaven kunne ikke gemmes.");
     return result.data;
   }
-  const inserted = await db.from("work_share_participants").insert(input).select("id").single();
+  const inserted = await db.from("work_share_participants").insert(participantWritePayload(input)).select("id").single();
   if (!inserted.error && inserted.data) return inserted.data;
   if (inserted.error?.code === "23505") {
     const { data: concurrent, error: concurrentError } = await db.from("work_share_participants")
-      .select("id")
+      .select("id,source_tags,source_details")
       .eq("case_id", input.case_id)
       .eq("rights_holder_id", input.rights_holder_id)
       .single();
     if (concurrentError || !concurrent) throw new Error(concurrentError?.message ?? "Medklipperopgaven kunne ikke genfindes.");
-    const updated = await db.from("work_share_participants").update(input).eq("id", concurrent.id).select("id").single();
+    const updated = await db.from("work_share_participants").update(participantWritePayload(input, concurrent)).eq("id", concurrent.id).select("id").single();
     if (updated.error || !updated.data) throw new Error(updated.error?.message ?? "Medklipperopgaven kunne ikke gemmes.");
     return updated.data;
   }

@@ -3,17 +3,22 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import sharp from "sharp";
 
 import {
+  classifyOcrDocument,
   classifyPageText,
+  classifyRasterBlankness,
   computeSpatialAccuracy,
   correctPageOrientation,
   detectPhysicalOrientation,
   enforceVisionWordLimits,
   isPdfImagesInventoryReliable,
+  mapVisionPageToCanonical,
   pageRasterEvidence,
   parsePdfImagesList,
   parsePdftotextBbox,
+  processPdfSpatially,
   readTextArtifactWithinLimit,
 } from "./spatial-ocr.mjs";
 import { GoogleOcrOperationalError } from "./google-secure-api.mjs";
@@ -32,6 +37,151 @@ test("native tekst og billedside klassificeres forskelligt", () => {
   assert.equal(classifyPageText("").classification, "image_only");
 });
 
+test("kort men pålideligt digitalt tekstlag genkendes uden at stole på helsides raster", () => {
+  const sparseText = "Denne aftale gælder i hele perioden og kan opsiges med skriftligt varsel.";
+  const sparse = classifyPageText(sparseText, {
+    imageEvidence: { fullPageRaster: false, coverage: 0, imageCount: 0 },
+  });
+  assert.equal(sparse.classification, "native_text");
+  assert.equal(sparse.nativeTextConfidence, "sparse");
+  assert.equal(classifyPageText(sparseText, {
+    imageEvidence: { fullPageRaster: true, coverage: 0.98, imageCount: 1 },
+  }).classification, "mixed");
+});
+
+test("kun konservativt tomme rastere fritages fra ulæselig-kontrollen", () => {
+  const nearlyWhite = Array(256).fill(0);
+  nearlyWhite[255] = 9_976;
+  nearlyWhite[240] = 14;
+  nearlyWhite[0] = 10;
+  assert.equal(classifyRasterBlankness({
+    histogram: nearlyWhite, mean: 254.6, stdev: 5,
+  }).blank, true);
+  assert.equal(classifyRasterBlankness({
+    histogram: nearlyWhite,
+    mean: 254.6,
+    stdev: 5,
+    maxLocalNonWhiteRatio: 0.08,
+    maxLocalDarkRatio: 0.02,
+  }).blank, false);
+
+  const sparseSignature = Array(256).fill(0);
+  sparseSignature[255] = 9_960;
+  sparseSignature[0] = 40;
+  assert.equal(classifyRasterBlankness({
+    histogram: sparseSignature, mean: 254, stdev: 10,
+  }).blank, false);
+  assert.equal(classifyRasterBlankness({ histogram: [], mean: 255, stdev: 0 }).blank, false);
+});
+
+test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dfks-blank-page-"));
+  try {
+    const whiteJpeg = await sharp({
+      create: { width: 100, height: 100, channels: 3, background: "white" },
+    }).jpeg({ quality: 95 }).toBuffer();
+    const runner = async (command, args) => {
+      if (command === "pdfinfo") {
+        return { stdout: "Pages: 2\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+      }
+      if (command === "pdfimages") {
+        return {
+          stdout: "page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio\n",
+          stderr: "",
+        };
+      }
+      if (command === "pdftoppm") {
+        await writeFile(`${args.at(-1)}.jpg`, whiteJpeg);
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftotext") {
+        const target = args.at(-1);
+        if (args.includes("-bbox-layout")) {
+          await writeFile(target, `<page width="612" height="792">
+            <word xMin="61.2" yMin="79.2" xMax="183.6" yMax="158.4">Ord1</word>
+            <word xMin="61.2" yMin="237.6" xMax="183.6" yMax="316.8">Ord2</word>
+            <word xMin="61.2" yMin="396" xMax="183.6" yMax="475.2">Ord3</word>
+          </page><page width="612" height="792"></page>`);
+        } else if (args[0] === "-f") {
+          await writeFile(target, "");
+        } else {
+          await writeFile(target, "A".repeat(200));
+        }
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "python3" && args[0].endsWith("normalise_orientation.py")) {
+        await writeFile(args[2], whiteJpeg);
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "python3" && args[0].endsWith("vision_overlay.py")) {
+        await writeFile(args[4], "%PDF-blank-test");
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command ${command}`);
+    };
+    const word = (text, top) => ({
+      confidence: 0.99,
+      boundingBox: { vertices: [
+        { x: 10, y: top }, { x: 30, y: top },
+        { x: 30, y: top + 10 }, { x: 10, y: top + 10 },
+      ] },
+      symbols: text.split("").map((symbol) => ({ text: symbol })),
+    });
+    const result = await processPdfSpatially({
+      inputPath: join(directory, "input.pdf"),
+      outputPath: join(directory, "output.pdf"),
+      geometryPath: join(directory, "geometry.json.gz"),
+      workDir: directory,
+      commandRunner: runner,
+      googleClient: {
+        async redactAndAnnotate() {
+          return {
+            responses: [
+              { fullTextAnnotation: { pages: [{
+                width: 100, height: 100,
+                blocks: [{ paragraphs: [{ words: [word("Ord1", 10), word("Ord2", 30), word("Ord3", 50)] }] }],
+              }] } },
+              { fullTextAnnotation: { pages: [] } },
+            ],
+            redactionCounts: {},
+            redactionRegions: [],
+            redactedPages: [
+              { pageNumber: 1, imageBytes: whiteJpeg },
+              { pageNumber: 2, imageBytes: whiteJpeg },
+            ],
+            visionPageTransforms: [1, 2].map((pageNumber) => ({
+              pageNumber,
+              sourceWidth: 100,
+              sourceHeight: 100,
+              visionWidth: 100,
+              visionHeight: 100,
+            })),
+          };
+        },
+      },
+    });
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(result.blankPageCount, 1);
+    assert.equal(result.unreadablePageCount, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("OCR-dokumentklasse bruger kun databasegodkendte kildeklasser", () => {
+  assert.equal(classifyOcrDocument([
+    { classification: "image_only" },
+    { classification: "image_only" },
+  ]), "image_only");
+  assert.equal(classifyOcrDocument([
+    { classification: "native_text" },
+    { classification: "image_only" },
+  ]), "mixed");
+  assert.equal(classifyOcrDocument([
+    { classification: "mixed" },
+  ]), "mixed");
+});
+
 test("pdfimages afslører helsides scan bag et skjult tekstlag", () => {
   const images = parsePdfImagesList(`
 page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio
@@ -47,6 +197,57 @@ page num type width height color comp bpc enc interp object ID x-ppi y-ppi size 
   assert.equal(isPdfImagesInventoryReliable(`
 page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio
   `), true);
+});
+
+test("mange små rasterfliser kan ikke skjule en scannet side som native tekst", () => {
+  const tile = {
+    pageNumber: 1,
+    type: "image",
+    width: 128,
+    height: 128,
+    xPpi: 144,
+    yPpi: 144,
+  };
+  const evidence = pageRasterEvidence(
+    Array.from({ length: 96 }, () => ({ ...tile })),
+    { widthPoints: 612, heightPoints: 792 },
+  );
+  assert.equal(evidence.imageCount, 96);
+  assert.equal(evidence.fullPageRaster, true);
+  assert.equal(evidence.coverage >= 0.72, true);
+});
+
+test("Vision-ord fra transportkopien mappes tilbage til den kanoniske DLP-side", () => {
+  const mapped = mapVisionPageToCanonical({
+    pageNumber: 3,
+    imageWidth: 1_600,
+    imageHeight: 1_200,
+    words: [{ text: "Aftale", confidence: 0.99, vertices: [
+      { x: 100, y: 200 }, { x: 300, y: 200 },
+      { x: 300, y: 260 }, { x: 100, y: 260 },
+    ] }],
+  }, {
+    pageNumber: 3,
+    sourceWidth: 3_200,
+    sourceHeight: 2_400,
+    visionWidth: 1_600,
+    visionHeight: 1_200,
+  });
+  assert.equal(mapped.imageWidth, 3_200);
+  assert.equal(mapped.imageHeight, 2_400);
+  assert.deepEqual(mapped.words[0].vertices, [
+    { x: 200, y: 400 }, { x: 600, y: 400 },
+    { x: 600, y: 520 }, { x: 200, y: 520 },
+  ]);
+  assert.throws(() => mapVisionPageToCanonical({
+    pageNumber: 3, imageWidth: 1_500, imageHeight: 1_200, words: [],
+  }, {
+    pageNumber: 3,
+    sourceWidth: 3_200,
+    sourceHeight: 2_400,
+    visionWidth: 1_600,
+    visionHeight: 1_200,
+  }), /vision_page_dimension_mismatch/);
 });
 
 function orientedPage(degrees) {
@@ -102,6 +303,78 @@ test("geometrisk præcision måles mod PDF-tekstlaget", () => {
   assert.equal(result.matchCoverage, 1);
   assert.equal(result.score, 1);
   assert.equal(result.medianIou, 1);
+});
+
+test("gentagne ord matches samlet i stedet for med en grådig kaskade", () => {
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 20,
+    imageHeight: 10,
+    words: [
+      { text: "og", vertices: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }] },
+      { text: "og", vertices: [{ x: 1, y: 0 }, { x: 11, y: 0 }, { x: 11, y: 10 }, { x: 1, y: 10 }] },
+    ],
+  }];
+  const extracted = [{
+    width: 20,
+    height: 10,
+    words: [
+      { text: "og", xMin: 0.5, yMin: 0, xMax: 10.5, yMax: 10 },
+      { text: "og", xMin: 0, yMin: 0, xMax: 9, yMax: 10 },
+    ],
+  }];
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.matchCoverage, 1);
+  assert.equal(result.score, 1);
+  assert.ok(result.medianIou >= 0.8);
+  assert.equal(result.passed, true);
+});
+
+test("store gentagne ordgrupper bruger en afgrænset fail-closed matching", () => {
+  const words = Array.from({ length: 300 }, (_, index) => ({
+    text: "og",
+    vertices: [
+      { x: 1, y: index * 2 + 1 }, { x: 20, y: index * 2 + 1 },
+      { x: 20, y: index * 2 + 2 }, { x: 1, y: index * 2 + 2 },
+    ],
+  }));
+  const geometry = [{ pageNumber: 1, imageWidth: 100, imageHeight: 604, words }];
+  const extracted = [{
+    width: 100,
+    height: 604,
+    words: words.map((word) => ({
+      text: word.text,
+      xMin: word.vertices[0].x,
+      yMin: word.vertices[0].y,
+      xMax: word.vertices[2].x,
+      yMax: word.vertices[2].y,
+    })),
+  }];
+
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.matchedWords, 300);
+  assert.equal(result.passed, true);
+});
+
+test("modgående centerkontrol accepterer samme slanke ordgeometri uden at sænke IoU-kravet", () => {
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 20,
+    imageHeight: 20,
+    words: [{
+      text: "Aftale",
+      vertices: [{ x: 5, y: 0 }, { x: 10, y: 5 }, { x: 5, y: 10 }, { x: 0, y: 5 }],
+    }],
+  }];
+  const extracted = [{
+    width: 20,
+    height: 20,
+    words: [{ text: "Aftale", xMin: 0.25, yMin: 0.25, xMax: 10.25, yMax: 10.25 }],
+  }];
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.ok(result.medianIou >= 0.8);
+  assert.equal(result.centerInsideRatio, 1);
+  assert.equal(result.passed, true);
 });
 
 test("99 procent manglende ord kan ikke give falsk spatial godkendelse", () => {

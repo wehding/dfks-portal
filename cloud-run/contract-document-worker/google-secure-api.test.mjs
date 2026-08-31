@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { randomBytes } from "node:crypto";
+import { EventEmitter, getEventListeners } from "node:events";
 import test from "node:test";
 import sharp from "sharp";
 
@@ -9,14 +10,18 @@ import {
   decodeDlpRedactedImage,
   dlpRequestBodySize,
   extractDlpFindings,
+  fetchGoogleAccessToken,
   GOOGLE_OCR_INFO_TYPES,
   GoogleOcrOperationalError,
   isDlpRequestBodyWithinLimit,
   MAX_DLP_IMAGE_BYTES,
   MAX_DLP_REQUEST_BODY_BYTES,
+  prepareRedactedImageForVision,
   readGoogleConfig,
   secureJsonPost,
+  visionRequestBodySize,
 } from "./google-secure-api.mjs";
+import { MAX_VISION_REQUEST_BODY_BYTES } from "./resource-limits.mjs";
 
 async function solidJpeg(width = 12, height = 10, background = "#ffffff", quality = 90) {
   return sharp({ create: { width, height, channels: 3, background } })
@@ -42,6 +47,90 @@ test("kun regionale EU-endpoints konfigureres", () => {
   assert.equal(GOOGLE_OCR_INFO_TYPES.includes("PERSON_NAME"), true);
   assert.equal(GOOGLE_OCR_INFO_TYPES.includes("SWIFT_CODE"), true);
   assert.equal(GOOGLE_OCR_INFO_TYPES.includes("DFKS_DANISH_CPR_OCR"), true);
+});
+
+test("metadata-tokenkald efterlader ikke abort-listeners mellem sider", async () => {
+  const controller = new AbortController();
+  for (let index = 0; index < 20; index += 1) {
+    const token = await fetchGoogleAccessToken(async (_url, init) => {
+      assert.equal(init.signal.aborted, false);
+      return new Response(JSON.stringify({ access_token: "short-lived" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }, { signal: controller.signal });
+    assert.equal(token, "short-lived");
+  }
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("metadata-tokenkald stopper en hængende request ved timeout", async () => {
+  await assert.rejects(() => fetchGoogleAccessToken((_url, init) => new Promise((resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+  }), { timeoutMs: 10 }), (error) => error instanceof GoogleOcrOperationalError
+    && error.code === "google_access_token_failed");
+});
+
+test("metadata-tokenkald afviser et allerede afbrudt job før netværkskald", async () => {
+  const controller = new AbortController();
+  const reason = new GoogleOcrOperationalError("job_already_aborted");
+  controller.abort(reason);
+  let called = false;
+  await assert.rejects(() => fetchGoogleAccessToken(async () => {
+    called = true;
+  }, { signal: controller.signal }), (error) => error === reason);
+  assert.equal(called, false);
+});
+
+test("metadata-tokenets timeout dækker også læsning af response body", async () => {
+  await assert.rejects(() => fetchGoogleAccessToken(async (_url, init) => ({
+    ok: true,
+    json: () => new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    }),
+  }), { timeoutMs: 10 }), (error) => error instanceof GoogleOcrOperationalError
+    && error.code === "google_access_token_failed");
+});
+
+test("metadata-tokenets timeout kan ikke omgås af en sen bodylæsning", async () => {
+  await assert.rejects(() => fetchGoogleAccessToken(async () => ({
+    ok: true,
+    json: () => new Promise((resolve) => {
+      setTimeout(() => resolve({ access_token: "too-late" }), 40);
+    }),
+  }), { timeoutMs: 5 }), (error) => error instanceof GoogleOcrOperationalError
+    && error.code === "google_access_token_failed");
+});
+
+test("metadata-tokenets timeout stopper en bodylæsning der aldrig afslutter", async () => {
+  await assert.rejects(() => fetchGoogleAccessToken(async () => ({
+    ok: true,
+    json: () => new Promise(() => {}),
+  }), { timeoutMs: 5 }), (error) => error instanceof GoogleOcrOperationalError
+    && error.code === "google_access_token_failed");
+});
+
+test("metadata-tokenets bodylæsning følger job-abort og rydder listeneren", async () => {
+  const controller = new AbortController();
+  const reason = new GoogleOcrOperationalError("job_aborted_during_token_body");
+  const promise = fetchGoogleAccessToken(async (_url, init) => ({
+    ok: true,
+    json: () => new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    }),
+  }), { signal: controller.signal });
+  controller.abort(reason);
+  await assert.rejects(() => promise, (error) => error === reason);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("ugyldig metadata-token-JSON klassificeres som en driftsfejl", async () => {
+  const controller = new AbortController();
+  await assert.rejects(() => fetchGoogleAccessToken(async () => new Response("ikke-json", {
+    status: 200,
+  }), { signal: controller.signal }), (error) => error instanceof GoogleOcrOperationalError
+    && error.code === "google_access_token_failed");
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 });
 
 test("globale og asynkrone endpoints afvises før netværkskald", async () => {
@@ -114,6 +203,40 @@ test("en ren DLP-JPEG-re-encoding maskeres lokalt og kun en verificeret PNG når
     pageNumber: 1, top: 2, left: 3, width: 4, height: 5, infoType: "DENMARK_CPR_NUMBER",
   }]);
   assert.deepEqual(result.redactedPages[0].imageBytes, visionImage);
+});
+
+test("udeladte nulkoordinater maskeres ved øverste venstre kant før Vision", async () => {
+  const calls = [];
+  const image = await solidJpeg(12, 10, "#ffffff", 90);
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      calls.push({ url, payload });
+      if (url.includes("image:redact")) return {
+        redactedImage: image.toString("base64"),
+        inspectResult: { findings: [{
+          infoType: { name: "DENMARK_CPR_NUMBER" },
+          location: { contentLocations: [{ imageLocation: {
+            boundingBoxes: [{ width: 4, height: 3 }],
+          } }] },
+        }] },
+      };
+      return { responses: [{ fullTextAnnotation: { pages: [] } }] };
+    },
+  });
+
+  const result = await client.redactAndAnnotate([{ pageNumber: 1, imageBytes: image }]);
+  const visionImage = Buffer.from(calls[1].payload.requests[0].image.content, "base64");
+  assert.deepEqual(await rgbAt(visionImage, 0, 0), [0, 0, 0]);
+  assert.deepEqual(await rgbAt(visionImage, 3, 2), [0, 0, 0]);
+  assert.notDeepEqual(await rgbAt(visionImage, 4, 3), [0, 0, 0]);
+  assert.deepEqual(result.redactionRegions, [{
+    pageNumber: 1, top: 0, left: 0, width: 4, height: 3, infoType: "DENMARK_CPR_NUMBER",
+  }]);
 });
 
 test("DLP-koordinater uden for siden afvises før Vision", async () => {
@@ -195,6 +318,34 @@ test("kendt DLP-fund uden koordinater stopper før Vision", async () => {
   assert.equal(visionCalled, false);
 });
 
+test("hver DLP-content-location skal have verificerbar geometri", async () => {
+  const image = await solidJpeg();
+  let visionCalled = false;
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url) => {
+      if (url.includes("image:redact")) return {
+        redactedImage: image.toString("base64"),
+        inspectResult: { findings: [{
+          infoType: { name: "PERSON_NAME" },
+          location: { contentLocations: [
+            { imageLocation: { boundingBoxes: [{ top: 1, left: 1, width: 2, height: 2 }] } },
+            { imageLocation: { boundingBoxes: [] } },
+          ] },
+        }] },
+      };
+      visionCalled = true;
+      return { responses: [] };
+    },
+  });
+  await assert.rejects(() => client.redactAndAnnotate([{ pageNumber: 1, imageBytes: image }]), /dlp_location_missing/);
+  assert.equal(visionCalled, false);
+});
+
 test("DLP-fund returnerer kun tællinger og geometri, aldrig fundet tekst", () => {
   const result = extractDlpFindings({ inspectResult: { findings: [{
     quote: "hemmeligt-cpr",
@@ -207,6 +358,39 @@ test("DLP-fund returnerer kun tællinger og geometri, aldrig fundet tekst", () =
     unlocatedFindings: 0,
   });
   assert.equal(JSON.stringify(result).includes("hemmeligt-cpr"), false);
+});
+
+test("DLP accepterer udeladte nulkoordinater ved billedets top og venstre kant", () => {
+  const result = extractDlpFindings({ inspectResult: { findings: [{
+    infoType: { name: "DENMARK_CPR_NUMBER" },
+    location: { contentLocations: [{ imageLocation: { boundingBoxes: [
+      { width: 3, height: 4 },
+      { top: 2, width: 5, height: 6 },
+      { left: 7, width: 8, height: 9 },
+      { top: null, left: null, width: 10, height: 11 },
+    ] } }] },
+  }] } });
+  assert.deepEqual(result.boxes, [
+    { top: 0, left: 0, width: 3, height: 4, infoType: "DENMARK_CPR_NUMBER" },
+    { top: 2, left: 0, width: 5, height: 6, infoType: "DENMARK_CPR_NUMBER" },
+    { top: 0, left: 7, width: 8, height: 9, infoType: "DENMARK_CPR_NUMBER" },
+    { top: 0, left: 0, width: 10, height: 11, infoType: "DENMARK_CPR_NUMBER" },
+  ]);
+  assert.equal(result.unlocatedFindings, 0);
+});
+
+test("DLP kræver fortsat positive dimensioner for kantbokse", () => {
+  const response = (boundingBox) => ({ inspectResult: { findings: [{
+    infoType: { name: "IBAN_CODE" },
+    location: { contentLocations: [{ imageLocation: { boundingBoxes: [boundingBox] } }] },
+  }] } });
+  assert.throws(() => extractDlpFindings(response({ height: 4 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ width: 3 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ width: 0, height: 4 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ width: 3, height: 0 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ top: -1, width: 3, height: 4 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ left: 1.5, width: 3, height: 4 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ top: "0", width: 3, height: 4 })), /dlp_location_invalid/);
 });
 
 test("DLP-svar uden et gyldigt dekodbart billede afvises", async () => {
@@ -283,6 +467,224 @@ test("DLP-redigerede flersidede rasterbuffere har et samlet RAM-budget før Visi
   }), /document_raster_budget_exceeded/);
   assert.equal(dlpCalls, 2);
   assert.equal(visionCalled, false);
+});
+
+test("for stor kanonisk DLP-PNG nedskaleres sikkert før Vision og masker forbliver sorte", async () => {
+  const width = 2_000;
+  const height = 1_600;
+  const channels = 3;
+  const pixels = randomBytes(width * height * channels);
+  const box = { top: 400, left: 500, width: 300, height: 200, infoType: "IBAN_CODE" };
+  for (let y = box.top; y < box.top + box.height; y += 1) {
+    for (let x = box.left; x < box.left + box.width; x += 1) {
+      const offset = (y * width + x) * channels;
+      pixels[offset] = 0;
+      pixels[offset + 1] = 0;
+      pixels[offset + 2] = 0;
+    }
+  }
+  const canonicalPng = await sharp(pixels, { raw: { width, height, channels } })
+    .png({ compressionLevel: 9, palette: false })
+    .toBuffer();
+  assert.equal(
+    visionRequestBodySize([{ imageBytes: canonicalPng }]) > MAX_VISION_REQUEST_BODY_BYTES,
+    true,
+  );
+
+  const result = await prepareRedactedImageForVision(canonicalPng, [box]);
+  const metadata = await sharp(result.imageBytes).metadata();
+  assert.equal(result.downscaled, true);
+  assert.equal(metadata.width < width, true);
+  assert.equal(metadata.height < height, true);
+  assert.equal(Math.max(metadata.width, metadata.height) >= 1_600, true);
+  assert.equal(
+    visionRequestBodySize([{ imageBytes: result.imageBytes }]) <= MAX_VISION_REQUEST_BODY_BYTES,
+    true,
+  );
+  assert.equal(result.boxes.length, 1);
+  assert.equal(result.boxes[0].infoType, "IBAN_CODE");
+  const resizedBox = result.boxes[0];
+  assert.deepEqual(await rgbAt(result.imageBytes, resizedBox.left, resizedBox.top), [0, 0, 0]);
+  assert.deepEqual(await rgbAt(
+    result.imageBytes,
+    resizedBox.left + resizedBox.width - 1,
+    resizedBox.top + resizedBox.height - 1,
+  ), [0, 0, 0]);
+});
+
+test("Vision-nedskalering erstatter ikke den kanoniske side i derivatet", async () => {
+  const width = 2_000;
+  const height = 1_600;
+  const pixels = randomBytes(width * height * 3);
+  const sourceJpeg = await sharp(pixels, {
+    raw: { width, height, channels: 3 },
+  }).jpeg({ quality: 35 }).toBuffer();
+  const dlpImage = await sharp(pixels, {
+    raw: { width, height, channels: 3 },
+  }).png({ compressionLevel: 9, palette: false }).toBuffer();
+  let visionImage;
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      if (url.includes("image:redact")) {
+        return { redactedImage: dlpImage.toString("base64"), inspectResult: { findings: [] } };
+      }
+      visionImage = Buffer.from(payload.requests[0].image.content, "base64");
+      const metadata = await sharp(visionImage).metadata();
+      return { responses: [{ fullTextAnnotation: { pages: [{
+        width: metadata.width,
+        height: metadata.height,
+        blocks: [],
+      }] } }] };
+    },
+  });
+
+  const result = await client.redactAndAnnotate([
+    { pageNumber: 1, imageBytes: sourceJpeg },
+  ]);
+  const canonicalMetadata = await sharp(result.redactedPages[0].imageBytes).metadata();
+  const visionMetadata = await sharp(visionImage).metadata();
+  assert.equal(canonicalMetadata.width, width);
+  assert.equal(canonicalMetadata.height, height);
+  assert.equal(visionMetadata.width < width, true);
+  assert.equal(visionMetadata.height < height, true);
+  assert.notDeepEqual(result.redactedPages[0].imageBytes, visionImage);
+  assert.deepEqual(result.visionPageTransforms, [{
+    pageNumber: 1,
+    sourceWidth: width,
+    sourceHeight: height,
+    visionWidth: visionMetadata.width,
+    visionHeight: visionMetadata.height,
+  }]);
+});
+
+test("Vision deler automatisk et for stort fler-sidesvar uden at ændre rækkefølgen", async () => {
+  const image = await solidJpeg(20, 20);
+  const responseForPage = (pageNumber) => ({
+    fullTextAnnotation: {
+      text: "x".repeat(160),
+      pages: [{ width: 20, height: 20, blocks: [], pageNumber }],
+    },
+  });
+  const oneResponseBytes = Buffer.byteLength(JSON.stringify([responseForPage(1)]));
+  const visionBatchSizes = [];
+  const visionUrls = [];
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      if (url.includes("image:redact")) {
+        return { redactedImage: image.toString("base64"), inspectResult: { findings: [] } };
+      }
+      visionUrls.push(url);
+      visionBatchSizes.push(payload.requests.length);
+      return {
+        responses: payload.requests.map((_, index) => responseForPage(index + 1)),
+      };
+    },
+  });
+
+  const result = await client.redactAndAnnotate(
+    Array.from({ length: 4 }, (_, index) => ({ pageNumber: index + 1, imageBytes: image })),
+    { resourceLimits: { maxVisionResponseBytesPerBatch: oneResponseBytes + 1 } },
+  );
+  assert.equal(result.responses.length, 4);
+  assert.equal(visionBatchSizes[0], 4);
+  assert.equal(visionBatchSizes.every((size) => size >= 1 && size <= 4), true);
+  assert.equal(visionBatchSizes.filter((size) => size === 1).length, 4);
+  assert.equal(visionUrls.every((url) => url.includes("fields=responses(")), true);
+  assert.equal(visionUrls.every((url) => url.includes("fullTextAnnotation%2Fpages")), true);
+});
+
+test("adaptiv Vision-opdeling stopper mellem delkald, når jobleasen mistes", async () => {
+  const image = await solidJpeg(20, 20);
+  const responseForPage = () => ({
+    fullTextAnnotation: {
+      text: "x".repeat(160),
+      pages: [{ width: 20, height: 20, blocks: [] }],
+    },
+  });
+  const oneResponseBytes = Buffer.byteLength(JSON.stringify([responseForPage()]));
+  let leaseLost = false;
+  let visionCalls = 0;
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      if (url.includes("image:redact")) {
+        return { redactedImage: image.toString("base64"), inspectResult: { findings: [] } };
+      }
+      visionCalls += 1;
+      const responses = payload.requests.map(() => responseForPage());
+      if (payload.requests.length === 1) leaseLost = true;
+      return { responses };
+    },
+  });
+
+  await assert.rejects(
+    () => client.redactAndAnnotate(
+      Array.from({ length: 4 }, (_, index) => ({ pageNumber: index + 1, imageBytes: image })),
+      {
+        assertHealthy: () => {
+          if (leaseLost) throw new Error("lease_lost");
+        },
+        resourceLimits: { maxVisionResponseBytesPerBatch: oneResponseBytes + 1 },
+      },
+    ),
+    /lease_lost/,
+  );
+  assert.equal(visionCalls, 3);
+});
+
+test("adaptiv Vision-opdeling håndhæver dokumentbudgettet ved hvert leaf-svar", async () => {
+  const image = await solidJpeg(20, 20);
+  const responseForPage = () => ({
+    fullTextAnnotation: {
+      text: "x".repeat(160),
+      pages: [{ width: 20, height: 20, blocks: [] }],
+    },
+  });
+  const oneResponseBytes = Buffer.byteLength(JSON.stringify([responseForPage()]));
+  let visionCalls = 0;
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      if (url.includes("image:redact")) {
+        return { redactedImage: image.toString("base64"), inspectResult: { findings: [] } };
+      }
+      visionCalls += 1;
+      return { responses: payload.requests.map(() => responseForPage()) };
+    },
+  });
+
+  await assert.rejects(
+    () => client.redactAndAnnotate(
+      Array.from({ length: 4 }, (_, index) => ({ pageNumber: index + 1, imageBytes: image })),
+      { resourceLimits: {
+        maxVisionResponseBytesPerBatch: oneResponseBytes + 1,
+        maxVisionResponseBytesTotal: oneResponseBytes * 2 - 1,
+      } },
+    ),
+    (error) => error instanceof GoogleOcrOperationalError
+      && error.code === "vision_response_too_large",
+  );
+  // Initial batch, first half and its two leaves. The second leaf exhausts the
+  // total budget, so the untouched right half is never requested.
+  assert.equal(visionCalls, 4);
 });
 
 test("for stort Vision-svar afvises med sikker dokumentkode", async () => {

@@ -15,11 +15,16 @@ test("listetimer opdeler serverarbejdet i sikre målbare faser", async () => {
 
 test("Mine værker starter data på serveren og parallelt", async () => {
   const page = await source("app/portal/mine-vaerker/page.tsx");
+  const action = await source("app/actions/member-works.ts");
+  const client = await source("app/portal/mine-vaerker/MineVaerkerClient.tsx");
   assert.doesNotMatch(page, /^\s*["']use client["']/);
   assert.match(page, /Promise\.all\(\[/);
   assert.match(page, /fetchMemberWorkOverview/);
-  assert.match(page, /visibleWorkIds/);
-  assert.match(page, /\.in\("work_id", visibleWorkIds\)/);
+  assert.match(page, /getRequestAppAccessContext/);
+  assert.doesNotMatch(page, /\.from\("contracts"\)/);
+  assert.match(action, /\[assignmentsResult, scopesResult\]\s*=\s*await Promise\.all/);
+  assert.match(client, /fetchMemberContractsForWorks/);
+  assert.match(client, /requestIdleCallback/);
 });
 
 test("Mine kontrakter henter kontrakter og værkvalg i samme netværksrunde", async () => {
@@ -62,14 +67,32 @@ test("layouts løser adgang server-side og sprog genbruger serverens terminologi
 test("Mit overblik streamer opgaver før statistik og indbakke", async () => {
   const page = await source("app/portal/page.tsx");
   const sections = await source("components/portal/dashboard-sections.tsx");
+  const migration = await source("supabase/migrations/20260831143000_member_dashboard_performance.sql");
+  const supplementFix = await source("supabase/migrations/20260831152652_fix_member_salary_supplements.sql");
   assert.match(page, /<Suspense[\s\S]*DashboardTasksSection/);
+  assert.match(page, /getRequestAppAccessContext/);
   assert.match(page, /DashboardSalarySection/);
   assert.match(page, /DashboardInboxSection/);
   assert.match(sections, /member-dashboard-tasks/);
   assert.match(sections, /member-dashboard-statistics/);
-  assert.match(sections, /get_statistics_facts/);
+  assert.match(sections, /get_member_dashboard_task_overview/);
+  assert.match(sections, /get_member_salary_facts/);
+  assert.match(migration, /create or replace function public\.get_member_dashboard_task_overview/);
+  assert.match(migration, /create or replace function public\.get_member_salary_facts/);
+  assert.match(supplementFix, /otherSupplements/);
+  assert.match(supplementFix, /structured_post_production > 0/);
+  assert.match(supplementFix, /else raw\.legacy_post_production/);
   assert.doesNotMatch(sections, /db\.from\("contracts"\)[\s\S]{0,180}\.eq\("org_id", orgId\)(?![\s\S]{0,120}rights_holder_id)/);
   assert.doesNotMatch(page, /contract_validations/);
+});
+
+test("performance-markøren for Mine værker følger det faktiske listområde", async () => {
+  const client = await source("app/portal/mine-vaerker/MineVaerkerClient.tsx");
+  const firstRowMarker = client.indexOf('<ListReadinessMarker route="member-works" stage="first-row"');
+  const listRows = client.indexOf("visibleAssignments.map");
+  assert.ok(firstRowMarker > 0);
+  assert.ok(listRows > 0);
+  assert.ok(Math.abs(firstRowMarker - listRows) < 1_000);
 });
 
 test("Kontraktgennemgang bruger smal side og målrettede medarbejderopslag", async () => {

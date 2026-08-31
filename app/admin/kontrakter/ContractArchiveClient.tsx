@@ -117,6 +117,7 @@ function documentProcessingErrorMessage(contract: ContractRow) {
         document_processing_failed: "PDF'en kunne ikke rettes eller OCR-behandles efter de automatiske forsøg.",
         ocr_unreadable_page: "Mindst én PDF-side gav ikke læsbar tekst. Kontrollér scanningens kvalitet.",
         ocr_spatial_quality: "PDF'ens søgbare tekstlag bestod ikke den geometriske kvalitetskontrol.",
+        ocr_rescan_required: "PDF'en er fotograferet eller skannet i en kvalitet, som ikke kan sikkerhedsbehandles automatisk. Upload en ny, lige og tydelig scanning uden skygger eller baggrund.",
     }
     if (contract.document_processing_error_code) {
         return messages[contract.document_processing_error_code] ?? "PDF-behandlingen fejlede og kræver manuel kontrol."

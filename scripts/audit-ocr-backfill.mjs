@@ -27,8 +27,10 @@ const MAX_PDF_BYTES = 100 * 1024 * 1024;
 const MAX_SPATIAL_COMPRESSED_BYTES = 25 * 1024 * 1024;
 const MAX_SPATIAL_JSON_BYTES = 32 * 1024 * 1024;
 const MAX_BBOX_BYTES = 64 * 1024 * 1024;
+const MAX_PAGE_COUNT_OUTPUT_BYTES = 64;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
 const PDFTOTEXT_TIMEOUT_MS = 120_000;
+const PDF_PAGE_COUNT_TIMEOUT_MS = 60_000;
 const BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v3";
 const MAX_BASELINE_BYTES = 64 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -360,6 +362,7 @@ export async function extractPdfBboxPages(pdfBytes) {
       });
       const chunks = [];
       let length = 0;
+      let terminalError = null;
       let settled = false;
       const finish = (error, value) => {
         if (settled) return;
@@ -368,22 +371,30 @@ export async function extractPdfBboxPages(pdfBytes) {
         if (error) reject(error);
         else resolve(value);
       };
-      const timer = setTimeout(() => {
+      const failAfterTermination = () => {
+        if (settled) return;
+        terminalError ??= new AuditOperationalError("spatial_bbox_failed");
+        if (child.pid == null) {
+          finish(terminalError);
+          return;
+        }
         child.kill("SIGKILL");
-        finish(new AuditOperationalError("spatial_bbox_failed"));
-      }, PDFTOTEXT_TIMEOUT_MS);
+      };
+      const timer = setTimeout(failAfterTermination, PDFTOTEXT_TIMEOUT_MS);
       child.stdout.on("data", (chunk) => {
         length += chunk.length;
         if (length > MAX_BBOX_BYTES) {
-          child.kill("SIGKILL");
-          finish(new AuditOperationalError("spatial_bbox_failed"));
+          failAfterTermination();
           return;
         }
         chunks.push(chunk);
       });
-      child.once("error", () => finish(new AuditOperationalError("spatial_bbox_failed")));
+      child.stdout.once("error", failAfterTermination);
+      child.once("error", failAfterTermination);
       child.once("close", (code) => {
-        if (code !== 0) finish(new AuditOperationalError("spatial_bbox_failed"));
+        if (terminalError || code !== 0) {
+          finish(terminalError ?? new AuditOperationalError("spatial_bbox_failed"));
+        }
         else finish(null, Buffer.concat(chunks).toString("utf8"));
       });
     });
@@ -395,6 +406,77 @@ export async function extractPdfBboxPages(pdfBytes) {
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+export async function extractPdfPageCount(pdfBytes) {
+  if (!(pdfBytes instanceof Uint8Array) || pdfBytes.byteLength === 0
+    || pdfBytes.byteLength > MAX_PDF_BYTES) {
+    throw new AuditOperationalError("pdf_page_count_failed");
+  }
+  const script = [
+    "import io, sys",
+    "import pikepdf",
+    "payload = sys.stdin.buffer.read()",
+    "with pikepdf.open(io.BytesIO(payload)) as document:",
+    "    print(len(document.pages))",
+  ].join("\n");
+  return new Promise((resolve, reject) => {
+    const child = spawn("python3", ["-c", script], {
+      shell: false,
+      stdio: ["pipe", "pipe", "ignore"],
+      env: {
+        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        LANG: "C",
+        LC_ALL: "C",
+        PYTHONDONTWRITEBYTECODE: "1",
+      },
+    });
+    const chunks = [];
+    let length = 0;
+    let terminalError = null;
+    let settled = false;
+    const failAfterTermination = () => {
+      if (settled) return;
+      terminalError ??= new AuditOperationalError("pdf_page_count_failed");
+      if (child.pid == null) {
+        finish(terminalError);
+        return;
+      }
+      child.kill("SIGKILL");
+    };
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const timer = setTimeout(failAfterTermination, PDF_PAGE_COUNT_TIMEOUT_MS);
+    child.stdout.on("data", (chunk) => {
+      length += chunk.length;
+      if (length > MAX_PAGE_COUNT_OUTPUT_BYTES) {
+        failAfterTermination();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.stdout.once("error", failAfterTermination);
+    child.stdin.once("error", failAfterTermination);
+    child.once("error", failAfterTermination);
+    child.once("close", (code) => {
+      if (terminalError || code !== 0) {
+        finish(terminalError ?? new AuditOperationalError("pdf_page_count_failed"));
+        return;
+      }
+      const pageCount = Number(Buffer.concat(chunks).toString("ascii").trim());
+      if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 10_000) {
+        finish(new AuditOperationalError("pdf_page_count_failed"));
+        return;
+      }
+      finish(null, pageCount);
+    });
+    child.stdin.end(pdfBytes);
+  });
 }
 
 function spatialMetricsEqual(stored, recomputed) {
@@ -469,8 +551,10 @@ async function inspectCompletedJob({
   completedContractCount,
   activeAiCount,
   baselineContractStatus,
+  baselineOriginal,
   readStorage,
   extractBboxPages,
+  extractOriginalPageCount,
 }) {
   const violations = emptyViolations();
 
@@ -519,7 +603,32 @@ async function inspectCompletedJob({
     if (original.readFailed) violations.originalReadFailure += 1;
     else {
       if (!original.hashMatches) violations.originalHashMismatch += 1;
-      if (original.invalidPdf) violations.invalidOriginalPdf += 1;
+      if (original.invalidPdf) {
+        let independentlyVerifiedPageCount = null;
+        const originalStoragePathDigest = sha256(Buffer.from(job.original_storage_path, "utf8"));
+        const matchesKnownUnparseableBaseline = original.hashMatches
+          && baselineOriginal?.jobId === job.id
+          && baselineOriginal.contractId === job.contract_id
+          && baselineOriginal?.originalSha256 === original.sha256
+          && baselineOriginal.originalSha256 === job.original_sha256
+          && baselineOriginal?.originalStoragePathDigest === originalStoragePathDigest
+          && baselineOriginal?.originalPdfReadable === false
+          && baselineOriginal?.originalPageCount === null;
+        if (matchesKnownUnparseableBaseline) {
+          try {
+            independentlyVerifiedPageCount = await extractOriginalPageCount(original.bytes);
+          } catch {
+            // Known source parser failures still fail closed unless a second,
+            // independent PDF tool verifies the exact expected page count.
+          }
+        }
+        if (independentlyVerifiedPageCount !== job.page_count) {
+          violations.invalidOriginalPdf += 1;
+        } else {
+          original.pageCount = independentlyVerifiedPageCount;
+          original.invalidPdf = false;
+        }
+      }
     }
 
     if (derivativePathsValid) {
@@ -580,9 +689,11 @@ export async function auditCompletedJobs({
   contractsById,
   activeAiCounts,
   baselineStatusByContract = new Map(),
+  baselineOriginalByJob = new Map(),
   readStorage,
   concurrency = 1,
   extractBboxPages = extractPdfBboxPages,
+  extractOriginalPageCount = extractPdfPageCount,
 }) {
   const summary = createAuditSummary(jobs.length);
   const completedByContract = new Map();
@@ -597,8 +708,10 @@ export async function auditCompletedJobs({
     completedContractCount: completedByContract.get(job.contract_id) ?? 0,
     activeAiCount: activeAiCounts.get(job.contract_id) ?? 0,
     baselineContractStatus: baselineStatusByContract.get(job.contract_id),
+    baselineOriginal: baselineOriginalByJob.get(job.id),
     readStorage,
     extractBboxPages,
+    extractOriginalPageCount,
   }));
 
   for (const violations of results) {
@@ -1096,12 +1209,23 @@ export async function runAudit({ db, concurrency = DEFAULT_CONCURRENCY, baseline
   const baselineStatusByContract = new Map(
     baseline?.records.map((record) => [record.contractId, record.contractStatus]) ?? [],
   );
+  const baselineOriginalByJob = new Map(
+    baseline?.records.map((record) => [record.jobId, {
+      jobId: record.jobId,
+      contractId: record.contractId,
+      originalSha256: record.originalSha256,
+      originalStoragePathDigest: record.originalStoragePathSha256,
+      originalPdfReadable: record.originalPdfReadable,
+      originalPageCount: record.originalPageCount,
+    }]) ?? [],
+  );
 
   const summary = await auditCompletedJobs({
     jobs,
     contractsById,
     activeAiCounts,
     baselineStatusByContract,
+    baselineOriginalByJob,
     readStorage: createStorageReader(db),
     concurrency,
   });
@@ -1119,6 +1243,7 @@ export async function runAudit({ db, concurrency = DEFAULT_CONCURRENCY, baseline
     });
     summary.baselineJobsExamined = baselineSummary.baselineJobsExamined;
     summary.baselineDocumentsPassingAllChecks = baselineSummary.baselineDocumentsPassingAllChecks;
+    summary.baselineSourceState = { ...baselineSummary.baselineSourceState };
     for (const [key, value] of Object.entries(baselineSummary.violations)) {
       summary.violations[key] += value;
     }
