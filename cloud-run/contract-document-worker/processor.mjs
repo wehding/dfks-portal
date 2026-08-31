@@ -21,6 +21,16 @@ export const OCR_QUALITY_DIAGNOSTIC_CODES = Object.freeze({
   unreadablePage: "ocr_unreadable_page",
   spatialQuality: "ocr_spatial_quality",
   orientationUncertain: "orientation_uncertain",
+  pageGeometryUnavailable: "page_geometry_unavailable",
+  dlpResponseTooLarge: "dlp_response_too_large",
+  dlpLocationInvalid: "dlp_location_invalid",
+  dlpLocationOutOfBounds: "dlp_location_out_of_bounds",
+  dlpLocationMissing: "dlp_location_missing",
+  dlpRedactedImageMissing: "dlp_redacted_image_missing",
+  dlpRedactedImageInvalid: "dlp_redacted_image_invalid",
+  dlpRedactionNotApplied: "dlp_redaction_not_applied",
+  dlpImageDimensionsChanged: "dlp_image_dimensions_changed",
+  dlpCanonicalImageInvalid: "dlp_canonical_image_invalid",
   documentTextLimitExceeded: "document_text_limit_exceeded",
   processedFileTooLarge: "processed_file_too_large",
   spatialArtifactTooLarge: "spatial_artifact_too_large",
@@ -33,6 +43,16 @@ const DOCUMENT_GOOGLE_ERROR_CODES = new Set([
   "document_raster_budget_exceeded",
   "dlp_request_too_large",
   "dlp_too_many_locations",
+  OCR_QUALITY_DIAGNOSTIC_CODES.pageGeometryUnavailable,
+  OCR_QUALITY_DIAGNOSTIC_CODES.dlpResponseTooLarge,
+  OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationInvalid,
+  OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationOutOfBounds,
+  OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationMissing,
+  OCR_QUALITY_DIAGNOSTIC_CODES.dlpRedactedImageMissing,
+  OCR_QUALITY_DIAGNOSTIC_CODES.dlpRedactedImageInvalid,
+  OCR_QUALITY_DIAGNOSTIC_CODES.dlpRedactionNotApplied,
+  OCR_QUALITY_DIAGNOSTIC_CODES.dlpImageDimensionsChanged,
+  OCR_QUALITY_DIAGNOSTIC_CODES.dlpCanonicalImageInvalid,
   "vision_page_too_large",
   "vision_request_too_large",
   OCR_QUALITY_DIAGNOSTIC_CODES.documentTextLimitExceeded,
@@ -378,13 +398,51 @@ async function requestUploadAuthorisation(config, identityTokenProvider, job, fe
   }
 }
 
-async function sendCompletion(config, identityTokenProvider, body, fetchImpl) {
-  const response = await portalRequest(config, identityTokenProvider, "/api/internal/document-processing/complete", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  }, fetchImpl);
-  if (!response.ok) throw new FatalProcessingError("completion_callback_failed");
+async function sendCompletion(config, identityTokenProvider, body, fetchImpl, {
+  assertHealthy = () => {},
+} = {}) {
+  const safeFailureCodes = new Set([
+    "completion_generation_conflict",
+    "completion_integrity_rejected",
+    "completion_lease_inactive",
+    "completion_persistence_failed",
+  ]);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    assertHealthy();
+    let response;
+    try {
+      response = await portalRequest(config, identityTokenProvider, "/api/internal/document-processing/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }, fetchImpl);
+    } catch (error) {
+      if (error instanceof FatalProcessingError
+        && error.code === "portal_request_failed" && attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        assertHealthy();
+        continue;
+      }
+      throw error;
+    }
+    if (response.ok) return;
+    if ((response.status === 429 || response.status >= 500) && attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      assertHealthy();
+      continue;
+    }
+    if (response.status === 409) {
+      try {
+        const result = await response.json();
+        if (safeFailureCodes.has(result?.code)) {
+          throw new FatalProcessingError(result.code);
+        }
+      } catch (error) {
+        if (error instanceof FatalProcessingError) throw error;
+      }
+    }
+    throw new FatalProcessingError("completion_callback_failed");
+  }
 }
 
 export async function startLeaseHeartbeat({
@@ -502,6 +560,9 @@ export function createProcessor(options = {}) {
     const processingSignal = processingAbortController?.signal;
     let workDir;
     let heartbeat;
+    const completionOptions = {
+      assertHealthy: () => heartbeat?.assertHealthy(),
+    };
     try {
       heartbeat = await leaseHeartbeatFactory({
         config, identityTokenProvider, jobId: job.jobId, leaseToken: job.leaseToken, fetchImpl,
@@ -581,7 +642,7 @@ export function createProcessor(options = {}) {
         originalSha256,
       };
       if (result.status === "not_required") {
-        await sendCompletion(config, identityTokenProvider, { ...completion, status: "not_required" }, fetchImpl);
+        await sendCompletion(config, identityTokenProvider, { ...completion, status: "not_required" }, fetchImpl, completionOptions);
         return { outcome: "completed" };
       }
       if (result.status === "needs_review") {
@@ -599,7 +660,7 @@ export function createProcessor(options = {}) {
             : result.unreadablePageCount > 0
               ? "Mindst én side gav ikke læsbar tekst. Kontrollér scanningens kvalitet."
               : "Tekstlagets placering bestod ikke den geometriske kvalitetskontrol.",
-        }, fetchImpl);
+        }, fetchImpl, completionOptions);
         return { outcome: "needs_review", diagnosticCode };
       }
 
@@ -653,7 +714,7 @@ export function createProcessor(options = {}) {
         status: "completed",
         processedSha256: sha256(output),
         spatialSha256: sha256(geometry),
-      }, fetchImpl);
+      }, fetchImpl, completionOptions);
       return { outcome: "completed" };
     } catch (error) {
       const processingError = processingSignal?.aborted && !(error instanceof FatalProcessingError)
@@ -676,7 +737,7 @@ export function createProcessor(options = {}) {
           safeErrorMessage: documentError
             ? "Dokumentet kunne ikke sikkerhedsbehandles automatisk og kræver manuel kontrol."
             : "Google OCR-tjenesten kunne ikke behandle dokumentet. Fejlen er registreret.",
-        }, fetchImpl);
+        }, fetchImpl, completionOptions);
         if (!documentError) {
           throw new FatalProcessingError(errorCode, { cause: processingError });
         }
@@ -689,7 +750,7 @@ export function createProcessor(options = {}) {
         status: documentError.status,
         errorCode: documentError.code,
         safeErrorMessage: documentError.safeMessage,
-      }, fetchImpl);
+      }, fetchImpl, completionOptions);
       return {
         outcome: documentError.status === "needs_review" ? "needs_review" : "handled_failure",
         ...(documentError.status === "needs_review"

@@ -288,6 +288,7 @@ test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
 });
 
 test("callbackfejl er fatal", async () => {
+  let completionCalls = 0;
   const processor = createProcessor({
     config,
     identityTokenProvider: async () => "identity-secret",
@@ -295,11 +296,108 @@ test("callbackfejl er fatal", async () => {
     fetchImpl: async (url) => {
       const value = String(url);
       if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
-      if (value.endsWith("/complete")) return response("{}", { status: 503 });
+      if (value.endsWith("/complete")) {
+        completionCalls += 1;
+        return response("{}", { status: 503 });
+      }
       return response("not-a-pdf", { status: 200 }, value);
     },
   });
   await assert.rejects(processor, (error) => error instanceof FatalProcessingError && error.code === "completion_callback_failed");
+  assert.equal(completionCalls, 3);
+});
+
+test("midlertidig callbackfejl prøves igen uden at oprette et nyt claim", async () => {
+  let claims = 0;
+  let completionCalls = 0;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) {
+        claims += 1;
+        return response(JSON.stringify(claimJob()), { status: 200 });
+      }
+      if (value.endsWith("/complete")) {
+        completionCalls += 1;
+        return response("{}", { status: completionCalls === 1 ? 503 : 200 });
+      }
+      return response("not-a-pdf", { status: 200 }, value);
+    },
+  });
+  assert.deepEqual(await processor(), { outcome: "needs_review" });
+  assert.equal(claims, 1);
+  assert.equal(completionCalls, 2);
+});
+
+test("midlertidig callback-netværksfejl prøves igen uden et nyt claim", async () => {
+  let claims = 0;
+  let completionCalls = 0;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) {
+        claims += 1;
+        return response(JSON.stringify(claimJob()), { status: 200 });
+      }
+      if (value.endsWith("/complete")) {
+        completionCalls += 1;
+        if (completionCalls === 1) throw new Error("temporary network failure");
+        return response("{}", { status: 200 });
+      }
+      return response("not-a-pdf", { status: 200 }, value);
+    },
+  });
+  assert.deepEqual(await processor(), { outcome: "needs_review" });
+  assert.equal(claims, 1);
+  assert.equal(completionCalls, 2);
+});
+
+test("permanent callback-netværksfejl stopper efter tre forsøg", async () => {
+  let completionCalls = 0;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) {
+        completionCalls += 1;
+        throw new Error("persistent network failure");
+      }
+      return response("not-a-pdf", { status: 200 }, value);
+    },
+  });
+  await assert.rejects(processor, (error) => error instanceof FatalProcessingError
+    && error.code === "portal_request_failed");
+  assert.equal(completionCalls, 3);
+});
+
+test("callbackens sikre konfliktkode bevares", async () => {
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) {
+        return response(JSON.stringify({ code: "completion_integrity_rejected" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return response("not-a-pdf", { status: 200 }, value);
+    },
+  });
+  await assert.rejects(processor, (error) => error instanceof FatalProcessingError
+    && error.code === "completion_integrity_rejected");
 });
 
 test("lease-heartbeat valideres før dokumentdownload og stopper ved tabt lease", async () => {
@@ -443,6 +541,31 @@ test("dokumentrelateret Google OCR-fejl registreres og batchen kan fortsætte", 
   });
 });
 
+test("DLP-geometri der ikke kan sikkerhedsverificeres sendes til manuel kontrol", async () => {
+  const completions = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_location_missing"); },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+  assert.deepEqual(await processor(), {
+    outcome: "needs_review",
+    diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationMissing,
+  });
+  assert.equal(completions[0].status, "needs_review");
+  assert.equal(completions[0].errorCode, OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationMissing);
+});
+
 test("Google IAM-fejl frigiver claim og stopper tasken", async () => {
   const completions = [];
   const processor = createProcessor({
@@ -501,6 +624,7 @@ test("ukendt Google-fejlkode bliver sanitiseret", () => {
   assert.equal(safeGoogleErrorCode("google_api_503"), "google_api_503");
   assert.equal(safeGoogleErrorCode("dlp_api_400"), "dlp_api_400");
   assert.equal(safeGoogleErrorCode("vision_api_503"), "vision_api_503");
+  assert.equal(safeGoogleErrorCode("dlp_location_missing"), "dlp_location_missing");
 });
 
 test("fatal identitetsfejl stopper før claim", async () => {

@@ -105,7 +105,16 @@ function waitForRetry(milliseconds, { signal } = {}) {
   });
 }
 
-export async function fetchGoogleAccessToken(fetchImpl = fetch, { signal } = {}) {
+export async function fetchGoogleAccessToken(fetchImpl = fetch, { signal, timeoutMs = 10_000 } = {}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) {
+    throw new GoogleOcrOperationalError("google_access_token_failed");
+  }
+  const requestController = new AbortController();
+  const onAbort = () => requestController.abort(abortReason(signal));
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const timeout = setTimeout(() => {
+    requestController.abort(new GoogleOcrOperationalError("google_access_token_failed"));
+  }, timeoutMs);
   let response;
   try {
     response = await fetchImpl(
@@ -113,17 +122,23 @@ export async function fetchGoogleAccessToken(fetchImpl = fetch, { signal } = {})
       {
         headers: { "Metadata-Flavor": "Google" },
         redirect: "error",
-        signal: signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-          : AbortSignal.timeout(10_000),
+        signal: requestController.signal,
       },
     );
   } catch (error) {
     if (signal?.aborted) throw abortReason(signal);
     throw new GoogleOcrOperationalError("google_access_token_failed", { cause: error });
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
   }
   if (!response.ok) throw new GoogleOcrOperationalError("google_access_token_failed");
-  const body = await response.json();
+  let body;
+  try {
+    body = await response.json();
+  } catch (error) {
+    throw new GoogleOcrOperationalError("google_access_token_failed", { cause: error });
+  }
   if (typeof body.access_token !== "string" || !body.access_token) {
     throw new GoogleOcrOperationalError("google_access_token_failed");
   }
@@ -223,9 +238,19 @@ export function extractDlpFindings(response) {
     const name = finding?.infoType?.name;
     if (!DLP_REDACTION_INFO_TYPES.includes(name)) continue;
     counts[name] = (counts[name] ?? 0) + 1;
-    let findingHasLocation = false;
-    for (const location of finding?.location?.contentLocations ?? []) {
-      for (const box of location?.imageLocation?.boundingBoxes ?? []) {
+    const contentLocations = finding?.location?.contentLocations;
+    if (!Array.isArray(contentLocations) || contentLocations.length === 0) {
+      unlocatedFindings += 1;
+      continue;
+    }
+    for (const location of contentLocations) {
+      const boundingBoxes = location?.imageLocation?.boundingBoxes;
+      if (!Array.isArray(boundingBoxes) || boundingBoxes.length === 0) {
+        unlocatedFindings += 1;
+        continue;
+      }
+      let locationHasBox = false;
+      for (const box of boundingBoxes) {
         const parsed = {
           top: Number(box?.top),
           left: Number(box?.left),
@@ -235,13 +260,13 @@ export function extractDlpFindings(response) {
         if (Object.values(parsed).every(Number.isFinite)
           && parsed.top >= 0 && parsed.left >= 0 && parsed.width > 0 && parsed.height > 0) {
           boxes.push({ ...parsed, infoType: name });
-          findingHasLocation = true;
+          locationHasBox = true;
         } else {
           throw new GoogleOcrOperationalError("dlp_location_invalid");
         }
       }
+      if (!locationHasBox) unlocatedFindings += 1;
     }
-    if (!findingHasLocation) unlocatedFindings += 1;
   }
   if (boxes.length > MAX_DLP_BOXES_PER_PAGE) {
     throw new GoogleOcrOperationalError("dlp_too_many_locations");

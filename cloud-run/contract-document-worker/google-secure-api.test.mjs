@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners } from "node:events";
 import test from "node:test";
 import sharp from "sharp";
 
@@ -9,6 +9,7 @@ import {
   decodeDlpRedactedImage,
   dlpRequestBodySize,
   extractDlpFindings,
+  fetchGoogleAccessToken,
   GOOGLE_OCR_INFO_TYPES,
   GoogleOcrOperationalError,
   isDlpRequestBodyWithinLimit,
@@ -42,6 +43,35 @@ test("kun regionale EU-endpoints konfigureres", () => {
   assert.equal(GOOGLE_OCR_INFO_TYPES.includes("PERSON_NAME"), true);
   assert.equal(GOOGLE_OCR_INFO_TYPES.includes("SWIFT_CODE"), true);
   assert.equal(GOOGLE_OCR_INFO_TYPES.includes("DFKS_DANISH_CPR_OCR"), true);
+});
+
+test("metadata-tokenkald efterlader ikke abort-listeners mellem sider", async () => {
+  const controller = new AbortController();
+  for (let index = 0; index < 20; index += 1) {
+    const token = await fetchGoogleAccessToken(async (_url, init) => {
+      assert.equal(init.signal.aborted, false);
+      return new Response(JSON.stringify({ access_token: "short-lived" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }, { signal: controller.signal });
+    assert.equal(token, "short-lived");
+  }
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("metadata-tokenkald stopper en hængende request ved timeout", async () => {
+  await assert.rejects(() => fetchGoogleAccessToken((_url, init) => new Promise((resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+  }), { timeoutMs: 10 }), (error) => error instanceof GoogleOcrOperationalError
+    && error.code === "google_access_token_failed");
+});
+
+test("ugyldig metadata-token-JSON klassificeres som en driftsfejl", async () => {
+  await assert.rejects(() => fetchGoogleAccessToken(async () => new Response("ikke-json", {
+    status: 200,
+  })), (error) => error instanceof GoogleOcrOperationalError
+    && error.code === "google_access_token_failed");
 });
 
 test("globale og asynkrone endpoints afvises før netværkskald", async () => {
@@ -192,6 +222,34 @@ test("kendt DLP-fund uden koordinater stopper før Vision", async () => {
     },
   });
   await assert.rejects(() => client.redactAndAnnotate([{ pageNumber: 1, imageBytes: Buffer.from("raw") }]), /dlp_location_missing/);
+  assert.equal(visionCalled, false);
+});
+
+test("hver DLP-content-location skal have verificerbar geometri", async () => {
+  const image = await solidJpeg();
+  let visionCalled = false;
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url) => {
+      if (url.includes("image:redact")) return {
+        redactedImage: image.toString("base64"),
+        inspectResult: { findings: [{
+          infoType: { name: "PERSON_NAME" },
+          location: { contentLocations: [
+            { imageLocation: { boundingBoxes: [{ top: 1, left: 1, width: 2, height: 2 }] } },
+            { imageLocation: { boundingBoxes: [] } },
+          ] },
+        }] },
+      };
+      visionCalled = true;
+      return { responses: [] };
+    },
+  });
+  await assert.rejects(() => client.redactAndAnnotate([{ pageNumber: 1, imageBytes: image }]), /dlp_location_missing/);
   assert.equal(visionCalled, false);
 });
 

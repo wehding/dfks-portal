@@ -1,9 +1,15 @@
 import { NextResponse } from "next/server";
 
+import {
+  classifyDocumentCompletionFailure,
+  isIdempotentDocumentCompletionReplay,
+  type StoredDocumentCompletion,
+} from "@/lib/contract-document-completion";
 import { verifyOcrCloudRunRequest } from "@/lib/server/cloud-run-identity";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 const MAX_DOCUMENT_PAGES = 200;
 
 type Completion = {
@@ -93,7 +99,18 @@ export async function POST(request: Request) {
     p_safe_error_message: body.safeErrorMessage?.slice(0, 500) || null,
   });
   if (error || !finished?.contract_id) {
-    return NextResponse.json({ error: "Dokumentjobbet kunne ikke afsluttes" }, { status: 409 });
+    const { data: stored } = await db.from("contract_document_jobs")
+      .select("contract_id,status,lease_token,document_classification,ocr_applied,processed_sha256,spatial_sha256,error_code")
+      .eq("id", body.jobId)
+      .maybeSingle<StoredDocumentCompletion>();
+    if (isIdempotentDocumentCompletionReplay(stored, body)) {
+      return NextResponse.json({ ok: true, replayed: true });
+    }
+    const failure = classifyDocumentCompletionFailure(error?.code);
+    return NextResponse.json({
+      error: "Dokumentjobbet kunne ikke afsluttes",
+      code: failure.code,
+    }, { status: failure.status });
   }
 
   return NextResponse.json({ ok: true });
