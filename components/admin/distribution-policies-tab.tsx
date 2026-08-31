@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Plus, ChevronDown, ChevronRight, CheckCircle2, Clock, Archive, Eye, Trash2 } from "lucide-react"
+import { Plus, ChevronDown, ChevronRight, CheckCircle2, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -20,14 +20,6 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select"
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "@/components/ui/table"
 import { toast } from "sonner"
 import {
     getRightsFunds,
@@ -337,7 +329,9 @@ function PolicyPanel({ policy }: { policy: DistributionPolicy }) {
     }, [policy.id])
 
     useEffect(() => {
-        if (expanded) loadVersions()
+        if (!expanded) return
+        const timer = window.setTimeout(() => void loadVersions(), 0)
+        return () => window.clearTimeout(timer)
     }, [expanded, loadVersions])
 
     const handleActivate = async (versionId: string) => {
@@ -519,7 +513,7 @@ export function DistributionPoliciesTab() {
         <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
                 Fordelingspolitikker definerer administrationsfradrag, hensættelsesprocent og SKU-komponenter
-                pr. rettighedskasse og gyldighedsperiode. Satser snapshot'es ved aktivering og kan ikke
+                pr. rettighedskasse og gyldighedsperiode. Satser snapshot&apos;es ved aktivering og kan ikke
                 ændres bagefter.
             </p>
 
@@ -527,7 +521,7 @@ export function DistributionPoliciesTab() {
                 <p className="text-sm text-muted-foreground">Henter kasser…</p>
             ) : funds.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                    Ingen aktive rettighedskasser — opret en kasse under "Rettighedskasser" først.
+                    Ingen aktive rettighedskasser — opret en kasse under &quot;Rettighedskasser&quot; først.
                 </p>
             ) : (
                 <>

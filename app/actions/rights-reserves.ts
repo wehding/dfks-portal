@@ -105,7 +105,7 @@ export async function getReserveEntries(run_id: string): Promise<{
 
         if (error) throw error
 
-        const entries: ReserveEntry[] = (data ?? []).map((r: any) => ({
+        const entries: ReserveEntry[] = (data ?? []).map((r) => ({
             ...r,
             amount: Number(r.amount),
             fund_name: r.rights_funds?.name,
@@ -183,7 +183,7 @@ export async function getRightsClaims(fund_id?: string, run_id?: string): Promis
         const { data, error } = await q
         if (error) throw error
 
-        const claims: RightsClaim[] = (data ?? []).map((r: any) => ({
+        const claims: RightsClaim[] = (data ?? []).map((r) => ({
             ...r,
             claim_amount: Number(r.claim_amount),
             rights_holder_name: r.rettighedshavere?.full_name,
@@ -337,7 +337,7 @@ export async function getUndistributableActions(run_id: string): Promise<{
 
         if (error) throw error
 
-        const actions: UndistributableAction[] = (data ?? []).map((r: any) => ({
+        const actions: UndistributableAction[] = (data ?? []).map((r) => ({
             ...r,
             amount: Number(r.amount),
             fund_name: r.rights_funds?.name,

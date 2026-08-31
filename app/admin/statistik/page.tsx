@@ -25,6 +25,7 @@ type YearRow = {
   suppressed?: boolean; suppressionReason?: SuppressionReason; outlierExcludedCount?: number;
 };
 type StatisticsPayload = {
+  dataSource: "production";
   suppressed: boolean; minimum: number; lowSampleThreshold: number; lowSample?: boolean; includeDrafts?: boolean; memberCount: number | null; contractCount?: number; validatedCount?: number; draftCount?: number; years: number[];
   minimumGroupSize?: number; dominanceLimit?: number; calculationVersion?: string;
   suppressionCount?: number; suppressionReasons?: Partial<Record<SuppressionReason, number>>; outlierExcludedCount?: number;
@@ -91,17 +92,6 @@ const querySuggestions = [
 ];
 const chartLabels: Record<CombinedChartType, string> = { table: "Tabel", grouped_bar: "Grupperet søjlediagram", line: "Linjediagram", area: "Arealdiagram", composed: "Kombineret diagram", indexed_line: "Indekseret linjediagram" };
 const selectableCharts: CombinedChartType[] = ["line", "grouped_bar", "area", "composed", "indexed_line", "table"];
-const demoSalary = [
-  { year: 2022, feature: 46_000, documentary: 41_000 },
-  { year: 2023, feature: 48_500, documentary: 43_000 },
-  { year: 2024, feature: 51_000, documentary: 45_500 },
-];
-const demoRights = [
-  { name: "Copydan-forbehold", value: 72 },
-  { name: "Streamingforbehold", value: 54 },
-  { name: "Ukendt", value: 18 },
-];
-
 function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<string | number>> }) {
   return <div className="max-w-full overflow-x-auto rounded-lg border"><Table className="min-w-max"><TableHeader><TableRow>{headers.map((header, index) => <TableHead key={`${header}-${index}`}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.length ? rows.map((row, index) => <TableRow key={index}>{row.map((value, cell) => <TableCell key={cell}>{value}</TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={headers.length} className="text-muted-foreground">Ingen synlige datapunkter med de valgte filtre.</TableCell></TableRow>}</TableBody></Table></div>;
 }
@@ -195,7 +185,7 @@ export default function AdminStatistikPage() {
     data?.workingWeeks,
     data?.contributions,
   ].filter(rows => hasVisibleStatisticRows(rows)).length, [data]);
-  const showDemonstrations = Boolean(data?.suppressed) || availableStatisticsCount < 2;
+  const hasProductionStatistics = !data?.suppressed && availableStatisticsCount > 0;
   const dataProtectionSummary = suppressionSummaryText(data?.suppressionReasons);
   const salaryCategoryChart = useMemo(() => {
     const rows = new Map<number, { year: number; feature?: number; documentary?: number }>();
@@ -278,24 +268,6 @@ export default function AdminStatistikPage() {
   return <div className="space-y-6">
     <PageHeader title={t("admin.stats.title")} subtitle="Anonymiseret statistik for den aktive organisation" />
 
-    {showDemonstrations && <section className="space-y-4" aria-labelledby="demo-statistics-title">
-      <Alert>
-        <Sparkles className="h-4 w-4" />
-        <AlertTitle id="demo-statistics-title">Eksempler på statistikvisninger</AlertTitle>
-        <AlertDescription>Der er endnu ikke data nok til at vise mindst to reelle statistikker. Diagrammerne nedenfor bruger fiktive eksempeldata og indgår ikke i beregninger, forespørgsler eller eksport.</AlertDescription>
-      </Alert>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle className="text-base">Demonstration: lønudvikling</CardTitle></CardHeader>
-          <CardContent className="h-[300px]"><ResponsiveChartContainer><LineChart data={demoSalary}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${Number(value) / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle className="text-base">Demonstration: rettighedsforbehold</CardTitle></CardHeader>
-          <CardContent className="h-[300px]"><ResponsiveChartContainer><BarChart data={demoRights} layout="vertical"><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" domain={[0, 100]} tickFormatter={value => `${value}%`} /><YAxis type="category" dataKey="name" width={130} /><Tooltip contentStyle={tooltipStyle} formatter={value => `${value}%`} /><Bar dataKey="value" name="Andel" fill="#8b5cf6" /></BarChart></ResponsiveChartContainer></CardContent>
-        </Card>
-      </div>
-    </section>}
-
     <Card>
       <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-4 w-4" />Spørg statistikken</CardTitle></CardHeader>
       <CardContent className="space-y-3">
@@ -332,7 +304,7 @@ export default function AdminStatistikPage() {
       <Select value={contractType} onValueChange={setContractType}><SelectTrigger className="w-full"><SelectValue placeholder="Kontrakttype" /></SelectTrigger><SelectContent><SelectItem value="all">Alle kontrakttyper</SelectItem><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandør</SelectItem></SelectContent></Select>
       <Select value={experienceGroup} onValueChange={setExperienceGroup}><SelectTrigger className="w-full"><SelectValue placeholder="Erfaringsgruppe" /></SelectTrigger><SelectContent><SelectItem value="all">Alle erfaringsgrupper</SelectItem>{EXPERIENCE_GROUPS.map(group => <SelectItem key={group.value} value={group.value}>{group.label} ({group.description})</SelectItem>)}</SelectContent></Select>
       <Select value={gender} onValueChange={setGender}><SelectTrigger className="w-full"><SelectValue placeholder="Køn" /></SelectTrigger><SelectContent><SelectItem value="all">Alle køn</SelectItem><SelectItem value="male">Mand</SelectItem><SelectItem value="female">Kvinde</SelectItem><SelectItem value="other">Andet</SelectItem></SelectContent></Select>
-      {!data?.suppressed && <Button variant="outline" className="w-full" onClick={exportCsv}><Download className="mr-2 h-4 w-4" />CSV</Button>}
+      {hasProductionStatistics && <Button variant="outline" className="w-full" onClick={exportCsv}><Download className="mr-2 h-4 w-4" />CSV</Button>}
     </div>
     {data && <Alert>
       <ShieldCheck className="h-4 w-4" />
@@ -342,7 +314,8 @@ export default function AdminStatistikPage() {
       </AlertDescription>
     </Alert>}
 
-    {data?.suppressed ? <Card><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok personer til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} forskellige personer. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : <>
+    <section data-statistics-source={data?.dataSource ?? "production"} data-exportable="true">
+    {data?.suppressed ? <Card><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok personer til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} forskellige personer. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : !hasProductionStatistics ? <Card><CardContent className="py-16 text-center"><h2 className="font-semibold">Ingen statistikdata</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Der findes endnu ingen beregnede data med de valgte filtre. Statistikken viser ikke eksempel- eller demonstrationsdata.</p></CardContent></Card> : <>
       {((data?.suppressionCount ?? 0) > 0 || (data?.outlierExcludedCount ?? 0) > 0) && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Diskretionsregler er anvendt</AlertTitle><AlertDescription>{(data?.suppressionCount ?? 0) > 0 && <span className="block">Nogle felter vises som N/A, fordi de ikke må udleveres som statistik. {dataProtectionSummary}</span>}{(data?.outlierExcludedCount ?? 0) > 0 && <span className="block">{data?.outlierExcludedCount} åbenlyse afvigere er frasorteret før beregning af løn, medianer og bidrag.</span>}<span className="block">Grafer og CSV-eksport bruger de samme slørede tal som tabellerne.</span></AlertDescription></Alert>}
       <div className="grid grid-cols-3 gap-2 sm:gap-4"><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.memberCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Samlet antal kontrakter</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.contractCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{salaryContractCount}</CardContent></Card></div>
       <Tabs defaultValue="salary"><div className="-mx-3 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"><TabsList className="w-max min-w-full justify-start"><TabsTrigger value="salary">Løn</TabsTrigger><TabsTrigger value="pension">Pension</TabsTrigger><TabsTrigger value="weeks">Arbejdsuger</TabsTrigger><TabsTrigger value="rights">Rettigheder</TabsTrigger><TabsTrigger value="credits">Kreditering</TabsTrigger><TabsTrigger value="gender">Køn</TabsTrigger><TabsTrigger value="contracts">Kontrakter</TabsTrigger><TabsTrigger value="contributions">Bidrag</TabsTrigger><TabsTrigger value="ai">AI-forbehold</TabsTrigger><TabsTrigger value="individual">Individdata</TabsTrigger></TabsList></div>
@@ -360,5 +333,6 @@ export default function AdminStatistikPage() {
       {data?.includeDrafts && <Alert><AlertTitle>Kladder indgår</AlertTitle><AlertDescription>Organisationens indstilling medtager kladekontrakter. De kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata.</AlertDescription></Alert>}
       {data?.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Det valgte resultat bygger på {data.memberCount} forskellige personer. Vær forsigtig med konklusioner baseret på færre end {data.lowSampleThreshold} personer.</AlertDescription></Alert>}
     </>}
+    </section>
   </div>;
 }

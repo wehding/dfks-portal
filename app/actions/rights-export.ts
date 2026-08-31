@@ -112,7 +112,7 @@ async function fetchExportRows(
     if (error) throw error
 
     // Hent lønsystem-referencer
-    const holderIds = [...new Set((items ?? []).map((i: any) => i.rights_holder_id))]
+    const holderIds = [...new Set((items ?? []).map((i) => i.rights_holder_id))]
     const { data: refs } = await db
         .from("payroll_recipient_references")
         .select("rights_holder_id, recipient_id")
@@ -122,12 +122,12 @@ async function fetchExportRows(
         .in("rights_holder_id", holderIds)
 
     const refMap = new Map<string, string>(
-        (refs ?? []).map((r: any) => [r.rights_holder_id, r.recipient_id])
+        (refs ?? []).map((r) => [r.rights_holder_id, r.recipient_id])
     )
 
     // Summér pr. rettighedshaver (kan have flere poster pr. run)
     const byHolder = new Map<string, ExportRow>()
-    for (const item of (items ?? []) as any[]) {
+    for (const item of items ?? []) {
         const existing = byHolder.get(item.rights_holder_id)
         const amount = Number(item.payable_amount)
         const settlement = Array.isArray(item.settlements) ? item.settlements[0] : item.settlements
@@ -294,7 +294,7 @@ export async function getExportBatches(settlement_id?: string): Promise<{
         const { data, error } = await q
         if (error) throw error
 
-        const batches = (data ?? []).map((b: any) => ({
+        const batches = (data ?? []).map((b) => ({
             ...b,
             settlement_label: Array.isArray(b.settlements) ? b.settlements[0]?.label : b.settlements?.label,
         }))
@@ -336,4 +336,3 @@ export async function redownloadExport(
         return { success: false, error: String(err) }
     }
 }
-

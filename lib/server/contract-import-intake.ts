@@ -1,7 +1,8 @@
 import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { contractFileHash, safeContractFileName, validateContractImportFile } from "@/lib/contract-import";
+import { safeContractFileName, validateContractImportFile } from "@/lib/contract-import";
+import { contractFileHash } from "@/lib/server/contract-file-hash";
 import { getAiRuntimeConfig } from "@/lib/ai-runtime";
 import { CONTRACT_IMPORT_PROMPT_VERSION, CONTRACT_IMPORT_SCHEMA_VERSION } from "@/lib/contract-import-job";
 

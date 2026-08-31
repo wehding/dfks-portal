@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
 import {
     ArrowLeft, Plus, CheckCircle2, Clock, Ban, BookOpen,
-    AlertTriangle, RotateCcw, ChevronDown, ChevronUp
+    ChevronDown, ChevronUp
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -27,7 +27,6 @@ import type { CalculationRun, WorkAllocation } from "@/app/actions/rights-calcul
 import { RightsAllocationsPanel } from "@/components/admin/rights-allocations-panel"
 import { RightsReservesPanel } from "@/components/admin/rights-reserves-panel"
 import { createRightsAllocations, type AllocationInput } from "@/app/actions/rights-allocations"
-import Link from "next/link"
 
 // ── Hjælpere ──────────────────────────────────────────────────────────────────
 
@@ -53,7 +52,9 @@ const STATUS_CONFIG: Record<string, {
     cancelled:         { label: "Annulleret",        variant: "outline",   icon: Ban },
 }
 
-const NEXT_STATUS: Record<string, string> = {
+type NextCalculationStatus = "calculated" | "awaiting_approval" | "approved" | "booked"
+
+const NEXT_STATUS: Partial<Record<CalculationRun["status"], NextCalculationStatus>> = {
     draft: "calculated", calculated: "awaiting_approval",
     awaiting_approval: "approved", approved: "booked",
 }
@@ -169,14 +170,17 @@ export default function CalculationRunDetailPage() {
         setLoading(false)
     }, [runId])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => void load(), 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
 
     const handleAdvance = async () => {
         if (!run) return
         const next = NEXT_STATUS[run.status]
         if (!next) return
         setAdvancing(true)
-        const res = await advanceCalculationRunStatus(run.id, next as any)
+        const res = await advanceCalculationRunStatus(run.id, next)
         if (res.success) { toast.success("Status opdateret"); load() }
         else toast.error(res.error ?? "Fejl")
         setAdvancing(false)

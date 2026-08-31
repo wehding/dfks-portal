@@ -5,7 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
 import { computePolicyPreview } from "@/lib/rights-policy-preview"
-import type { PolicyVersionWithComponents } from "@/app/actions/rights-funds"
+import type { PolicyComponent, PolicyVersionWithComponents } from "@/app/actions/rights-funds"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -109,7 +109,7 @@ export async function getCalculationRuns(fund_id?: string): Promise<{
         const { data, error } = await q
         if (error) throw error
 
-        const runs: CalculationRun[] = (data ?? []).map((r: any) => ({
+        const runs: CalculationRun[] = (data ?? []).map((r) => ({
             ...r,
             fund_name: r.rights_funds?.name,
             fund_code: r.rights_funds?.code,
@@ -151,9 +151,9 @@ export async function getCalculationRun(id: string): Promise<{
             success: true,
             run: {
                 ...data,
-                fund_name: (data as any).rights_funds?.name,
-                fund_code: (data as any).rights_funds?.code,
-                policy_version_number: (data as any).distribution_policy_versions?.version_number,
+                fund_name: data.rights_funds?.name,
+                fund_code: data.rights_funds?.code,
+                policy_version_number: data.distribution_policy_versions?.version_number,
             } as CalculationRun,
         }
     } catch (err) {
@@ -196,7 +196,7 @@ export async function createCalculationRun(payload: {
         }
 
         const version = versionData as PolicyVersionWithComponents & {
-            distribution_policy_components: any[]
+            distribution_policy_components: PolicyComponent[]
         }
         const components = version.distribution_policy_components ?? []
 
@@ -343,7 +343,7 @@ export async function getWorkAllocations(run_id: string): Promise<{
 
         if (error) throw error
 
-        const allocations: WorkAllocation[] = (data ?? []).map((r: any) => ({
+        const allocations: WorkAllocation[] = (data ?? []).map((r) => ({
             ...r,
             work_title: r.works?.title,
             episode_title: r.episodes?.title,
@@ -401,7 +401,7 @@ export async function createWorkAllocations(
         if (runErr) throw runErr
         if (run.status === "booked") throw new Error("Kan ikke tilføje værkbeløb til en booket runde.")
 
-        const pv = (run as any).distribution_policy_versions
+        const pv = run.distribution_policy_versions
         const components = pv?.distribution_policy_components ?? []
         const claimPeriodYears: number = pv?.distribution_policies?.claim_period_years ?? 3
 

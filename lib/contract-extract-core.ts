@@ -5,7 +5,6 @@
  */
 
 import { createClient } from "@supabase/supabase-js"
-import { getSupabaseServiceKey } from "@/lib/env"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { normaliseSources, extractClauseIdFromCitation, stripClauseIdPrefix } from "@/lib/ai-sources"
 import { resolveOtherSupplements } from "@/lib/contract-supplements"
@@ -89,26 +88,6 @@ function parseStructuredExtraction(raw: string) {
             failureClass: "invalid_output",
         })
     }
-}
-
-async function loadContractPrompt() {
-    let systemPrompt = buildContractExtractionPrompt()
-    try {
-        const supabase = createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            getSupabaseServiceKey(),
-            { auth: { autoRefreshToken: false, persistSession: false } }
-        )
-        const { data: refDocs } = await supabase
-            .from("reference_docs")
-            .select("title, doc_subtype, content_text")
-            .eq("archived", false)
-            .not("content_text", "is", null)
-        systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined)
-    } catch (error) {
-        console.warn("[contract-extract] Referencedokumenter kunne ikke hentes:", error instanceof Error ? error.message : "ukendt fejl")
-    }
-    return systemPrompt
 }
 
 export async function runContractExtraction(maskedText: string, context: ContractExtractionContext = {}): Promise<ContractExtractionResult> {

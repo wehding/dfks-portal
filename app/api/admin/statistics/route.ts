@@ -57,7 +57,10 @@ export async function GET(req: NextRequest) {
         ].filter(Boolean),
       },
     });
-    return NextResponse.json(data, { headers: { "Cache-Control": "private, no-store" } });
+    return NextResponse.json(
+      { ...data, dataSource: "production" as const },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (error) {
     console.error("[admin-statistics] Aggregation failed", error instanceof Error ? error.message : "Unknown error");
     return NextResponse.json({ error: "Statistikken kunne ikke beregnes" }, { status: 500 });

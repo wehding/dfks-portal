@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { requireMemberContext } from "@/lib/org"
+import { firstRelated } from "@/lib/supabase/relations"
 
 export type MemberAllocation = {
     id: string
@@ -58,7 +59,12 @@ export async function getMemberAllocations(): Promise<{
 
         if (error) throw error
 
-        const allocations: MemberAllocation[] = (data ?? []).map((r: any) => ({
+        const allocations: MemberAllocation[] = (data ?? []).map((r) => {
+            const run = firstRelated(r.rights_calculation_runs)
+            const fund = firstRelated(run?.rights_funds)
+            const work = firstRelated(r.works)
+            const episode = firstRelated(r.episodes)
+            return {
             id: r.id,
             run_id: r.run_id,
             work_id: r.work_id,
@@ -69,15 +75,15 @@ export async function getMemberAllocations(): Promise<{
             status: r.status,
             withheld_reason: r.withheld_reason,
             created_at: r.created_at,
-            period_label: r.rights_calculation_runs?.period_label ?? "—",
-            fund_name: r.rights_calculation_runs?.rights_funds?.name ?? "—",
-            fund_code: r.rights_calculation_runs?.rights_funds?.code ?? "—",
-            currency: r.rights_calculation_runs?.currency ?? "DKK",
-            work_title: r.works?.title ?? null,
-            episode_title: r.episodes?.title ?? null,
-            run_status: r.rights_calculation_runs?.status ?? "—",
-            booked_at: r.rights_calculation_runs?.booked_at ?? null,
-        }))
+            period_label: run?.period_label ?? "—",
+            fund_name: fund?.name ?? "—",
+            fund_code: fund?.code ?? "—",
+            currency: run?.currency ?? "DKK",
+            work_title: work?.title ?? null,
+            episode_title: episode?.title ?? null,
+            run_status: run?.status ?? "—",
+            booked_at: run?.booked_at ?? null,
+        }})
 
         return { success: true, allocations }
     } catch (err) {

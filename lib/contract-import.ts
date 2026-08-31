@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 export const MAX_CONTRACT_IMPORT_BYTES = 25 * 1024 * 1024;
 export const CONTRACT_IMPORT_CHUNK_SIZE = 20;
 export const CONTRACT_IMPORT_CONCURRENCY = 3;
@@ -17,10 +15,6 @@ export type ScoredCandidate<T> = {
   score: number;
   evidence: SafeMatchEvidence[];
 };
-
-export function contractFileHash(buffer: Buffer | Uint8Array) {
-  return createHash("sha256").update(buffer).digest("hex");
-}
 
 export function safeContractFileName(value: string) {
   const normalized = value.normalize("NFKC").replace(/[^a-zA-Z0-9._-]/g, "_").slice(-180);

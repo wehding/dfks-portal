@@ -1,5 +1,7 @@
 "use client"
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- This legacy editor normalizes dynamic AI extraction and untyped Supabase relation payloads at the UI boundary. */
+
 import { useState, useRef, useMemo, useEffect, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
@@ -206,7 +208,7 @@ function AdminValideringPageInner() {
             .then(({ data }: { data: Array<{ broadcaster: string | null; distribution_type: string | null }> | null }) => {
                 if (data?.length) setWorkDistributions((data as any[]).map(d => ({ broadcaster: d.broadcaster, distributionType: d.distribution_type })))
             })
-    }, [reviewingId, contracts]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [reviewingId, contracts])
 
     // Opret ny producent dialog
     const [showNewEmployer, setShowNewEmployer] = useState(false)
@@ -332,9 +334,9 @@ function AdminValideringPageInner() {
         if (!rh?.gender) return
         // Kun auto-udfyld hvis feltet ikke er manuelt redigeret
         if (!brugerRedigerede.has("gender")) {
-            setField("gender", rh.gender)
+            setFormData(prev => ({ ...prev, gender: rh.gender }))
         }
-    }, [selectedRhId, rettighedshavere])
+    }, [selectedRhId, rettighedshavere, brugerRedigerede])
 
     // Moderselskab: søg DFI + vis eksisterende parent når employer vælges
     useEffect(() => {
@@ -790,20 +792,6 @@ function AdminValideringPageInner() {
             isFreelanceContract:           !!ed.isFreelanceContract,
             collectiveAgreementByReference:!!ed.collectiveAgreementByReference,
         }
-    }
-
-    // Udfyld kun felter brugeren ikke selv har redigeret
-    const mergeWithAi = (ed: Record<string, any>) => {
-        const ai = buildFormFromAi(ed)
-        setFormData(prev => {
-            const next: typeof prev = { ...prev }
-            for (const key of Object.keys(ai) as (keyof typeof ai)[]) {
-                if (!brugerRedigerede.has(key)) {
-                    (next as any)[key] = ai[key]
-                }
-            }
-            return next
-        })
     }
 
     // Overskriv AI-felter — respektér stadig manuelt redigerede felter
@@ -1891,7 +1879,7 @@ setActiveField(fieldId)
                             <p className="text-sm text-muted-foreground">Ingen personoplysninger fundet med automatisk detektion.</p>
                         )}
                         <p className="text-xs text-muted-foreground border-t pt-3">
-                            Automatisk maskering er ikke 100% pålidelig. Brug "Rediger maskeret tekst" for at tjekke og tilføje yderligere maskeringer inden afsendelse.
+                            Automatisk maskering er ikke 100% pålidelig. Brug &quot;Rediger maskeret tekst&quot; for at tjekke og tilføje yderligere maskeringer inden afsendelse.
                         </p>
                     </div>
                     <DialogFooter className="flex-col sm:flex-row gap-2">
@@ -1945,13 +1933,13 @@ setActiveField(fieldId)
                                                     onClick={() => setNewEmpRelation(r => r?.id === m.id && r.role === "child" ? null : { role: "child", id: m.id, name: m.name })}
                                                     className={`w-full text-left text-[11px] rounded px-2.5 py-1.5 border transition-colors ${newEmpRelation?.id === m.id && newEmpRelation.role === "child" ? "bg-blue-100 text-blue-900 border-blue-400 font-medium" : "bg-blue-50 text-blue-800 border-blue-200 hover:bg-blue-100"}`}>
                                                     {newEmpRelation?.id === m.id && newEmpRelation.role === "child" ? "✓ Valgt — " : ""}
-                                                    "{newEmpName || "Ny"}" er underselskab af "{m.name}"
+                                                    &quot;{newEmpName || "Ny"}&quot; er underselskab af &quot;{m.name}&quot;
                                                 </button>
                                                 <button type="button"
                                                     onClick={() => setNewEmpRelation(r => r?.id === m.id && r.role === "parent" ? null : { role: "parent", id: m.id, name: m.name })}
                                                     className={`w-full text-left text-[11px] rounded px-2.5 py-1.5 border transition-colors ${newEmpRelation?.id === m.id && newEmpRelation.role === "parent" ? "bg-purple-100 text-purple-900 border-purple-400 font-medium" : "bg-purple-50 text-purple-800 border-purple-200 hover:bg-purple-100"}`}>
                                                     {newEmpRelation?.id === m.id && newEmpRelation.role === "parent" ? "✓ Valgt — " : ""}
-                                                    "{m.name}" er underselskab af "{newEmpName || "Ny"}"
+                                                    &quot;{m.name}&quot; er underselskab af &quot;{newEmpName || "Ny"}&quot;
                                                 </button>
                                             </div>
                                         </div>
