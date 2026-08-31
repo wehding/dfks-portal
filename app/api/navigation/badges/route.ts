@@ -6,6 +6,7 @@ import { createRequestClient } from "@/lib/supabase/request-client";
 import { verifyRequestUser } from "@/lib/supabase/request-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { countUniqueWorkShareTasks } from "@/lib/work-share-task-count";
+import { isActionableAdminWorkShareCase } from "@/lib/work-share-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
   const row = Array.isArray(data) ? data[0] : data;
   const [shareCases, collaborationDisputes] = context.canUseAdmin
     ? await Promise.all([
-        db.from("work_share_cases").select("work_id,season_number,episode_number").eq("org_id", context.orgId).neq("status", "resolved"),
+        db.from("work_share_cases").select("work_id,season_number,episode_number,work_share_participants(rights_holder_id,invited_by_rights_holder_id,source_tags,excluded_at)").eq("org_id", context.orgId).neq("status", "resolved"),
         db.from("member_work_collaboration_reviews").select("work_id,works(season_number,episode_number)").eq("org_id", context.orgId).eq("status", "disputed"),
       ])
     : [{ data: [], error: null }, { data: [], error: null }];
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
     console.error("[navigation-badges] work_share_count_failed", { code: taskError.code });
     return applyAuthResponse(NextResponse.json({ error: "Navigationstællere kunne ikke hentes" }, { status: 500 }));
   }
-  const taskReferences = (shareCases.data ?? []).map(item => ({
+  const taskReferences = (shareCases.data ?? []).filter(isActionableAdminWorkShareCase).map(item => ({
     work_id: item.work_id,
     season_number: item.season_number,
     episode_number: item.episode_number,

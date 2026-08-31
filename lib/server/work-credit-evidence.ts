@@ -259,7 +259,7 @@ export async function buildReconciledWorkCredits(db: ServiceClient, params: {
     db.from("work_assignments").select("rights_holder_id,role,share_percent,rettighedshavere(full_name)")
       .eq("org_id", params.orgId).in("work_id", assignmentWorkIds).not("rights_holder_id", "is", null),
     params.caseId
-      ? db.from("work_share_participants").select("rights_holder_id,proposed_name,role,proposed_percent,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name)")
+      ? db.from("work_share_participants").select("rights_holder_id,proposed_name,role,proposed_percent,source_tags,invited_by_rights_holder_id,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name)")
         .eq("case_id", params.caseId).is("excluded_at", null)
       : Promise.resolve({ data: [], error: null }),
     db.from("work_credit_evidence").select("source,external_person_id,credited_name,credited_role")
@@ -279,7 +279,10 @@ export async function buildReconciledWorkCredits(db: ServiceClient, params: {
     if (!name) continue;
     // DFI/TMDb tags are always rebuilt from the evidence snapshot below, so a
     // refreshed source cannot be kept alive by its own old participant tag.
-    const sources = [row.rights_holder_id ? "local" : "member"];
+    const storedSources = ((row.source_tags ?? []) as string[]).filter((source: string) => source === "local" || source === "member");
+    const sources = storedSources.length
+      ? storedSources
+      : [row.invited_by_rights_holder_id ? "member" : row.rights_holder_id ? "local" : "member"];
     for (const source of sources) {
       if (["local", "member", "dfi", "tmdb"].includes(source)) candidates.push({ name, role: row.role, source: source as WorkCreditCandidate["source"], rightsHolderId: row.rights_holder_id, proposedPercent: row.proposed_percent });
     }

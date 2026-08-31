@@ -160,6 +160,7 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
     rights_holder_id: params.actorRightsHolderId,
     role: normalizeWorkEditorRole(params.actorRole),
     relationship_status: "confirmed",
+    source_tags: ["local"],
     response_scope: shareCase.resolution_scope,
     proposed_percent: actorPercent,
     responded_at: new Date().toISOString(),
