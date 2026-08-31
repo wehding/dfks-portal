@@ -542,7 +542,8 @@ async function inspectCompletedJob({
         try {
           const extractedPages = await extractBboxPages(output.bytes);
           const recomputed = computeSpatialAccuracy(spatial.geometry.pages, extractedPages);
-          if (!recomputed.passed || recomputed.matchCoverage < 0.95) {
+          if (!recomputed.passed || recomputed.matchCoverage < 0.95
+            || recomputed.score < 0.95) {
             violations.spatialIndependentVerificationFailure += 1;
           }
           if (!spatialMetricsEqual(spatial.geometry.spatialVerification, recomputed)) {

@@ -127,6 +127,68 @@ test("99 procent manglende ord kan ikke give falsk spatial godkendelse", () => {
   assert.equal(result.passed, false);
 });
 
+function spatialFixture({ expectedCount, matchedCount, placedCount }) {
+  const words = Array.from({ length: expectedCount }, (_, index) => ({
+    text: `Ord${index}`,
+    vertices: [
+      { x: 10, y: index * 2 + 1 }, { x: 30, y: index * 2 + 1 },
+      { x: 30, y: index * 2 + 2 }, { x: 10, y: index * 2 + 2 },
+    ],
+  }));
+  return {
+    geometry: [{ pageNumber: 1, imageWidth: 100, imageHeight: expectedCount * 2 + 2, words }],
+    extracted: [{
+      width: 100,
+      height: expectedCount * 2 + 2,
+      words: Array.from({ length: matchedCount }, (_, index) => ({
+        text: `Ord${index}`,
+        xMin: index < placedCount ? 10 : 15,
+        yMin: index * 2 + 1,
+        xMax: index < placedCount ? 30 : 25,
+        yMax: index * 2 + 2,
+      })),
+    }],
+  };
+}
+
+test("dækning og placering kontrolleres separat uden dobbeltstraf", () => {
+  const { geometry, extracted } = spatialFixture({
+    expectedCount: 100,
+    matchedCount: 95,
+    placedCount: 91,
+  });
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.matchCoverage, 0.95);
+  assert.equal(result.score, 0.95);
+  assert.equal(result.centerInsideRatio, 1);
+  assert.equal(result.passed, true);
+});
+
+test("under 95 procent matchede ord afvises trods perfekt placering", () => {
+  const { geometry, extracted } = spatialFixture({
+    expectedCount: 100,
+    matchedCount: 94,
+    placedCount: 94,
+  });
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.matchCoverage, 0.94);
+  assert.equal(result.score, 0.94);
+  assert.equal(result.passed, false);
+});
+
+test("under 95 procent korrekt placerede ord afvises trods fuld dækning", () => {
+  const { geometry, extracted } = spatialFixture({
+    expectedCount: 100,
+    matchedCount: 100,
+    placedCount: 94,
+  });
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.matchCoverage, 1);
+  assert.equal(result.score, 0.94);
+  assert.equal(result.centerInsideRatio, 1);
+  assert.equal(result.passed, false);
+});
+
 test("textbomb afvises før hele pdftotext-outputtet læses", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dfks-text-cap-"));
   const path = join(directory, "text.txt");
