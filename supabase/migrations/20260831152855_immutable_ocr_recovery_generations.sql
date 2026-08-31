@@ -402,11 +402,17 @@ begin
     or current_job.original_storage_path is distinct from current_contract.pdf_url then
     raise exception 'document source changed during processing' using errcode = '55000';
   end if;
-  if current_job.downstream_ai_policy = 'preserve'
+  -- The policy/status fence belongs to manually created recovery generations.
+  -- Ordinary upload jobs can legitimately be claimed while a contract is a
+  -- draft and finish after an administrator validates it; preserve the
+  -- established linearisation behaviour for that race.
+  if current_job.recovery_of_job_id is not null
+    and current_job.downstream_ai_policy = 'preserve'
     and current_contract.status <> 'valideret' then
     raise exception 'preserve policy requires a validated contract' using errcode = '55000';
   end if;
-  if current_job.downstream_ai_policy = 'reanalyze'
+  if current_job.recovery_of_job_id is not null
+    and current_job.downstream_ai_policy = 'reanalyze'
     and current_contract.status = 'valideret' then
     raise exception 'validated contract requires preserve policy' using errcode = '55000';
   end if;
