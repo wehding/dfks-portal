@@ -16,6 +16,7 @@ const required = [
 ];
 const seen = new Set();
 const classified = new Set();
+const registeredPaths = new Set((registry.entries ?? []).map(entry => entry.path));
 const candidateClassifications = [
   ...(registry.candidateClassifications ?? []),
   ...(registry.classificationGroups ?? []).flatMap(group => (group.paths ?? []).map(item => ({
@@ -23,7 +24,7 @@ const candidateClassifications = [
     paths: undefined,
     ...(typeof item === "string" ? { path: item } : item),
   }))),
-];
+].filter(candidate => !registeredPaths.has(candidate.path));
 
 if (registry.schemaVersion !== 3) structuralFailures.push("Registry skal bruge schemaVersion 3");
 if (!registry.lastReviewed) structuralFailures.push("Registry mangler lastReviewed");

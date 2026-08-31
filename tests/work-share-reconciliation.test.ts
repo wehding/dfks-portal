@@ -14,7 +14,7 @@ test("kun egentlige klipperkrediteringer indgår i arbejdsandele", () => {
   for (const role of ["Klipper", "Klip", "Editor", "Film Editor", "Konceptuerende klipper"]) {
     assert.equal(isEligibleWorkShareRole(role), true, role);
   }
-  for (const role of ["B-klipper", "Klipperassistent", "Assistant Editor", "Trailer klipper", "Pilotklip", "Klippekonsulent", "Supplerende klipper"]) {
+  for (const role of ["B-klipper", "Klippeassistent", "Klipperassistent", "Assistant Editor", "Assistant klipper", "Trailer klipper", "Pilotklip", "Klippekonsulent", "Supplerende klipper"]) {
     assert.equal(isEligibleWorkShareRole(role), false, role);
   }
 });

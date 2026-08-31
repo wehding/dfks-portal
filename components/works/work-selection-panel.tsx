@@ -9,6 +9,7 @@ import type { UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import type { ManualWorkFormValue } from "@/lib/manual-work";
 import { WORK_TYPES } from "@/lib/work-types";
 import { useI18n } from "@/lib/i18n";
+import { SourcePictogram } from "@/components/source-pictogram";
 
 const selectCls =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring dark:bg-input/30";
@@ -133,11 +134,7 @@ export function WorkSelectionPanel({
                           <div className="flex items-center justify-between gap-2">
                             <p className="truncate font-semibold text-foreground">{item.title}</p>
                             <div className="flex gap-1">
-                              {item.sources.map(source => (
-                                <span key={source} className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${source === "local" ? "bg-amber-100 text-amber-800" : source === "dfi" ? "bg-blue-100 text-blue-800" : "bg-purple-100 text-purple-800"}`}>
-                                  {source === "local" ? (locale === "da" ? "Findes allerede" : "Already exists") : source}
-                                </span>
-                              ))}
+                              {item.sources.map(source => <SourcePictogram key={source} source={source} />)}
                             </div>
                           </div>
                           <p className="mt-0.5 text-xs text-muted-foreground">

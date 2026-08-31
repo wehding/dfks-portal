@@ -31,6 +31,7 @@ import type { MemberOverviewItem } from "@/lib/member-work-overview";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 import { createClientId } from "@/lib/client-id";
 import { fetchMemberContractsForWorks } from "@/app/actions/member-contracts";
+import { SourcePictogram } from "@/components/source-pictogram";
 
 const AddWorkModal = dynamic(() => import("./components/AddWorkModal").then(module => module.AddWorkModal), { ssr: false });
 const EditWorkModal = dynamic(() => import("./components/EditWorkModal").then(module => module.EditWorkModal), { ssr: false });
@@ -2056,7 +2057,7 @@ export default function MineVaerkerClient({
                                 <span className="font-medium">{suggestion.name}</span>
                                 <span className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                                   <span>{suggestion.role}</span>
-                                  {suggestion.sources.map(source => <Badge key={source} variant="outline" className="h-5 px-1.5 text-[10px]">{source === "local" ? "Portal" : source === "member" ? "Indtastet" : source.toUpperCase()}</Badge>)}
+                                  {suggestion.sources.map(source => <SourcePictogram key={source} source={source} />)}
                                 </span>
                               </span>
                             </label>

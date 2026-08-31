@@ -53,6 +53,7 @@ import { extractedProductionCompanyNames } from "@/lib/production-companies"
 import { contractReadinessDetails, effectiveCopydanStatus, normalizeTriState } from "@/lib/contract-list-status"
 import { contractDataToManualWorkSeed, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work"
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker"
+import { SourcePictogram } from "@/components/source-pictogram"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -2698,8 +2699,8 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                                         >
                                                             <div className="flex items-center justify-between gap-1 w-full font-medium">
                                                                 <span className="truncate">{item.title}</span>
-                                                                <span className="text-[9px] uppercase font-bold text-muted-foreground shrink-0">
-                                                                    {item.sources.map(source => source === "local" ? "Findes allerede" : source).join(" · ")}
+                                                                <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                                                                    {item.sources.map(source => <SourcePictogram key={source} source={source} />)}
                                                                 </span>
                                                             </div>
                                                             <span className="text-[10px] text-muted-foreground mt-0.5">
