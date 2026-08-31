@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -95,6 +96,14 @@ export async function getRightsNotifications(opts?: {
             rights_holder_name: r.rettighedshavere?.full_name,
             member_number: r.rettighedshavere?.member_number,
         }))
+
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "read", component: "admin.rights_notifications", entityType: "rights_notification",
+            targetMemberUuids: [...new Set(notifications.map(item => item.rights_holder_id).filter((id): id is string => Boolean(id)))],
+            purposeCode: "rights_administration", legalBasis: "gdpr_art_6_1_f",
+            dataCategories: ["rights_data", "contact_data"], counts: { results: notifications.length },
+        })
 
         return { success: true, notifications }
     } catch (err) {

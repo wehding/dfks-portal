@@ -3,6 +3,7 @@ import { requireAdminApi, requireStaffModuleApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeCompanyName, validateRegistrationNumber } from "@/lib/production-companies";
 import { loadAdminProducerList } from "@/lib/server/admin-producer-list";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -70,6 +71,7 @@ export async function GET(req: NextRequest) {
   }
   try {
     const payload = await loadAdminProducerList(auth, searchParams);
+    await recordSensitiveFlow({ actor: { userId: auth.userId, orgId: auth.orgId, role: auth.role, source: "admin" }, action: "search", component: "admin.producers.list", entityType: "employers", orgIds: [auth.orgId], purposeCode: "producer_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["company_data", "contact_data", "contract_data"] });
     return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
   } catch {
     return NextResponse.json({ error: "Producenter kunne ikke hentes" }, { status: 500 });
@@ -152,6 +154,7 @@ export async function POST(req: NextRequest) {
     await db.from("employers").delete().eq("id", employer.id);
     return NextResponse.json({ error: "Producenttyperne kunne ikke gemmes." }, { status: 409 });
   }
+  await recordSensitiveFlow({ actor: { userId: auth.userId, orgId: auth.orgId, role: auth.role, source: "admin" }, action: "create", component: "admin.producers.create", entityType: "employers", entityId: employer.id, orgIds: [auth.orgId], purposeCode: "producer_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["company_data", "contact_data", "contract_data"] });
   return NextResponse.json({ id: employer.id }, { status: 201 });
 }
 
@@ -188,5 +191,7 @@ export async function DELETE(req: NextRequest) {
     console.error("[producers] permanent delete failed", error.message);
     return NextResponse.json({ error: /linked records/i.test(error.message) ? "Tilknytningerne er ændret. Producenterne blev ikke slettet." : "Producenterne kunne ikke slettes permanent." }, { status: 409 });
   }
-  return NextResponse.json({ deletedCount: Number((data as { deleted_count?: number } | null)?.deleted_count ?? 0) });
+  const deletedCount = Number((data as { deleted_count?: number } | null)?.deleted_count ?? 0);
+  await recordSensitiveFlow({ actor: { userId: auth.userId, orgId: auth.orgId, role: auth.role, source: "admin" }, action: "delete", component: "admin.producers.delete", entityType: "employers", orgIds: [auth.orgId], purposeCode: "producer_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["company_data", "contact_data", "contract_data"], counts: { deleted: deletedCount } });
+  return NextResponse.json({ deletedCount });
 }

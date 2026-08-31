@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { browseGoogleDrive } from "@/lib/server/import-provider-files";
 import { driveImportWorkerSecret, triggerDriveImportWorker } from "@/lib/drive-import-worker";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ con
       sharedWithMe: request.nextUrl.searchParams.get("view") === "shared",
       pageSize: 100,
     });
+    await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "search", component: "admin.import-connections.files", entityType: "import_connections", entityId: connection.id, orgIds: [caller.orgId], purposeCode: "contract_import_source_selection", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["document_metadata", "contract_data"], counts: { folders: result.entries.filter(entry => entry.kind === "folder").length, files: result.entries.filter(entry => entry.kind === "file").length } });
     return NextResponse.json({
       folders: result.entries.filter(entry => entry.kind === "folder"),
       files: result.entries.filter(entry => entry.kind === "file" && /\.(pdf|doc|docx|txt)$/i.test(entry.name)),
@@ -78,6 +80,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ co
     run_id: run.id, provider_file_id: id, provider_revision: "selected", file_name: id, file_size_bytes: 0,
   })));
   if (queued.error) return NextResponse.json({ error: "Filerne kunne ikke sættes i kø" }, { status: 500 });
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "import", component: "admin.import-connections.queue", entityType: "drive_import_runs", entityId: run.id, orgIds: [caller.orgId], purposeCode: "contract_import", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["document_metadata", "contract_data"], counts: { queued: fileIds.length } });
   after(() => triggerDriveImportWorker(run.id));
   return NextResponse.json({ batchId: batch.id, runId: run.id, queued: fileIds.length }, { status: 202 });
 }

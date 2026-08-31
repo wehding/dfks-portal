@@ -13,6 +13,7 @@ import { assertUserInOrg } from "@/lib/authz"
 import { isMissingGenderColumn } from "@/lib/rights-holder-gender"
 import { isStillUnassigned, parseUnassignedRecordId, type UnassignedRecordKind } from "@/lib/admin-user-deletion"
 import { highestStaffRole, isStaffRole, STAFF_ROLES, USER_ADMIN_ROLES } from "@/lib/admin-roles"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ALLOWED_STAFF_ROLES = [...STAFF_ROLES]
 
@@ -27,6 +28,15 @@ async function ensureTargetUserInOrg(admin: ReturnType<typeof getAdmin>, userId:
     } catch {
         return NextResponse.json({ error: "Brugeren tilhører ikke din organisation" }, { status: 403 })
     }
+}
+
+async function auditUserAdministration(caller: { userId: string; orgId: string; role: string }, input: { action: "read" | "update" | "delete" | "link" | "unlink" | "security_review" | "reset_link"; component: string; targetUserId?: string | null; targetMemberUuid?: string | null; targetMemberUuids?: string[]; count?: number }) {
+    let targetMemberUuid = input.targetMemberUuid ?? null
+    if (!targetMemberUuid && input.targetUserId) {
+        const { data } = await getAdmin().from("rettighedshavere").select("id").eq("user_id", input.targetUserId).maybeSingle()
+        targetMemberUuid = data?.id ?? null
+    }
+    await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: input.action, component: input.component, entityType: "users", entityId: input.targetUserId ?? targetMemberUuid, targetMemberUuid, targetMemberUuids: input.targetMemberUuids, orgIds: [caller.orgId], purposeCode: "user_and_access_administration", legalBasis: "GDPR Art. 6(1)(c)/(f), 9(2)(d) og 32", dataCategories: ["identity_data", "contact_data", "union_membership_data", "access_control_metadata"], counts: input.count == null ? undefined : { affected: input.count } })
 }
 
 export async function GET() {
@@ -227,6 +237,7 @@ export async function GET() {
     const { data: availableOrganisations } = caller.role === "superadmin"
         ? await admin.from("organisations").select("id,name").order("name")
         : await admin.from("organisations").select("id,name").eq("id", orgId)
+    await auditUserAdministration(caller, { action: "read", component: "admin.users.list", targetMemberUuids: users.map(user => user.rh_id).filter((id): id is string => Boolean(id)), count: users.length })
     return NextResponse.json({ users, staff, portal, unassigned, availableOrganisations: availableOrganisations ?? [], callerRole: caller.role, callerUserId: caller.userId })
 }
 
@@ -265,6 +276,7 @@ export async function PATCH(req: NextRequest) {
             }
             const { error } = await admin.auth.admin.deleteUser(recordId)
             if (error) return NextResponse.json({ error: "Loginbrugeren kunne ikke slettes." }, { status: 409 })
+            await auditUserAdministration(patchCaller, { action: "delete", component: "admin.users.delete-unassigned-auth", targetUserId: recordId })
             return NextResponse.json({ ok: true, deletedUser: true })
         }
 
@@ -303,6 +315,7 @@ export async function PATCH(req: NextRequest) {
                 else deletedUser = true
             }
         }
+        await auditUserAdministration(patchCaller, { action: "delete", component: "admin.users.delete-unassigned-holder", targetMemberUuid: recordId })
         return NextResponse.json({ ok: true, deletedUser, warning })
     }
 
@@ -377,6 +390,7 @@ export async function PATCH(req: NextRequest) {
         const primary = highestStaffRole(nextRoles) ?? "member"
         await admin.auth.admin.updateUserById(userId, { user_metadata: { role: primary } })
 
+        await auditUserAdministration(patchCaller, { action: "security_review", component: "admin.users.set-roles", targetUserId: userId })
         return NextResponse.json({ ok: true })
     }
 
@@ -398,6 +412,7 @@ export async function PATCH(req: NextRequest) {
                 if (unlinkError) return NextResponse.json({ error: "Rettighedshaveradgangen kunne ikke fjernes" }, { status: 500 })
             }
             await admin.from("user_org_roles").delete().eq("user_id", userId).eq("org_id", orgId).eq("role", "member")
+            await auditUserAdministration(patchCaller, { action: "unlink", component: "admin.users.disable-rights-holder", targetUserId: userId, targetMemberUuids: ids })
             return NextResponse.json({ ok: true })
         }
 
@@ -428,6 +443,7 @@ export async function PATCH(req: NextRequest) {
 
         const { error: memberRoleError } = await admin.from("user_org_roles").upsert({ user_id: userId, org_id: orgId, role: "member" }, { onConflict: "user_id,org_id,role", ignoreDuplicates: true })
         if (memberRoleError) return NextResponse.json({ error: "Medlemsrollen kunne ikke gemmes" }, { status: 500 })
+        await auditUserAdministration(patchCaller, { action: "link", component: "admin.users.enable-rights-holder", targetUserId: userId, targetMemberUuid: rightsHolderId })
         return NextResponse.json({ ok: true, rightsHolderId })
     }
 
@@ -446,6 +462,7 @@ export async function PATCH(req: NextRequest) {
             ban_duration: "876000h", // ~100 år
         })
         if (error) return NextResponse.json({ error: "Juristadgangen kunne ikke opdateres." }, { status: 500 })
+        await auditUserAdministration(patchCaller, { action: "security_review", component: "admin.users.deactivate", targetUserId: userId })
         return NextResponse.json({ ok: true })
     }
 
@@ -462,6 +479,7 @@ export async function PATCH(req: NextRequest) {
             ban_duration: "none",
         })
         if (error) return NextResponse.json({ error: "Rollen kunne ikke opdateres." }, { status: 500 })
+        await auditUserAdministration(patchCaller, { action: "security_review", component: "admin.users.activate", targetUserId: userId })
         return NextResponse.json({ ok: true })
     }
 
@@ -488,6 +506,7 @@ export async function PATCH(req: NextRequest) {
             gender: gender || undefined,
         }).eq("user_id", userId)
 
+        await auditUserAdministration(patchCaller, { action: "update", component: "admin.users.update-profile", targetUserId: userId })
         return NextResponse.json({ ok: true })
     }
 
@@ -503,6 +522,7 @@ export async function PATCH(req: NextRequest) {
         const { error: pwErr } = await admin.auth.admin.updateUserById(userId, { password })
         if (pwErr) return NextResponse.json({ error: "Adgangskoden kunne ikke opdateres." }, { status: 500 })
 
+        await auditUserAdministration(patchCaller, { action: "reset_link", component: "admin.users.set-password", targetUserId: userId })
         return NextResponse.json({ ok: true })
     }
 
@@ -514,6 +534,7 @@ export async function PATCH(req: NextRequest) {
             user_metadata: { role: body.role }
         })
         if (error) return NextResponse.json({ error: "Brugeren kunne ikke opdateres." }, { status: 500 })
+        await auditUserAdministration(patchCaller, { action: "security_review", component: "admin.users.legacy-role", targetUserId: body.userId })
         return NextResponse.json({ ok: true })
     }
 

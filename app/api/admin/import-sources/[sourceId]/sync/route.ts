@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { driveImportWorkerSecret, triggerDriveImportWorker } from "@/lib/drive-import-worker";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ sourceId: string }> }) {
   const session = await createClient();
@@ -49,6 +50,7 @@ export async function POST(_request: NextRequest, context: { params: Promise<{ s
   if (runError || !run) return NextResponse.json({ error: "Importkøen kunne ikke oprettes" }, { status: 500 });
   const { error: folderError } = await db.from("drive_import_folders").insert({ run_id: run.id, provider_folder_id: source.provider_folder_id, page_token: "" });
   if (folderError) return NextResponse.json({ error: "Importmappen kunne ikke sættes i kø" }, { status: 500 });
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "sync", component: "admin.import-sources.sync", entityType: "drive_import_runs", entityId: run.id, orgIds: [caller.orgId], purposeCode: "contract_import", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["document_metadata", "contract_data"] });
   after(() => triggerDriveImportWorker(run.id));
   return NextResponse.json({ runId: run.id, status: run.status }, { status: 202 });
 }

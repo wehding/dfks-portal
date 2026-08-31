@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js"
 import { getEmbedding } from "@/lib/embedding-provider"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { requireStaffModuleApi } from "@/lib/api-auth"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 import { extractWordText } from "@/lib/word-text"
 import { errorMessage } from "@/lib/error-message"
 
@@ -182,6 +183,7 @@ export async function POST(req: NextRequest) {
             indekseret++
         }
 
+        await recordSensitiveFlow({ actor: { userId: auth.userId, orgId: auth.orgId, role: auth.role, source: "admin" }, action: "import", component: "admin.agreements.attachments-index", entityType: "knowledge_chunks", orgIds: [auth.orgId], purposeCode: "agreement_rule_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["agreement_data", "salary_rules", "ai_analysis"], counts: { indexed: indekseret } })
         return NextResponse.json({ ok: true, indekseret, lønskemaSatser })
     } catch (e: unknown) {
         console.error("[overenskomst-bilag] indexing failed", e instanceof Error ? e.name : "unknown")
@@ -225,6 +227,7 @@ export async function DELETE(req: NextRequest) {
         const { error } = await delQuery
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        await recordSensitiveFlow({ actor: { userId: auth.userId, orgId: auth.orgId, role: auth.role, source: "admin" }, action: "delete", component: "admin.agreements.attachments-delete", entityType: "knowledge_chunks", orgIds: [auth.orgId], purposeCode: "agreement_rule_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["agreement_data", "salary_rules"] })
         return NextResponse.json({ ok: true })
     } catch (e: unknown) {
         return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
@@ -295,5 +298,7 @@ export async function GET(req: NextRequest) {
         }
     }
 
-    return NextResponse.json({ bilag: Object.values(bilag) })
+    const items = Object.values(bilag)
+    await recordSensitiveFlow({ actor: { userId: auth.userId, orgId: auth.orgId, role: auth.role, source: "admin" }, action: "read", component: "admin.agreements.attachments", entityType: "knowledge_chunks", entityId: agreement_id, orgIds: [auth.orgId], purposeCode: "agreement_rule_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["agreement_data", "salary_rules"], counts: { results: items.length } })
+    return NextResponse.json({ bilag: items })
 }

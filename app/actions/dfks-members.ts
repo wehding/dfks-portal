@@ -6,6 +6,7 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { encryptValue } from "@/lib/encryption";
 import { resolveForeningLetCredentials } from "@/lib/org-integrations";
 import { findStaleForeningLetMemberIds, normalizeForeningLetMember, parseForeningLetMemberPayload, type NormalizedForeningLetMember } from "@/lib/foreninglet";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 type ForeningLetMember = NormalizedForeningLetMember & { status: "active" | "resigned" };
 
@@ -259,6 +260,15 @@ export async function syncDfksMembers() {
     }
     const candidates = await loadImportCandidates(orgId);
     const updatedExisting = await updateExistingMemberships(orgId, candidates);
+    await recordSensitiveFlow({
+      actor: { userId: caller.userId, orgId, role: caller.role, source: "admin" }, action: "import",
+      component: "admin.dfks_member_sync", entityType: "membership_directory",
+      targetMemberUuids: candidates.map(candidate => candidate.rights_holder_id).filter((id): id is string => Boolean(id)),
+      purposeCode: "membership_administration", legalBasis: "gdpr_art_6_1_f",
+      dataCategories: ["membership_data", "contact_data"],
+      outcome: resignedFetchComplete ? "success" : "partial",
+      counts: { active: activeMembers.length, total: rows.length, updatedExisting, removed: staleIds.length },
+    });
     return {
       success: true,
       count: activeMembers.length,

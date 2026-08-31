@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { requireMemberContext } from "@/lib/org"
 import { firstRelated } from "@/lib/supabase/relations"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 export type MemberAllocation = {
     id: string
@@ -84,6 +85,8 @@ export async function getMemberAllocations(): Promise<{
             run_status: run?.status ?? "—",
             booked_at: run?.booked_at ?? null,
         }})
+
+        await recordSensitiveFlow({ actor: { userId: user.id, orgId: context.orgId, role: "member", source: "portal" }, action: "read", component: "portal.rights.allocations", entityType: "rights_allocations", targetMemberUuid: context.rightsHolderId, orgIds: [context.orgId], purposeCode: "member_rights_overview", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"], counts: { results: allocations.length } })
 
         return { success: true, allocations }
     } catch (err) {
