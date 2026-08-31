@@ -48,9 +48,10 @@ type RawAuditEvent = {
   changes: AuditChange[] | null;
   missing_actor_context: boolean;
   audit_event_organisations?: Array<{ org_id: string; org_name: string | null }>;
+  audit_event_subjects?: Array<{ target_member_uuid: string; relationship_type: string }>;
 };
 
-const AUDIT_SELECT = "id,occurred_at,action,entity_type,entity_id,entity_label,actor_user_id,actor_display_name,actor_email,actor_role,actor_type,actor_org_id,source,correlation_id,request_id,target_member_uuid,purpose_code,legal_basis,data_categories,ip_address,system_component,outcome,error_code,schema_version,sequence_no,payload_hash,chain_hash,changes,missing_actor_context,audit_event_organisations(org_id,org_name)";
+const AUDIT_SELECT = "id,occurred_at,action,entity_type,entity_id,entity_label,actor_user_id,actor_display_name,actor_email,actor_role,actor_type,actor_org_id,source,correlation_id,request_id,target_member_uuid,purpose_code,legal_basis,data_categories,ip_address,system_component,outcome,error_code,schema_version,sequence_no,payload_hash,chain_hash,changes,missing_actor_context,audit_event_organisations(org_id,org_name),audit_event_subjects(target_member_uuid,relationship_type)";
 
 function normalizeEvent(row: RawAuditEvent, integrityValid: boolean): AuditEvent {
   return {
@@ -70,6 +71,10 @@ function normalizeEvent(row: RawAuditEvent, integrityValid: boolean): AuditEvent
     correlationId: row.correlation_id,
     requestId: row.request_id,
     targetMemberUuid: row.target_member_uuid,
+    targetMemberUuids: [...new Set([
+      row.target_member_uuid,
+      ...(row.audit_event_subjects ?? []).map(subject => subject.target_member_uuid),
+    ].filter((value): value is string => Boolean(value)))],
     purposeCode: row.purpose_code,
     legalBasis: row.legal_basis,
     dataCategories: row.data_categories ?? [],
@@ -100,9 +105,12 @@ export async function fetchAuditEvents(
   const safeLimit = Math.min(Math.max(limit, 1), 1000);
   const isSuperadmin = caller.role === "superadmin";
   const requestedOrg = isSuperadmin ? filters.orgId : caller.orgId;
-  const select = requestedOrg
+  let select = requestedOrg
     ? AUDIT_SELECT.replace("audit_event_organisations(", "audit_event_organisations!inner(")
     : AUDIT_SELECT;
+  if (filters.targetMemberUuid) {
+    select = select.replace("audit_event_subjects(", "audit_event_subjects!inner(");
+  }
   let query = db.from("audit_events").select(select)
     .order("occurred_at", { ascending: false })
     .order("id", { ascending: false })
@@ -119,7 +127,7 @@ export async function fetchAuditEvents(
   if (filters.entityType) query = query.eq("entity_type", filters.entityType);
   else query = query.not("entity_type", "in", `(${AUDIT_DETAIL_ENTITY_TYPES.join(",")})`);
   if (filters.source) query = query.eq("source", filters.source);
-  if (filters.targetMemberUuid) query = query.eq("target_member_uuid", filters.targetMemberUuid);
+  if (filters.targetMemberUuid) query = query.eq("audit_event_subjects.target_member_uuid", filters.targetMemberUuid);
   if (filters.purposeCode) query = query.eq("purpose_code", filters.purposeCode);
   if (filters.systemComponent) query = query.eq("system_component", filters.systemComponent);
   if (filters.outcome) query = query.eq("outcome", filters.outcome);
@@ -178,6 +186,7 @@ export async function recordAuditEvent(input: {
   metadata?: Record<string, unknown>;
   actorType?: "user" | "system" | "integration";
   targetMemberUuid?: string | null;
+  targetMemberUuids?: string[];
   purposeCode?: string | null;
   legalBasis?: string | null;
   dataCategories?: string[];
@@ -197,7 +206,12 @@ export async function recordAuditEvent(input: {
     actorName = holder?.full_name ?? actorEmail;
   }
   const orgIds = [...new Set([...(input.orgIds ?? []), input.context.actorOrgId].filter((id): id is string => Boolean(id)))];
-  const { data: eventId, error } = await db.rpc("append_audit_event", {
+  const targetMemberUuids = [...new Set([
+    input.targetMemberUuid,
+    ...(input.targetMemberUuids ?? []),
+  ].map(safeUuid).filter((value): value is string => Boolean(value)))];
+  if (targetMemberUuids.length > 5000) throw new Error("Too many audit subjects");
+  const { data: eventId, error } = await db.rpc("append_audit_event_v2", {
     p_action: input.action,
     p_entity_type: input.entityType,
     p_entity_id: input.entityId ?? null,
@@ -215,6 +229,7 @@ export async function recordAuditEvent(input: {
     p_metadata: sanitizeMetadata(input.metadata ?? {}),
     p_missing_actor_context: !input.context.actorUserId && input.context.source === "api",
     p_target_member_uuid: safeUuid(input.targetMemberUuid),
+    p_target_member_uuids: targetMemberUuids,
     p_purpose_code: input.purposeCode ?? null,
     p_legal_basis: input.legalBasis ?? null,
     p_data_categories: input.dataCategories ?? [],

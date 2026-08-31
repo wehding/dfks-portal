@@ -1,6 +1,23 @@
 {
-  "schemaVersion": 1,
-  "lastReviewed": "2026-08-23",
+  "schemaVersion": 2,
+  "lastReviewed": "2026-08-31",
+  "mode": "reporting",
+  "statusTaxonomy": ["implemented", "activated", "verified", "pending"],
+  "discoveryRoots": ["app/api"],
+  "serverActionRoots": ["app/actions"],
+  "processingActivities": [
+    { "id": "PROC-CONTRACT-ACCESS", "name": "Kontraktadgang og sagsbehandling", "lifecyclePhase": "use", "categories": ["contract_data", "salary_data", "union_membership_data"], "owner": "Portalteam" },
+    { "id": "PROC-MEMBER-ADMIN", "name": "Medlemsadministration og søgning", "lifecyclePhase": "use", "categories": ["identity_data", "contact_data", "union_membership_data"], "owner": "Portalteam" },
+    { "id": "PROC-DOCUMENT-AI", "name": "Dokument-, OCR- og AI-behandling", "lifecyclePhase": "analysis", "categories": ["contract_data", "salary_data", "ai_analysis"], "owner": "AI- og portalteam" },
+    { "id": "PROC-STATISTICS", "name": "Statistik og diskretion", "lifecyclePhase": "analysis", "categories": ["salary_data", "contract_data", "union_membership_data"], "owner": "Statistikteam" },
+    { "id": "PROC-COMMUNICATION", "name": "Kommunikation og eksterne kladder", "lifecyclePhase": "sharing", "categories": ["contact_data", "communication_data", "contract_data"], "owner": "Juridisk team og portalteam" },
+    { "id": "PROC-DATA-SUBJECT-RIGHTS", "name": "Indsigtsret og sikker udlevering", "lifecyclePhase": "sharing", "categories": ["audit_metadata"], "owner": "Privacyteam" }
+  ],
+  "dataStores": [
+    { "id": "STORE-SUPABASE-DB", "type": "database", "organisationScoped": true, "encryption": "managed_at_rest_and_tls", "retention": "table_specific", "owner": "Portalteam" },
+    { "id": "STORE-SUPABASE-STORAGE", "type": "object_storage", "organisationScoped": true, "encryption": "managed_at_rest_and_tls", "retention": "bucket_specific", "owner": "Portalteam" },
+    { "id": "STORE-AUDIT-WORM", "type": "external_worm", "organisationScoped": true, "encryption": "kms_signed_batches", "retention": "governance_controlled", "owner": "Sikkerhedsteam" }
+  ],
   "coverageRoots": [
     "app/api/admin/contracts",
     "app/api/admin/statistics",
