@@ -94,6 +94,10 @@ export async function POST(request: Request) {
   return NextResponse.json({
     jobId: job.id,
     leaseToken: job.lease_token,
+    expectedOriginalSha256: typeof job.original_sha256 === "string"
+      && /^[0-9a-f]{64}$/i.test(job.original_sha256)
+      ? job.original_sha256.toLowerCase()
+      : null,
     downloadUrl: download.data.signedUrl,
     uploadPath: outputUploadPath,
     spatialUploadPath,
