@@ -13,6 +13,7 @@ import {
   captureBaseline,
   createReadOnlyFetch,
   extractPdfBboxPages,
+  extractPdfPageCount,
   readBaselineFile,
   safeSummaryJson,
   sha256,
@@ -23,6 +24,9 @@ import {
 } from "../scripts/audit-ocr-backfill.mjs";
 
 const pdftotextUnavailable = spawnSync("pdftotext", ["-v"], { stdio: "ignore" }).error?.code === "ENOENT";
+const pikepdfUnavailable = spawnSync(
+  "python3", ["-c", "import pikepdf"], { stdio: "ignore" },
+).status !== 0;
 
 async function pdf(pages) {
   const document = await PDFDocument.create();
@@ -138,6 +142,18 @@ function baselineInput(original, status = "kladde") {
   };
 }
 
+function knownUnparseableBaseline(job, overrides = {}) {
+  return {
+    jobId: job.id,
+    contractId: job.contract_id,
+    originalSha256: job.original_sha256,
+    originalStoragePathDigest: sha256(Buffer.from(job.original_storage_path, "utf8")),
+    originalPdfReadable: false,
+    originalPageCount: null,
+    ...overrides,
+  };
+}
+
 test("en intakt OCR-kørsel består alle kontroller", async () => {
   const original = await pdf(2);
   const output = await pdf(2);
@@ -196,6 +212,149 @@ test("produktionsaudit udtrækker bbox fra PDF uden shell eller dokumentlogs", {
       && !String(error?.message).includes("hemmelig")
       && !String(error?.message).includes("token=abc"),
   );
+});
+
+test("produktionsaudit tæller PDF-sider med et uafhængigt værktøj", {
+  skip: pikepdfUnavailable,
+}, async () => {
+  assert.equal(await extractPdfPageCount(await pdf(3)), 3);
+  await assert.rejects(
+    extractPdfPageCount(Buffer.from("ikke en kontrakt-pdf token=abc")),
+    (error) => error?.code === "pdf_page_count_failed"
+      && !String(error?.message).includes("token=abc"),
+  );
+});
+
+test("kendt uparsebar original kræver samme hash og uafhængigt sideantal", async () => {
+  const original = Buffer.from("%PDF-kendt-uparsebar");
+  const output = await pdf(2);
+  const input = fixture({ original, output, expectedPages: 2 });
+  const job = input.jobs[0];
+  input.baselineOriginalByJob = new Map([[
+    job.id,
+    knownUnparseableBaseline(job),
+  ]]);
+  let extractorCalls = 0;
+  input.extractOriginalPageCount = async (bytes) => {
+    extractorCalls += 1;
+    assert.strictEqual(bytes, original);
+    return 2;
+  };
+
+  const accepted = await auditCompletedJobs(input);
+  assert.equal(accepted.violations.invalidOriginalPdf, 0);
+  assert.equal(accepted.documentsPassingAllChecks, 1);
+  assert.equal(extractorCalls, 1);
+
+  input.extractOriginalPageCount = async (bytes) => {
+    extractorCalls += 1;
+    assert.strictEqual(bytes, original);
+    return 1;
+  };
+  const rejected = await auditCompletedJobs(input);
+  assert.equal(rejected.violations.invalidOriginalPdf, 1);
+  assert.equal(rejected.documentsPassingAllChecks, 0);
+  assert.equal(extractorCalls, 2);
+});
+
+test("uparsebar original uden baseline kalder ikke den uafhængige extractor", async () => {
+  const original = Buffer.from("%PDF-uden-baseline");
+  const input = fixture({ original, output: await pdf(2), expectedPages: 2 });
+  let extractorCalls = 0;
+  input.extractOriginalPageCount = async () => {
+    extractorCalls += 1;
+    return 2;
+  };
+
+  const summary = await auditCompletedJobs(input);
+  assert.equal(summary.violations.invalidOriginalPdf, 1);
+  assert.equal(summary.documentsPassingAllChecks, 0);
+  assert.equal(extractorCalls, 0);
+});
+
+test("uparsebar original med læsbar baseline kalder ikke den uafhængige extractor", async () => {
+  const original = Buffer.from("%PDF-læsbar-baseline");
+  const input = fixture({ original, output: await pdf(2), expectedPages: 2 });
+  const job = input.jobs[0];
+  input.baselineOriginalByJob = new Map([[
+    job.id,
+    knownUnparseableBaseline(job, { originalPdfReadable: true, originalPageCount: 2 }),
+  ]]);
+  let extractorCalls = 0;
+  input.extractOriginalPageCount = async () => {
+    extractorCalls += 1;
+    return 2;
+  };
+
+  const summary = await auditCompletedJobs(input);
+  assert.equal(summary.violations.invalidOriginalPdf, 1);
+  assert.equal(summary.documentsPassingAllChecks, 0);
+  assert.equal(extractorCalls, 0);
+});
+
+test("uparsebar original kræver match mellem aktuelle bytes, job og baseline", async () => {
+  const cases = [
+    {
+      name: "baselinejob",
+      mutate: (_job, baseline) => { baseline.jobId = "00000000-0000-4000-8000-000000000099"; },
+    },
+    {
+      name: "baselinecontract",
+      mutate: (_job, baseline) => { baseline.contractId = "00000000-0000-4000-8000-000000000098"; },
+    },
+    {
+      name: "jobhash",
+      mutate: (job) => { job.original_sha256 = "a".repeat(64); },
+    },
+    {
+      name: "baselinehash",
+      mutate: (_job, baseline) => { baseline.originalSha256 = "b".repeat(64); },
+    },
+    {
+      name: "baselinepath",
+      mutate: (_job, baseline) => { baseline.originalStoragePathDigest = "c".repeat(64); },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const original = Buffer.from(`%PDF-mismatch-${testCase.name}`);
+    const input = fixture({ original, output: await pdf(2), expectedPages: 2 });
+    const job = input.jobs[0];
+    const baseline = knownUnparseableBaseline(job);
+    testCase.mutate(job, baseline);
+    input.baselineOriginalByJob = new Map([[job.id, baseline]]);
+    let extractorCalls = 0;
+    input.extractOriginalPageCount = async () => {
+      extractorCalls += 1;
+      return 2;
+    };
+
+    const summary = await auditCompletedJobs(input);
+    assert.equal(summary.violations.invalidOriginalPdf, 1, testCase.name);
+    assert.equal(summary.documentsPassingAllChecks, 0, testCase.name);
+    assert.equal(extractorCalls, 0, testCase.name);
+  }
+});
+
+test("fejl i den uafhængige extractor afviser en ellers kendt uparsebar original", async () => {
+  const original = Buffer.from("%PDF-extractor-fejl");
+  const input = fixture({ original, output: await pdf(2), expectedPages: 2 });
+  const job = input.jobs[0];
+  input.baselineOriginalByJob = new Map([[
+    job.id,
+    knownUnparseableBaseline(job),
+  ]]);
+  let extractorCalls = 0;
+  input.extractOriginalPageCount = async () => {
+    extractorCalls += 1;
+    throw new Error("token=skal-ikke-lækkes");
+  };
+
+  const summary = await auditCompletedJobs(input);
+  assert.equal(summary.violations.invalidOriginalPdf, 1);
+  assert.equal(summary.documentsPassingAllChecks, 0);
+  assert.equal(extractorCalls, 1);
+  assert.doesNotMatch(safeSummaryJson(summary), /skal-ikke-lækkes/);
 });
 
 test("originalens ændrede hash og outputtets sideantal afvises", async () => {
