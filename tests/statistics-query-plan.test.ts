@@ -115,6 +115,7 @@ test("antal A-løns- og leverandørkontrakter forveksles ikke med lønstatistik"
   const plan = predefinedStatisticsQueryPlan("Hvor mange A-løns- og leverandørkontrakter er der registreret pr. år?");
   assert.deepEqual(plan?.metrics, ["contract_count"]);
   assert.deepEqual(plan?.compareBy, ["contract_type"]);
+  assert.equal(plan?.chart, "bar");
 });
 
 test("flere produktive mål kan forespørges sammen", () => {

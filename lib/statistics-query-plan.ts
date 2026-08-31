@@ -285,7 +285,10 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   if (includesAny(value, ["efter erfaringsgruppe", "fordelt pa erfaring", "fordelt på erfaring"])) plan.compareBy.push("experience_group");
   if (includesAny(value, ["efter faggruppe", "fordelt pa faggruppe", "fordelt på faggruppe"])) plan.compareBy.push("profession_type");
   if (includesAny(value, ["inflation", "reallon", "realløn", "købekraft", "kobekraft"])) plan.adjustForInflation = true;
-  plan.chart = includesAny(value, ["tabel", "oversigt"]) ? "table" : includesAny(value, ["søjle", "sojle"]) ? "bar" : "line";
+  const requestedTable = includesAny(value, ["tabel", "oversigt"]);
+  const requestedBar = includesAny(value, ["søjle", "sojle"]);
+  const countComparison = plan.metrics.length === 1 && plan.metrics[0] === "contract_count" && plan.compareBy.length > 0;
+  plan.chart = requestedTable ? "table" : requestedBar || countComparison ? "bar" : "line";
 
   // Producentnavne og andre fritekstværdier skal stadig løses af AI og det
   // kanoniske register. Undgå at gætte, når spørgsmålet tydeligt nævner en
