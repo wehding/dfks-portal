@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 type DeleteBlocked = {
   id: string;
@@ -61,6 +62,7 @@ export async function archiveRightsHolders(ids: string[]) {
       .update({ archived_at: new Date().toISOString() })
       .in("id", archiveIds);
     if (error) throw new Error(error.message);
+    await recordSensitiveFlow({ actor: { userId: admin.userId, orgId: admin.orgId, role: admin.role, source: "admin" }, action: "archive", component: "admin.rights-holders.archive", entityType: "rettighedshavere", targetMemberUuids: archiveIds, orgIds: [admin.orgId], purposeCode: "member_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["identity_data", "union_membership_data"], counts: { affected: archiveIds.length } });
     return { success: true, archivedCount: archiveIds.length, blocked };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : "Kunne ikke arkivere rettighedshavere.", archivedCount: 0, blocked: [] as DeleteBlocked[] };
@@ -81,6 +83,7 @@ export async function restoreRightsHolders(ids: string[]) {
       .update({ archived_at: null })
       .in("id", restoreIds);
     if (error) throw new Error(error.message);
+    await recordSensitiveFlow({ actor: { userId: admin.userId, orgId: admin.orgId, role: admin.role, source: "admin" }, action: "restore", component: "admin.rights-holders.restore", entityType: "rettighedshavere", targetMemberUuids: restoreIds, orgIds: [admin.orgId], purposeCode: "member_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["identity_data", "union_membership_data"], counts: { affected: restoreIds.length } });
     return { success: true, restoredCount: restoreIds.length };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : "Kunne ikke gendanne rettighedshavere.", restoredCount: 0 };
@@ -207,6 +210,7 @@ export async function permanentlyDeleteRightsHolders(
       }
     }
 
+    await recordSensitiveFlow({ actor: { userId: admin.userId, orgId: admin.orgId, role: admin.role, source: "admin" }, action: "delete", component: "admin.rights-holders.permanent-delete", entityType: "rettighedshavere", targetMemberUuids: holderIds, orgIds: [admin.orgId], purposeCode: "member_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["identity_data", "contract_data", "union_membership_data"], counts: { affected: holderIds.length, contracts: deletedContracts, works: deletedWorks, users: deletedUsers } });
     return { success: true, deletedCount: holderIds.length, deletedContracts, deletedWorks, deletedUsers, authDeleteFailures, blocked };
   } catch (error) {
     return {

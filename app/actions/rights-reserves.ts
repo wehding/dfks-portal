@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -111,6 +112,13 @@ export async function getReserveEntries(run_id: string): Promise<{
             fund_name: r.rights_funds?.name,
             period_label: r.rights_calculation_runs?.period_label,
         }))
+
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "read", component: "admin.rights_reserves", entityType: "rights_calculation_run", entityId: run_id,
+            purposeCode: "rights_administration", legalBasis: "gdpr_art_6_1_f",
+            dataCategories: ["rights_data", "financial_data"], counts: { results: entries.length },
+        })
 
         return { success: true, entries }
     } catch (err) {

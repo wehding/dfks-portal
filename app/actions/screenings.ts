@@ -9,6 +9,7 @@ import { sendMemberNotification } from "@/lib/member-notifications";
 import { resolveOrgId } from "@/lib/org";
 import { normalizeScreeningTitle } from "@/lib/screening-utils";
 import type { FilterRule } from "@/lib/streaming-types";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
 
@@ -65,6 +66,12 @@ export async function fetchMemberScreeningOptions() {
   ]);
   const assignmentWorks = (assignments ?? []).flatMap(row => Array.isArray(row.works) ? row.works : row.works ? [row.works] : []);
   const works = Array.from(new Map(assignmentWorks.map(work => [work.id, work])).values());
+  await recordSensitiveFlow({
+    actor: { userId: user.id, orgId, role: "member", source: "portal" }, action: "read",
+    component: "portal.screening_options", entityType: "screening_option", targetMemberUuid: holder?.id ?? null,
+    purposeCode: "screening_claim", legalBasis: "gdpr_art_6_1_b",
+    dataCategories: ["work_data", "membership_data"], counts: { works: works.length, broadcasters: broadcasters?.length ?? 0 },
+  });
   return { success: true, works, broadcasters: broadcasters ?? [] };
 }
 
@@ -73,6 +80,8 @@ export async function fetchMemberScreeningClaims() {
   if (!user) return { success: false, error: "Ikke autoriseret" };
 
   const db = createServiceClient();
+  const orgId = await userOrgId(user.id);
+  const { data: holder } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
   const { data: claims, error } = await db
     .from("screening_claims")
     .select(`
@@ -95,6 +104,13 @@ export async function fetchMemberScreeningClaims() {
       (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     ),
   }));
+
+  await recordSensitiveFlow({
+    actor: { userId: user.id, orgId, role: "member", source: "portal" }, action: "read",
+    component: "portal.screening_claims", entityType: "screening_claim", targetMemberUuid: holder?.id ?? null,
+    purposeCode: "screening_claim", legalBasis: "gdpr_art_6_1_b",
+    dataCategories: ["screening_data", "message_data"], counts: { results: processed.length },
+  });
 
   return { success: true, claims: processed };
 }

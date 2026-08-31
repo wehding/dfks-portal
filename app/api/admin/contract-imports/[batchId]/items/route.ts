@@ -4,6 +4,7 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { validateContractImportFile } from "@/lib/contract-import";
 import { intakeContractFile } from "@/lib/server/contract-import-intake";
 import { processPendingContractJobs } from "@/lib/server/contract-import-processor";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -32,6 +33,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ba
     workId: requestedWorkId,
   });
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "import", component: "admin.contract-imports.item-upload", entityType: "contract_import_batches", entityId: batchId, targetMemberUuid: preferredRightsHolderId, orgIds: [caller.orgId], purposeCode: "contract_import", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["contract_data", "document_data", "union_membership_data"], counts: { duplicate: result.duplicate } });
   after(async () => { await processPendingContractJobs(caller.orgId); });
   return NextResponse.json({ item: result.item, duplicate: result.duplicate });
 }

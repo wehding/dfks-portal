@@ -10,6 +10,7 @@ import { ensureMemberCollaborationReviews } from "@/lib/server/work-collaboratio
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { collaborationReviewStatusForSoloClaim } from "@/lib/work-collaboration-review";
 import { loadMemberWorkReviewTasks } from "@/lib/server/member-work-review-tasks";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 async function ownContext(rightsHolderId: string) {
   const session = await createClient();
@@ -43,6 +44,12 @@ export async function fetchMemberCollaborationReviews(params: { rightsHolderId: 
     holders.add(assignment.rights_holder_id);
     otherCounts.set(assignment.work_id, holders);
   }
+  await recordSensitiveFlow({
+    actor: { userId: holder.user_id, orgId, role: "member", source: "portal" }, action: "read",
+    component: "portal.work_collaboration_reviews", entityType: "work_collaboration_review", targetMemberUuid: holder.id,
+    purposeCode: "work_rights_review", legalBasis: "gdpr_art_6_1_b",
+    dataCategories: ["work_data", "rights_data"], counts: { results: reviews?.length ?? 0 },
+  });
   return {
     success: true as const,
     reviews: (reviews ?? []).map(review => ({

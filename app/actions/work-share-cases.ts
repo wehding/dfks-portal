@@ -21,6 +21,7 @@ import { paginateWorkShareQueue, type WorkShareQueueReference, type WorkShareQue
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import type { AuditContext } from "@/lib/audit-log";
 import { randomUUID } from "node:crypto";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 const ADMIN_SHARE_CASE_SELECT = "id,work_id,season_number,episode_number,status,resolution_scope,reserve_percent,created_at,works(title),work_share_participants(id,rights_holder_id,proposed_name,role,relationship_status,response_scope,proposed_percent,admin_seed_percent,final_percent,source_tags,source_details,invited_by_rights_holder_id,excluded_at,last_reminder_sent_at,rettighedshavere!work_share_participants_rights_holder_id_fkey(full_name,email,user_id,invite_sent_at),reported_by:rettighedshavere!work_share_participants_invited_by_rights_holder_id_fkey(full_name))";
 type AdminShareCaseRecord = Record<string, unknown> & {
@@ -119,6 +120,12 @@ export async function fetchMemberShareTask(params: {
   if (!knownHolderIds.includes(holder.id)) {
     return { success: false as const, error: "Værket er ikke tilknyttet din profil." };
   }
+  await recordSensitiveFlow({
+    actor: { userId: holder.user_id, orgId, role: "member", source: "portal" }, action: "read",
+    component: "portal.work_share_task", entityType: "work_share_case", entityId: shareCase?.id ?? null,
+    targetMemberUuid: holder.id, targetMemberUuids: knownHolderIds, purposeCode: "work_share_resolution",
+    legalBasis: "gdpr_art_6_1_b", dataCategories: ["work_data", "rights_data"], counts: { participants: knownHolderIds.length },
+  });
   const registeredCoEditors = [...new Map(eligibleAssignments
     .filter(row => row.rights_holder_id && row.rights_holder_id !== holder.id)
     .map(row => {

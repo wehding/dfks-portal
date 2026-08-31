@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuditAction, isAuditSource, type AuditFilters } from "@/lib/audit-log";
-import { fetchAuditEvents } from "@/lib/audit-log-server";
+import { fetchAuditEvents, recordAuditEvent } from "@/lib/audit-log-server";
+import { auditRequestContext } from "@/lib/audit-access-server";
 import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { z } from "zod";
@@ -70,6 +71,18 @@ export async function GET(req: NextRequest) {
         });
       }
     }
+    await recordAuditEvent({
+      context: auditRequestContext(req, caller, "admin", "admin.audit.events"),
+      action: "security_review",
+      entityType: "audit_events",
+      entityLabel: "Auditlog vist",
+      targetMemberUuids: [...new Set(items.flatMap(item => item.targetMemberUuids ?? []).filter((id): id is string => Boolean(id)))],
+      purposeCode: "audit_oversight",
+      legalBasis: "GDPR Art. 5(2), 15, 24 og 32",
+      dataCategories: ["audit_metadata"],
+      orgIds: requestedOrg ? [requestedOrg] : [],
+      metadata: { resultCount: items.length, filteredByMember: Boolean(filters.targetMemberUuid) },
+    });
     return NextResponse.json({
       items: items.map(item => caller.role === "superadmin" ? item : { ...item, ipAddress: null }),
       nextCursor,

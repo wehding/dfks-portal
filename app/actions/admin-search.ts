@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { requireOrgId } from "@/lib/org";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export type AdminSearchResult = { id: string; type: "rightsHolder" | "work" | "contract" | "producer"; title: string; context: string; href: string };
 
@@ -16,7 +17,8 @@ export async function searchAdmin(queryValue: string): Promise<{ success: boolea
   if (query.length < 2 || query.length > 100) return { success: false, results: [], error: "Søgningen skal være mellem 2 og 100 tegn." };
   const session = await createClient();
   const { data: { user } } = await session.auth.getUser();
-  if (!user || !(await assertAdminRole(session))) return { success: false, results: [], error: "Ikke autoriseret" };
+  const caller = user ? await assertAdminRole(session) : null;
+  if (!user || !caller) return { success: false, results: [], error: "Ikke autoriseret" };
   const db = createServiceClient();
   const orgId = await requireOrgId(db, user.id);
   const pattern = `%${escapedLike(query)}%`;
@@ -36,5 +38,6 @@ export async function searchAdmin(queryValue: string): Promise<{ success: boolea
     ...(contracts.data ?? []).map(row => ({ id: row.id, type: "contract" as const, title: row.working_title ?? "Kontrakt uden titel", context: row.type ?? "Kontrakt", href: `/admin/kontrakter?edit=${row.id}` })),
     ...(producers.data ?? []).map(row => ({ id: row.id, type: "producer" as const, title: row.name, context: "Producent", href: `/admin/producenter?search=${encodeURIComponent(row.name)}` })),
   ];
+  await recordSensitiveFlow({ actor: { userId: user.id, orgId, role: caller.role, source: "admin" }, action: "search", component: "admin.global-search", entityType: "admin_search", targetMemberUuids: (holders.data ?? []).map(row => row.id), orgIds: [orgId], purposeCode: "administration_search", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["identity_data", "contact_data", "contract_data", "union_membership_data"], counts: { results: results.length } });
   return { success: true, results };
 }

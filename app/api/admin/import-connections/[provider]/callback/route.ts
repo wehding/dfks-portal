@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { canonicalImportCallback, consumeImportOAuthAttempt, encryptIntegrationCredentials, providerOAuthConfig, type ImportProvider } from "@/lib/server/import-connection-oauth";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 type TokenResponse = { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string; account_id?: string };
 
@@ -65,6 +66,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pro
     };
     const result = existing.data?.id ? await db.from("import_connections").update(values).eq("id", existing.data.id) : await db.from("import_connections").insert(values);
     if (result.error) throw new Error(result.error.message);
+    await recordSensitiveFlow({ actor: { userId: attempt.userId, orgId: attempt.orgId, role: attempt.connectionKind === "member" ? "member" : "admin", source: attempt.connectionKind === "member" ? "portal" : "admin" }, action: "link", component: "import-connections.oauth-callback", entityType: "import_connections", entityId: existing.data?.id ?? null, targetMemberUuid: attempt.rightsHolderId, orgIds: attempt.orgId ? [attempt.orgId] : [], purposeCode: "document_import_connection", legalBasis: "GDPR Art. 6(1)(b)/(f) og 9(2)(d)", dataCategories: ["integration_metadata", "document_metadata", "union_membership_data"] });
     redirect.searchParams.set("import_connection", "connected");
   } catch (error) {
     console.error("[import-oauth] Callback fejlede", error instanceof Error ? error.message : "Ukendt fejl");

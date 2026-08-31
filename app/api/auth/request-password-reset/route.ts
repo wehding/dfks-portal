@@ -5,6 +5,7 @@ import { resolveBranding, resolveEmailSenderName, resolveReplyToEmail } from "@/
 import { buildAccountAccessUrl } from "@/lib/auth/account-access";
 import { requireConfiguredSiteUrl } from "@/lib/site-url";
 import { consumeRateLimit, requestIdentifier } from "@/lib/server/rate-limit";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 const GENERIC_RESPONSE = {
   ok: true,
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
     const user = linkData.user;
     const { data: holder } = await admin
       .from("rettighedshavere")
-      .select("full_name,org_affiliations(org_id,organisations(name,from_email,branding))")
+      .select("id,full_name,org_affiliations(org_id,organisations(name,from_email,branding))")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle();
@@ -70,6 +71,18 @@ export async function POST(request: NextRequest) {
         primaryColor: brand.primary_color,
         accessType: "recovery",
       }),
+    });
+    await recordSensitiveFlow({
+      actor: { orgId: affiliation?.org_id ?? null, source: "api" },
+      action: "reset_link",
+      component: "auth.password-reset-request",
+      entityType: "rettighedshavere",
+      entityId: holder?.id ?? user.id,
+      targetMemberUuid: holder?.id ?? null,
+      orgIds: affiliation?.org_id ? [affiliation.org_id] : [],
+      purposeCode: "account_recovery",
+      legalBasis: "GDPR Art. 6(1)(b)/(f) og 9(2)(d)",
+      dataCategories: ["identity_data", "contact_data", "union_membership_data"],
     });
   } catch (error) {
     console.error("[auth/request-password-reset] Password-reset kunne ikke afsendes", {

@@ -3,6 +3,11 @@ import { createClient } from "@supabase/supabase-js"
 import { requireAdminApi } from "@/lib/api-auth"
 import { errorMessage } from "@/lib/error-message"
 import { ADMIN_ROLES } from "@/lib/admin-roles"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
+
+async function auditAgreement(auth: { userId: string; orgId: string; role: string }, action: "create" | "read" | "update" | "delete", entityId?: string | null) {
+    await recordSensitiveFlow({ actor: { userId: auth.userId, orgId: auth.orgId, role: auth.role, source: "admin" }, action, component: `admin.agreements.${action}`, entityType: "agreements", entityId: entityId ?? null, orgIds: [auth.orgId], purposeCode: "agreement_rule_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["agreement_data", "salary_rules"] })
+}
 
 function sb() {
     return createClient(
@@ -55,6 +60,7 @@ export async function POST(req: NextRequest) {
                 if (error.code === "23505") return NextResponse.json({ error: "En regel med dette rate_key og valid_from findes allerede for denne overenskomst" }, { status: 409 })
                 return NextResponse.json({ error: error.message }, { status: 500 })
             }
+            await auditAgreement(auth, "create", String(r.agreementId))
             return NextResponse.json({ ok: true, id: data.id })
         }
 
@@ -85,6 +91,7 @@ export async function POST(req: NextRequest) {
                 if (error.code === "23505") return NextResponse.json({ error: "En pensionsregel med denne ansættelsesform og valid_from findes allerede for denne overenskomst" }, { status: 409 })
                 return NextResponse.json({ error: error.message }, { status: 500 })
             }
+            await auditAgreement(auth, "create", String(r.agreementId))
             return NextResponse.json({ ok: true, id: data.id })
         }
 
@@ -123,6 +130,7 @@ export async function POST(req: NextRequest) {
                 if (error.code === "23505") return NextResponse.json({ error: "En procentregel med dette rate_key og valid_from findes allerede" }, { status: 409 })
                 return NextResponse.json({ error: error.message }, { status: 500 })
             }
+            await auditAgreement(auth, "create", String(r.agreementId))
             return NextResponse.json({ ok: true, id: data.id })
         }
 
@@ -146,6 +154,7 @@ export async function POST(req: NextRequest) {
             .select("id")
             .single()
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        await auditAgreement(auth, "create", data.id)
         return NextResponse.json({ ok: true, id: data.id })
     } catch (e: unknown) {
         return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
@@ -182,6 +191,7 @@ export async function PATCH(req: NextRequest) {
             }
             const { error } = await supabase.from("agreements").update(patch).eq("id", body.agreementId)
             if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            await auditAgreement(auth, "update", body.agreementId)
             return NextResponse.json({ ok: true })
         }
 
@@ -206,6 +216,7 @@ export async function PATCH(req: NextRequest) {
             }
             const { error } = await supabase.from("agreement_wage_rules").update(patch).eq("id", body.wageRuleId)
             if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            await auditAgreement(auth, "update", body.wageRuleId)
             return NextResponse.json({ ok: true })
         }
 
@@ -228,6 +239,7 @@ export async function PATCH(req: NextRequest) {
             }
             const { error } = await supabase.from("agreement_pension_rules").update(patch).eq("id", body.pensionRuleId)
             if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            await auditAgreement(auth, "update", body.pensionRuleId)
             return NextResponse.json({ ok: true })
         }
 
@@ -251,6 +263,7 @@ export async function PATCH(req: NextRequest) {
             }
             const { error } = await supabase.from("agreement_percentage_rules").update(patch).eq("id", body.percentageRuleId)
             if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            await auditAgreement(auth, "update", body.percentageRuleId)
             return NextResponse.json({ ok: true })
         }
 
@@ -281,6 +294,7 @@ export async function GET(req: NextRequest) {
                 .filter(r => r.short_code)
                 .map(r => ({ value: r.short_code as string, label: r.title as string }))
                 .filter(o => seen.has(o.value) ? false : (seen.add(o.value), true))
+            await auditAgreement(auth, "read")
             return NextResponse.json({ overenskomster })
         }
 
@@ -301,6 +315,7 @@ export async function GET(req: NextRequest) {
         for (const row of (data ?? []) as Array<{ label_key: string | null; fortolkningsnote: string | null }>) {
             if (row.label_key && row.fortolkningsnote) notes[row.label_key] = row.fortolkningsnote
         }
+        await auditAgreement(auth, "read", agreementCode)
         return NextResponse.json({ notes })
     } catch (e: unknown) {
         return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
@@ -333,6 +348,7 @@ export async function DELETE(req: NextRequest) {
                     .eq("id", body.wageRuleId)
                 if (error) return NextResponse.json({ error: error.message }, { status: 500 })
             }
+            await auditAgreement(auth, "delete", body.wageRuleId)
             return NextResponse.json({ ok: true })
         }
 
@@ -352,6 +368,7 @@ export async function DELETE(req: NextRequest) {
                     .eq("id", body.pensionRuleId)
                 if (error) return NextResponse.json({ error: error.message }, { status: 500 })
             }
+            await auditAgreement(auth, "delete", body.pensionRuleId)
             return NextResponse.json({ ok: true })
         }
 
@@ -371,6 +388,7 @@ export async function DELETE(req: NextRequest) {
                     .eq("id", body.percentageRuleId)
                 if (error) return NextResponse.json({ error: error.message }, { status: 500 })
             }
+            await auditAgreement(auth, "delete", body.percentageRuleId)
             return NextResponse.json({ ok: true })
         }
 

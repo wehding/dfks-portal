@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
 import type { PayrollExportBatch } from "@/app/actions/rights-settlements"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -173,6 +174,14 @@ export async function previewExport(
             ? buildDataLonCsv(rows, lønart)
             : buildGenericCsv(rows)
 
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "download", component: "admin.rights_export_preview", entityType: "settlement", entityId: settlement_id,
+            targetMemberUuids: rows.map(row => row.rights_holder_id), purposeCode: "payroll_export",
+            legalBasis: "gdpr_art_6_1_f", dataCategories: ["financial_data", "membership_data"],
+            counts: { rows: rows.length, skipped },
+        })
+
         return {
             success: true,
             row_count: rows.filter(r => r.payroll_recipient_id).length,
@@ -255,6 +264,14 @@ export async function exportSettlement(
                 ignoreDuplicates: true,
             })
         }
+
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "download", component: "admin.rights_export", entityType: "payroll_export_batch", entityId: batch.id,
+            targetMemberUuids: exportableRows.map(row => row.rights_holder_id), purposeCode: "payroll_export",
+            legalBasis: "gdpr_art_6_1_f", dataCategories: ["financial_data", "membership_data"],
+            counts: { rows: exportableRows.length, skipped },
+        })
 
         revalidatePath("/admin/rettighedsmidler/afregning")
         return {

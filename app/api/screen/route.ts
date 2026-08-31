@@ -17,6 +17,8 @@ import { buildPortalContractScreeningPrompt } from "@/lib/portal-contract-screen
 import { buildSystemPrompt } from "@/lib/ai"
 import { maskPersonalData } from "@/lib/mask-text"
 import { ADMIN_ROLES } from "@/lib/admin-roles"
+import { createServiceClient } from "@/lib/supabase/service"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 export async function POST(req: NextRequest) {
     const auth = await requireSessionApi()
@@ -71,6 +73,25 @@ export async function POST(req: NextRequest) {
                 { status: 500 }
             )
         }
+
+        const db = createServiceClient()
+        const { data: holder } = await db.from("rettighedshavere")
+            .select("id,org_affiliations(org_id)")
+            .eq("user_id", auth.userId)
+            .limit(1)
+            .maybeSingle()
+        const affiliation = Array.isArray(holder?.org_affiliations) ? holder.org_affiliations[0] : null
+        await recordSensitiveFlow({
+            actor: { userId: auth.userId, orgId: affiliation?.org_id ?? null, role: mode === "portal" ? "member" : "admin", source: mode === "portal" ? "portal" : "admin" },
+            action: "ai_analysis",
+            component: `contracts.screen.${mode}`,
+            entityType: "contract_text",
+            targetMemberUuid: holder?.id ?? null,
+            orgIds: affiliation?.org_id ? [affiliation.org_id] : [],
+            purposeCode: mode === "portal" ? "member_contract_screening" : "contract_review",
+            legalBasis: "GDPR Art. 6(1)(b)/(f) og 9(2)(d)",
+            dataCategories: ["contract_data", "salary_data", "ai_analysis"],
+        })
 
         return NextResponse.json({ result: parsed })
     } catch (err: unknown) {

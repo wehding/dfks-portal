@@ -9,6 +9,7 @@ import { personSearchVariants, scorePersonName } from "@/lib/person-name-match";
 import { isAllowedPortraitSource } from "@/lib/person-portrait";
 import { sourceSearchFailed, type SourceAttemptStatus } from "@/lib/source-search-status";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export type PersonCandidate = {
   key: string;
@@ -176,6 +177,10 @@ export async function discoverPersonCandidates(fullName: string, alternativeName
     tmdb: sourceSearchFailed(sourceAttempts.tmdb),
     wikidata: sourceSearchFailed(sourceAttempts.wikidata),
   };
+  const db = createServiceClient();
+  const { data: holder } = await db.from("rettighedshavere").select("id,org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
+  const affiliation = Array.isArray(holder?.org_affiliations) ? holder.org_affiliations[0] : null;
+  await recordSensitiveFlow({ actor: { userId: user.id, orgId: affiliation?.org_id ?? null, role: "member", source: "portal" }, action: "search", component: "portal.person-discovery", entityType: "external_person_candidates", targetMemberUuid: holder?.id ?? null, orgIds: affiliation?.org_id ? [affiliation.org_id] : [], purposeCode: "member_identity_matching", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["identity_data", "work_data", "union_membership_data"], counts: { results: result.length } });
   return { success: true, candidates: result, sourceErrors };
 }
 
@@ -206,7 +211,7 @@ export async function confirmExternalPersonIdentity(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
   const db = createServiceClient();
-  const { data: holder } = await db.from("rettighedshavere").select("id, full_name, alternative_names").eq("user_id", user.id).maybeSingle();
+  const { data: holder } = await db.from("rettighedshavere").select("id, full_name, alternative_names,org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
   if (!holder) return { success: false, error: "Rettighedshaveren blev ikke fundet." };
   const verifiedSearchName = searchedName?.trim() || holder.full_name;
   if (holder.full_name && scorePersonName(holder.full_name, verifiedSearchName).score < 0.62) return { success: false, error: "Søgenavnet afviger for meget fra din profil." };
@@ -266,5 +271,7 @@ export async function confirmExternalPersonIdentity(
         : error.message,
     };
   }
+  const affiliation = Array.isArray(holder.org_affiliations) ? holder.org_affiliations[0] : null;
+  await recordSensitiveFlow({ actor: { userId: user.id, orgId: affiliation?.org_id ?? null, role: "member", source: "portal" }, action: "update", component: "portal.person-identity.confirm", entityType: "rettighedshavere", entityId: holder.id, targetMemberUuid: holder.id, orgIds: affiliation?.org_id ? [affiliation.org_id] : [], purposeCode: "member_identity_matching", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["identity_data", "work_data", "union_membership_data"], counts: { externalIdentities: rows.length, nameVariants: variants.length } });
   return { success: true, portraitUrl: storedPortraitUrl };
 }

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { verifyOcrCloudRunRequest } from "@/lib/server/cloud-run-identity";
 import { parseContractDocumentLeaseArtifactPath } from "@/lib/server/contract-document-lease-artifacts";
 import { createServiceClient } from "@/lib/supabase/service";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -91,6 +92,24 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ error: "Midlertidig filadgang kunne ikke oprettes" }, { status: 500 });
   }
+  const { data: contract } = await db.from("contracts")
+    .select("rights_holder_id")
+    .eq("id", job.contract_id)
+    .eq("org_id", job.org_id)
+    .maybeSingle();
+  await recordSensitiveFlow({
+    actor: { orgId: job.org_id, source: "cron" },
+    action: "read",
+    component: "internal.document-processing.claim",
+    entityType: "contracts",
+    entityId: job.contract_id,
+    targetMemberUuid: contract?.rights_holder_id ?? null,
+    orgIds: [job.org_id],
+    purposeCode: "document_ocr_processing",
+    legalBasis: "GDPR Art. 6(1)(b)/(f) og 9(2)(d)",
+    dataCategories: ["contract_data", "document_data", "ai_analysis"],
+    correlationId: job.id,
+  });
   return NextResponse.json({
     jobId: job.id,
     leaseToken: job.lease_token,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 function getAdmin() {
     return createAdminClient(
@@ -40,6 +41,8 @@ export async function GET() {
         user_count: countMap[org.id] ?? 0,
     }))
 
+    await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "security_review", component: "superadmin.organisations.list", entityType: "organisations", orgIds: result.map(org => org.id), purposeCode: "platform_administration", legalBasis: "GDPR Art. 6(1)(f), 24 og 32", dataCategories: ["organisation_data", "access_control_metadata"], counts: { results: result.length } })
+
     return NextResponse.json(result)
 }
 
@@ -74,6 +77,7 @@ export async function POST(req: NextRequest) {
         .single()
 
     if (error) return NextResponse.json({ error: "Organisationen kunne ikke oprettes." }, { status: 500 })
+    await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "create", component: "superadmin.organisations.create", entityType: "organisations", entityId: data.id, orgIds: [data.id], purposeCode: "platform_administration", legalBasis: "GDPR Art. 6(1)(f), 24 og 32", dataCategories: ["organisation_data", "contact_data", "access_control_metadata"] })
     return NextResponse.json(data, { status: 201 })
 }
 
