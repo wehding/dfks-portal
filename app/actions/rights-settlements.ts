@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { firstRelated } from "@/lib/supabase/relations"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -179,7 +180,7 @@ export async function getSettlements(): Promise<{
 
         if (error) throw error
 
-        const settlements: Settlement[] = (data ?? []).map((r: any) => ({
+        const settlements: Settlement[] = (data ?? []).map((r) => ({
             ...r,
             total_gross: Number(r.total_gross ?? 0),
             total_individual: Number(r.total_individual ?? 0),
@@ -248,7 +249,7 @@ export async function createSettlement(payload: {
             run_label: string | null
         }>()
 
-        for (const a of allocs as any[]) {
+        for (const a of allocs) {
             const id = a.rights_holder_id
             if (!byHolder.has(id)) {
                 byHolder.set(id, { allocIds: [], total: 0, work_title: null, run_label: null })
@@ -256,8 +257,8 @@ export async function createSettlement(payload: {
             const entry = byHolder.get(id)!
             entry.allocIds.push(a.id)
             entry.total += Number(a.individual_net)
-            entry.work_title = a.episodes?.title ?? a.works?.title ?? null
-            entry.run_label = a.rights_calculation_runs?.period_label ?? null
+            entry.work_title = firstRelated(a.episodes)?.title ?? firstRelated(a.works)?.title ?? null
+            entry.run_label = firstRelated(a.rights_calculation_runs)?.period_label ?? null
         }
 
         // Beregn summer
@@ -288,9 +289,9 @@ export async function createSettlement(payload: {
                 items.push({
                     rights_holder_id: rhId,
                     allocation_id: allocId,
-                    individual_net: Number((allocs as any[]).find(a => a.id === allocId)?.individual_net ?? 0),
+                    individual_net: Number(allocs.find(a => a.id === allocId)?.individual_net ?? 0),
                     adjustment_total: 0,
-                    payable_amount: belowThreshold ? 0 : Number((allocs as any[]).find(a => a.id === allocId)?.individual_net ?? 0),
+                    payable_amount: belowThreshold ? 0 : Number(allocs.find(a => a.id === allocId)?.individual_net ?? 0),
                     below_threshold: belowThreshold,
                     currency,
                 })
@@ -415,7 +416,7 @@ export async function getSettlementItems(settlement_id: string): Promise<{
 
         if (error) throw error
 
-        const items: SettlementItem[] = (data ?? []).map((r: any) => ({
+        const items: SettlementItem[] = (data ?? []).map((r) => ({
             ...r,
             individual_net: Number(r.individual_net),
             adjustment_total: Number(r.adjustment_total),
@@ -454,7 +455,7 @@ export async function getPayrollReferences(): Promise<{
 
         if (error) throw error
 
-        const references: PayrollRecipientReference[] = (data ?? []).map((r: any) => ({
+        const references: PayrollRecipientReference[] = (data ?? []).map((r) => ({
             ...r,
             rights_holder_name: r.rettighedshavere?.full_name,
         }))
@@ -517,7 +518,7 @@ export async function getPayrollExportBatches(): Promise<{
 
         if (error) throw error
 
-        const batches: PayrollExportBatch[] = (data ?? []).map((r: any) => ({
+        const batches: PayrollExportBatch[] = (data ?? []).map((r) => ({
             ...r,
             settlement_label: r.settlements?.label,
         }))

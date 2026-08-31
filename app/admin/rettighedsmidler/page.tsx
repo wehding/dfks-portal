@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Plus, ChevronRight, CheckCircle2, Clock, Ban, BookOpen, RotateCcw } from "lucide-react"
+import { Plus, CheckCircle2, Clock, Ban, BookOpen, RotateCcw } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -29,11 +29,10 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { getRightsFunds, getPolicyVersions } from "@/app/actions/rights-funds"
+import { getRightsFunds } from "@/app/actions/rights-funds"
 import type { RightsFund, PolicyVersionWithComponents } from "@/app/actions/rights-funds"
 import {
     getCalculationRuns,
@@ -411,7 +410,10 @@ export default function RettighedsmidlerPage() {
         setLoading(false)
     }, [])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => void load(), 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
 
     const activeRuns = runs.filter(r => !["booked", "cancelled"].includes(r.status))
     const completedRuns = runs.filter(r => r.status === "booked")

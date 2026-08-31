@@ -94,7 +94,7 @@ export async function getSearchPublications(status?: SearchPublicationStatus): P
         const { data, error } = await q
         if (error) throw error
 
-        const publications: SearchPublication[] = (data ?? []).map((r: any) => ({
+        const publications: SearchPublication[] = (data ?? []).map((r) => ({
             ...r,
             withheld_amount: r.withheld_amount != null ? Number(r.withheld_amount) : null,
             fund_name: r.rights_funds?.name,
@@ -226,7 +226,7 @@ export async function getInheritanceRelations(rights_holder_id?: string): Promis
         if (error) throw error
 
         // Returner aldrig krypteret CPR til klienten
-        const relations: InheritanceRelation[] = (data ?? []).map((r: any) => ({
+        const relations: InheritanceRelation[] = (data ?? []).map((r) => ({
             ...r,
             heir_cpr_encrypted: null,   // bevidst udeladt
             rights_holder_name: r.rettighedshavere?.full_name,

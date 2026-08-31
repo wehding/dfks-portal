@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
 import {
     Dialog,
     DialogContent,
@@ -34,7 +33,6 @@ import {
     getRightsHolderSummary,
     getWithheldPositions,
     createRightsAllocations,
-    createWithheldPosition,
     resolveWithheldPosition,
     type RightsAllocation,
     type RightsHolderSummary,
@@ -316,7 +314,10 @@ export function RightsAllocationsPanel({
         setLoading(false)
     }, [runId])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => void load(), 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
 
     const canEdit = !["booked", "cancelled"].includes(runStatus)
 
@@ -363,7 +364,7 @@ export function RightsAllocationsPanel({
                 <TabsContent value="personer" className="mt-3">
                     {summary.length === 0 ? (
                         <p className="text-sm text-muted-foreground py-4">
-                            Ingen tildelinger endnu. Fordel værkbeløb under fanen "Tildelinger".
+                            Ingen tildelinger endnu. Fordel værkbeløb under fanen &quot;Tildelinger&quot;.
                         </p>
                     ) : (
                         <Table>

@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { firstRelated } from "@/lib/supabase/relations"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -111,7 +112,7 @@ export async function getRightsAllocations(run_id: string): Promise<{
 
         if (error) throw error
 
-        const allocations: RightsAllocation[] = (data ?? []).map((r: any) => ({
+        const allocations: RightsAllocation[] = (data ?? []).map((r) => ({
             ...r,
             rights_holder_name: r.rettighedshavere?.full_name,
             rights_holder_member_number: r.rettighedshavere?.member_number,
@@ -262,7 +263,7 @@ export async function getWithheldPositions(run_id: string): Promise<{
 
         if (error) throw error
 
-        const positions: WithheldPosition[] = (data ?? []).map((r: any) => ({
+        const positions: WithheldPosition[] = (data ?? []).map((r) => ({
             ...r,
             rights_holder_name: r.rettighedshavere?.full_name,
             rights_holder_member_number: r.rettighedshavere?.member_number,
@@ -379,13 +380,14 @@ export async function getRightsHolderSummary(run_id: string): Promise<{
 
         // Aggregér per rettighedshaver
         const map = new Map<string, RightsHolderSummary>()
-        for (const row of (data ?? []) as any[]) {
+        for (const row of data ?? []) {
             const id = row.rights_holder_id
+            const holder = firstRelated(row.rettighedshavere)
             if (!map.has(id)) {
                 map.set(id, {
                     rights_holder_id: id,
-                    rights_holder_name: row.rettighedshavere?.full_name ?? "—",
-                    member_number: row.rettighedshavere?.member_number ?? null,
+                    rights_holder_name: holder?.full_name ?? "—",
+                    member_number: holder?.member_number ?? null,
                     allocation_count: 0,
                     total_individual_net: 0,
                     has_withheld: false,

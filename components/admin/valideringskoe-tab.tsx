@@ -118,9 +118,12 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
         }))
         setRows(mapped)
         setLoading(false)
-    }, [onAfventerCount])
+    }, [])
 
-    useEffect(() => { void load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => void load(), 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
 
     const afventer = rows.filter(r => r.status === "kladde")
     const gennemgaede = rows.filter(r => r.status !== "kladde")
