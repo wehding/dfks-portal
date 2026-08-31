@@ -7,6 +7,17 @@ export type DocumentCompletion = {
   errorCode?: string | null;
 };
 
+const CONTRACT_DOCUMENT_CLASSIFICATIONS = new Set([
+  "native_text",
+  "image_only",
+  "mixed",
+  "unreadable",
+]);
+
+export function isContractDocumentClassification(value: unknown): value is NonNullable<DocumentCompletion["documentClassification"]> {
+  return typeof value === "string" && CONTRACT_DOCUMENT_CLASSIFICATIONS.has(value);
+}
+
 export type StoredDocumentCompletion = {
   contract_id: string;
   status: string;

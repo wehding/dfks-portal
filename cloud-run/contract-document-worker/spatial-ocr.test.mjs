@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  classifyOcrDocument,
   classifyPageText,
   computeSpatialAccuracy,
   correctPageOrientation,
@@ -30,6 +31,20 @@ test("native tekst og billedside klassificeres forskelligt", () => {
   }).classification, "mixed");
   assert.equal(classifyPageText(nativeText, { rasterInspectionReliable: false }).classification, "mixed");
   assert.equal(classifyPageText("").classification, "image_only");
+});
+
+test("OCR-dokumentklasse bruger kun databasegodkendte kildeklasser", () => {
+  assert.equal(classifyOcrDocument([
+    { classification: "image_only" },
+    { classification: "image_only" },
+  ]), "image_only");
+  assert.equal(classifyOcrDocument([
+    { classification: "native_text" },
+    { classification: "image_only" },
+  ]), "mixed");
+  assert.equal(classifyOcrDocument([
+    { classification: "mixed" },
+  ]), "mixed");
 });
 
 test("pdfimages afslører helsides scan bag et skjult tekstlag", () => {

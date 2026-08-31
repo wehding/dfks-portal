@@ -257,7 +257,7 @@ test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
     identityTokenProvider: async () => "identity-secret",
     spatialProcessor: async () => ({
       status: "needs_review",
-      classification: "orientation_uncertain",
+      classification: "image_only",
       pageCount: 3,
       nativePageCount: 0,
       ocrPageCount: 3,
@@ -285,6 +285,38 @@ test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
     { page: 1, degrees: 270 }, { page: 3, degrees: 90 },
   ]);
   assert.equal(completions[0].errorCode, "orientation_uncertain");
+  assert.equal(completions[0].documentClassification, "image_only");
+});
+
+test("en diagnose kan ikke bruges som dokumentklassifikation", async () => {
+  let completionCalls = 0;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    spatialProcessor: async () => ({
+      status: "needs_review",
+      classification: "orientation_uncertain",
+      pageCount: 1,
+      nativePageCount: 0,
+      ocrPageCount: 1,
+      unreadablePageCount: 0,
+      orientationQualityFailed: true,
+    }),
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) {
+        completionCalls += 1;
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  await assert.rejects(processor, (error) => error instanceof FatalProcessingError
+    && error.code === "invalid_document_classification");
+  assert.equal(completionCalls, 0);
 });
 
 test("callbackfejl er fatal", async () => {

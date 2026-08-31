@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   classifyDocumentCompletionFailure,
+  isContractDocumentClassification,
   isIdempotentDocumentCompletionReplay,
   type StoredDocumentCompletion,
 } from "@/lib/contract-document-completion";
@@ -54,7 +55,9 @@ export async function POST(request: Request) {
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (!body.jobId || !uuidPattern.test(body.jobId)
     || !body.leaseToken || !uuidPattern.test(body.leaseToken)
-    || !["completed", "failed", "needs_review", "not_required"].includes(body.status ?? "")) {
+    || !["completed", "failed", "needs_review", "not_required"].includes(body.status ?? "")
+    || (body.documentClassification != null
+      && !isContractDocumentClassification(body.documentClassification))) {
     return NextResponse.json({ error: "Ugyldig jobstatus" }, { status: 400 });
   }
   const corrections = Array.isArray(body.orientationCorrections)

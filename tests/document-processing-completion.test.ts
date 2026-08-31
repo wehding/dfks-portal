@@ -3,8 +3,18 @@ import test from "node:test";
 
 import {
   classifyDocumentCompletionFailure,
+  isContractDocumentClassification,
   isIdempotentDocumentCompletionReplay,
 } from "../lib/contract-document-completion";
+
+test("completion accepterer kun databasegodkendte dokumentklasser", () => {
+  for (const value of ["native_text", "image_only", "mixed", "unreadable"]) {
+    assert.equal(isContractDocumentClassification(value), true);
+  }
+  for (const value of ["orientation_uncertain", "", null, undefined, 42]) {
+    assert.equal(isContractDocumentClassification(value), false);
+  }
+});
 
 const completed = {
   contract_id: "contract",
