@@ -379,6 +379,34 @@ test("DLP accepterer udeladte nulkoordinater ved billedets top og venstre kant",
   assert.equal(result.unlocatedFindings, 0);
 });
 
+test("DLP accepterer kanoniske ProtoJSON-heltalstrenge uden at lempe geometrikrav", () => {
+  const result = extractDlpFindings({
+    inspectResult: {
+      findings: [{
+        infoType: { name: "IBAN_CODE" },
+        location: { contentLocations: [{ imageLocation: { boundingBoxes: [{
+          top: "0", left: "12", width: "30", height: "8",
+        }] } }] },
+      }],
+    },
+  });
+  assert.deepEqual(result.boxes, [{
+    top: 0, left: 12, width: 30, height: 8, infoType: "IBAN_CODE",
+  }]);
+  for (const invalid of [" 1", "+1", "01", "1.0", "1e1", "9007199254740992"]) {
+    assert.throws(() => extractDlpFindings({
+      inspectResult: {
+        findings: [{
+          infoType: { name: "IBAN_CODE" },
+          location: { contentLocations: [{ imageLocation: { boundingBoxes: [{
+            top: 0, left: 0, width: invalid, height: 1,
+          }] } }] },
+        }],
+      },
+    }), /dlp_location_invalid/);
+  }
+});
+
 test("DLP kræver fortsat positive dimensioner for kantbokse", () => {
   const response = (boundingBox) => ({ inspectResult: { findings: [{
     infoType: { name: "IBAN_CODE" },
@@ -390,7 +418,7 @@ test("DLP kræver fortsat positive dimensioner for kantbokse", () => {
   assert.throws(() => extractDlpFindings(response({ width: 3, height: 0 })), /dlp_location_invalid/);
   assert.throws(() => extractDlpFindings(response({ top: -1, width: 3, height: 4 })), /dlp_location_invalid/);
   assert.throws(() => extractDlpFindings(response({ left: 1.5, width: 3, height: 4 })), /dlp_location_invalid/);
-  assert.throws(() => extractDlpFindings(response({ top: "0", width: 3, height: 4 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ top: "-0", width: 3, height: 4 })), /dlp_location_invalid/);
 });
 
 test("DLP-svar uden et gyldigt dekodbart billede afvises", async () => {
@@ -496,7 +524,7 @@ test("for stor kanonisk DLP-PNG nedskaleres sikkert før Vision og masker forbli
   assert.equal(result.downscaled, true);
   assert.equal(metadata.width < width, true);
   assert.equal(metadata.height < height, true);
-  assert.equal(Math.max(metadata.width, metadata.height) >= 1_600, true);
+  assert.equal(Math.max(metadata.width, metadata.height) >= 1_200, true);
   assert.equal(
     visionRequestBodySize([{ imageBytes: result.imageBytes }]) <= MAX_VISION_REQUEST_BODY_BYTES,
     true,
@@ -601,6 +629,59 @@ test("Vision deler automatisk et for stort fler-sidesvar uden at ændre rækkef�
   assert.equal(visionBatchSizes.filter((size) => size === 1).length, 4);
   assert.equal(visionUrls.every((url) => url.includes("fields=responses(")), true);
   assert.equal(visionUrls.every((url) => url.includes("fullTextAnnotation%2Fpages")), true);
+});
+
+test("for stort enkelt-sidesvar får præcis én ekstra maskeret nedskalering", async () => {
+  const width = 1_600;
+  const height = 1_200;
+  const source = await solidJpeg(width, height);
+  const redacted = await sharp({
+    create: { width, height, channels: 3, background: "white" },
+  }).png({ compressionLevel: 9, palette: false }).toBuffer();
+  const responseLimit = 500;
+  const visionWidths = [];
+  const visionImages = [];
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      if (url.includes("image:redact")) {
+        return {
+          redactedImage: redacted.toString("base64"),
+          inspectResult: { findings: [{
+            infoType: { name: "IBAN_CODE" },
+            location: { contentLocations: [{ imageLocation: { boundingBoxes: [{
+              top: "120", left: "160", width: "320", height: "240",
+            }] } }] },
+          }] },
+        };
+      }
+      const image = Buffer.from(payload.requests[0].image.content, "base64");
+      const metadata = await sharp(image).metadata();
+      visionWidths.push(metadata.width);
+      visionImages.push(image);
+      return { responses: [{
+        fullTextAnnotation: {
+          pages: [{ width: metadata.width, height: metadata.height, blocks: [] }],
+          ...(visionWidths.length === 1 ? { padding: "x".repeat(responseLimit) } : {}),
+        },
+      }] };
+    },
+  });
+
+  const result = await client.redactAndAnnotate([{ pageNumber: 1, imageBytes: source }], {
+    resourceLimits: { maxVisionResponseBytesPerBatch: responseLimit },
+  });
+  assert.equal(result.responses.length, 1);
+  assert.deepEqual(visionWidths, [1_600, 1_200]);
+  assert.equal(result.visionPageTransforms[0].visionWidth, 1_200);
+  assert.equal(result.visionPageTransforms[0].visionHeight, 900);
+  assert.deepEqual(await rgbAt(visionImages[1], 120, 90), [0, 0, 0]);
+  assert.deepEqual(await rgbAt(visionImages[1], 359, 269), [0, 0, 0]);
+  assert.notDeepEqual(await rgbAt(visionImages[1], 119, 89), [0, 0, 0]);
 });
 
 test("adaptiv Vision-opdeling stopper mellem delkald, når jobleasen mistes", async () => {

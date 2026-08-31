@@ -114,6 +114,7 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
         return { stdout: "", stderr: "" };
       }
       if (command === "python3" && args[0].endsWith("vision_overlay.py")) {
+        assert.equal(args[5], String(25 * 1024 * 1024));
         await writeFile(args[4], "%PDF-blank-test");
         return { stdout: "", stderr: "" };
       }
@@ -375,6 +376,78 @@ test("modgående centerkontrol accepterer samme slanke ordgeometri uden at sænk
   assert.ok(result.medianIou >= 0.8);
   assert.equal(result.centerInsideRatio, 1);
   assert.equal(result.passed, true);
+});
+
+test("ét Vision-ord kan matches mod højst tre tilstødende PDF-tokens", () => {
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 100,
+    imageHeight: 40,
+    words: [{
+      text: "arbejdsmarked",
+      vertices: [{ x: 10, y: 10 }, { x: 70, y: 10 }, { x: 70, y: 20 }, { x: 10, y: 20 }],
+    }],
+  }];
+  const extracted = [{
+    width: 100,
+    height: 40,
+    words: [
+      { text: "arbejds-", xMin: 10, yMin: 10, xMax: 40, yMax: 20 },
+      { text: "marked", xMin: 40, yMin: 10, xMax: 70, yMax: 20 },
+    ],
+  }];
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.expectedWords, 1);
+  assert.equal(result.matchedWords, 1);
+  assert.equal(result.score, 1);
+  assert.equal(result.passed, true);
+});
+
+test("tilstødende Vision-ord kan matches mod ét samlet PDF-token", () => {
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 100,
+    imageHeight: 40,
+    words: [
+      { text: "arbejds", vertices: [{ x: 10, y: 10 }, { x: 40, y: 10 }, { x: 40, y: 20 }, { x: 10, y: 20 }] },
+      { text: "marked", vertices: [{ x: 40, y: 10 }, { x: 70, y: 10 }, { x: 70, y: 20 }, { x: 40, y: 20 }] },
+    ],
+  }];
+  const extracted = [{
+    width: 100,
+    height: 40,
+    words: [{ text: "arbejdsmarked", xMin: 10, yMin: 10, xMax: 70, yMax: 20 }],
+  }];
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.expectedWords, 2);
+  assert.equal(result.matchedWords, 2);
+  assert.equal(result.score, 1);
+  assert.equal(result.passed, true);
+});
+
+test("ikke-tilstødende tokens samles ikke og kvalitetsgrænsen sænkes ikke", () => {
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 100,
+    imageHeight: 40,
+    words: [{
+      text: "arbejdsmarked",
+      vertices: [{ x: 10, y: 10 }, { x: 70, y: 10 }, { x: 70, y: 20 }, { x: 10, y: 20 }],
+    }],
+  }];
+  const extracted = [{
+    width: 100,
+    height: 40,
+    words: [
+      { text: "arbejds", xMin: 10, yMin: 10, xMax: 35, yMax: 20 },
+      { text: "andet", xMin: 35, yMin: 10, xMax: 45, yMax: 20 },
+      { text: "marked", xMin: 45, yMin: 10, xMax: 70, yMax: 20 },
+    ],
+  }];
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.matchedWords, 0);
+  assert.equal(result.score, 0);
+  assert.equal(result.passed, false);
 });
 
 test("99 procent manglende ord kan ikke give falsk spatial godkendelse", () => {
