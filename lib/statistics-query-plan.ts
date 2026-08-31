@@ -281,6 +281,7 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
 
   if (plan.filters.categories.length > 1 || includesAny(value, ["efter produktionstype", "fordelt pa produktionstype", "fordelt på produktionstype"])) plan.compareBy.push("category");
   if (plan.filters.contractTypes.length > 1 || includesAny(value, ["efter kontrakttype", "fordelt pa kontrakttype", "fordelt på kontrakttype"])) plan.compareBy.push("contract_type");
+  if (salaryMentioned && includesAny(value, ["hvilke producenter", "bedste producenter", "producenter giver bedst", "producenter betaler bedst", "top producenter", "efter producent", "fordelt pa producent", "fordelt på producent"])) plan.compareBy.push("producer");
   if (plan.filters.genders.length > 1 || /\b(?:efter|fordelt (?:pa|på)) (?:kon|køn)\b/.test(value)) plan.compareBy.push("gender");
   if (includesAny(value, ["efter erfaringsgruppe", "fordelt pa erfaring", "fordelt på erfaring"])) plan.compareBy.push("experience_group");
   if (includesAny(value, ["efter faggruppe", "fordelt pa faggruppe", "fordelt på faggruppe"])) plan.compareBy.push("profession_type");
@@ -288,12 +289,13 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   const requestedTable = includesAny(value, ["tabel", "oversigt"]);
   const requestedBar = includesAny(value, ["søjle", "sojle"]);
   const countComparison = plan.metrics.length === 1 && plan.metrics[0] === "contract_count" && plan.compareBy.length > 0;
-  plan.chart = requestedTable ? "table" : requestedBar || countComparison ? "bar" : "line";
+  const producerSalaryComparison = plan.compareBy.includes("producer") && plan.metrics.some(metric => metric === "median_monthly_salary" || metric === "average_monthly_salary");
+  plan.chart = requestedTable ? "table" : requestedBar || countComparison || producerSalaryComparison ? "bar" : "line";
 
   // Producentnavne og andre fritekstværdier skal stadig løses af AI og det
   // kanoniske register. Undgå at gætte, når spørgsmålet tydeligt nævner en
   // navngiven producent.
-  if (value.includes("producent") && /\b(?:hos|fra|for)\b/.test(value)) return null;
+  if (value.includes("producent") && /\b(?:hos|fra|for) producent(?:en)?\s+\S/.test(value)) return null;
   return parseStatisticsQueryPlan(plan);
 }
 
@@ -357,7 +359,7 @@ export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
   if (plan.compareBy.includes("membership_type") && !plan.filters.membershipTypes.length) plan.filters.membershipTypes = [...allowedMembershipTypes];
   if (plan.compareBy.includes("experience_group") && !plan.filters.experienceGroups.length) plan.filters.experienceGroups = [...allowedExperienceGroups];
   for (const dimension of plan.compareBy) {
-    const values = dimension === "producer" ? plan.filters.producerNames
+    const values = dimension === "producer" ? ["auto"]
       : dimension === "producer_type" ? plan.filters.producerTypeCodes
         : dimension === "profession_type" ? plan.filters.professionTypes
           : ["category", "contract_type", "gender", "membership_type", "experience_group"].includes(dimension) ? ["known"] : [];

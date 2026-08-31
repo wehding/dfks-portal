@@ -159,6 +159,14 @@ test("navngivne producentspørgsmål overlades til registermatch via AI", () => 
   assert.equal(predefinedStatisticsQueryPlan("Hvordan er lønnen hos producent Nordisk Film?"), null);
 });
 
+test("producentrangering bliver forstået som producentsammenligning", () => {
+  const plan = predefinedStatisticsQueryPlan("Hvilke producenter giver bedst løn?");
+  assert.deepEqual(plan?.metrics, ["median_monthly_salary"]);
+  assert.deepEqual(plan?.compareBy, ["producer"]);
+  assert.deepEqual(plan?.filters.producerNames, []);
+  assert.equal(plan?.chart, "bar");
+});
+
 test("almindelige danske formuleringer giver forventede sikre mål", () => {
   const cases: Array<[string, string[], string[]]> = [
     ["Hvordan har medianlønnen udviklet sig?", ["median_monthly_salary"], []],
