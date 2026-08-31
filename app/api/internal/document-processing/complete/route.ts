@@ -4,6 +4,7 @@ import { verifyOcrCloudRunRequest } from "@/lib/server/cloud-run-identity";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 const MAX_DOCUMENT_PAGES = 200;
 
 type Completion = {
@@ -31,6 +32,37 @@ type Completion = {
   errorCode?: string | null;
   safeErrorMessage?: string | null;
 };
+
+type StoredCompletion = {
+  contract_id: string;
+  status: string;
+  lease_token: string | null;
+  document_classification: string | null;
+  ocr_applied: boolean;
+  processed_sha256: string | null;
+  spatial_sha256: string | null;
+  error_code: string | null;
+};
+
+export function isIdempotentReplay(stored: StoredCompletion | null, body: Completion) {
+  if (!stored?.contract_id || stored.lease_token !== null || stored.status !== body.status) return false;
+  if (body.status === "completed") {
+    return stored.ocr_applied === true
+      && stored.processed_sha256 === body.processedSha256
+      && stored.spatial_sha256 === body.spatialSha256;
+  }
+  if (body.status === "not_required") {
+    return stored.document_classification === "native_text";
+  }
+  return stored.error_code === (body.errorCode || null);
+}
+
+export function completionFailure(errorCode?: string) {
+  if (errorCode === "P0002") return { code: "completion_lease_inactive", status: 409 } as const;
+  if (errorCode === "22023") return { code: "completion_integrity_rejected", status: 409 } as const;
+  if (errorCode === "23505") return { code: "completion_generation_conflict", status: 409 } as const;
+  return { code: "completion_persistence_failed", status: 503 } as const;
+}
 
 export async function POST(request: Request) {
   try {
@@ -93,7 +125,18 @@ export async function POST(request: Request) {
     p_safe_error_message: body.safeErrorMessage?.slice(0, 500) || null,
   });
   if (error || !finished?.contract_id) {
-    return NextResponse.json({ error: "Dokumentjobbet kunne ikke afsluttes" }, { status: 409 });
+    const { data: stored } = await db.from("contract_document_jobs")
+      .select("contract_id,status,lease_token,document_classification,ocr_applied,processed_sha256,spatial_sha256,error_code")
+      .eq("id", body.jobId)
+      .maybeSingle<StoredCompletion>();
+    if (isIdempotentReplay(stored, body)) {
+      return NextResponse.json({ ok: true, replayed: true });
+    }
+    const failure = completionFailure(error?.code);
+    return NextResponse.json({
+      error: "Dokumentjobbet kunne ikke afsluttes",
+      code: failure.code,
+    }, { status: failure.status });
   }
 
   return NextResponse.json({ ok: true });
