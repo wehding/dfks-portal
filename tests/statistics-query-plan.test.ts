@@ -124,6 +124,14 @@ test("flere produktive mål kan forespørges sammen", () => {
   assert.deepEqual(plan?.compareBy, ["category"]);
 });
 
+test("pension for fiktion og dokumentar bliver to produktionstyper", () => {
+  const plan = predefinedStatisticsQueryPlan("Har pensionen udviklet sig for henholdsvis fiktion og dokumentar?");
+  assert.deepEqual(plan?.metrics, ["average_pension"]);
+  assert.deepEqual(plan?.filters.categories, ["feature", "documentary"]);
+  assert.deepEqual(plan?.compareBy, ["category"]);
+  assert.equal(plan?.chart, "line");
+});
+
 test("rettighedsforbehold bliver selvstændige procentmål", () => {
   const plan = predefinedStatisticsQueryPlan("Hvordan har Copydan- og streamingforbehold udviklet sig over alle år?");
   assert.deepEqual(plan?.metrics, ["copydan_share", "streaming_share"]);

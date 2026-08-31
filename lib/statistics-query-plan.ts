@@ -115,7 +115,7 @@ Når spørgsmålet sammenligner flere produktionstyper, kontrakttyper, producent
 filters må kun indeholde years, yearFrom, yearTo, genders, categories, contractTypes, producerNames, producerTypeCodes, membershipTypes, professionTypes og experienceGroups.
 Ved "siden 2022" sættes yearFrom til 2022 og yearTo til ${currentYear}. Ved et enkelt år bruges years. Brug null for en manglende periodegrænse.
 Alle filterfelter undtagen yearFrom/yearTo er arrays. Brug tomme arrays eller null for værdier, der ikke fremgår.
-Spillefilm er category feature, dokumentarfilm documentary, TV-serie tvSeries og dokumentarserie docSeries.
+Spillefilm, fiktion og fiktionsfilm er category feature, dokumentarfilm documentary, TV-serie tvSeries og dokumentarserie docSeries.
 A-løn er contractType a-løn; faktura, freelance og leverandørkontrakt er leverandør.
 experienceGroups: new_graduate (0–3 år), early_career (4–7 år), experienced (8–17 år), veteran (18+ år).
 membershipTypes: member, associate, none eller unknown.
@@ -251,7 +251,7 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   if (!metrics.length) return null;
 
   const plan = emptyPlan(metrics.slice(0, 4));
-  if (value.includes("spillefilm")) plan.filters.categories.push("feature");
+  if (value.includes("spillefilm") || includesAny(value, ["fiktion", "fiktionsfilm", "fiction"])) plan.filters.categories.push("feature");
   if (includesAny(value, ["dokumentarserie", "dokumentar-serie", "dok-serie", "dok serie"])) plan.filters.categories.push("docSeries");
   if (value.includes("dokumentarfilm") || (value.includes("dokumentar") && !plan.filters.categories.includes("docSeries"))) plan.filters.categories.push("documentary");
   if (includesAny(value, ["tv-serie", "tv serie", "tvserier", "tv-serier"])) plan.filters.categories.push("tvSeries");
