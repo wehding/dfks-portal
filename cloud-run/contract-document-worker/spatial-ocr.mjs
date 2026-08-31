@@ -442,10 +442,11 @@ export function computeSpatialAccuracy(geometryPages, extractedPages) {
     }
   }
   const matchCoverage = expectedWords ? matchedWords / expectedWords : 0;
-  // Missing words are failures, not absent measurements. This prevents a
-  // derivative with a single correctly placed word and hundreds missing from
-  // passing the spatial quality gate.
-  const score = expectedWords ? passed / expectedWords : 0;
+  const placementAccuracy = matchedWords ? passed / matchedWords : 0;
+  // Coverage and placement are independent quality dimensions. Persist the
+  // weaker result so the database's 95% gate remains fail-closed, without
+  // penalising an unmatched token twice by multiplying the two ratios.
+  const score = Math.min(matchCoverage, placementAccuracy);
   const centerInsideRatio = matchedWords ? centerInside / matchedWords : 0;
   const medianIou = median(ious);
   return {
