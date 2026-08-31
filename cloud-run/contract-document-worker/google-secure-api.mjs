@@ -11,8 +11,10 @@ const VISION_HOST = "eu-vision.googleapis.com";
 const DLP_HOST = "dlp.eu.rep.googleapis.com";
 const MAX_VISION_IMAGES = 16;
 const VISION_BODY_MARGIN_BYTES = 128_000;
-const MIN_VISION_LONG_EDGE = 1_600;
-const MAX_VISION_DOWNSCALE_ATTEMPTS = 6;
+const MIN_VISION_LONG_EDGE = 1_200;
+const MAX_VISION_DOWNSCALE_ATTEMPTS = 7;
+const VISION_RESPONSE_RECOVERY_SCALE = 0.75;
+const MAX_VISION_RESPONSE_RECOVERY_ATTEMPTS = 1;
 const VISION_RESPONSE_FIELDS = "responses(error,fullTextAnnotation/pages)";
 // Google documents a 4 MB limit for image:redact requests. Keep a small
 // margin for service-side framing changes and measure the complete JSON body,
@@ -62,6 +64,19 @@ export class GoogleOcrOperationalError extends Error {
     this.name = "GoogleOcrOperationalError";
     this.code = code;
   }
+}
+
+function parseProtoJsonNonNegativeInteger(value, { defaultZero = false } = {}) {
+  if (value == null && defaultZero) return 0;
+  if (Number.isSafeInteger(value) && value >= 0) return value;
+  // ProtoJSON may represent integer fields as decimal strings. Accept only a
+  // canonical, unsigned base-10 form; whitespace, signs, exponents, fractions
+  // and unsafe values remain fail-closed.
+  if (typeof value === "string" && /^(?:0|[1-9][0-9]*)$/.test(value)) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed) && parsed >= 0) return parsed;
+  }
+  throw new GoogleOcrOperationalError("dlp_location_invalid");
 }
 
 export function readGoogleConfig(env = process.env) {
@@ -277,16 +292,15 @@ export function extractDlpFindings(response) {
         // A DLP box at the top or left image edge is therefore valid even when
         // `top` or `left` is absent from the JSON response. Width and height,
         // however, must always be present and strictly positive.
-        const top = box?.top == null ? 0 : box.top;
-        const left = box?.left == null ? 0 : box.left;
+        const top = parseProtoJsonNonNegativeInteger(box?.top, { defaultZero: true });
+        const left = parseProtoJsonNonNegativeInteger(box?.left, { defaultZero: true });
         const parsed = {
           top,
           left,
-          width: box?.width,
-          height: box?.height,
+          width: parseProtoJsonNonNegativeInteger(box?.width),
+          height: parseProtoJsonNonNegativeInteger(box?.height),
         };
-        if (Object.values(parsed).every(Number.isSafeInteger)
-          && parsed.top >= 0 && parsed.left >= 0 && parsed.width > 0 && parsed.height > 0) {
+        if (parsed.width > 0 && parsed.height > 0) {
           boxes.push({ ...parsed, infoType: name });
           locationHasBox = true;
         } else {
@@ -551,6 +565,41 @@ async function resizeAndVerifyRedactedImage(
   return { imageBytes: resizedPng, boxes: scaledBoxes };
 }
 
+async function recoverVisionTransportPage(page, transport) {
+  if (!transport || transport.recoveryAttempts >= MAX_VISION_RESPONSE_RECOVERY_ATTEMPTS) {
+    throw new GoogleOcrOperationalError("vision_response_too_large");
+  }
+  const currentLongEdge = Math.max(transport.visionWidth, transport.visionHeight);
+  const scaledLongEdge = Math.floor(currentLongEdge * VISION_RESPONSE_RECOVERY_SCALE);
+  const targetLongEdge = currentLongEdge > MIN_VISION_LONG_EDGE
+    ? Math.max(MIN_VISION_LONG_EDGE, scaledLongEdge)
+    : scaledLongEdge;
+  if (!Number.isSafeInteger(targetLongEdge) || targetLongEdge < 1 || targetLongEdge >= currentLongEdge) {
+    throw new GoogleOcrOperationalError("vision_response_too_large");
+  }
+  const scale = targetLongEdge / currentLongEdge;
+  const targetWidth = Math.max(1, Math.floor(transport.visionWidth * scale));
+  const targetHeight = Math.max(1, Math.floor(transport.visionHeight * scale));
+  const resized = await resizeAndVerifyRedactedImage(
+    page.imageBytes,
+    transport.boxes,
+    transport.visionWidth,
+    transport.visionHeight,
+    targetWidth,
+    targetHeight,
+  );
+  const previousRetainedTransportBytes = transport.retainedTransportBytes ?? 0;
+  page.imageBytes = resized.imageBytes;
+  transport.boxes = resized.boxes;
+  transport.visionWidth = targetWidth;
+  transport.visionHeight = targetHeight;
+  transport.recoveryAttempts += 1;
+  transport.retainedTransportBytes = resized.imageBytes.length;
+  transport.transform.visionWidth = targetWidth;
+  transport.transform.visionHeight = targetHeight;
+  return resized.imageBytes.length - previousRetainedTransportBytes;
+}
+
 /**
  * DLP always sees the higher-resolution source first. Only the already
  * redacted, canonical PNG may be reduced for Vision. Coordinates are mapped
@@ -754,6 +803,7 @@ export function createGoogleOcrClient({
     const redactedPages = [];
     const visionPages = [];
     const visionPageTransforms = [];
+    const visionTransportByPage = new Map();
     const totalCounts = {};
     const redactionRegions = [];
     for (const page of pages) {
@@ -776,23 +826,44 @@ export function createGoogleOcrClient({
         ...box,
       })));
       redactedPages.push({ ...page, imageBytes: redacted.canonicalImageBytes });
-      visionPages.push({ ...page, imageBytes: redacted.visionImageBytes });
-      visionPageTransforms.push({
+      const visionPage = { ...page, imageBytes: redacted.visionImageBytes };
+      const transform = {
         pageNumber: page.pageNumber,
         sourceWidth: redacted.sourceWidth,
         sourceHeight: redacted.sourceHeight,
         visionWidth: redacted.visionWidth,
         visionHeight: redacted.visionHeight,
+      };
+      visionPages.push(visionPage);
+      visionPageTransforms.push(transform);
+      visionTransportByPage.set(page.pageNumber, {
+        boxes: redacted.visionBoxes,
+        visionWidth: redacted.visionWidth,
+        visionHeight: redacted.visionHeight,
+        recoveryAttempts: 0,
+        // A transport buffer that aliases the canonical PNG is already
+        // counted once. Only a separate downscaled transport copy contributes
+        // extra retained bytes, and a later replacement subtracts that copy.
+        retainedTransportBytes: redacted.downscaledForVision
+          ? redacted.visionImageBytes.length
+          : 0,
+        transform,
       });
     }
 
     const responses = [];
     let retainedVisionResponseBytes = 0;
     const appendResponses = (batchResponses) => {
-      retainedVisionResponseBytes += visionResponseByteSize(batchResponses);
-      if (retainedVisionResponseBytes > limits.maxVisionResponseBytesTotal) {
-        throw new GoogleOcrOperationalError("vision_response_too_large");
+      const nextRetainedBytes = retainedVisionResponseBytes + visionResponseByteSize(batchResponses);
+      if (nextRetainedBytes > limits.maxVisionResponseBytesTotal) {
+        const error = new GoogleOcrOperationalError("vision_response_too_large");
+        // A document-wide budget exhaustion cannot be repaired by changing
+        // the raster of the current page. Keep the public diagnostic code,
+        // but prevent the single-page transport retry from doing extra work.
+        error.documentBudgetExceeded = true;
+        throw error;
       }
+      retainedVisionResponseBytes = nextRetainedBytes;
       responses.push(...batchResponses);
     };
     const annotateAdaptive = async (pagesInBatch) => {
@@ -808,8 +879,24 @@ export function createGoogleOcrClient({
         return;
       } catch (error) {
         if (!(error instanceof GoogleOcrOperationalError)
-          || error.code !== "vision_response_too_large"
-          || pagesInBatch.length <= 1) throw error;
+          || error.code !== "vision_response_too_large") throw error;
+        if (error.documentBudgetExceeded === true) throw error;
+        if (pagesInBatch.length === 1) {
+          const page = pagesInBatch[0];
+          const retainedByteDelta = await recoverVisionTransportPage(
+            page,
+            visionTransportByPage.get(page.pageNumber),
+          );
+          retainedRasterBytes += retainedByteDelta;
+          if (retainedRasterBytes > limits.maxDocumentTotalRasterBytes) {
+            throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
+          }
+          checkHealthy();
+          const recoveredResponses = await annotateBatch([page], { signal, resourceLimits: limits });
+          checkHealthy();
+          appendResponses(recoveredResponses);
+          return;
+        }
         // A dense group may exceed Google's or our bounded response body even
         // though each page is valid. Split deterministically, keep order, and
         // retain the document-wide response budget.
