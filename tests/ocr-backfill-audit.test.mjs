@@ -13,6 +13,7 @@ import {
   captureBaseline,
   createReadOnlyFetch,
   extractPdfBboxPages,
+  extractPdfPageCount,
   readBaselineFile,
   safeSummaryJson,
   sha256,
@@ -23,6 +24,7 @@ import {
 } from "../scripts/audit-ocr-backfill.mjs";
 
 const pdftotextUnavailable = spawnSync("pdftotext", ["-v"], { stdio: "ignore" }).error?.code === "ENOENT";
+const pdfinfoUnavailable = spawnSync("pdfinfo", ["-v"], { stdio: "ignore" }).error?.code === "ENOENT";
 
 async function pdf(pages) {
   const document = await PDFDocument.create();
@@ -196,6 +198,38 @@ test("produktionsaudit udtrækker bbox fra PDF uden shell eller dokumentlogs", {
       && !String(error?.message).includes("hemmelig")
       && !String(error?.message).includes("token=abc"),
   );
+});
+
+test("produktionsaudit tæller PDF-sider med et uafhængigt værktøj", {
+  skip: pdfinfoUnavailable,
+}, async () => {
+  assert.equal(await extractPdfPageCount(await pdf(3)), 3);
+  await assert.rejects(
+    extractPdfPageCount(Buffer.from("ikke en kontrakt-pdf token=abc")),
+    (error) => error?.code === "pdf_page_count_failed"
+      && !String(error?.message).includes("token=abc"),
+  );
+});
+
+test("kendt uparsebar original kræver samme hash og uafhængigt sideantal", async () => {
+  const original = Buffer.from("%PDF-kendt-uparsebar");
+  const output = await pdf(2);
+  const input = fixture({ original, output, expectedPages: 2 });
+  const jobId = input.jobs[0].id;
+  input.baselineOriginalByJob = new Map([[jobId, {
+    originalPdfReadable: false,
+    originalPageCount: null,
+  }]]);
+  input.extractOriginalPageCount = async () => 2;
+
+  const accepted = await auditCompletedJobs(input);
+  assert.equal(accepted.violations.invalidOriginalPdf, 0);
+  assert.equal(accepted.documentsPassingAllChecks, 1);
+
+  input.extractOriginalPageCount = async () => 1;
+  const rejected = await auditCompletedJobs(input);
+  assert.equal(rejected.violations.invalidOriginalPdf, 1);
+  assert.equal(rejected.documentsPassingAllChecks, 0);
 });
 
 test("originalens ændrede hash og outputtets sideantal afvises", async () => {

@@ -27,8 +27,10 @@ const MAX_PDF_BYTES = 100 * 1024 * 1024;
 const MAX_SPATIAL_COMPRESSED_BYTES = 25 * 1024 * 1024;
 const MAX_SPATIAL_JSON_BYTES = 32 * 1024 * 1024;
 const MAX_BBOX_BYTES = 64 * 1024 * 1024;
+const MAX_PDFINFO_BYTES = 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
 const PDFTOTEXT_TIMEOUT_MS = 120_000;
+const PDFINFO_TIMEOUT_MS = 60_000;
 const BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v3";
 const MAX_BASELINE_BYTES = 64 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -397,6 +399,65 @@ export async function extractPdfBboxPages(pdfBytes) {
   }
 }
 
+export async function extractPdfPageCount(pdfBytes) {
+  if (!(pdfBytes instanceof Uint8Array) || pdfBytes.byteLength === 0
+    || pdfBytes.byteLength > MAX_PDF_BYTES) {
+    throw new AuditOperationalError("pdf_page_count_failed");
+  }
+  const directory = await mkdtemp(join(tmpdir(), "dfks-ocr-page-count-"));
+  const pdfPath = join(directory, "original.pdf");
+  try {
+    await writeFile(pdfPath, pdfBytes, { mode: 0o600 });
+    const output = await new Promise((resolve, reject) => {
+      const child = spawn("pdfinfo", [pdfPath], {
+        shell: false,
+        stdio: ["ignore", "pipe", "ignore"],
+        env: {
+          PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+          LANG: "C",
+          LC_ALL: "C",
+        },
+      });
+      const chunks = [];
+      let length = 0;
+      let settled = false;
+      const finish = (error, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error) reject(error);
+        else resolve(value);
+      };
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        finish(new AuditOperationalError("pdf_page_count_failed"));
+      }, PDFINFO_TIMEOUT_MS);
+      child.stdout.on("data", (chunk) => {
+        length += chunk.length;
+        if (length > MAX_PDFINFO_BYTES) {
+          child.kill("SIGKILL");
+          finish(new AuditOperationalError("pdf_page_count_failed"));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      child.once("error", () => finish(new AuditOperationalError("pdf_page_count_failed")));
+      child.once("close", (code) => {
+        if (code !== 0) finish(new AuditOperationalError("pdf_page_count_failed"));
+        else finish(null, Buffer.concat(chunks).toString("utf8"));
+      });
+    });
+    const match = /^Pages:\s+([0-9]+)\s*$/m.exec(output);
+    const pageCount = Number(match?.[1]);
+    if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 10_000) {
+      throw new AuditOperationalError("pdf_page_count_failed");
+    }
+    return pageCount;
+  } finally {
+    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 function spatialMetricsEqual(stored, recomputed) {
   if (!stored || !recomputed) return false;
   if (stored.expectedWords !== recomputed.expectedWords
@@ -469,8 +530,10 @@ async function inspectCompletedJob({
   completedContractCount,
   activeAiCount,
   baselineContractStatus,
+  baselineOriginal,
   readStorage,
   extractBboxPages,
+  extractOriginalPageCount,
 }) {
   const violations = emptyViolations();
 
@@ -519,7 +582,23 @@ async function inspectCompletedJob({
     if (original.readFailed) violations.originalReadFailure += 1;
     else {
       if (!original.hashMatches) violations.originalHashMismatch += 1;
-      if (original.invalidPdf) violations.invalidOriginalPdf += 1;
+      if (original.invalidPdf) {
+        let independentlyVerifiedPageCount = null;
+        if (original.hashMatches && baselineOriginal?.originalPdfReadable === false) {
+          try {
+            independentlyVerifiedPageCount = await extractOriginalPageCount(original.bytes);
+          } catch {
+            // Known source parser failures still fail closed unless a second,
+            // independent PDF tool verifies the exact expected page count.
+          }
+        }
+        if (independentlyVerifiedPageCount !== job.page_count) {
+          violations.invalidOriginalPdf += 1;
+        } else {
+          original.pageCount = independentlyVerifiedPageCount;
+          original.invalidPdf = false;
+        }
+      }
     }
 
     if (derivativePathsValid) {
@@ -580,9 +659,11 @@ export async function auditCompletedJobs({
   contractsById,
   activeAiCounts,
   baselineStatusByContract = new Map(),
+  baselineOriginalByJob = new Map(),
   readStorage,
   concurrency = 1,
   extractBboxPages = extractPdfBboxPages,
+  extractOriginalPageCount = extractPdfPageCount,
 }) {
   const summary = createAuditSummary(jobs.length);
   const completedByContract = new Map();
@@ -597,8 +678,10 @@ export async function auditCompletedJobs({
     completedContractCount: completedByContract.get(job.contract_id) ?? 0,
     activeAiCount: activeAiCounts.get(job.contract_id) ?? 0,
     baselineContractStatus: baselineStatusByContract.get(job.contract_id),
+    baselineOriginal: baselineOriginalByJob.get(job.id),
     readStorage,
     extractBboxPages,
+    extractOriginalPageCount,
   }));
 
   for (const violations of results) {
@@ -1096,12 +1179,19 @@ export async function runAudit({ db, concurrency = DEFAULT_CONCURRENCY, baseline
   const baselineStatusByContract = new Map(
     baseline?.records.map((record) => [record.contractId, record.contractStatus]) ?? [],
   );
+  const baselineOriginalByJob = new Map(
+    baseline?.records.map((record) => [record.jobId, {
+      originalPdfReadable: record.originalPdfReadable,
+      originalPageCount: record.originalPageCount,
+    }]) ?? [],
+  );
 
   const summary = await auditCompletedJobs({
     jobs,
     contractsById,
     activeAiCounts,
     baselineStatusByContract,
+    baselineOriginalByJob,
     readStorage: createStorageReader(db),
     concurrency,
   });
