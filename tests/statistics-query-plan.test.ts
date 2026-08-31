@@ -124,6 +124,22 @@ test("flere produktive mål kan forespørges sammen", () => {
   assert.deepEqual(plan?.compareBy, ["category"]);
 });
 
+test("pension for fiktion og dokumentar bliver to produktionstyper", () => {
+  const plan = predefinedStatisticsQueryPlan("Har pensionen udviklet sig for henholdsvis fiktion og dokumentar?");
+  assert.deepEqual(plan?.metrics, ["average_pension"]);
+  assert.deepEqual(plan?.filters.categories, ["feature", "documentary"]);
+  assert.deepEqual(plan?.compareBy, ["category"]);
+  assert.equal(plan?.chart, "line");
+});
+
+test("lønforskel for fiktion og dokumentar bliver to produktionstyper", () => {
+  const plan = predefinedStatisticsQueryPlan("løn forskel på fiktion og dokumentar over tid");
+  assert.deepEqual(plan?.metrics, ["median_monthly_salary"]);
+  assert.deepEqual(plan?.filters.categories, ["feature", "documentary"]);
+  assert.deepEqual(plan?.compareBy, ["category"]);
+  assert.equal(plan?.chart, "line");
+});
+
 test("rettighedsforbehold bliver selvstændige procentmål", () => {
   const plan = predefinedStatisticsQueryPlan("Hvordan har Copydan- og streamingforbehold udviklet sig over alle år?");
   assert.deepEqual(plan?.metrics, ["copydan_share", "streaming_share"]);
@@ -157,6 +173,14 @@ test("queryplan accepterer ufarlige ældre modelvariationer", () => {
 
 test("navngivne producentspørgsmål overlades til registermatch via AI", () => {
   assert.equal(predefinedStatisticsQueryPlan("Hvordan er lønnen hos producent Nordisk Film?"), null);
+});
+
+test("producentrangering bliver forstået som producentsammenligning", () => {
+  const plan = predefinedStatisticsQueryPlan("Hvilke producenter giver bedst løn?");
+  assert.deepEqual(plan?.metrics, ["median_monthly_salary"]);
+  assert.deepEqual(plan?.compareBy, ["producer"]);
+  assert.deepEqual(plan?.filters.producerNames, []);
+  assert.equal(plan?.chart, "bar");
 });
 
 test("almindelige danske formuleringer giver forventede sikre mål", () => {
