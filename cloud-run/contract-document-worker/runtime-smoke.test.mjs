@@ -17,6 +17,16 @@ import {
 
 const runtimeOnly = { skip: process.env.DFKS_CONTAINER_RUNTIME_TEST !== "1" };
 
+function identityVisionPageTransforms(pages, width = 2550, height = 3300) {
+  return pages.map((page) => ({
+    pageNumber: page.pageNumber,
+    sourceWidth: width,
+    sourceHeight: height,
+    visionWidth: width,
+    visionHeight: height,
+  }));
+}
+
 function run(command, args, { input } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -229,6 +239,7 @@ c.save()
           return {
             responses: [{ fullTextAnnotation: { pages: [] } }],
             redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+            visionPageTransforms: identityVisionPageTransforms(pages),
           };
         },
       },
@@ -267,6 +278,7 @@ c.save()
           redactionCounts: { IBAN_CODE: 1 },
           redactionRegions: [{ pageNumber: 2, top: 1, left: 1, width: 10, height: 10, infoType: "IBAN_CODE" }],
           redactedPages: pages,
+          visionPageTransforms: identityVisionPageTransforms(pages),
           responses: [1, 2].map((pageNumber) => ({
             fullTextAnnotation: { pages: [{
               width: 2550,
@@ -340,6 +352,7 @@ test("for stor DLP-side genrenderes adaptivt før Google-kald", async () => {
           return {
             responses: [{ fullTextAnnotation: { pages: [] } }],
             redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+            visionPageTransforms: identityVisionPageTransforms(pages),
           };
         },
       },
@@ -520,6 +533,7 @@ test("en flersidet PDF på rasterbudgettets stramme testgrænse bevarer OCR-flow
           return {
             responses: pages.map(() => ({ fullTextAnnotation: { pages: [] } })),
             redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+            visionPageTransforms: identityVisionPageTransforms(pages),
           };
         },
       },
@@ -574,6 +588,7 @@ print(json.dumps([image.width, image.height]))
           return {
             responses: [{ fullTextAnnotation: { pages: [] } }],
             redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+            visionPageTransforms: identityVisionPageTransforms(pages, width, height),
           };
         },
       },

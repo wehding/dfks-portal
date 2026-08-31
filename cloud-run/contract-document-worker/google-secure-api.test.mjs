@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { EventEmitter, getEventListeners } from "node:events";
 import test from "node:test";
 import sharp from "sharp";
@@ -15,9 +16,12 @@ import {
   isDlpRequestBodyWithinLimit,
   MAX_DLP_IMAGE_BYTES,
   MAX_DLP_REQUEST_BODY_BYTES,
+  prepareRedactedImageForVision,
   readGoogleConfig,
   secureJsonPost,
+  visionRequestBodySize,
 } from "./google-secure-api.mjs";
+import { MAX_VISION_REQUEST_BODY_BYTES } from "./resource-limits.mjs";
 
 async function solidJpeg(width = 12, height = 10, background = "#ffffff", quality = 90) {
   return sharp({ create: { width, height, channels: 3, background } })
@@ -463,6 +467,224 @@ test("DLP-redigerede flersidede rasterbuffere har et samlet RAM-budget før Visi
   }), /document_raster_budget_exceeded/);
   assert.equal(dlpCalls, 2);
   assert.equal(visionCalled, false);
+});
+
+test("for stor kanonisk DLP-PNG nedskaleres sikkert før Vision og masker forbliver sorte", async () => {
+  const width = 2_000;
+  const height = 1_600;
+  const channels = 3;
+  const pixels = randomBytes(width * height * channels);
+  const box = { top: 400, left: 500, width: 300, height: 200, infoType: "IBAN_CODE" };
+  for (let y = box.top; y < box.top + box.height; y += 1) {
+    for (let x = box.left; x < box.left + box.width; x += 1) {
+      const offset = (y * width + x) * channels;
+      pixels[offset] = 0;
+      pixels[offset + 1] = 0;
+      pixels[offset + 2] = 0;
+    }
+  }
+  const canonicalPng = await sharp(pixels, { raw: { width, height, channels } })
+    .png({ compressionLevel: 9, palette: false })
+    .toBuffer();
+  assert.equal(
+    visionRequestBodySize([{ imageBytes: canonicalPng }]) > MAX_VISION_REQUEST_BODY_BYTES,
+    true,
+  );
+
+  const result = await prepareRedactedImageForVision(canonicalPng, [box]);
+  const metadata = await sharp(result.imageBytes).metadata();
+  assert.equal(result.downscaled, true);
+  assert.equal(metadata.width < width, true);
+  assert.equal(metadata.height < height, true);
+  assert.equal(Math.max(metadata.width, metadata.height) >= 1_600, true);
+  assert.equal(
+    visionRequestBodySize([{ imageBytes: result.imageBytes }]) <= MAX_VISION_REQUEST_BODY_BYTES,
+    true,
+  );
+  assert.equal(result.boxes.length, 1);
+  assert.equal(result.boxes[0].infoType, "IBAN_CODE");
+  const resizedBox = result.boxes[0];
+  assert.deepEqual(await rgbAt(result.imageBytes, resizedBox.left, resizedBox.top), [0, 0, 0]);
+  assert.deepEqual(await rgbAt(
+    result.imageBytes,
+    resizedBox.left + resizedBox.width - 1,
+    resizedBox.top + resizedBox.height - 1,
+  ), [0, 0, 0]);
+});
+
+test("Vision-nedskalering erstatter ikke den kanoniske side i derivatet", async () => {
+  const width = 2_000;
+  const height = 1_600;
+  const pixels = randomBytes(width * height * 3);
+  const sourceJpeg = await sharp(pixels, {
+    raw: { width, height, channels: 3 },
+  }).jpeg({ quality: 35 }).toBuffer();
+  const dlpImage = await sharp(pixels, {
+    raw: { width, height, channels: 3 },
+  }).png({ compressionLevel: 9, palette: false }).toBuffer();
+  let visionImage;
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      if (url.includes("image:redact")) {
+        return { redactedImage: dlpImage.toString("base64"), inspectResult: { findings: [] } };
+      }
+      visionImage = Buffer.from(payload.requests[0].image.content, "base64");
+      const metadata = await sharp(visionImage).metadata();
+      return { responses: [{ fullTextAnnotation: { pages: [{
+        width: metadata.width,
+        height: metadata.height,
+        blocks: [],
+      }] } }] };
+    },
+  });
+
+  const result = await client.redactAndAnnotate([
+    { pageNumber: 1, imageBytes: sourceJpeg },
+  ]);
+  const canonicalMetadata = await sharp(result.redactedPages[0].imageBytes).metadata();
+  const visionMetadata = await sharp(visionImage).metadata();
+  assert.equal(canonicalMetadata.width, width);
+  assert.equal(canonicalMetadata.height, height);
+  assert.equal(visionMetadata.width < width, true);
+  assert.equal(visionMetadata.height < height, true);
+  assert.notDeepEqual(result.redactedPages[0].imageBytes, visionImage);
+  assert.deepEqual(result.visionPageTransforms, [{
+    pageNumber: 1,
+    sourceWidth: width,
+    sourceHeight: height,
+    visionWidth: visionMetadata.width,
+    visionHeight: visionMetadata.height,
+  }]);
+});
+
+test("Vision deler automatisk et for stort fler-sidesvar uden at ændre rækkefølgen", async () => {
+  const image = await solidJpeg(20, 20);
+  const responseForPage = (pageNumber) => ({
+    fullTextAnnotation: {
+      text: "x".repeat(160),
+      pages: [{ width: 20, height: 20, blocks: [], pageNumber }],
+    },
+  });
+  const oneResponseBytes = Buffer.byteLength(JSON.stringify([responseForPage(1)]));
+  const visionBatchSizes = [];
+  const visionUrls = [];
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      if (url.includes("image:redact")) {
+        return { redactedImage: image.toString("base64"), inspectResult: { findings: [] } };
+      }
+      visionUrls.push(url);
+      visionBatchSizes.push(payload.requests.length);
+      return {
+        responses: payload.requests.map((_, index) => responseForPage(index + 1)),
+      };
+    },
+  });
+
+  const result = await client.redactAndAnnotate(
+    Array.from({ length: 4 }, (_, index) => ({ pageNumber: index + 1, imageBytes: image })),
+    { resourceLimits: { maxVisionResponseBytesPerBatch: oneResponseBytes + 1 } },
+  );
+  assert.equal(result.responses.length, 4);
+  assert.equal(visionBatchSizes[0], 4);
+  assert.equal(visionBatchSizes.every((size) => size >= 1 && size <= 4), true);
+  assert.equal(visionBatchSizes.filter((size) => size === 1).length, 4);
+  assert.equal(visionUrls.every((url) => url.includes("fields=responses(")), true);
+  assert.equal(visionUrls.every((url) => url.includes("fullTextAnnotation%2Fpages")), true);
+});
+
+test("adaptiv Vision-opdeling stopper mellem delkald, når jobleasen mistes", async () => {
+  const image = await solidJpeg(20, 20);
+  const responseForPage = () => ({
+    fullTextAnnotation: {
+      text: "x".repeat(160),
+      pages: [{ width: 20, height: 20, blocks: [] }],
+    },
+  });
+  const oneResponseBytes = Buffer.byteLength(JSON.stringify([responseForPage()]));
+  let leaseLost = false;
+  let visionCalls = 0;
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      if (url.includes("image:redact")) {
+        return { redactedImage: image.toString("base64"), inspectResult: { findings: [] } };
+      }
+      visionCalls += 1;
+      const responses = payload.requests.map(() => responseForPage());
+      if (payload.requests.length === 1) leaseLost = true;
+      return { responses };
+    },
+  });
+
+  await assert.rejects(
+    () => client.redactAndAnnotate(
+      Array.from({ length: 4 }, (_, index) => ({ pageNumber: index + 1, imageBytes: image })),
+      {
+        assertHealthy: () => {
+          if (leaseLost) throw new Error("lease_lost");
+        },
+        resourceLimits: { maxVisionResponseBytesPerBatch: oneResponseBytes + 1 },
+      },
+    ),
+    /lease_lost/,
+  );
+  assert.equal(visionCalls, 3);
+});
+
+test("adaptiv Vision-opdeling håndhæver dokumentbudgettet ved hvert leaf-svar", async () => {
+  const image = await solidJpeg(20, 20);
+  const responseForPage = () => ({
+    fullTextAnnotation: {
+      text: "x".repeat(160),
+      pages: [{ width: 20, height: 20, blocks: [] }],
+    },
+  });
+  const oneResponseBytes = Buffer.byteLength(JSON.stringify([responseForPage()]));
+  let visionCalls = 0;
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      if (url.includes("image:redact")) {
+        return { redactedImage: image.toString("base64"), inspectResult: { findings: [] } };
+      }
+      visionCalls += 1;
+      return { responses: payload.requests.map(() => responseForPage()) };
+    },
+  });
+
+  await assert.rejects(
+    () => client.redactAndAnnotate(
+      Array.from({ length: 4 }, (_, index) => ({ pageNumber: index + 1, imageBytes: image })),
+      { resourceLimits: {
+        maxVisionResponseBytesPerBatch: oneResponseBytes + 1,
+        maxVisionResponseBytesTotal: oneResponseBytes * 2 - 1,
+      } },
+    ),
+    (error) => error instanceof GoogleOcrOperationalError
+      && error.code === "vision_response_too_large",
+  );
+  // Initial batch, first half and its two leaves. The second leaf exhausts the
+  // total budget, so the untouched right half is never requested.
+  assert.equal(visionCalls, 4);
 });
 
 test("for stort Vision-svar afvises med sikker dokumentkode", async () => {

@@ -172,6 +172,27 @@ test("subprocesser dræbes straks, når processeringssignalet afbrydes", async (
   assert.equal(Date.now() - startedAt < 1_000, true);
 });
 
+test("et stort men afgrænset pdfimages-inventar bevarer både header og slutning", async () => {
+  const header = "page num type width height color comp bpc enc interp object ID x-ppi y-ppi\n";
+  const result = await runCommand(process.execPath, [
+    "-e",
+    `process.stdout.write(${JSON.stringify(header)} + "x".repeat(30_000) + "slut")`,
+  ], 10_000, { stdoutMode: "full", maxStdoutBytes: 40_000 });
+
+  assert.equal(result.stdout.startsWith(header), true);
+  assert.equal(result.stdout.endsWith("slut"), true);
+});
+
+test("fuld subprocess-output afvises sikkert, når den overskrider sin særskilte grænse", async () => {
+  await assert.rejects(
+    () => runCommand(process.execPath, [
+      "-e",
+      "process.stdout.write('x'.repeat(30_000))",
+    ], 10_000, { stdoutMode: "full", maxStdoutBytes: 20_000 }),
+    (error) => error?.code === "document_processing_failed",
+  );
+});
+
 test("spatial processor sender abortsignal til lokale subprocesser", async () => {
   const controller = new AbortController();
   const reason = new Error("processing_deadline_exceeded");
