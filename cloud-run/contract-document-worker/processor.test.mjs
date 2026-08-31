@@ -217,6 +217,40 @@ test("en kontrolleret dokumentfejl registreres og batchen kan fortsætte", async
   assert.equal(completions[0].errorCode, "invalid_pdf");
 });
 
+test("en genkørsel stopper før DLP og Vision, hvis originalens hash er ændret", async () => {
+  const completions = [];
+  let spatialCalls = 0;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    spatialProcessor: async () => {
+      spatialCalls += 1;
+      throw new Error("spatial processor should not be reached");
+    },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob({
+        expectedOriginalSha256: "0".repeat(64),
+      })), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "needs_review" });
+  assert.equal(spatialCalls, 0);
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].status, "needs_review");
+  assert.equal(completions[0].errorCode, "original_sha256_mismatch");
+  assert.equal("originalSha256" in completions[0], false);
+  assert.equal(JSON.stringify(completions[0]).includes("%PDF-"), false);
+  assert.equal(JSON.stringify(completions[0]).includes("signed-secret"), false);
+});
+
 test("OCR-kvalitetsfejl propagerer en sikker diagnose til backfill-stopreglen", async () => {
   const completions = [];
   const processor = createProcessor({

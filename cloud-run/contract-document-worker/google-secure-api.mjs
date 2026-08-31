@@ -269,13 +269,19 @@ export function extractDlpFindings(response) {
       }
       let locationHasBox = false;
       for (const box of boundingBoxes) {
+        // ProtoJSON may omit scalar fields whose value is the default zero.
+        // A DLP box at the top or left image edge is therefore valid even when
+        // `top` or `left` is absent from the JSON response. Width and height,
+        // however, must always be present and strictly positive.
+        const top = box?.top == null ? 0 : box.top;
+        const left = box?.left == null ? 0 : box.left;
         const parsed = {
-          top: Number(box?.top),
-          left: Number(box?.left),
-          width: Number(box?.width),
-          height: Number(box?.height),
+          top,
+          left,
+          width: box?.width,
+          height: box?.height,
         };
-        if (Object.values(parsed).every(Number.isFinite)
+        if (Object.values(parsed).every(Number.isSafeInteger)
           && parsed.top >= 0 && parsed.left >= 0 && parsed.width > 0 && parsed.height > 0) {
           boxes.push({ ...parsed, infoType: name });
           locationHasBox = true;

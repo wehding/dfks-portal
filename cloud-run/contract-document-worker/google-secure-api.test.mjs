@@ -201,6 +201,40 @@ test("en ren DLP-JPEG-re-encoding maskeres lokalt og kun en verificeret PNG når
   assert.deepEqual(result.redactedPages[0].imageBytes, visionImage);
 });
 
+test("udeladte nulkoordinater maskeres ved øverste venstre kant før Vision", async () => {
+  const calls = [];
+  const image = await solidJpeg(12, 10, "#ffffff", 90);
+  const client = createGoogleOcrClient({
+    config: {
+      projectId: "dfks", visionLocation: "eu", dlpLocation: "europe",
+      visionEndpoint: "https://eu-vision.googleapis.com", dlpEndpoint: "https://dlp.eu.rep.googleapis.com",
+    },
+    accessTokenProvider: async () => "short-lived",
+    jsonPost: async (url, _token, payload) => {
+      calls.push({ url, payload });
+      if (url.includes("image:redact")) return {
+        redactedImage: image.toString("base64"),
+        inspectResult: { findings: [{
+          infoType: { name: "DENMARK_CPR_NUMBER" },
+          location: { contentLocations: [{ imageLocation: {
+            boundingBoxes: [{ width: 4, height: 3 }],
+          } }] },
+        }] },
+      };
+      return { responses: [{ fullTextAnnotation: { pages: [] } }] };
+    },
+  });
+
+  const result = await client.redactAndAnnotate([{ pageNumber: 1, imageBytes: image }]);
+  const visionImage = Buffer.from(calls[1].payload.requests[0].image.content, "base64");
+  assert.deepEqual(await rgbAt(visionImage, 0, 0), [0, 0, 0]);
+  assert.deepEqual(await rgbAt(visionImage, 3, 2), [0, 0, 0]);
+  assert.notDeepEqual(await rgbAt(visionImage, 4, 3), [0, 0, 0]);
+  assert.deepEqual(result.redactionRegions, [{
+    pageNumber: 1, top: 0, left: 0, width: 4, height: 3, infoType: "DENMARK_CPR_NUMBER",
+  }]);
+});
+
 test("DLP-koordinater uden for siden afvises før Vision", async () => {
   const image = await solidJpeg();
   let visionCalled = false;
@@ -320,6 +354,39 @@ test("DLP-fund returnerer kun tællinger og geometri, aldrig fundet tekst", () =
     unlocatedFindings: 0,
   });
   assert.equal(JSON.stringify(result).includes("hemmeligt-cpr"), false);
+});
+
+test("DLP accepterer udeladte nulkoordinater ved billedets top og venstre kant", () => {
+  const result = extractDlpFindings({ inspectResult: { findings: [{
+    infoType: { name: "DENMARK_CPR_NUMBER" },
+    location: { contentLocations: [{ imageLocation: { boundingBoxes: [
+      { width: 3, height: 4 },
+      { top: 2, width: 5, height: 6 },
+      { left: 7, width: 8, height: 9 },
+      { top: null, left: null, width: 10, height: 11 },
+    ] } }] },
+  }] } });
+  assert.deepEqual(result.boxes, [
+    { top: 0, left: 0, width: 3, height: 4, infoType: "DENMARK_CPR_NUMBER" },
+    { top: 2, left: 0, width: 5, height: 6, infoType: "DENMARK_CPR_NUMBER" },
+    { top: 0, left: 7, width: 8, height: 9, infoType: "DENMARK_CPR_NUMBER" },
+    { top: 0, left: 0, width: 10, height: 11, infoType: "DENMARK_CPR_NUMBER" },
+  ]);
+  assert.equal(result.unlocatedFindings, 0);
+});
+
+test("DLP kræver fortsat positive dimensioner for kantbokse", () => {
+  const response = (boundingBox) => ({ inspectResult: { findings: [{
+    infoType: { name: "IBAN_CODE" },
+    location: { contentLocations: [{ imageLocation: { boundingBoxes: [boundingBox] } }] },
+  }] } });
+  assert.throws(() => extractDlpFindings(response({ height: 4 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ width: 3 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ width: 0, height: 4 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ width: 3, height: 0 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ top: -1, width: 3, height: 4 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ left: 1.5, width: 3, height: 4 })), /dlp_location_invalid/);
+  assert.throws(() => extractDlpFindings(response({ top: "0", width: 3, height: 4 })), /dlp_location_invalid/);
 });
 
 test("DLP-svar uden et gyldigt dekodbart billede afvises", async () => {

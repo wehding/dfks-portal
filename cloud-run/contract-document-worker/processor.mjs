@@ -368,7 +368,10 @@ function validateClaim(job) {
   if (!job || typeof job !== "object" || typeof job.jobId !== "string"
     || typeof job.leaseToken !== "string"
     || typeof job.downloadUrl !== "string" || typeof job.uploadPath !== "string"
-    || typeof job.spatialUploadPath !== "string") {
+    || typeof job.spatialUploadPath !== "string"
+    || (job.expectedOriginalSha256 != null
+      && (typeof job.expectedOriginalSha256 !== "string"
+        || !/^[0-9a-f]{64}$/.test(job.expectedOriginalSha256)))) {
     throw new FatalProcessingError("invalid_claim_response");
   }
   return job;
@@ -621,8 +624,16 @@ export function createProcessor(options = {}) {
       if (input.length < 5 || input.subarray(0, 5).toString("ascii") !== "%PDF-") {
         throw new DocumentProcessingError("invalid_pdf", "needs_review", "Filen er ikke en gyldig PDF.");
       }
-      await writeFile(inputPath, input, { mode: 0o600 });
       const originalSha256 = sha256(input);
+      if (job.expectedOriginalSha256 != null
+        && originalSha256 !== job.expectedOriginalSha256) {
+        throw new DocumentProcessingError(
+          "original_sha256_mismatch",
+          "needs_review",
+          "Originalfilens integritetskontrol stemte ikke. Dokumentet blev ikke sendt til OCR.",
+        );
+      }
+      await writeFile(inputPath, input, { mode: 0o600 });
       const result = await spatialProcessor({
         inputPath, outputPath, geometryPath, workDir, commandRunner, googleClient,
         assertLeaseHealthy: assertProcessingHealthy,
