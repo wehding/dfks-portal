@@ -261,11 +261,23 @@ function hasExactKeys(value, allowed, required = allowed) {
 }
 
 function validSpatialPage(page, pageCount) {
-  if (!hasExactKeys(page, ["pageNumber", "imageWidth", "imageHeight", "words"])
+  if (!hasExactKeys(page, [
+    "pageNumber", "sourceImageWidth", "sourceImageHeight",
+    "imageWidth", "imageHeight", "orientationCorrection", "words",
+  ])
     || !Number.isInteger(page.pageNumber) || page.pageNumber < 1 || page.pageNumber > pageCount
+    || !Number.isFinite(page.sourceImageWidth)
+    || page.sourceImageWidth <= 0 || page.sourceImageWidth > 100_000
+    || !Number.isFinite(page.sourceImageHeight)
+    || page.sourceImageHeight <= 0 || page.sourceImageHeight > 100_000
     || !Number.isFinite(page.imageWidth) || page.imageWidth <= 0 || page.imageWidth > 100_000
     || !Number.isFinite(page.imageHeight) || page.imageHeight <= 0 || page.imageHeight > 100_000
+    || ![0, 90, 180, 270].includes(page.orientationCorrection)
     || !Array.isArray(page.words) || page.words.length > 1_000_000) return false;
+  const dimensionsMatch = page.orientationCorrection % 180 === 0
+    ? page.imageWidth === page.sourceImageWidth && page.imageHeight === page.sourceImageHeight
+    : page.imageWidth === page.sourceImageHeight && page.imageHeight === page.sourceImageWidth;
+  if (!dimensionsMatch) return false;
   return page.words.every((word) => hasExactKeys(word, ["text", "confidence", "vertices"])
     && typeof word.text === "string" && word.text.length > 0 && word.text.length <= 10_000
     && Number.isFinite(word.confidence) && word.confidence >= 0 && word.confidence <= 1
