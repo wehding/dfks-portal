@@ -57,6 +57,7 @@ export async function withMemberDataAudit<T>(input: {
   context: AuditContext;
   action: Extract<AuditAction, "read" | "search" | "download" | "ai_analysis">;
   targetMemberUuid?: string | null;
+  targetMemberUuids?: string[];
   purposeCode: string;
   legalBasis?: string | null;
   dataCategories: string[];
@@ -73,6 +74,7 @@ export async function withMemberDataAudit<T>(input: {
       context: input.context,
       action: input.action,
       targetMemberUuid: input.targetMemberUuid,
+      targetMemberUuids: input.targetMemberUuids,
       purposeCode: input.purposeCode,
       legalBasis: input.legalBasis,
       dataCategories: input.dataCategories,
@@ -91,6 +93,7 @@ export async function withMemberDataAudit<T>(input: {
         context: input.context,
         action: input.action,
         targetMemberUuid: input.targetMemberUuid,
+        targetMemberUuids: input.targetMemberUuids,
         purposeCode: input.purposeCode,
         legalBasis: input.legalBasis,
         dataCategories: input.dataCategories,

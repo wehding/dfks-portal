@@ -40,7 +40,7 @@ test("værksarkivet bruger URL-styret fane uden arbejdsandelsdialog", () => {
 test("kø- og detaljelæsning auditeres uden søgetekst eller procentdata", () => {
   const actions = readFileSync("app/actions/work-share-cases.ts", "utf8");
   assert.match(actions, /auditShareRead/);
-  assert.match(actions, /targetMemberUuid/);
+  assert.match(actions, /targetMemberUuids/);
   assert.doesNotMatch(actions, /metadata:\s*\{[^}]*search/);
   assert.doesNotMatch(actions, /metadata:\s*\{[^}]*(percent|email|phone)/i);
 });

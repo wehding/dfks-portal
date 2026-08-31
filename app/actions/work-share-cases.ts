@@ -72,16 +72,8 @@ async function auditShareRead(input: {
   metadata: Record<string, unknown>;
 }) {
   const context = shareAuditContext(input.admin, input.userId);
-  const memberIds = [...new Set(input.memberIds.filter(Boolean))];
-  if (!memberIds.length) {
-    await recordAuditEvent({ context, action: input.action, entityType: "work_share_queue", entityId: input.entityId, orgIds: [input.admin.orgId], purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", dataCategories: ["work_credit_data"], metadata: input.metadata });
-    return;
-  }
-  // Auditmodellen har ét medlemssubjekt pr. hændelse. Samme request-id og
-  // correlation-id binder de nødvendige subjektshændelser til én læsehandling.
-  for (const targetMemberUuid of memberIds) {
-    await recordAuditEvent({ context, action: input.action, entityType: "work_share_queue", entityId: input.entityId, orgIds: [input.admin.orgId], targetMemberUuid, purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", dataCategories: ["work_credit_data"], metadata: input.metadata });
-  }
+  const targetMemberUuids = [...new Set(input.memberIds.filter(Boolean))];
+  await recordAuditEvent({ context, action: input.action, entityType: "work_share_queue", entityId: input.entityId, orgIds: [input.admin.orgId], targetMemberUuids, purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", dataCategories: ["work_credit_data"], metadata: input.metadata });
 }
 
 async function ownContext(rightsHolderId: string) {
