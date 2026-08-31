@@ -132,6 +132,14 @@ test("pension for fiktion og dokumentar bliver to produktionstyper", () => {
   assert.equal(plan?.chart, "line");
 });
 
+test("lønforskel for fiktion og dokumentar bliver to produktionstyper", () => {
+  const plan = predefinedStatisticsQueryPlan("løn forskel på fiktion og dokumentar over tid");
+  assert.deepEqual(plan?.metrics, ["median_monthly_salary"]);
+  assert.deepEqual(plan?.filters.categories, ["feature", "documentary"]);
+  assert.deepEqual(plan?.compareBy, ["category"]);
+  assert.equal(plan?.chart, "line");
+});
+
 test("rettighedsforbehold bliver selvstændige procentmål", () => {
   const plan = predefinedStatisticsQueryPlan("Hvordan har Copydan- og streamingforbehold udviklet sig over alle år?");
   assert.deepEqual(plan?.metrics, ["copydan_share", "streaming_share"]);
