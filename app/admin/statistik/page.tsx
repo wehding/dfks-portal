@@ -111,6 +111,15 @@ type AiSeriesRow = {
   sampleBand?: string; outlierExcludedCount?: number;
 };
 
+type OmittedStatisticsPoint = {
+  year: number | null;
+  seriesLabel: string;
+  metricLabel: string;
+  reason: SuppressionReason | "suppressed_segment";
+  memberCount: number | null;
+  contractCount: number | null;
+};
+
 type AiAnswer = {
   suppressed?: boolean; minimum?: number; explanation?: string; understoodAs?: string; interpretedBy?: "rules" | "ai";
   minimumGroupSize?: number; dominanceLimit?: number; calculationVersion?: string;
@@ -121,7 +130,32 @@ type AiAnswer = {
   metricMeta?: Array<{ metric: string; label: string; unit: "dkk" | "percent" | "weeks" | "count"; additive: boolean }>;
   series?: AiSeriesRow[];
   visualization?: StatisticsVisualization;
+  omittedData?: OmittedStatisticsPoint[];
 };
+
+async function readJsonResponse(response: Response) {
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new Error(response.ok
+      ? "Statistikserveren svarede tomt."
+      : `Statistikserveren svarede uden fejltekst (${response.status}).`);
+  }
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new Error("Statistikserveren svarede ikke med gyldig JSON.");
+  }
+}
+
+function omittedPointText(point: OmittedStatisticsPoint) {
+  const reason = point.reason === "suppressed_segment"
+    ? "hele delgruppen blev skjult"
+    : suppressionDescriptions[point.reason] ?? "diskretionshensyn";
+  const basis = point.memberCount == null
+    ? ""
+    : ` · ${point.memberCount} ${point.memberCount === 1 ? "person" : "personer"}${point.contractCount == null ? "" : ` / ${point.contractCount} kontrakter`}`;
+  return `${point.year ?? "Ukendt år"} · ${point.seriesLabel || point.metricLabel}: ${reason}${basis}`;
+}
 
 function AiChartView({ chart, visualization }: { chart: CombinedChartType; visualization: StatisticsVisualization }) {
   const colors = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"];
@@ -169,7 +203,11 @@ export default function AdminStatistikPage() {
     if (contractType !== "all") params.set("contractType", contractType);
     if (experienceGroup !== "all") params.set("experienceGroup", experienceGroup);
     fetch(`/api/admin/statistics?${params}`, { signal: controller.signal, cache: "no-store" })
-      .then(async response => { const json = await response.json(); if (!response.ok) throw new Error(json.error ?? "Statistikken kunne ikke hentes"); return json; })
+      .then(async response => {
+        const json = await readJsonResponse(response) as Partial<StatisticsPayload> & { error?: string };
+        if (!response.ok) throw new Error(json.error ?? "Statistikken kunne ikke hentes");
+        return json as StatisticsPayload;
+      })
       .then(setData)
       .catch(fetchError => { if (fetchError.name !== "AbortError") setError(fetchError.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -239,7 +277,7 @@ export default function AdminStatistikPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
       });
-      const result = await response.json();
+      const result = await readJsonResponse(response) as AiAnswer & { error?: string; reason?: string; suggestion?: string };
       if (!response.ok) {
         setAiError({
           title: result.error ?? "Forespørgslen kunne ikke gennemføres",
@@ -288,6 +326,7 @@ export default function AdminStatistikPage() {
             {!chartSelectionError && activeAiChart !== "table" && <Card><CardHeader><CardTitle className="text-sm">{chartLabels[activeAiChart]}</CardTitle></CardHeader><CardContent className="h-[360px] min-w-0"><ResponsiveChartContainer minWidth={0}><AiChartView chart={activeAiChart} visualization={aiAnswer.visualization} /></ResponsiveChartContainer></CardContent></Card>}
             <DataTable headers={["Serie", "År", "Resultat", "Kontrakter", "Grundlag", "Reel værdi", "Realændring"]} rows={(aiAnswer.series ?? []).map(row => [row.seriesLabel, row.year, formatStatisticsValue(row.value, row.unit), row.contractCount, aiBasisText(row), row.realValue == null ? "—" : formatStatisticsValue(row.realValue, row.unit), row.realChangePercent == null ? "—" : `${row.realChangePercent}%`])} />
           </section>}
+          {Boolean(aiAnswer.omittedData?.length) && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Data udeladt af diskretionshensyn</AlertTitle><AlertDescription><p className="mb-2">Nogle år eller delgrupper findes i datagrundlaget, men vises ikke, fordi anonymiseringsreglerne skal beskytte små grupper og forhindre bagudregning.</p><ul className="list-disc space-y-1 pl-5">{aiAnswer.omittedData?.slice(0, 12).map((point, index) => <li key={`${point.year}-${point.seriesLabel}-${point.metricLabel}-${index}`}>{omittedPointText(point)}</li>)}</ul>{(aiAnswer.omittedData?.length ?? 0) > 12 && <p className="mt-2">{(aiAnswer.omittedData?.length ?? 0) - 12} yderligere datapunkt(er) er udeladt af samme årsager.</p>}</AlertDescription></Alert>}
           {Boolean(aiAnswer.caveats?.length) && <Alert><AlertTitle>Forbehold ved resultatet</AlertTitle><AlertDescription><ul className="list-disc space-y-1 pl-5">{aiAnswer.caveats?.map(caveat => <li key={caveat}>{caveat}</li>)}</ul></AlertDescription></Alert>}
           {aiAnswer.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Mindst ét datapunkt ligger under den valgte advarselsgrænse for små grupper. Tolk derfor udviklingen forsigtigt.</AlertDescription></Alert>}
         </div>}
@@ -316,8 +355,8 @@ export default function AdminStatistikPage() {
 
     <section data-statistics-source={data?.dataSource ?? "production"} data-exportable="true">
     {data?.suppressed ? <Card><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok personer til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} forskellige personer. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : !hasProductionStatistics ? <Card><CardContent className="py-16 text-center"><h2 className="font-semibold">Ingen statistikdata</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Der findes endnu ingen beregnede data med de valgte filtre. Statistikken viser ikke eksempel- eller demonstrationsdata.</p></CardContent></Card> : <>
-      {((data?.suppressionCount ?? 0) > 0 || (data?.outlierExcludedCount ?? 0) > 0) && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Diskretionsregler er anvendt</AlertTitle><AlertDescription>{(data?.suppressionCount ?? 0) > 0 && <span className="block">Nogle felter vises som N/A, fordi de ikke må udleveres som statistik. {dataProtectionSummary}</span>}{(data?.outlierExcludedCount ?? 0) > 0 && <span className="block">{data?.outlierExcludedCount} åbenlyse afvigere er frasorteret før beregning af løn, medianer og bidrag.</span>}<span className="block">Grafer og CSV-eksport bruger de samme slørede tal som tabellerne.</span></AlertDescription></Alert>}
-      <div className="grid grid-cols-3 gap-2 sm:gap-4"><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.memberCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Samlet antal kontrakter</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.contractCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{salaryContractCount}</CardContent></Card></div>
+      {((data?.suppressionCount ?? 0) > 0 || (data?.outlierExcludedCount ?? 0) > 0) && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Diskretionsregler er anvendt</AlertTitle><AlertDescription>{(data?.suppressionCount ?? 0) > 0 && <span className="block">Nogle felter vises som N/A, fordi de ikke må udleveres som statistik. {dataProtectionSummary}</span>}{(data?.outlierExcludedCount ?? 0) > 0 && <span className="block">{data?.outlierExcludedCount} åbenlyse afvigere er frasorteret før beregning af løn, medianer og bidrag.</span>}<span className="block">Grupper kan også være udeladt, hvis de ikke har nok forskellige personer, mangler statistiktilvalg eller ikke har et årstal, som statistikmotoren kan bruge.</span><span className="block">Grafer og CSV-eksport bruger de samme slørede tal som tabellerne.</span></AlertDescription></Alert>}
+      <div className="grid grid-cols-3 gap-2 sm:gap-4"><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.memberCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Kontrakter i statistikgrundlaget</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.contractCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{salaryContractCount}</CardContent></Card></div>
       <Tabs defaultValue="salary"><div className="-mx-3 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"><TabsList className="w-max min-w-full justify-start"><TabsTrigger value="salary">Løn</TabsTrigger><TabsTrigger value="pension">Pension</TabsTrigger><TabsTrigger value="weeks">Arbejdsuger</TabsTrigger><TabsTrigger value="rights">Rettigheder</TabsTrigger><TabsTrigger value="credits">Kreditering</TabsTrigger><TabsTrigger value="gender">Køn</TabsTrigger><TabsTrigger value="contracts">Kontrakter</TabsTrigger><TabsTrigger value="contributions">Bidrag</TabsTrigger><TabsTrigger value="ai">AI-forbehold</TabsTrigger><TabsTrigger value="individual">Individdata</TabsTrigger></TabsList></div>
         <TabsContent value="salary" className="space-y-4"><Card><CardContent className="h-[360px] pt-6"><ResponsiveChartContainer><LineChart data={salaryCategoryChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${value / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line connectNulls dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line connectNulls dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent></Card><DataTable headers={["År", "Produktionstype", "Kontrakter", "Median månedsløn", "Grundlag"]} rows={(data?.salaryByCategory ?? []).map(row => [row.year, categoryLabels[row.category] ?? row.category, row.contractCount, formatSafeKr(row.monthlyRate), basisText(row)])} /></TabsContent>
         <TabsContent value="pension"><DataTable headers={["År", "Medlemmer", "Gennemsnitlig pension", "Grundlag"]} rows={(data?.pension ?? []).map(row => [row.year, row.memberCount, formatSafeValue(row.avgPensionPercent, "%"), basisText(row)])} /></TabsContent>

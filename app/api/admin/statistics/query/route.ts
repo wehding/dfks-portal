@@ -23,6 +23,7 @@ import { getAnnualCpi } from "@/lib/statistics-cpi";
 import { companyMatchScore, normalizeCompanyBaseName, type ProductionCompanyOption } from "@/lib/production-companies";
 import { sampleSizeBand } from "@/lib/statistics/privacy-guard";
 import { buildStatisticsVisualization } from "@/lib/statistics/visualization";
+import { collectOmittedStatisticsPoints, describeOmittedStatisticsPoints, type OmittedStatisticsPoint } from "@/lib/statistics/omitted-points";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { auditRequestContext } from "@/lib/audit-access-server";
 import { recordAuditEvent } from "@/lib/audit-log-server";
@@ -252,9 +253,11 @@ export async function POST(request: NextRequest) {
     let includeDrafts = false;
     let suppressedSegments = 0;
     let suppressedCells = 0;
+    const omittedData: OmittedStatisticsPoint[] = [];
     const suppressionReasons: Record<string, number> = {};
     for (const segment of segments) {
       const statistics = await getAdminStatistics(caller.orgId, segment.filters);
+      const statisticsRecord = statistics as unknown as Record<string, unknown>;
       minimum = statistics.minimum;
       dominanceLimit = Number(statistics.dominanceLimit ?? dominanceLimit);
       includeDrafts ||= Boolean(statistics.includeDrafts);
@@ -265,8 +268,21 @@ export async function POST(request: NextRequest) {
       for (const [reason, count] of Object.entries(reasons)) suppressionReasons[reason] = (suppressionReasons[reason] ?? 0) + Number(count);
       if (statistics.suppressed) {
         suppressedSegments += 1;
+        omittedData.push({
+          year: null,
+          seriesLabel: segment.label,
+          metricLabel: plan.metrics.map(metric => STATISTICS_METRIC_META[metric].label).join(", "),
+          reason: "suppressed_segment",
+          memberCount: typeof statisticsRecord.memberCount === "number" ? statisticsRecord.memberCount : null,
+          contractCount: typeof statisticsRecord.contractCount === "number" ? statisticsRecord.contractCount : null,
+        });
         continue;
       }
+      omittedData.push(...collectOmittedStatisticsPoints({
+        metrics: plan.metrics,
+        statistics: statisticsRecord,
+        segmentLabel: segment.label === "Samlet resultat" ? "" : segment.label,
+      }));
       for (const metric of plan.metrics) {
         const meta = STATISTICS_METRIC_META[metric];
         const segmentLabel = segment.label === "Samlet resultat" ? "" : segment.label;
@@ -325,6 +341,7 @@ export async function POST(request: NextRequest) {
       ...(suppressionReasons.minimum_count ? [`${suppressionReasons.minimum_count} datapunkt(er) er sløret, fordi de bygger på for få forskellige personer.`] : []),
       ...(suppressionReasons.dominance ? [`${suppressionReasons.dominance} økonomiske datapunkt(er) er sløret, fordi få producenter overstiger dominansgrænsen på ${Math.round(dominanceLimit * 100)} %.`] : []),
       ...(suppressionReasons.secondary ? [`${suppressionReasons.secondary} datapunkt(er) er sekundært sløret for at forhindre bagudregning.`] : []),
+      ...describeOmittedStatisticsPoints(omittedData),
       ...(comparison.some(row => (row.outlierExcludedCount ?? 0) > 0) ? ["Åbenlyse løn-afvigere er frasorteret før beregning af løn- og bidragstal."] : []),
       ...(inflationUnavailable ? ["Inflationsdata er midlertidigt utilgængelige. Løntallene vises derfor nominelt uden inflationskorrektion."] : []),
     ];
@@ -342,6 +359,7 @@ export async function POST(request: NextRequest) {
       lowSample: comparison.some(row => row.lowSample),
       suppressionCount: suppressedSegments + suppressedCells,
       suppressionReasons,
+      omittedData,
       series: comparison,
       visualization,
       metricMeta: plan.metrics.map(metric => ({ metric, ...STATISTICS_METRIC_META[metric] })),
