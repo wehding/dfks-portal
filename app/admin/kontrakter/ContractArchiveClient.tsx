@@ -11,7 +11,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
-import { addAdminContractComment, deleteAdminContractsPermanently, fetchAdminContractsPage, markContractCommentsRead, checkRightsHolderName, updateAdminContract, validateAdminContracts, type AdminContractsPageParams } from "@/app/actions/member-contracts"
+import { addAdminContractComment, deleteAdminContractsPermanently, fetchAdminContractsPage, getContractSignedUrl, markContractCommentsRead, checkRightsHolderName, updateAdminContract, validateAdminContracts, type AdminContractsPageParams } from "@/app/actions/member-contracts"
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management"
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works"
 import { useRouter, useSearchParams } from "next/navigation"
@@ -837,9 +837,8 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         setViewPdfUrl(null)
         const displayPath = contract.processed_pdf_url ?? contract.pdf_url
         if (!displayPath) return
-        const supabase = createClient()
-        const { data } = await supabase.storage.from("kontrakter").createSignedUrl(displayPath, 3600)
-        if (data?.signedUrl) setViewPdfUrl(data.signedUrl)
+        const { url } = await getContractSignedUrl(displayPath)
+        if (url) setViewPdfUrl(url)
     }
 
     // ── Upload: file selection ────────────────────────────────
@@ -1045,9 +1044,8 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
 
         const displayPath = c.processed_pdf_url ?? c.pdf_url
         if (displayPath) {
-            const supabase = createClient()
-            supabase.storage.from("kontrakter").createSignedUrl(displayPath, 3600).then(({ data }) => {
-                if (data?.signedUrl) setEditDocUrl(data.signedUrl)
+            getContractSignedUrl(displayPath).then(({ url }) => {
+                if (url) setEditDocUrl(url)
             })
         }
         setEditForm({
@@ -1737,10 +1735,9 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     const openContractVersion = async (version: ContractVersion) => {
         const path = version.processed_pdf_url ?? version.pdf_url
         if (!path) return toast.error("Denne version har ingen dokumentfil")
-        const supabase = createClient()
-        const { data, error } = await supabase.storage.from("kontrakter").createSignedUrl(path, 10 * 60)
-        if (error || !data?.signedUrl) return toast.error("Dokumentet kunne ikke åbnes sikkert")
-        window.open(data.signedUrl, "_blank", "noopener,noreferrer")
+        const { url, error } = await getContractSignedUrl(path)
+        if (error || !url) return toast.error("Dokumentet kunne ikke åbnes sikkert")
+        window.open(url, "_blank", "noopener,noreferrer")
     }
 
     const SortButton = ({ label, sortId }: { label: string; sortId: SortKey }) => (
@@ -2111,12 +2108,10 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                         <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => openPdf(c)}><Eye className="h-3.5 w-3.5" />Se</Button>
                                         <Button type="button" variant="ghost" size="sm" className="gap-1" disabled={!c.pdf_url} onClick={async () => {
                                             if (!c.pdf_url) return
-                                            const { createClient } = await import("@/lib/supabase/client")
-                                            const supabase = createClient()
-                                            const { data } = await supabase.storage.from("kontrakter").createSignedUrl(c.pdf_url, 60)
-                                            if (!data?.signedUrl) return
+                                            const { url } = await getContractSignedUrl(c.pdf_url)
+                                            if (!url) return
                                             const a = document.createElement("a")
-                                            a.href = data.signedUrl
+                                            a.href = url
                                             a.download = c.pdf_url.split("/").pop() ?? "kontrakt.pdf"
                                             a.click()
                                         }}><Download className="h-3.5 w-3.5" /></Button>

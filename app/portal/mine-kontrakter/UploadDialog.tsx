@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { Upload, X, Loader2, CheckCircle2, Sparkles, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { linkContractToWork, queueUploadedContractAiJob, saveUploadedContract } from "@/app/actions/member-contracts";
+import { linkContractToWork, prepareMemberContractUpload, queueUploadedContractAiJob, saveUploadedContract } from "@/app/actions/member-contracts";
 import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, findManualWorkDuplicates, linkExistingWorkForMember, resolveUnifiedSearchResultDetails, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { SeasonStepper } from "@/components/works/season-stepper";
@@ -20,7 +20,6 @@ import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { createClientId } from "@/lib/client-id";
 import { MemberDriveConnections } from "@/components/portal/member-drive-connections";
 
-const BUCKET = "kontrakter";
 const MAX_FILES = 15;
 
 const ROLES = ["Klipper", "Film Editor", "Klippeassistent", "Dramaturg", "Klipper/Instruktør"];
@@ -390,35 +389,36 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     if (files.length === 0 || (!isBatchUpload && !resolvedUploadTitle)) return null;
     setSaving(true);
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { toast.error("Ikke logget ind"); return null; }
-
-      const contextResponse = await fetch("/api/access/context", { cache: "no-store" });
-      const access = contextResponse.ok
-        ? await contextResponse.json() as { orgId?: string; rightsHolderId?: string | null; canUseMember?: boolean }
-        : null;
-      const orgId = access?.canUseMember ? access.orgId : undefined;
-      if (!orgId || !access?.rightsHolderId) { toast.error("Vælg en organisation, hvor du er rettighedshaver"); return null; }
-
-      const { data: rhRow } = await supabase.from("rettighedshavere").select("id, full_name").eq("id", access.rightsHolderId).single();
-      if (!rhRow) { toast.error("Ingen rettighedshaver-profil"); return null; }
-
       const roles = isSeries
         ? [...new Set(episodeCredits.filter(e => e.role).map(e => e.role))]
         : creditedRoles.filter(Boolean);
 
       const savedContracts: UploadedContract[] = [];
+      const supabase = createClient();
 
-      for (const [index, selectedFile] of files.entries()) {
+      for (const selectedFile of files) {
         setUploadStage("uploading");
-        const filePath = `${orgId}/${Date.now()}_${index}_${selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-        const { error: storageErr } = await supabase.storage.from(BUCKET).upload(filePath, selectedFile, { contentType: selectedFile.type });
-        if (storageErr) { toast.error(`Upload fejlede for ${selectedFile.name}: ${storageErr.message}`); return null; }
-
+        const prepared = await prepareMemberContractUpload({
+          fileName: selectedFile.name,
+          fileSize: selectedFile.size,
+        });
+        if (!prepared.success) {
+          toast.error(prepared.error);
+          return null;
+        }
+        const uploaded = await supabase.storage.from("kontrakter").uploadToSignedUrl(
+          prepared.filePath,
+          prepared.uploadToken,
+          selectedFile,
+          { contentType: selectedFile.type || "application/octet-stream", upsert: false },
+        );
+        if (uploaded.error) {
+          toast.error(`Upload fejlede for ${selectedFile.name}`);
+          return null;
+        }
         setUploadStage("saving");
         const res = await saveUploadedContract({
-          filePath, orgId, rhId: rhRow.id, memberName: rhRow.full_name,
+          filePath: prepared.filePath,
           // Batch: ingen fælles titel — AI-jobbet udtrækker titlen pr. kontrakt.
           workTitle: isBatchUpload ? undefined : resolvedUploadTitle,
           workId: isBatchUpload ? undefined : selectedWorkId || undefined,
