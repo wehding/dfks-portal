@@ -240,6 +240,7 @@ begin
   -- A legally validated contract is never eligible for extraction recovery.
   original_path := test_org || '/' || validated_contract_id || '/original.pdf';
   processed_path := test_org || '/' || validated_contract_id || '/processed.pdf';
+  perform set_config('app.explicit_contract_validation', 'on', true);
   insert into public.contracts(
     id, org_id, type, status, pdf_url, processed_pdf_url,
     document_processing_status
@@ -247,6 +248,7 @@ begin
     validated_contract_id, test_org, 'a-løn', 'valideret', original_path,
     processed_path, 'ready'
   );
+  perform set_config('app.explicit_contract_validation', 'off', true);
   insert into public.contract_ai_jobs(
     id, contract_id, org_id, status, stage, failure_class, error_code,
     provider, model, input_storage_path

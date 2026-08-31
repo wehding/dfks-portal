@@ -239,7 +239,9 @@ begin
   where id = document_contract_id;
 
   -- A validated contract must never be put back through OCR -> AI recovery.
+  perform set_config('app.explicit_contract_validation', 'on', true);
   update public.contracts set status = 'valideret' where id = document_contract_id;
+  perform set_config('app.explicit_contract_validation', 'off', true);
   rejected := false;
   begin
     perform public.requeue_contract_document_job_for_recovery(
