@@ -1,6 +1,6 @@
 begin;
 
-select plan(1);
+select plan(2);
 
 do $$
 declare
@@ -422,6 +422,24 @@ begin
   end if;
 end;
 $$;
+
+set local role service_role;
+select lives_ok(
+  $$
+    update public.contract_document_jobs
+    set output_storage_path = org_id::text || '/processed/' || contract_id::text
+      || '/leases/service-role-regression/normalised.pdf'
+    where id = (
+      select id
+      from public.contract_document_jobs
+      where recovery_origin = 'automatic'
+      order by created_at asc, id asc
+      limit 1
+    )
+  $$,
+  'service_role can update a recovery lease path without private-helper access'
+);
+reset role;
 
 select pass('automatic OCR recovery is typed, bounded, immutable and service-only');
 select * from finish();
