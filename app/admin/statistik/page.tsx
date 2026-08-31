@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useI18n } from "@/lib/i18n";
 import { EXPERIENCE_GROUPS } from "@/lib/experience-groups";
+import { createStatisticsDisplayResult, getExportableStatisticsRows } from "@/lib/statistics/display-result";
 import type { CombinedChartType, StatisticsVisualization } from "@/lib/statistics/visualization";
 
 type SafeNumber = number | null;
@@ -25,6 +26,7 @@ type YearRow = {
   suppressed?: boolean; suppressionReason?: SuppressionReason; outlierExcludedCount?: number;
 };
 type StatisticsPayload = {
+  dataSource: "production";
   suppressed: boolean; minimum: number; lowSampleThreshold: number; lowSample?: boolean; includeDrafts?: boolean; memberCount: number | null; contractCount?: number; validatedCount?: number; draftCount?: number; years: number[];
   minimumGroupSize?: number; dominanceLimit?: number; calculationVersion?: string;
   suppressionCount?: number; suppressionReasons?: Partial<Record<SuppressionReason, number>>; outlierExcludedCount?: number;
@@ -207,6 +209,16 @@ export default function AdminStatistikPage() {
     }
     return [...rows.values()].sort((left, right) => left.year - right.year);
   }, [data]);
+  const salaryDisplayResult = useMemo(() => createStatisticsDisplayResult({
+    productionRows: salaryCategoryChart,
+    demonstrationRows: demoSalary,
+    useDemonstration: showDemonstrations,
+  }), [salaryCategoryChart, showDemonstrations]);
+  const rightsDisplayResult = useMemo(() => createStatisticsDisplayResult({
+    productionRows: data?.rights ?? [],
+    demonstrationRows: demoRights,
+    useDemonstration: showDemonstrations,
+  }), [data?.rights, showDemonstrations]);
   const contractCountsChart = useMemo(() => (data?.contractCounts ?? [])
     .filter(row => !row.suppressed && (row.aLoen != null || row.leverandoer != null))
     .map(row => ({ year: row.year, aLoen: row.aLoen ?? undefined, leverandoer: row.leverandoer ?? undefined }))
@@ -226,7 +238,12 @@ export default function AdminStatistikPage() {
     setYears((data?.years ?? []).filter(year => year >= lower && year <= upper));
   };
   const exportCsv = () => {
-    const rows = data?.contributions ?? [];
+    const exportResult = createStatisticsDisplayResult({
+      productionRows: data?.contributions ?? [],
+      demonstrationRows: [],
+      useDemonstration: false,
+    });
+    const rows = getExportableStatisticsRows(exportResult);
     const csv = ["År;Medlemmer;Kontrakter;Feriepenge;BETA;I alt;Diskretion", ...rows.map(row => [
       row.year,
       row.memberCount,
@@ -278,20 +295,20 @@ export default function AdminStatistikPage() {
   return <div className="space-y-6">
     <PageHeader title={t("admin.stats.title")} subtitle="Anonymiseret statistik for den aktive organisation" />
 
-    {showDemonstrations && <section className="space-y-4" aria-labelledby="demo-statistics-title">
+    {salaryDisplayResult.source === "demonstration" && <section className="space-y-4 print:hidden" aria-labelledby="demo-statistics-title" data-statistics-source="demonstration" data-exportable="false">
       <Alert>
         <Sparkles className="h-4 w-4" />
         <AlertTitle id="demo-statistics-title">Eksempler på statistikvisninger</AlertTitle>
         <AlertDescription>Der er endnu ikke data nok til at vise mindst to reelle statistikker. Diagrammerne nedenfor bruger fiktive eksempeldata og indgår ikke i beregninger, forespørgsler eller eksport.</AlertDescription>
       </Alert>
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle className="text-base">Demonstration: lønudvikling</CardTitle></CardHeader>
-          <CardContent className="h-[300px]"><ResponsiveChartContainer><LineChart data={demoSalary}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${Number(value) / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent>
+        <Card data-statistics-source={salaryDisplayResult.source} data-exportable={salaryDisplayResult.exportable}>
+          <CardHeader><CardTitle className="text-base">Demonstration: lønudvikling</CardTitle><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Fiktive eksempeldata · kan ikke eksporteres</p></CardHeader>
+          <CardContent className="h-[300px]"><ResponsiveChartContainer><LineChart data={salaryDisplayResult.rows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${Number(value) / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent>
         </Card>
-        <Card>
-          <CardHeader><CardTitle className="text-base">Demonstration: rettighedsforbehold</CardTitle></CardHeader>
-          <CardContent className="h-[300px]"><ResponsiveChartContainer><BarChart data={demoRights} layout="vertical"><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" domain={[0, 100]} tickFormatter={value => `${value}%`} /><YAxis type="category" dataKey="name" width={130} /><Tooltip contentStyle={tooltipStyle} formatter={value => `${value}%`} /><Bar dataKey="value" name="Andel" fill="#8b5cf6" /></BarChart></ResponsiveChartContainer></CardContent>
+        <Card data-statistics-source={rightsDisplayResult.source} data-exportable={rightsDisplayResult.exportable}>
+          <CardHeader><CardTitle className="text-base">Demonstration: rettighedsforbehold</CardTitle><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Fiktive eksempeldata · kan ikke eksporteres</p></CardHeader>
+          <CardContent className="h-[300px]"><ResponsiveChartContainer><BarChart data={rightsDisplayResult.rows} layout="vertical"><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" domain={[0, 100]} tickFormatter={value => `${value}%`} /><YAxis type="category" dataKey="name" width={130} /><Tooltip contentStyle={tooltipStyle} formatter={value => `${value}%`} /><Bar dataKey="value" name="Andel" fill="#8b5cf6" /></BarChart></ResponsiveChartContainer></CardContent>
         </Card>
       </div>
     </section>}
@@ -342,6 +359,7 @@ export default function AdminStatistikPage() {
       </AlertDescription>
     </Alert>}
 
+    <section data-statistics-source={data?.dataSource ?? "production"} data-exportable="true">
     {data?.suppressed ? <Card><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok personer til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} forskellige personer. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : <>
       {((data?.suppressionCount ?? 0) > 0 || (data?.outlierExcludedCount ?? 0) > 0) && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Diskretionsregler er anvendt</AlertTitle><AlertDescription>{(data?.suppressionCount ?? 0) > 0 && <span className="block">Nogle felter vises som N/A, fordi de ikke må udleveres som statistik. {dataProtectionSummary}</span>}{(data?.outlierExcludedCount ?? 0) > 0 && <span className="block">{data?.outlierExcludedCount} åbenlyse afvigere er frasorteret før beregning af løn, medianer og bidrag.</span>}<span className="block">Grafer og CSV-eksport bruger de samme slørede tal som tabellerne.</span></AlertDescription></Alert>}
       <div className="grid grid-cols-3 gap-2 sm:gap-4"><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.memberCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Samlet antal kontrakter</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.contractCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{salaryContractCount}</CardContent></Card></div>
@@ -360,5 +378,6 @@ export default function AdminStatistikPage() {
       {data?.includeDrafts && <Alert><AlertTitle>Kladder indgår</AlertTitle><AlertDescription>Organisationens indstilling medtager kladekontrakter. De kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata.</AlertDescription></Alert>}
       {data?.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Det valgte resultat bygger på {data.memberCount} forskellige personer. Vær forsigtig med konklusioner baseret på færre end {data.lowSampleThreshold} personer.</AlertDescription></Alert>}
     </>}
+    </section>
   </div>;
 }
