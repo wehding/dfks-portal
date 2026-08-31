@@ -38,6 +38,7 @@ export const OCR_QUALITY_DIAGNOSTIC_CODES = Object.freeze({
   visionWordLimitExceeded: "vision_word_limit_exceeded",
 });
 const OCR_QUALITY_DIAGNOSTIC_CODE_SET = new Set(Object.values(OCR_QUALITY_DIAGNOSTIC_CODES));
+const DOCUMENT_CLASSIFICATION_SET = new Set(["native_text", "image_only", "mixed", "unreadable"]);
 const DOCUMENT_GOOGLE_ERROR_CODES = new Set([
   "document_page_limit_exceeded",
   "document_raster_budget_exceeded",
@@ -77,6 +78,13 @@ export class FatalProcessingError extends Error {
     this.name = "FatalProcessingError";
     this.code = code;
   }
+}
+
+function requireDocumentClassification(value) {
+  if (!DOCUMENT_CLASSIFICATION_SET.has(value)) {
+    throw new FatalProcessingError("invalid_document_classification");
+  }
+  return value;
 }
 
 export function parseProcessingDeadlineSeconds(value) {
@@ -624,7 +632,7 @@ export function createProcessor(options = {}) {
       const completion = {
         jobId: job.jobId,
         leaseToken: job.leaseToken,
-        documentClassification: result.classification,
+        documentClassification: requireDocumentClassification(result.classification),
         ocrEngine: result.status === "not_required" ? null : "google-vision-eu-v1",
         orientationCorrections: result.orientationCorrections ?? [],
         ocrApplied: result.status === "completed",

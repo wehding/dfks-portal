@@ -127,7 +127,7 @@ test("rigtig processOne-orienteringsfejl stopper pilotens runBackfill", async ()
     leaseHeartbeatFactory: async () => ({ assertHealthy() {}, async stop() {} }),
     spatialProcessor: async () => ({
       status: "needs_review",
-      classification: "orientation_uncertain",
+      classification: "image_only",
       pageCount: 1,
       nativePageCount: 0,
       ocrPageCount: 1,

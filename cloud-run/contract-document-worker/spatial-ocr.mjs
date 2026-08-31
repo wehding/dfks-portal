@@ -143,6 +143,12 @@ export function classifyPageText(text, {
   };
 }
 
+export function classifyOcrDocument(pageStates) {
+  return pageStates.every((page) => page.classification === "image_only")
+    ? "image_only"
+    : "mixed";
+}
+
 export function parsePdfImagesList(value) {
   const images = [];
   for (const line of String(value ?? "").split(/\r?\n/)) {
@@ -553,6 +559,7 @@ export async function processPdfSpatially({
       textCharCount: pageStates.reduce((total, page) => total + page.chars, 0),
     };
   }
+  const ocrDocumentClassification = classifyOcrDocument(pageStates);
 
   // A document that needs OCR is rebuilt consistently from DLP-redacted pages.
   // Processing every page prevents a mixed PDF from retaining unredacted native
@@ -622,7 +629,7 @@ export async function processPdfSpatially({
   }
   if (orientationUncertainPageCount > 0) {
     return {
-      status: "needs_review", classification: "orientation_uncertain", pageCount,
+      status: "needs_review", classification: ocrDocumentClassification, pageCount,
       nativePageCount,
       ocrPageCount: pageCount - nativePageCount,
       unreadablePageCount,
@@ -711,11 +718,9 @@ export async function processPdfSpatially({
     { mode: 0o600 },
   );
   assertProcessingHealthy();
-  const classification = nativePageCount === 0 && pageStates.every((page) => page.classification === "image_only")
-    ? "image_only" : "mixed";
   return {
     status: spatial.passed && textCharCount >= 120 ? "completed" : "needs_review",
-    classification,
+    classification: ocrDocumentClassification,
     pageCount,
     nativePageCount,
     ocrPageCount: pageCount - nativePageCount,
