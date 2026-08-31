@@ -27,6 +27,7 @@ import { normalizeSharePercent } from "@/lib/work-share-distribution";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { ensureMemberCollaborationReviews, markCollaborationReviewsCoeditorsReported, resolveCollaborationReviewWorkIds } from "@/lib/server/work-collaboration-reviews";
 import { collaborationReviewStatusForSoloClaim } from "@/lib/work-collaboration-review";
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
 
 import { requireMemberContext } from "@/lib/org";
 
@@ -236,8 +237,9 @@ async function currentOrgId(db: ReturnType<typeof createServiceClient>, userId: 
 }
 
 async function ensureOwnRightsHolder(db: ReturnType<typeof createServiceClient>, rightsHolderId: string) {
-  const user = await currentUser();
-  const context = await requireMemberContext(db, user.id);
+  const context = await getRequestAppAccessContext();
+  if (!context) throw new Error("Du skal være logget ind.");
+  const user = { id: context.userId };
   if (context.rightsHolderId !== rightsHolderId) throw new Error("Du er ikke rettighedshaver i den aktive organisation.");
   const { data, error } = await db
     .from("rettighedshavere")
@@ -313,23 +315,24 @@ export async function fetchMemberWorkOverview(params: {
   if (!logicalKeys.size) {
     return { success: true, items: [], page, pageSize, filteredCount, totalCount, hasNextPage: false };
   }
-  const { data, error } = await db
-    .from("work_assignments")
-    .select("id, role, contract_id, episode_id, created_at, works!inner(id, title, type, year, duration_minutes, episode_count, parent_work_id, season_number, episode_number, status, poster_url, description)")
-    .eq("org_id", context.orgId)
-    .eq("rights_holder_id", rightsHolder.id)
-    .in("id", assignmentIds)
-    .order("created_at", { ascending: false });
-  if (error) return { success: false, error: error.message, items: [] };
+  const [assignmentsResult, scopesResult] = await Promise.all([
+    db.from("work_assignments")
+      .select("id, role, contract_id, episode_id, created_at, works!inner(id, title, type, year, duration_minutes, episode_count, parent_work_id, season_number, episode_number, status, poster_url, description)")
+      .eq("org_id", context.orgId)
+      .eq("rights_holder_id", rightsHolder.id)
+      .in("id", assignmentIds)
+      .order("created_at", { ascending: false }),
+    db.from("member_series_episode_scopes")
+      .select("id,org_id,rights_holder_id,series_work_id,season_number,status,episode_numbers,covers_whole_season,source,confirmed_at")
+      .eq("org_id", context.orgId)
+      .eq("rights_holder_id", rightsHolder.id)
+      .in("id", scopeIds.length ? scopeIds : ["00000000-0000-0000-0000-000000000000"]),
+  ]);
+  const overviewPageError = assignmentsResult.error ?? scopesResult.error;
+  if (overviewPageError) return { success: false, error: overviewPageError.message, items: [] };
 
-  const assignments = (data ?? []) as unknown as MemberOverviewAssignmentRow[];
-  const { data: episodeScopes, error: scopesError } = await db
-    .from("member_series_episode_scopes")
-    .select("id,org_id,rights_holder_id,series_work_id,season_number,status,episode_numbers,covers_whole_season,source,confirmed_at")
-    .eq("org_id", context.orgId)
-    .eq("rights_holder_id", rightsHolder.id)
-    .in("id", scopeIds.length ? scopeIds : ["00000000-0000-0000-0000-000000000000"]);
-  if (scopesError) return { success: false, error: scopesError.message, items: [] };
+  const assignments = (assignmentsResult.data ?? []) as unknown as MemberOverviewAssignmentRow[];
+  const episodeScopes = scopesResult.data;
   const scopes = episodeScopes ?? [];
   const workIds = assignments.map(item => item.works?.id).filter((id): id is string => Boolean(id));
   const parentIds = [...new Set([
