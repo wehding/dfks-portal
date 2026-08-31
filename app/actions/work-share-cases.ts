@@ -236,14 +236,44 @@ export async function fetchMemberCoEditorSuggestions(params: {
 }
 
 export async function fetchMemberShareTaskTarget(params: { rightsHolderId: string; caseId: string }) {
-  const { db, holder, orgId } = await ownContext(params.rightsHolderId);
-  const { data: participant } = await db.from("work_share_participants").select("case_id")
+  const { db, user, holder, orgId } = await ownContext(params.rightsHolderId);
+  const { data: participant } = await db.from("work_share_participants")
+    .select("case_id,relationship_status,proposed_percent")
     .eq("case_id", params.caseId).eq("org_id", orgId).eq("rights_holder_id", holder.id).maybeSingle();
   if (!participant) return { success: false as const, error: "Opgaven tilhører ikke dig." };
-  const { data: shareCase } = await db.from("work_share_cases").select("work_id,season_number,episode_number")
+  const { data: shareCase } = await db.from("work_share_cases")
+    .select("id,work_id,season_number,episode_number,status,works(title,type,year)")
     .eq("id", params.caseId).eq("org_id", orgId).maybeSingle();
   if (!shareCase) return { success: false as const, error: "Opgaven findes ikke." };
-  return { success: true as const, target: shareCase };
+  await recordSensitiveFlow({
+    actor: { userId: user.id, orgId, role: "member", source: "portal" },
+    action: "read",
+    component: "portal.work_share_task_link",
+    entityType: "work_share_case",
+    entityId: shareCase.id,
+    targetMemberUuid: holder.id,
+    targetMemberUuids: [holder.id],
+    purposeCode: "work_share_resolution",
+    legalBasis: "gdpr_art_6_1_b",
+    dataCategories: ["work_data", "rights_data"],
+  });
+  const workRelation = shareCase.works as unknown as { title?: string | null; type?: string | null; year?: number | null } | Array<{ title?: string | null; type?: string | null; year?: number | null }> | null;
+  const work = Array.isArray(workRelation) ? workRelation[0] : workRelation;
+  return {
+    success: true as const,
+    target: {
+      id: shareCase.id,
+      workId: shareCase.work_id,
+      title: work?.title ?? "Værk",
+      type: work?.type ?? null,
+      year: work?.year ?? null,
+      seasonNumber: shareCase.season_number,
+      episodeNumber: shareCase.episode_number,
+      status: shareCase.status,
+      relationshipStatus: participant.relationship_status,
+      proposedPercent: participant.proposed_percent,
+    },
+  };
 }
 
 export async function respondToWorkShareTask(params: {
