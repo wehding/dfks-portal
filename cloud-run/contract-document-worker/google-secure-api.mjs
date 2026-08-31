@@ -87,6 +87,20 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw abortReason(signal);
 }
 
+async function awaitWithAbort(promise, signal) {
+  throwIfAborted(signal);
+  let onAbort;
+  const aborted = new Promise((resolve, reject) => {
+    onAbort = () => reject(abortReason(signal));
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
 function waitForRetry(milliseconds, { signal } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -109,15 +123,15 @@ export async function fetchGoogleAccessToken(fetchImpl = fetch, { signal, timeou
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) {
     throw new GoogleOcrOperationalError("google_access_token_failed");
   }
+  throwIfAborted(signal);
   const requestController = new AbortController();
   const onAbort = () => requestController.abort(abortReason(signal));
   signal?.addEventListener("abort", onAbort, { once: true });
   const timeout = setTimeout(() => {
     requestController.abort(new GoogleOcrOperationalError("google_access_token_failed"));
   }, timeoutMs);
-  let response;
   try {
-    response = await fetchImpl(
+    const response = await fetchImpl(
       "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
       {
         headers: { "Metadata-Flavor": "Google" },
@@ -125,24 +139,28 @@ export async function fetchGoogleAccessToken(fetchImpl = fetch, { signal, timeou
         signal: requestController.signal,
       },
     );
+    if (!response.ok) throw new GoogleOcrOperationalError("google_access_token_failed");
+    throwIfAborted(requestController.signal);
+    let body;
+    try {
+      body = await awaitWithAbort(Promise.resolve().then(() => response.json()), requestController.signal);
+      throwIfAborted(requestController.signal);
+    } catch (error) {
+      if (signal?.aborted) throw abortReason(signal);
+      throw new GoogleOcrOperationalError("google_access_token_failed", { cause: error });
+    }
+    if (typeof body.access_token !== "string" || !body.access_token) {
+      throw new GoogleOcrOperationalError("google_access_token_failed");
+    }
+    return body.access_token;
   } catch (error) {
     if (signal?.aborted) throw abortReason(signal);
+    if (error instanceof GoogleOcrOperationalError) throw error;
     throw new GoogleOcrOperationalError("google_access_token_failed", { cause: error });
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", onAbort);
   }
-  if (!response.ok) throw new GoogleOcrOperationalError("google_access_token_failed");
-  let body;
-  try {
-    body = await response.json();
-  } catch (error) {
-    throw new GoogleOcrOperationalError("google_access_token_failed", { cause: error });
-  }
-  if (typeof body.access_token !== "string" || !body.access_token) {
-    throw new GoogleOcrOperationalError("google_access_token_failed");
-  }
-  return body.access_token;
 }
 
 export async function secureJsonPost(urlValue, token, payload, {
