@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   createRightsHolderFromShareParticipant,
   excludeShareParticipant,
-  fetchAdminShareCases,
+  fetchAdminShareTaskDetail,
   matchShareParticipant,
   proposeAdminShareCompromise,
   refreshAdminShareCaseCredits,
@@ -27,10 +27,23 @@ type CreditSourceState = { source: "dfi" | "tmdb"; status: "missing" | "fresh" |
 type ShareCase = { id: string; work_id: string; season_number: number | null; episode_number: number | null; status: string; reserve_percent: number; works: { title: string } | null; work_share_participants: Participant[]; credit_source_states: CreditSourceState[] };
 type CollaborationDispute = { id: string; works: { title: string; season_number: number | null; episode_number: number | null } | null; rettighedshavere: { full_name: string } | null };
 
-export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange?: (count: number) => void }) {
-  const [cases, setCases] = useState<ShareCase[]>([]);
+export function WorkShareReconciliationWizard({
+  taskKey,
+  position,
+  total,
+  onPrevious,
+  onNext,
+  onResolved,
+}: {
+  taskKey: string;
+  position: number;
+  total: number;
+  onPrevious?: () => void;
+  onNext?: () => void;
+  onResolved: () => void;
+}) {
+  const [active, setActive] = useState<ShareCase | null>(null);
   const [disputes, setDisputes] = useState<CollaborationDispute[]>([]);
-  const [index, setIndex] = useState(0);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [reserve, setReserve] = useState("0");
   const [createDraft, setCreateDraft] = useState<Record<string, { name: string; email: string; phone: string }>>({});
@@ -43,13 +56,9 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     setLoading(true);
     setLoadError(null);
     try {
-      const caseResult = await fetchAdminShareCases();
-      const next = caseResult.cases as unknown as ShareCase[];
-      const nextDisputes = caseResult.disputes as unknown as CollaborationDispute[];
-      setCases(next);
-      setDisputes(nextDisputes);
-      setIndex(current => Math.min(current, Math.max(0, next.length - 1)));
-      onCountChange?.(caseResult.count);
+      const result = await fetchAdminShareTaskDetail(taskKey);
+      setActive(result.shareCase as unknown as ShareCase | null);
+      setDisputes(result.disputes as unknown as CollaborationDispute[]);
     } catch (error) {
       const text = error instanceof Error ? error.message : "Opgaverne kunne ikke hentes.";
       setLoadError(text);
@@ -57,10 +66,9 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     } finally {
       setLoading(false);
     }
-  }, [onCountChange]);
+  }, [taskKey]);
 
   useEffect(() => { void load().catch(() => undefined); }, [load]);
-  const active = cases[index] ?? null;
   const participants = useMemo(() => active?.work_share_participants.filter(row => !row.excluded_at) ?? [], [active]);
   const unresolved = participants.filter(row => !row.rights_holder_id);
   const missingResponses = participants.filter(row => row.rights_holder_id && ["pending", "pending_match"].includes(row.relationship_status));
@@ -78,7 +86,7 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     setBusy(`credits:${active.id}`);
     void refreshAdminShareCaseCredits(active.id).then(result => {
       const refreshed = result.case as unknown as ShareCase;
-      setCases(current => current.map(row => row.id === refreshed.id ? refreshed : row));
+      setActive(refreshed);
     }).catch(error => setMessage(error instanceof Error ? error.message : "Kilderne kunne ikke opdateres.")).finally(() => setBusy(null));
     // Kun et nyt sags-id må starte et kildeopslag; opdatering af den samme sag
     // erstatter objektet i listen og må ikke starte opslaget igen.
@@ -92,7 +100,7 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     try {
       const result = await refreshAdminShareCaseCredits(active.id, force);
       const refreshed = result.case as unknown as ShareCase;
-      setCases(current => current.map(row => row.id === refreshed.id ? refreshed : row));
+      setActive(refreshed);
       if (force) setMessage("Kilderne er opdateret.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Kilderne kunne ikke opdateres.");
@@ -101,9 +109,9 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     }
   }
 
-  async function run(key: string, operation: () => Promise<unknown>, success: string) {
+  async function run(key: string, operation: () => Promise<unknown>, success: string, after?: "resolved") {
     setBusy(key); setMessage(null);
-    try { await operation(); setMessage(success); await load(); }
+    try { await operation(); setMessage(success); if (after === "resolved") onResolved(); else await load(); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Handlingen kunne ikke gennemføres."); }
     finally { setBusy(null); }
   }
@@ -171,15 +179,15 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
         <p className="font-medium">{dispute.works?.title ?? "Ukendt værk"}{dispute.works?.season_number ? ` · sæson ${dispute.works.season_number}` : ""}{dispute.works?.episode_number ? ` · afsnit ${dispute.works.episode_number}` : ""}</p>
         <p className="mt-1 text-sm text-muted-foreground">{dispute.rettighedshavere?.full_name ?? "Et medlem"} oplyser, at arbejdet blev udført alene, selv om andre klippere er registreret.</p>
         <div className="mt-2 flex flex-wrap gap-2">
-          <Button size="sm" disabled={busy === `dispute:${dispute.id}`} onClick={() => void run(`dispute:${dispute.id}`, () => resolveCollaborationDispute({ reviewId: dispute.id, decision: "accept_solo" }), "Indsigelsen er accepteret som klippet alene.")}>Acceptér klippet alene</Button>
-          <Button size="sm" variant="outline" disabled={busy === `dispute:${dispute.id}`} onClick={() => void run(`dispute:${dispute.id}`, () => resolveCollaborationDispute({ reviewId: dispute.id, decision: "reopen" }), "Medlemmets opgave er genåbnet.")}>Bed medlemmet gennemgå igen</Button>
+          <Button size="sm" disabled={busy === `dispute:${dispute.id}`} onClick={() => void run(`dispute:${dispute.id}`, () => resolveCollaborationDispute({ reviewId: dispute.id, decision: "accept_solo" }), "Indsigelsen er accepteret som klippet alene.", active ? undefined : "resolved")}>Acceptér klippet alene</Button>
+          <Button size="sm" variant="outline" disabled={busy === `dispute:${dispute.id}`} onClick={() => void run(`dispute:${dispute.id}`, () => resolveCollaborationDispute({ reviewId: dispute.id, decision: "reopen" }), "Medlemmets opgave er genåbnet.", active ? undefined : "resolved")}>Bed medlemmet gennemgå igen</Button>
         </div>
       </div>)}</div>
     </details>}
     {!active ? null : <>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <h3 className="text-lg font-semibold">{active.works?.title ?? "Ukendt værk"}{active.season_number ? ` · sæson ${active.season_number}` : ""}</h3>
-      <div className="flex items-center gap-2" aria-label="Navigér mellem værker"><Button size="icon-xs" variant="outline" aria-label="Forrige værk" title="Forrige værk" disabled={index === 0} onClick={() => setIndex(value => value - 1)}><ChevronLeft /></Button><span className="min-w-12 text-center text-xs text-muted-foreground">{index + 1} af {cases.length}</span><Button size="icon-xs" variant="outline" aria-label="Spring til næste værk" title="Spring over" disabled={index >= cases.length - 1} onClick={() => setIndex(value => value + 1)}><ChevronRight /></Button></div>
+      <div className="flex items-center gap-2" aria-label="Navigér mellem værker"><Button size="icon-xs" variant="outline" aria-label="Forrige værk" title="Forrige værk" disabled={!onPrevious} onClick={onPrevious}><ChevronLeft /></Button><span className="min-w-12 text-center text-xs text-muted-foreground">{position} af {total}</span><Button size="icon-xs" variant="outline" aria-label="Spring til næste værk" title="Spring over" disabled={!onNext} onClick={onNext}><ChevronRight /></Button></div>
     </div>
     <p className="text-sm text-muted-foreground">Bekræft personerne og angiv deres arbejdsandel.</p>
 
@@ -214,7 +222,7 @@ export function WorkShareReconciliationWizard({ onCountChange }: { onCountChange
     <section className="space-y-3 rounded-lg border p-4" aria-labelledby="share-review-heading">
       <div className="flex flex-wrap items-center justify-between gap-3"><h4 id="share-review-heading" className="font-semibold">2. Kontrollér og godkend</h4><div className="flex gap-4 text-sm"><span>Fordelt <strong>{allocatedTotal.toLocaleString("da-DK", { maximumFractionDigits: 1 })} %</strong></span><span>Reserve <strong>{Number.isFinite(reserveValue) ? reserveValue.toLocaleString("da-DK", { maximumFractionDigits: 1 }) : "—"} %</strong></span><span>I alt <strong className={Math.abs(combinedTotal - 100) < 0.001 ? "text-emerald-700" : "text-amber-700"}>{combinedTotal.toLocaleString("da-DK", { maximumFractionDigits: 1 })} %</strong></span></div></div>
       {missingResponses.length > 0 && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-500/10">{missingResponses.length} deltager(e) har ikke svaret. Afslutning kræver ekstra bekræftelse.</p>}
-      <div className="flex justify-end"><Button disabled={unresolved.length > 0} onClick={() => { const allowMissingResponses = missingResponses.length > 0 ? window.confirm("Der mangler svar. Vil du alligevel godkende den administrative fordeling?") : false; if (missingResponses.length && !allowMissingResponses) return; void run(`resolve:${active.id}`, () => resolveAdminShareCase({ caseId: active.id, reservePercent: Number(reserve.replace(",", ".")), participants: participants.map(row => ({ participantId: row.id, finalPercent: drafts[row.id] ? Number(drafts[row.id].replace(",", ".")) : null })), allowMissingResponses }), "Fordelingen er godkendt og gemt."); }}>Godkend fordeling</Button></div>
+      <div className="flex justify-end"><Button disabled={unresolved.length > 0} onClick={() => { const allowMissingResponses = missingResponses.length > 0 ? window.confirm("Der mangler svar. Vil du alligevel godkende den administrative fordeling?") : false; if (missingResponses.length && !allowMissingResponses) return; void run(`resolve:${active.id}`, () => resolveAdminShareCase({ caseId: active.id, reservePercent: Number(reserve.replace(",", ".")), participants: participants.map(row => ({ participantId: row.id, finalPercent: drafts[row.id] ? Number(drafts[row.id].replace(",", ".")) : null })), allowMissingResponses }), "Fordelingen er godkendt og gemt.", "resolved"); }}>Godkend fordeling</Button></div>
     </section>
     </>}
   </div>;

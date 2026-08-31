@@ -1,9 +1,10 @@
 # C-579/21 logdækningsmatrix
 
-Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-08-23. CI scanner alle `route.ts` under de registrerede følsomme områder og afviser nye endpoints uden auditregistrering eller en dokumenteret udeladelse.
+Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-08-31. CI scanner alle `route.ts` under de registrerede følsomme områder og afviser nye endpoints uden auditregistrering eller en dokumenteret udeladelse.
 
 | Endpoint/serverhandling | Behandling | Datakategorier | Berørte medlemmer | Formål | Retsgrundlag | Audit-event | Målmedlem | Fejler lukket | Test | Ejer |
 |---|---|---|---|---|---|---|---|---|---|---|
+| app/actions/work-share-cases.ts | Administrativ arbejdsandelskø og sagsdetaljer | work_credit_data, union_membership_data | rettighedshavere fra køens sager og indsigelser | fordeling af rettighedsmidler | GDPR Art. 6(1)(c)/(f), Art. 9(2)(d) | read / admin.work-shares | organisationsafgrænsede deltagere i det viste resultat | Ja | tests/work-share-queue.test.ts | Rettigheds- og portalteam |
 | app/api/admin/audit-log/sar/[id]/export/route.ts | Art. 15-generering og link | audit_metadata | subject_access_requests.target_member_uuid | indsigtsret | GDPR Art. 15 | sar_export / admin.audit.sar-export | indsigtsanmodning | Ja | tests/audit-sar.test.ts | Privacyteam |
 | app/api/admin/contracts/[id]/gmail-draft/route.ts | Oprettelse eller opdatering af Gmail-kladde | contract_data, contact_data, communication_data | contract_reviews.member_id | kontraktgennemgang | GDPR Art. 6(1)(b)/(f), Art. 9(2)(d) | update / admin.contract-reviews.gmail-draft | gennemgangens medlems-id | Ja | tests/gmail-contract-review-draft.test.ts | Juridisk team og portalteam |
 | app/api/admin/contracts/[id]/gmail-thread/route.ts | Synkronisering og læsning af Gmail-tråd | contract_data, contact_data, communication_data | contract_reviews.member_id | kontraktgennemgang | GDPR Art. 6(1)(b)/(f), Art. 9(2)(d) | sync / admin.contract-reviews.gmail-thread | gennemgangens medlems-id | Ja | tests/gmail-contract-thread-core.test.ts | Juridisk team og portalteam |
