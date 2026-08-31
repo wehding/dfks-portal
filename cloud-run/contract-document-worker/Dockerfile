@@ -12,7 +12,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
-COPY server.mjs processor.mjs backfill.mjs google-secure-api.mjs spatial-ocr.mjs vision_overlay.py ./
+COPY server.mjs processor.mjs backfill.mjs google-secure-api.mjs spatial-ocr.mjs resource-limits.mjs vision_overlay.py normalise_orientation.py ./
 
 ENV NODE_ENV=production PORT=8080
 USER node

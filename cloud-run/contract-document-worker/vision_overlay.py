@@ -29,13 +29,16 @@ def rebuilt_page(page, geometry, image_path):
     rotation = int(page.get("/Rotate", 0)) % 360
     if rotation in (90, 270):
         width, height = height, width
+    physical_correction = int(geometry.get("orientationCorrection", 0)) % 360
+    if physical_correction in (90, 270):
+        width, height = height, width
     image_width = float(geometry["imageWidth"])
     image_height = float(geometry["imageHeight"])
     stream = BytesIO()
     output = canvas.Canvas(stream, pagesize=(width, height), pageCompression=1)
     with Image.open(image_path) as image:
         image.load()
-        if image.format != "JPEG" or image.size != (int(image_width), int(image_height)):
+        if image.format != "PNG" or image.size != (int(image_width), int(image_height)):
             raise ValueError("redacted image dimensions do not match Vision geometry")
     output.drawImage(ImageReader(image_path), 0, 0, width=width, height=height,
                      preserveAspectRatio=False, mask=None)
@@ -86,7 +89,7 @@ def main():
         output_pdf = pikepdf.Pdf.new()
         for page_number, page in enumerate(pdf.pages, start=1):
             geometry = page_geometry.get(page_number)
-            image_path = os.path.join(image_dir, f"redacted-{page_number}.jpg")
+            image_path = os.path.join(image_dir, f"redacted-{page_number}.png")
             if geometry is None or not os.path.isfile(image_path):
                 raise ValueError("missing redacted page or Vision geometry")
             with pikepdf.open(rebuilt_page(page, geometry, image_path)) as rebuilt:

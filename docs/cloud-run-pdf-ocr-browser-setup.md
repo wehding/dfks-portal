@@ -1,7 +1,8 @@
 # Cloud Run: privat PDF-normalisering og OCR
 
-Denne opsætning udføres i den indloggede Google Cloud Console i browseren. Der
-bruges ikke `gcloud` til oprettelse eller ændring af Cloud Run, IAM eller Scheduler.
+Opsætningen kan udføres i den indloggede Google Cloud Console eller med `gcloud`
+fra en kortlivet, interaktivt godkendt administratorkonto. Der oprettes aldrig
+service-account JSON-nøgler, og de samme IAM- og sikkerhedskrav gælder i begge flow.
 
 ## Datastrøm
 
@@ -23,6 +24,22 @@ bruges ikke `gcloud` til oprettelse eller ændring af Cloud Run, IAM eller Sched
 9. Først efter afsluttet behandling oprettes AI-jobbet. AI bruger den behandlede kopi.
 
 Cloud Run modtager aldrig Supabase service-role, refresh-tokens eller AI-nøgler.
+
+## Tillidsgrænse og efterkontrol
+
+Cloud Run-workeren er en betroet produktionskomponent. Portalen accepterer kun en
+færdigmelding fra den godkendte servicekonto, mens det konkrete job stadig ejer en
+gyldig databaselease, og kun for de tilfældige outputstier, som netop den lease fik
+udstedt. Workeren sender SHA-256 for både den afledte PDF og det komprimerede
+geometriartefakt; databasen gemmer værdierne atomisk med jobresultatet.
+
+Den separate backfill-audit downloader de private afledte artefakter via kortlivede
+links og kontrollerer hash, PDF-signatur, sideantal, geometrisk skema, ordgrænser og
+at originalens sti og hash fortsat matcher den låste baseline. Det er den obligatoriske
+kvalitetsport for enkeltprøve, pilot og fuld backfill. Den samme audit køres som
+periodisk driftskontrol efter backfillen. Portalen downloader ikke store artefakter i
+selve completion-requesten, fordi det ville flytte filverifikation og store dokumenter
+ind i Vercels request-grænse.
 
 ## Browserplan i Google Cloud Console
 
@@ -99,7 +116,8 @@ Miljøvariabler:
 - `SUPABASE_ANON_KEY=<projektets offentlige anon/publishable key>`
 - `GOOGLE_CLOUD_PROJECT=dfks-portal`
 - `GOOGLE_VISION_LOCATION=eu`
-- `GOOGLE_DLP_LOCATION=eu`
+- `GOOGLE_DLP_LOCATION=europe` (DLP-ressource-id; endpointet er fortsat
+  `dlp.eu.rep.googleapis.com`)
 - `OCR_TMP_DIR=/mnt/ramdisk`
 
 Montér `/mnt/ramdisk` som en memory volume. Dokumentbytes må ikke skrives til et
@@ -116,7 +134,34 @@ Portalen skal have:
 
 En ny deployment er nødvendig. Der må ikke tilføjes en Google service-account JSON-nøgle.
 
-### 7. Opret Scheduler-job
+### 7. Opret backfill-job
+
+Cloud Run Jobbet bruger samme image, servicekonto, memory volume og almindelige
+miljøvariabler som servicen, men starter med `node backfill.mjs`. Brug tre tasks og
+højst tre i parallel, task-timeout 12 timer og ingen retries under piloten.
+
+Pilot:
+
+- `OCR_MAX_DOCUMENTS_PER_TASK=4`
+- `OCR_MAX_CONSECUTIVE_FAILURES=1`
+- `OCR_MAX_CONSECUTIVE_QUALITY_FAILURES=1`
+- `OCR_QUALITY_FAILURE_WINDOW=10`
+- `OCR_MAX_QUALITY_FAILURE_RATE_PERCENT=50`
+
+Fuld backfill:
+
+- `OCR_MAX_DOCUMENTS_PER_TASK=0`
+- `OCR_MAX_CONSECUTIVE_FAILURES=5`
+- `OCR_MAX_CONSECUTIVE_QUALITY_FAILURES=5`
+- `OCR_QUALITY_FAILURE_WINDOW=10`
+- `OCR_MAX_QUALITY_FAILURE_RATE_PERCENT=50`
+
+Selv hvis pilotens kvalitetstærskel fejlagtigt sættes højere, håndhæver workeren
+første-fejl-stop, når dokumentgrænsen er højst fire. I fuld backfill kan isolerede
+reviewdokumenter fortsætte, men fem sammenhængende kvalitetsfejl eller mere end
+50 % kvalitetsfejl i det rullende vindue stopper tasken med non-zero status.
+
+### 8. Opret Scheduler-job
 
 I **Cloud Scheduler → Create job**:
 
@@ -131,7 +176,7 @@ I **Cloud Scheduler → Create job**:
 
 Tildel derefter kun Scheduler-kontoen rollen **Cloud Run Invoker** på denne service.
 
-### 8. Logning, overvågning og sletning
+### 9. Logning, overvågning og sletning
 
 - Aktivér Data Access-auditlogs for Cloud Run/IAM-ændringer.
 - Logbaseret alarm ved gentagne `document_job_failed`, men uden PDF-indhold, stier,
