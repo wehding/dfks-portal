@@ -303,7 +303,26 @@ async function uploadSignedArtifact({
   if (!response.ok) throw new DocumentProcessingError(errorCode);
 }
 
-export async function runCommand(command, args, timeoutMs = 12 * 60_000, { signal } = {}) {
+const DEFAULT_COMMAND_OUTPUT_BYTES = 20_000;
+const MAX_BOUNDED_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
+
+function boundedCommandOutputLimit(value) {
+  if (value == null) return DEFAULT_COMMAND_OUTPUT_BYTES;
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_BOUNDED_COMMAND_OUTPUT_BYTES) {
+    throw new DocumentProcessingError("document_processing_failed");
+  }
+  return value;
+}
+
+export async function runCommand(command, args, timeoutMs = 12 * 60_000, {
+  signal,
+  stdoutMode = "tail",
+  maxStdoutBytes,
+} = {}) {
+  if (!["tail", "full"].includes(stdoutMode)) {
+    throw new DocumentProcessingError("document_processing_failed");
+  }
+  const stdoutLimit = boundedCommandOutputLimit(maxStdoutBytes);
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortedProcessingError(signal));
@@ -330,8 +349,20 @@ export async function runCommand(command, args, timeoutMs = 12 * 60_000, { signa
     }, timeoutMs);
     timer.unref?.();
     signal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout.on("data", (chunk) => { stdout = (stdout + chunk.toString()).slice(-20_000); });
-    child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-20_000); });
+    child.stdout.on("data", (chunk) => {
+      const value = chunk.toString();
+      if (stdoutMode === "tail") {
+        stdout = (stdout + value).slice(-stdoutLimit);
+        return;
+      }
+      if (Buffer.byteLength(stdout) + chunk.length > stdoutLimit) {
+        child.kill("SIGKILL");
+        finish(reject, new DocumentProcessingError("document_processing_failed"));
+        return;
+      }
+      stdout += value;
+    });
+    child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-DEFAULT_COMMAND_OUTPUT_BYTES); });
     child.once("error", () => finish(reject, signal?.aborted
       ? abortedProcessingError(signal)
       : new DocumentProcessingError("document_processing_failed")));

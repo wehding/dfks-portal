@@ -10,6 +10,7 @@ export const MAX_SPATIAL_JSON_BYTES = 32 * 1024 * 1024;
 export const MAX_SPATIAL_GZIP_BYTES = 25 * 1024 * 1024;
 export const MAX_VISION_RESPONSE_BYTES_PER_BATCH = 16 * 1024 * 1024;
 export const MAX_VISION_RESPONSE_BYTES_TOTAL = 64 * 1024 * 1024;
+export const MAX_VISION_REQUEST_BODY_BYTES = 8 * 1024 * 1024;
 
 function tightenedPositiveInteger(value, productionMaximum) {
   if (value == null) return productionMaximum;
@@ -61,6 +62,10 @@ export function resolveDocumentResourceLimits(overrides = {}) {
     maxVisionResponseBytesTotal: tightenedPositiveInteger(
       overrides.maxVisionResponseBytesTotal,
       MAX_VISION_RESPONSE_BYTES_TOTAL,
+    ),
+    maxVisionRequestBodyBytes: tightenedPositiveInteger(
+      overrides.maxVisionRequestBodyBytes,
+      MAX_VISION_REQUEST_BODY_BYTES,
     ),
   };
 }

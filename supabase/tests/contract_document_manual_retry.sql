@@ -14,6 +14,7 @@ declare
   active_contract_id uuid := gen_random_uuid();
   completed_contract_id uuid := gen_random_uuid();
   native_contract_id uuid := gen_random_uuid();
+  rescan_contract_id uuid := gen_random_uuid();
   new_contract_id uuid := gen_random_uuid();
   foreign_contract_id uuid := gen_random_uuid();
   non_pdf_contract_id uuid := gen_random_uuid();
@@ -22,9 +23,13 @@ declare
   active_job_id uuid := gen_random_uuid();
   completed_job_id uuid := gen_random_uuid();
   native_job_id uuid := gen_random_uuid();
+  rescan_job_id uuid := gen_random_uuid();
   retry_result record;
+  failed_recovery_id uuid;
+  failed_lease uuid := gen_random_uuid();
   ownership_rejected boolean := false;
   non_pdf_rejected boolean := false;
+  rescan_rejected boolean := false;
 begin
   if has_function_privilege(
       'authenticated',
@@ -67,6 +72,7 @@ begin
     (active_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/active.pdf', 'processing', null),
     (completed_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/completed.pdf', 'ready', null),
     (native_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/native.pdf', 'not_required', null),
+    (rescan_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/rescan.pdf', 'needs_review', 'ocr_rescan_required'),
     (new_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/new.pdf', 'failed', 'missing_job'),
     (foreign_contract_id, test_org, other_holder_id, 'a-løn', 'kladde', test_org || '/' || other_actor_id || '/foreign.pdf', 'failed', 'missing_job'),
     (non_pdf_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/contract.docx', 'failed', 'missing_job');
@@ -100,33 +106,46 @@ begin
     (active_job_id, test_org, active_contract_id, test_org || '/' || actor_id || '/active.pdf', test_org || '/processed/' || active_contract_id || '/normalised.pdf', 'queued', 0, null, null),
     (completed_job_id, test_org, completed_contract_id, test_org || '/' || actor_id || '/completed.pdf', test_org || '/processed/' || completed_contract_id || '/normalised.pdf', 'completed', 1, null, null),
     (native_job_id, test_org, native_contract_id, test_org || '/' || actor_id || '/native.pdf', test_org || '/processed/' || native_contract_id || '/normalised.pdf', 'not_required', 1, null, null);
+  insert into public.contract_document_jobs(
+    id, org_id, contract_id, original_storage_path, output_storage_path,
+    status, attempts, error_code, safe_error_message, review_disposition,
+    reviewed_at, recovery_reason_code
+  ) values (
+    rescan_job_id, test_org, rescan_contract_id,
+    test_org || '/' || actor_id || '/rescan.pdf',
+    test_org || '/processed/' || rescan_contract_id || '/old.pdf',
+    'needs_review', 1, 'ocr_spatial_quality', 'Sikker dokumentfejl',
+    'rescan_requested', now(), 'source_scan_quality'
+  );
 
   perform set_config('request.jwt.claim.role', 'service_role', true);
 
   select * into retry_result from public.queue_or_retry_member_contract_document_job(
     actor_id, test_org, actor_holder_id, terminal_contract_id
   );
-  if retry_result.outcome <> 'requeued' or retry_result.job_id <> terminal_job_id then
-    raise exception 'Manual OCR retry regression: needs_review job was not requeued in place';
+  if retry_result.outcome <> 'requeued' or retry_result.job_id = terminal_job_id then
+    raise exception 'Manual OCR retry regression: needs_review job did not create a fresh generation';
   end if;
   if not exists (
     select 1 from public.contract_document_jobs
     where id = terminal_job_id
-      and status = 'queued' and attempts = 0 and next_attempt_at <= now()
-      and lease_token is null and lease_expires_at is null
-      and output_storage_path = test_org || '/processed/' || terminal_contract_id || '/normalised.pdf'
-      and spatial_data_path is null and orientation_corrections = '[]'::jsonb
-      and not ocr_applied and page_count is null and text_char_count is null
-      and error_code is null and safe_error_message is null and completed_at is null
-      and ocr_engine is null and document_classification is null
-      and native_page_count = 0 and ocr_page_count = 0 and unreadable_page_count = 0
-      and redaction_counts = '{}'::jsonb
-      and spatial_accuracy_score is null and spatial_median_iou is null
-      and spatial_center_inside_ratio is null and original_sha256 is null
-      and processed_sha256 is null and redaction_profile is null
-      and spatial_schema_version is null and spatial_sha256 is null
+      and status = 'needs_review' and attempts = 2
+      and error_code = 'low_text_quality'
+      and spatial_data_path is not null and orientation_corrections <> '[]'::jsonb
+      and ocr_applied and page_count = 2 and text_char_count = 500
+      and original_sha256 = repeat('a', 64)
+      and processed_sha256 = repeat('b', 64)
+      and review_disposition = 'retry_after_pipeline_fix'
+  ) or not exists (
+    select 1 from public.contract_document_jobs
+    where id = retry_result.job_id and status = 'queued' and attempts = 0
+      and recovery_of_job_id = terminal_job_id
+      and downstream_ai_policy = 'reanalyze'
+      and recovery_reason_code = 'member_retry'
+      and original_storage_path = test_org || '/' || actor_id || '/terminal.pdf'
+      and original_sha256 = repeat('a', 64)
   ) then
-    raise exception 'Manual OCR retry regression: terminal evidence or lease ownership remained';
+    raise exception 'Manual OCR retry regression: terminal evidence was mutated or child generation is invalid';
   end if;
   if not exists (
     select 1 from public.contracts
@@ -143,12 +162,76 @@ begin
   select * into retry_result from public.queue_or_retry_member_contract_document_job(
     actor_id, test_org, actor_holder_id, failed_contract_id
   );
-  if retry_result.outcome <> 'requeued' or retry_result.job_id <> failed_job_id
+  if retry_result.outcome <> 'requeued' or retry_result.job_id = failed_job_id
     or not exists (
       select 1 from public.contract_document_jobs
-      where id = failed_job_id and status = 'queued' and attempts = 0
+      where id = failed_job_id and status = 'failed' and attempts = 5
+        and error_code = 'max_attempts_exceeded'
+        and review_disposition = 'retry_after_pipeline_fix'
+    ) or not exists (
+      select 1 from public.contract_document_jobs
+      where id = retry_result.job_id and status = 'queued' and attempts = 0
+        and recovery_of_job_id = failed_job_id
+        and downstream_ai_policy = 'reanalyze'
     ) then
-    raise exception 'Manual OCR retry regression: permanently failed job was not reset';
+    raise exception 'Manual OCR retry regression: permanently failed evidence was not preserved';
+  end if;
+  failed_recovery_id := retry_result.job_id;
+  update public.contract_document_jobs
+  set status = 'processing', attempts = 1, lease_token = failed_lease,
+      lease_expires_at = now() + interval '10 minutes',
+      output_storage_path = test_org || '/processed/' || failed_contract_id
+        || '/leases/' || failed_lease || '/normalised.pdf',
+      spatial_data_path = test_org || '/processed/' || failed_contract_id
+        || '/leases/' || failed_lease || '/vision-layout.json.gz'
+  where id = failed_recovery_id;
+  perform public.finish_contract_document_job_v5(
+    p_job_id => failed_recovery_id,
+    p_lease_token => failed_lease,
+    p_status => 'completed',
+    p_document_classification => 'image_only',
+    p_ocr_engine => 'google-vision-eu-v1',
+    p_ocr_applied => true,
+    p_page_count => 1,
+    p_text_char_count => 100,
+    p_native_page_count => 0,
+    p_ocr_page_count => 1,
+    p_unreadable_page_count => 0,
+    p_spatial_accuracy_score => 0.99,
+    p_spatial_median_iou => 0.90,
+    p_spatial_center_inside_ratio => 0.99,
+    p_original_sha256 => repeat('d', 64),
+    p_processed_sha256 => repeat('e', 64),
+    p_redaction_profile => 'dfks-contract-redaction-v1',
+    p_spatial_schema_version => 'google-vision-spatial-v2',
+    p_spatial_sha256 => repeat('f', 64)
+  );
+  if not exists (
+    select 1 from public.contract_document_jobs
+    where id = failed_job_id and status = 'failed'
+      and superseded_by_job_id = failed_recovery_id
+      and superseded_at is not null
+  ) or not exists (
+    select 1 from public.contracts
+    where id = failed_contract_id and status = 'kladde'
+      and pdf_url = test_org || '/' || actor_id || '/failed.pdf'
+      and document_processing_status = 'ready'
+  ) then
+    raise exception 'Manual OCR retry regression: successful child did not supersede failed evidence safely';
+  end if;
+
+  begin
+    perform public.queue_or_retry_member_contract_document_job(
+      actor_id, test_org, actor_holder_id, rescan_contract_id
+    );
+  exception when sqlstate '55000' then
+    rescan_rejected := true;
+  end;
+  if not rescan_rejected or exists (
+    select 1 from public.contract_document_jobs
+    where recovery_of_job_id = rescan_job_id
+  ) then
+    raise exception 'Manual OCR retry regression: rescan request entered automatic recovery';
   end if;
 
   select * into retry_result from public.queue_or_retry_member_contract_document_job(

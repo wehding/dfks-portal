@@ -12,6 +12,7 @@ import {
   MAX_SPATIAL_JSON_BYTES,
   MAX_VISION_RESPONSE_BYTES_PER_BATCH,
   MAX_VISION_RESPONSE_BYTES_TOTAL,
+  MAX_VISION_REQUEST_BODY_BYTES,
   MAX_VISION_WORDS_PER_PAGE,
   MAX_VISION_WORDS_TOTAL,
   resolveDocumentResourceLimits,
@@ -31,6 +32,7 @@ test("produktionsgrænser kan strammes men aldrig hæves", () => {
     maxSpatialGzipBytes: MAX_SPATIAL_GZIP_BYTES,
     maxVisionResponseBytesPerBatch: MAX_VISION_RESPONSE_BYTES_PER_BATCH,
     maxVisionResponseBytesTotal: MAX_VISION_RESPONSE_BYTES_TOTAL,
+    maxVisionRequestBodyBytes: MAX_VISION_REQUEST_BODY_BYTES,
   });
   assert.deepEqual(resolveDocumentResourceLimits({
     maxDocumentPages: MAX_DOCUMENT_PAGES + 1,
@@ -49,6 +51,7 @@ test("produktionsgrænser kan strammes men aldrig hæves", () => {
     maxSpatialGzipBytes: MAX_SPATIAL_GZIP_BYTES,
     maxVisionResponseBytesPerBatch: MAX_VISION_RESPONSE_BYTES_PER_BATCH,
     maxVisionResponseBytesTotal: MAX_VISION_RESPONSE_BYTES_TOTAL,
+    maxVisionRequestBodyBytes: MAX_VISION_REQUEST_BODY_BYTES,
   });
   assert.deepEqual(resolveDocumentResourceLimits({
     maxDocumentPages: 3,
@@ -63,6 +66,7 @@ test("produktionsgrænser kan strammes men aldrig hæves", () => {
     maxSpatialGzipBytes: MAX_SPATIAL_GZIP_BYTES,
     maxVisionResponseBytesPerBatch: MAX_VISION_RESPONSE_BYTES_PER_BATCH,
     maxVisionResponseBytesTotal: MAX_VISION_RESPONSE_BYTES_TOTAL,
+    maxVisionRequestBodyBytes: MAX_VISION_REQUEST_BODY_BYTES,
   }), {
     maxDocumentPages: 3,
     maxDocumentRasterBytes: 2_400,
@@ -76,8 +80,10 @@ test("produktionsgrænser kan strammes men aldrig hæves", () => {
     maxSpatialGzipBytes: MAX_SPATIAL_GZIP_BYTES,
     maxVisionResponseBytesPerBatch: MAX_VISION_RESPONSE_BYTES_PER_BATCH,
     maxVisionResponseBytesTotal: MAX_VISION_RESPONSE_BYTES_TOTAL,
+    maxVisionRequestBodyBytes: MAX_VISION_REQUEST_BODY_BYTES,
   });
   for (const invalid of [0, -1, 1.5, Number.NaN]) {
     assert.throws(() => resolveDocumentResourceLimits({ maxDocumentPages: invalid }), /invalid_resource_limit/);
+    assert.throws(() => resolveDocumentResourceLimits({ maxVisionRequestBodyBytes: invalid }), /invalid_resource_limit/);
   }
 });
