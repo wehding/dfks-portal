@@ -71,8 +71,11 @@ function fixture({
     },
     pages: Array.from({ length: expectedPages }, (_, index) => ({
       pageNumber: index + 1,
+      sourceImageWidth: 100,
+      sourceImageHeight: 100,
       imageWidth: 100,
       imageHeight: 100,
+      orientationCorrection: 0,
       words: [{
         text: "tekst",
         confidence: 0.99,
@@ -143,6 +146,41 @@ test("en intakt OCR-kørsel består alle kontroller", async () => {
   assert.equal(summary.completedJobsExamined, 1);
   assert.equal(summary.documentsPassingAllChecks, 1);
   assert.equal(summaryHasViolations(summary), false);
+});
+
+test("audit accepterer workerens rotationsmetadata og kræver konsistente dimensioner", async () => {
+  const original = await pdf(1);
+  const output = await pdf(1);
+  const input = fixture({ original, output, expectedPages: 1 });
+  const spatialPath = input.jobs[0].spatial_data_path;
+  const originalReader = input.readStorage;
+  const geometry = JSON.parse(gunzipSync(await originalReader(spatialPath)).toString("utf8"));
+  Object.assign(geometry.pages[0], {
+    sourceImageWidth: 100,
+    sourceImageHeight: 200,
+    imageWidth: 200,
+    imageHeight: 100,
+    orientationCorrection: 90,
+  });
+  const rotated = gzipSync(Buffer.from(JSON.stringify(geometry)));
+  input.jobs[0].spatial_sha256 = sha256(rotated);
+  input.readStorage = async (path) => path === spatialPath ? rotated : originalReader(path);
+  input.extractBboxPages = async () => [{
+    width: 200,
+    height: 100,
+    words: [{ xMin: 1, yMin: 1, xMax: 20, yMax: 10, text: "tekst" }],
+  }];
+
+  const validSummary = await auditCompletedJobs(input);
+  assert.equal(validSummary.violations.invalidSpatialArtifact, 0);
+  assert.equal(validSummary.documentsPassingAllChecks, 1);
+
+  geometry.pages[0].imageWidth = 100;
+  const inconsistent = gzipSync(Buffer.from(JSON.stringify(geometry)));
+  input.jobs[0].spatial_sha256 = sha256(inconsistent);
+  input.readStorage = async (path) => path === spatialPath ? inconsistent : originalReader(path);
+  const invalidSummary = await auditCompletedJobs(input);
+  assert.equal(invalidSummary.violations.invalidSpatialArtifact, 1);
 });
 
 test("produktionsaudit udtrækker bbox fra PDF uden shell eller dokumentlogs", {
