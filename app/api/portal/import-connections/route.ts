@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireMemberDriveContext } from "@/lib/server/member-drive-context";
 import { revokeProviderCredentials } from "@/lib/server/import-provider-files";
 import type { ImportProvider } from "@/lib/server/import-connection-oauth";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export async function GET() {
     .select("id,provider,display_name,account_label,status,granted_scopes,last_tested_at,last_error,updated_at")
     .eq("connection_kind", "member").eq("owner_user_id", member.userId).eq("provider", "google_drive").order("updated_at", { ascending: false });
   if (error) return NextResponse.json({ error: "Drevforbindelserne kunne ikke hentes" }, { status: 500 });
+  await recordSensitiveFlow({ actor: { userId: member.userId, orgId: member.orgId, role: "member", source: "portal" }, action: "read", component: "portal.import-connections.list", entityType: "import_connections", targetMemberUuid: member.rightsHolderId, orgIds: [member.orgId], purposeCode: "member_contract_import", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["integration_metadata", "document_metadata", "union_membership_data"], counts: { results: data?.length ?? 0 } });
   return NextResponse.json({ connections: data ?? [] }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -30,5 +32,6 @@ export async function DELETE(request: NextRequest) {
   const { error } = await db.from("import_connections").delete()
     .eq("id", id).eq("connection_kind", "member").eq("owner_user_id", member.userId);
   if (error) return NextResponse.json({ error: "Forbindelsen kunne ikke fjernes" }, { status: 500 });
+  await recordSensitiveFlow({ actor: { userId: member.userId, orgId: member.orgId, role: "member", source: "portal" }, action: "unlink", component: "portal.import-connections.delete", entityType: "import_connections", entityId: id, targetMemberUuid: member.rightsHolderId, orgIds: [member.orgId], purposeCode: "member_contract_import", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["integration_metadata", "document_metadata", "union_membership_data"] });
   return NextResponse.json({ success: true });
 }

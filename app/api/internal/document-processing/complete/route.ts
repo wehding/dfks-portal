@@ -8,6 +8,7 @@ import {
 } from "@/lib/contract-document-completion";
 import { verifyOcrCloudRunRequest } from "@/lib/server/cloud-run-identity";
 import { createServiceClient } from "@/lib/supabase/service";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -115,6 +116,29 @@ export async function POST(request: Request) {
       code: failure.code,
     }, { status: failure.status });
   }
+
+  const { data: contract } = await db.from("contracts")
+    .select("org_id,rights_holder_id")
+    .eq("id", finished.contract_id)
+    .maybeSingle();
+  await recordSensitiveFlow({
+    actor: { orgId: contract?.org_id ?? null, source: "cron" },
+    action: "ai_analysis",
+    component: "internal.document-processing.complete",
+    entityType: "contracts",
+    entityId: finished.contract_id,
+    targetMemberUuid: contract?.rights_holder_id ?? null,
+    orgIds: contract?.org_id ? [contract.org_id] : [],
+    purposeCode: "document_ocr_processing",
+    legalBasis: "GDPR Art. 6(1)(b)/(f) og 9(2)(d)",
+    dataCategories: ["contract_data", "document_data", "ai_analysis"],
+    outcome: body.status === "completed" || body.status === "not_required" ? "success" : body.status === "needs_review" ? "partial" : "failed",
+    correlationId: body.jobId,
+    counts: {
+      pageCount: Number.isInteger(body.pageCount) ? Number(body.pageCount) : null,
+      ocrApplied: Boolean(body.ocrApplied),
+    },
+  });
 
   return NextResponse.json({ ok: true });
 }

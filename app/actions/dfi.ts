@@ -18,6 +18,7 @@ import { isRightBearingOnboardingRole } from "@/lib/onboarding-credit-role";
 import { upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
 import { isInternalWorkerSecret } from "@/lib/api-auth";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 // DFI org_id bruges ved import — DFKS default
 import { requireMemberContext } from "@/lib/org";
@@ -1566,6 +1567,14 @@ export async function searchNewCreditsForCurrentMember(fullName: string) {
 
     if (isAssigned) skippedAlreadyAssignedCount += 1;
     return !isAssigned;
+  });
+
+  await recordSensitiveFlow({
+    actor: { userId: context.userId, orgId: context.orgId, role: "member", source: "portal" }, action: "search",
+    component: "portal.external_work_credit_search", entityType: "external_work_credit", targetMemberUuid: context.rightsHolderId,
+    purposeCode: "member_work_import", legalBasis: "gdpr_art_6_1_b",
+    dataCategories: ["work_data", "professional_data"],
+    counts: { results: credits.length, skippedAlreadyAssigned: skippedAlreadyAssignedCount },
   });
 
   return {

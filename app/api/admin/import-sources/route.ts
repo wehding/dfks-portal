@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export async function GET() {
   const session = await createClient();
@@ -13,6 +14,7 @@ export async function GET() {
     .eq("org_id", caller.orgId)
     .order("display_name");
   if (error) return NextResponse.json({ error: "Importmapperne kunne ikke hentes" }, { status: 500 });
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "read", component: "admin.import-sources.list", entityType: "import_sources", orgIds: [caller.orgId], purposeCode: "document_import_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["integration_metadata", "document_metadata"], counts: { results: data?.length ?? 0 } });
   return NextResponse.json({ sources: data ?? [] });
 }
 
@@ -52,6 +54,7 @@ export async function POST(request: NextRequest) {
     auto_sync: false,
   }).select("id").single();
   if (error) return NextResponse.json({ error: error.code === "23505" ? "Mappen er allerede oprettet" : "Importmappen kunne ikke gemmes" }, { status: 500 });
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "create", component: "admin.import-sources.create", entityType: "import_sources", entityId: data.id, orgIds: [caller.orgId], purposeCode: "document_import_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["integration_metadata", "document_metadata"] });
   return NextResponse.json({ source: data });
 }
 
@@ -64,5 +67,6 @@ export async function DELETE(request: NextRequest) {
   const db = createServiceClient({ audit: { actorUserId: caller.userId, actorOrgId: caller.orgId, actorRole: caller.role, source: "admin", correlationId: crypto.randomUUID(), mode: "summary" } });
   const { error } = await db.from("import_sources").delete().eq("id", id).eq("org_id", caller.orgId);
   if (error) return NextResponse.json({ error: "Importmappen kunne ikke fjernes" }, { status: 500 });
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "delete", component: "admin.import-sources.delete", entityType: "import_sources", entityId: id, orgIds: [caller.orgId], purposeCode: "document_import_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["integration_metadata", "document_metadata"] });
   return NextResponse.json({ ok: true });
 }

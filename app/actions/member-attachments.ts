@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 const BUCKET = "kontrakter"; // samme bucket som kontrakter og admin-validering
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -88,6 +89,13 @@ export async function uploadMemberAttachment(contractId: string, formData: FormD
     await db.storage.from(BUCKET).remove([pdfUrl]);
     return { success: false, error: "Allongen blev ikke gemt, fordi AI-jobbet ikke kunne oprettes" };
   }
+
+  await recordSensitiveFlow({
+    actor: { userId: user.id, orgId: contract.org_id, role: "member", source: "portal" }, action: "create",
+    component: "portal.contract_attachment", entityType: "contract_attachment", entityId: attachment.id,
+    targetMemberUuid: rh.id, purposeCode: "contract_management", legalBasis: "gdpr_art_6_1_b",
+    dataCategories: ["contract_data", "document_data", "ai_analysis"], counts: { bytes: file.size },
+  });
 
   revalidatePath("/portal/mine-kontrakter");
   return { success: true, attachment };

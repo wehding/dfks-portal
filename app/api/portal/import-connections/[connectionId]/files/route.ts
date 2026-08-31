@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireMemberDriveContext } from "@/lib/server/member-drive-context";
 import { browseGoogleDrive } from "@/lib/server/import-provider-files";
 import { driveImportWorkerSecret, triggerDriveImportWorker } from "@/lib/drive-import-worker";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 async function ownedConnection(connectionId: string, userId: string) {
   const db = createServiceClient();
@@ -38,6 +39,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ con
     });
     const folders = result.entries.filter(entry => entry.kind === "folder");
     const files = result.entries.filter(entry => entry.kind === "file" && /\.(pdf|doc|docx)$/i.test(entry.name));
+    await recordSensitiveFlow({ actor: { userId: member.userId, orgId: member.orgId, role: "member", source: "portal" }, action: "search", component: "portal.import-connections.files", entityType: "import_connections", entityId: connection.id, targetMemberUuid: member.rightsHolderId, orgIds: [member.orgId], purposeCode: "member_contract_import", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["document_metadata", "contract_data", "union_membership_data"], counts: { folders: folders.length, files: files.length } });
     return NextResponse.json({ folders, files, nextCursor: result.nextPageToken }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Filerne kunne ikke hentes";
@@ -73,6 +75,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ co
     run_id: run.id, provider_file_id: id, provider_revision: "selected", file_name: id, file_size_bytes: 0,
   })));
   if (queueError) return NextResponse.json({ error: "De valgte filer kunne ikke sættes i kø" }, { status: 500 });
+  await recordSensitiveFlow({ actor: { userId: member.userId, orgId: member.orgId, role: "member", source: "portal" }, action: "import", component: "portal.import-connections.queue", entityType: "drive_import_runs", entityId: run.id, targetMemberUuid: member.rightsHolderId, orgIds: [member.orgId], purposeCode: "member_contract_import", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["document_metadata", "contract_data", "union_membership_data"], counts: { queued: fileIds.length } });
   after(() => triggerDriveImportWorker(run.id));
   return NextResponse.json({ batchId: batch.id, runId: run.id, status: run.status, queued: fileIds.length }, { status: 202 });
 }

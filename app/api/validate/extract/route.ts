@@ -23,14 +23,15 @@ import { isInternalWorkerSecret } from "@/lib/api-auth"
 import { buildPdfLayout, buildDocxLayout, buildAnnotatedContractText } from "@/lib/contract-layout"
 import type { ContractLayout } from "@/lib/contract-layout"
 import { enrichSourcesWithClauseIds } from "@/lib/contract-layout-store"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
-async function authorization(req: NextRequest): Promise<{ internal: true; orgId: null } | { internal: false; orgId: string } | null> {
+async function authorization(req: NextRequest): Promise<{ internal: true; orgId: null; userId: null; role: "integration" } | { internal: false; orgId: string; userId: string; role: string } | null> {
     const authHeader = req.headers.get("authorization") ?? ""
     const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null
-    if (isInternalWorkerSecret(bearer, "contract-ai")) return { internal: true, orgId: null }
+    if (isInternalWorkerSecret(bearer, "contract-ai")) return { internal: true, orgId: null, userId: null, role: "integration" }
     const sessionClient = await createSessionClient()
     const caller = await assertAdminRole(sessionClient)
-    return caller ? { internal: false, orgId: caller.orgId } : null
+    return caller ? { internal: false, orgId: caller.orgId, userId: caller.userId, role: caller.role } : null
 }
 
 export async function POST(req: NextRequest) {
@@ -55,13 +56,15 @@ export async function POST(req: NextRequest) {
 
         let storagePath = auth.internal ? pdfPath : null
         let orgId: string | null = null
+        let targetMemberUuid: string | null = null
         if (contractId) {
-            let contractQuery = admin.from("contracts").select("pdf_url,processed_pdf_url,org_id").eq("id", contractId)
+            let contractQuery = admin.from("contracts").select("pdf_url,processed_pdf_url,org_id,rights_holder_id").eq("id", contractId)
             if (!auth.internal) contractQuery = contractQuery.eq("org_id", auth.orgId)
             const { data: contract } = await contractQuery.maybeSingle()
             if (!contract) return NextResponse.json({ error: "Kontrakten blev ikke fundet i den aktive organisation" }, { status: 404 })
             storagePath = contract?.processed_pdf_url ?? contract?.pdf_url
             orgId = contract?.org_id ?? null
+            targetMemberUuid = contract?.rights_holder_id ?? null
         }
         if (!storagePath) return NextResponse.json({ error: "Ingen PDF-sti fundet" }, { status: 404 })
 
@@ -110,6 +113,19 @@ export async function POST(req: NextRequest) {
         if (result.data?._sources && layout) {
             result.data._sources = enrichSourcesWithClauseIds(result.data._sources as Record<string, string | null>, layout) as typeof result.data._sources
         }
+
+        await recordSensitiveFlow({
+            actor: { userId: auth.userId, orgId, role: auth.role, source: auth.internal ? "api" : "admin" },
+            action: "ai_analysis",
+            component: "validate.contract-extract",
+            entityType: "contracts",
+            entityId: contractId ?? null,
+            targetMemberUuid,
+            orgIds: orgId ? [orgId] : [],
+            purposeCode: "contract_validation",
+            legalBasis: "GDPR Art. 6(1)(b)/(f) og 9(2)(d)",
+            dataCategories: ["contract_data", "salary_data", "ai_analysis"],
+        })
 
         return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: aiText, layout })
     } catch (err: unknown) {

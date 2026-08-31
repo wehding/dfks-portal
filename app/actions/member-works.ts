@@ -28,6 +28,7 @@ import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { ensureMemberCollaborationReviews, markCollaborationReviewsCoeditorsReported, resolveCollaborationReviewWorkIds } from "@/lib/server/work-collaboration-reviews";
 import { collaborationReviewStatusForSoloClaim } from "@/lib/work-collaboration-review";
 import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 import { requireMemberContext } from "@/lib/org";
 
@@ -450,6 +451,12 @@ export async function fetchMemberWorkOverview(params: {
       const rightKey = right.kind === "season" ? right.key : `work:${right.work.id}`;
       return [...logicalKeys].indexOf(leftKey) - [...logicalKeys].indexOf(rightKey);
     });
+  await recordSensitiveFlow({
+    actor: { userId: rightsHolder.user_id, orgId: context.orgId, role: "member", source: "portal" }, action: params.search?.trim() ? "search" : "read",
+    component: "portal.member_work_overview", entityType: "work_assignment", targetMemberUuid: rightsHolder.id,
+    purposeCode: "member_work_management", legalBasis: "gdpr_art_6_1_b", dataCategories: ["work_data", "rights_data"],
+    counts: { results: items.length, filtered: filteredCount, page, pageSize },
+  });
   return { success: true, items, page, pageSize, filteredCount, totalCount, hasNextPage: (page - 1) * pageSize + items.length < filteredCount };
 }
 

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOrgId } from "@/lib/org";
 import type { OnboardingCredit } from "@/app/actions/dfi";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export type OnboardingImportStatus = {
   id: string;
@@ -116,6 +117,7 @@ export async function startOnboardingWorkImport(
       .eq("id", job.id)
       .select("id,status,total_items,completed_items,failed_items,current_title,error_message").single();
     if (updateError || !updated) throw new Error(updateError?.message ?? "Importjobbet kunne ikke opdateres.");
+    await recordSensitiveFlow({ actor: { userId: owner.userId, orgId: owner.orgId, role: "member", source: "portal" }, action: "import", component: "portal.onboarding.work-import", entityType: "onboarding_work_import_jobs", entityId: updated.id, targetMemberUuid: owner.rightsHolderId, orgIds: [owner.orgId], purposeCode: "member_work_onboarding", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["identity_data", "work_data", "union_membership_data"], counts: { requested: rows.length } });
     return { success: true as const, job: toStatus(updated as JobRow) };
   } catch (error) {
     return { success: false as const, error: error instanceof Error ? error.message : "Importjobbet kunne ikke oprettes." };
@@ -151,6 +153,7 @@ export async function retryOnboardingWorkImport(jobId: string) {
       .update({ status: "queued", failed_items: 0, error_message: null, completed_at: null, updated_at: now })
       .eq("id", jobId).eq("user_id", owner.userId);
     if (jobError) throw new Error(jobError.message);
+    await recordSensitiveFlow({ actor: { userId: owner.userId, orgId: owner.orgId, role: "member", source: "portal" }, action: "import", component: "portal.onboarding.work-import-retry", entityType: "onboarding_work_import_jobs", entityId: jobId, targetMemberUuid: owner.rightsHolderId, orgIds: [owner.orgId], purposeCode: "member_work_onboarding", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["identity_data", "work_data", "union_membership_data"] });
     return { success: true as const, jobId };
   } catch (error) {
     return { success: false as const, error: error instanceof Error ? error.message : "Importen kunne ikke genoptages." };
