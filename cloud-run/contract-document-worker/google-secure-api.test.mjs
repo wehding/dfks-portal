@@ -67,11 +67,66 @@ test("metadata-tokenkald stopper en hængende request ved timeout", async () => 
     && error.code === "google_access_token_failed");
 });
 
+test("metadata-tokenkald afviser et allerede afbrudt job før netværkskald", async () => {
+  const controller = new AbortController();
+  const reason = new GoogleOcrOperationalError("job_already_aborted");
+  controller.abort(reason);
+  let called = false;
+  await assert.rejects(() => fetchGoogleAccessToken(async () => {
+    called = true;
+  }, { signal: controller.signal }), (error) => error === reason);
+  assert.equal(called, false);
+});
+
+test("metadata-tokenets timeout dækker også læsning af response body", async () => {
+  await assert.rejects(() => fetchGoogleAccessToken(async (_url, init) => ({
+    ok: true,
+    json: () => new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    }),
+  }), { timeoutMs: 10 }), (error) => error instanceof GoogleOcrOperationalError
+    && error.code === "google_access_token_failed");
+});
+
+test("metadata-tokenets timeout kan ikke omgås af en sen bodylæsning", async () => {
+  await assert.rejects(() => fetchGoogleAccessToken(async () => ({
+    ok: true,
+    json: () => new Promise((resolve) => {
+      setTimeout(() => resolve({ access_token: "too-late" }), 40);
+    }),
+  }), { timeoutMs: 5 }), (error) => error instanceof GoogleOcrOperationalError
+    && error.code === "google_access_token_failed");
+});
+
+test("metadata-tokenets timeout stopper en bodylæsning der aldrig afslutter", async () => {
+  await assert.rejects(() => fetchGoogleAccessToken(async () => ({
+    ok: true,
+    json: () => new Promise(() => {}),
+  }), { timeoutMs: 5 }), (error) => error instanceof GoogleOcrOperationalError
+    && error.code === "google_access_token_failed");
+});
+
+test("metadata-tokenets bodylæsning følger job-abort og rydder listeneren", async () => {
+  const controller = new AbortController();
+  const reason = new GoogleOcrOperationalError("job_aborted_during_token_body");
+  const promise = fetchGoogleAccessToken(async (_url, init) => ({
+    ok: true,
+    json: () => new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    }),
+  }), { signal: controller.signal });
+  controller.abort(reason);
+  await assert.rejects(() => promise, (error) => error === reason);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
 test("ugyldig metadata-token-JSON klassificeres som en driftsfejl", async () => {
+  const controller = new AbortController();
   await assert.rejects(() => fetchGoogleAccessToken(async () => new Response("ikke-json", {
     status: 200,
-  })), (error) => error instanceof GoogleOcrOperationalError
+  }), { signal: controller.signal }), (error) => error instanceof GoogleOcrOperationalError
     && error.code === "google_access_token_failed");
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 });
 
 test("globale og asynkrone endpoints afvises før netværkskald", async () => {
