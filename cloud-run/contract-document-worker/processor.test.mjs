@@ -1,9 +1,20 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { writeFile } from "node:fs/promises";
+import { truncate, writeFile } from "node:fs/promises";
 import test from "node:test";
 
-import { createProcessor, FatalProcessingError, readRuntimeConfig } from "./processor.mjs";
+import { GoogleOcrOperationalError } from "./google-secure-api.mjs";
+import {
+  createProcessor,
+  FatalProcessingError,
+  OCR_QUALITY_DIAGNOSTIC_CODES,
+  parseProcessingDeadlineSeconds,
+  readRuntimeConfig,
+  runCommand,
+  safeGoogleErrorCode,
+  startLeaseHeartbeat,
+} from "./processor.mjs";
+import { processPdfSpatially } from "./spatial-ocr.mjs";
 
 const config = {
   portalBaseUrl: "https://portal.example",
@@ -26,11 +37,10 @@ function response(body, init = {}, url = "https://portal.example") {
 function claimJob(overrides = {}) {
   return {
     jobId: "11111111-1111-4111-8111-111111111111",
+    leaseToken: "22222222-2222-4222-8222-222222222222",
     downloadUrl: "https://project.supabase.co/storage/v1/object/sign/kontrakter/original.pdf?token=signed-secret",
     uploadPath: "org/processed/job/normalised.pdf",
-    uploadToken: "upload-secret",
     spatialUploadPath: "org/processed/job/vision-layout.json.gz",
-    spatialUploadToken: "spatial-secret",
     maxBytes: config.maxBytes,
     ...overrides,
   };
@@ -50,6 +60,140 @@ test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () 
     && error.code === "invalid_temporary_storage_configuration"
   ));
   assert.equal(readRuntimeConfig({ ...env, OCR_TMP_DIR: "/mnt/ramdisk" }).tempRoot, "/mnt/ramdisk");
+  assert.equal(parseProcessingDeadlineSeconds(undefined), 780);
+  assert.equal(parseProcessingDeadlineSeconds("0"), 0);
+  assert.equal(parseProcessingDeadlineSeconds("900"), 900);
+  for (const invalid of ["-1", "29", "43201", "1.5", "invalid"]) {
+    assert.throws(() => parseProcessingDeadlineSeconds(invalid), (error) => (
+      error instanceof FatalProcessingError && error.code === "invalid_processing_deadline"
+    ));
+  }
+});
+
+test("HTTP-processoren stopper kontrolleret før Cloud Run-requestens hårde timeout", async () => {
+  const completions = [];
+  let clockReads = 0;
+  const processor = createProcessor({
+    config: { ...config, processingDeadlineMs: 1 },
+    now: () => (clockReads++ === 0 ? 0 : 2),
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => { throw new Error("spatial processor should not be reached"); },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "needs_review" });
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].status, "needs_review");
+  assert.equal(completions[0].errorCode, "processing_deadline_exceeded");
+});
+
+test("deadline afbryder et igangværende spatialt OCR-kald og completion bruger et nyt signal", async () => {
+  const completions = [];
+  let spatialSignal;
+  const processor = createProcessor({
+    // Leave enough time for the mocked claim/download to reach the spatial
+    // processor even when the complete test suite runs concurrently on CI.
+    config: { ...config, processingDeadlineMs: 500 },
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async ({ signal }) => {
+      spatialSignal = signal;
+      await new Promise((resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) {
+        assert.equal(init.signal.aborted, false);
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "needs_review" });
+  assert.equal(spatialSignal.aborted, true);
+  assert.equal(spatialSignal.reason.code, "processing_deadline_exceeded");
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].errorCode, "processing_deadline_exceeded");
+});
+
+test("deadline afbryder et igangværende dokumentdownload", async () => {
+  const completions = [];
+  let downloadSignal;
+  const processor = createProcessor({
+    config: { ...config, processingDeadlineMs: 20 },
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      downloadSignal = init.signal;
+      return new Promise((resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+      });
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "needs_review" });
+  assert.equal(downloadSignal.aborted, true);
+  assert.equal(completions[0].errorCode, "processing_deadline_exceeded");
+});
+
+test("subprocesser dræbes straks, når processeringssignalet afbrydes", async () => {
+  const controller = new AbortController();
+  const reason = Object.assign(new Error("processing_deadline_exceeded"), { code: "processing_deadline_exceeded" });
+  const startedAt = Date.now();
+  const command = runCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], 10_000, {
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(reason), 20);
+
+  await assert.rejects(command, (error) => error === reason);
+  assert.equal(Date.now() - startedAt < 1_000, true);
+});
+
+test("spatial processor sender abortsignal til lokale subprocesser", async () => {
+  const controller = new AbortController();
+  const reason = new Error("processing_deadline_exceeded");
+  let receivedSignal;
+  const processing = processPdfSpatially({
+    inputPath: "/tmp/input.pdf",
+    outputPath: "/tmp/output.pdf",
+    geometryPath: "/tmp/geometry.gz",
+    workDir: "/tmp",
+    googleClient: {},
+    signal: controller.signal,
+    commandRunner: async (_command, _args, _timeoutMs, { signal }) => {
+      receivedSignal = signal;
+      return new Promise((resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+  });
+  setTimeout(() => controller.abort(reason), 10);
+
+  await assert.rejects(processing, (error) => error === reason);
+  assert.equal(receivedSignal, controller.signal);
 });
 
 test("en kontrolleret dokumentfejl registreres og batchen kan fortsætte", async () => {
@@ -73,6 +217,76 @@ test("en kontrolleret dokumentfejl registreres og batchen kan fortsætte", async
   assert.equal(completions[0].errorCode, "invalid_pdf");
 });
 
+test("OCR-kvalitetsfejl propagerer en sikker diagnose til backfill-stopreglen", async () => {
+  const completions = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    spatialProcessor: async () => ({
+      status: "needs_review",
+      classification: "image_only",
+      pageCount: 1,
+      nativePageCount: 0,
+      ocrPageCount: 1,
+      unreadablePageCount: 1,
+      textCharCount: 0,
+    }),
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), {
+    outcome: "needs_review",
+    diagnosticCode: "ocr_unreadable_page",
+  });
+  assert.equal(completions[0].errorCode, "ocr_unreadable_page");
+});
+
+test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
+  const completions = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    spatialProcessor: async () => ({
+      status: "needs_review",
+      classification: "orientation_uncertain",
+      pageCount: 3,
+      nativePageCount: 0,
+      ocrPageCount: 3,
+      unreadablePageCount: 0,
+      orientationCorrections: [{ page: 1, degrees: 270 }, { page: 3, degrees: 90 }],
+      orientationQualityFailed: true,
+    }),
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), {
+    outcome: "needs_review",
+    diagnosticCode: "orientation_uncertain",
+  });
+  assert.deepEqual(completions[0].orientationCorrections, [
+    { page: 1, degrees: 270 }, { page: 3, degrees: 90 },
+  ]);
+  assert.equal(completions[0].errorCode, "orientation_uncertain");
+});
+
 test("callbackfejl er fatal", async () => {
   const processor = createProcessor({
     config,
@@ -86,6 +300,207 @@ test("callbackfejl er fatal", async () => {
     },
   });
   await assert.rejects(processor, (error) => error instanceof FatalProcessingError && error.code === "completion_callback_failed");
+});
+
+test("lease-heartbeat valideres før dokumentdownload og stopper ved tabt lease", async () => {
+  let renewals = 0;
+  let identityTokens = 0;
+  const heartbeat = await startLeaseHeartbeat({
+    config,
+    identityTokenProvider: async () => `identity-${++identityTokens}`,
+    jobId: claimJob().jobId,
+    leaseToken: claimJob().leaseToken,
+    intervalMs: 1,
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      assert.equal(body.jobId, claimJob().jobId);
+      assert.equal(body.leaseToken, claimJob().leaseToken);
+      renewals += 1;
+      return response("{}", { status: renewals === 1 ? 200 : 409 });
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(identityTokens >= 2, true);
+  assert.throws(() => heartbeat.assertHealthy(), (error) =>
+    error instanceof FatalProcessingError && error.code === "document_lease_renewal_failed");
+  await heartbeat.stop();
+});
+
+test("claim, heartbeat og completion henter hver sit kortlivede identitetstoken", async () => {
+  let tokenSequence = 0;
+  const portalAuthorizations = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => `identity-${++tokenSequence}`,
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => ({
+      status: "not_required", classification: "native_text", pageCount: 1,
+      nativePageCount: 1, ocrPageCount: 0, unreadablePageCount: 0, textCharCount: 500,
+    }),
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.startsWith(config.portalBaseUrl)) {
+        portalAuthorizations.push({
+          path: new URL(value).pathname,
+          authorization: init.headers.Authorization,
+        });
+      }
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat") || value.endsWith("/complete")) {
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "completed" });
+  assert.deepEqual(portalAuthorizations, [
+    { path: "/api/internal/document-processing/claim", authorization: "Bearer identity-1" },
+    { path: "/api/internal/document-processing/heartbeat", authorization: "Bearer identity-2" },
+    { path: "/api/internal/document-processing/complete", authorization: "Bearer identity-3" },
+  ]);
+});
+
+test("fejl ved tokenfornyelse før completion er fatal og genbruger ikke claim-tokenet", async () => {
+  let tokenCalls = 0;
+  let completionCalled = false;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => {
+      tokenCalls += 1;
+      if (tokenCalls === 3) throw new FatalProcessingError("identity_token_failed");
+      return `identity-${tokenCalls}`;
+    },
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => ({
+      status: "not_required", classification: "native_text", pageCount: 1,
+      nativePageCount: 1, ocrPageCount: 0, unreadablePageCount: 0, textCharCount: 500,
+    }),
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) completionCalled = true;
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  await assert.rejects(
+    processor,
+    (error) => error instanceof FatalProcessingError && error.code === "identity_token_failed",
+  );
+  assert.equal(tokenCalls, 3);
+  assert.equal(completionCalled, false);
+});
+
+test("afvist første heartbeat stopper før kontrakten downloades", async () => {
+  let downloadCalled = false;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 409 });
+      downloadCalled = true;
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+  await assert.rejects(processor, (error) =>
+    error instanceof FatalProcessingError && error.code === "document_lease_renewal_failed");
+  assert.equal(downloadCalled, false);
+});
+
+test("dokumentrelateret Google OCR-fejl registreres og batchen kan fortsætte", async () => {
+  const completions = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_request_too_large"); },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), {
+    outcome: "needs_review",
+    diagnosticCode: "dlp_request_too_large",
+  });
+  assert.deepEqual(completions[0], {
+    jobId: claimJob().jobId,
+    leaseToken: claimJob().leaseToken,
+    status: "needs_review",
+    errorCode: "dlp_request_too_large",
+    safeErrorMessage: "Dokumentet kunne ikke sikkerhedsbehandles automatisk og kræver manuel kontrol.",
+  });
+});
+
+test("Google IAM-fejl frigiver claim og stopper tasken", async () => {
+  const completions = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_api_403"); },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  await assert.rejects(processor, (error) =>
+    error instanceof FatalProcessingError && error.code === "dlp_api_403");
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].status, "failed");
+  assert.equal(completions[0].errorCode, "dlp_api_403");
+});
+
+test("ugyldig Google-runtimekonfiguration stopper før claim med sikker kode", () => {
+  assert.throws(() => createProcessor({
+    config,
+    env: { GOOGLE_DLP_LOCATION: "eu" },
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+  }), (error) => error instanceof FatalProcessingError
+    && error.code === "invalid_google_ocr_configuration");
+});
+
+test("callbackfejl efter Google-fejl er fatal", async () => {
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_location_missing"); },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) return response("{}", { status: 503 });
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  await assert.rejects(processor, (error) =>
+    error instanceof FatalProcessingError && error.code === "completion_callback_failed");
+});
+
+test("ukendt Google-fejlkode bliver sanitiseret", () => {
+  assert.equal(safeGoogleErrorCode("CPR 010101-1234"), "google_ocr_service_failed");
+  assert.equal(safeGoogleErrorCode("google_api_503"), "google_api_503");
+  assert.equal(safeGoogleErrorCode("dlp_api_400"), "dlp_api_400");
+  assert.equal(safeGoogleErrorCode("vision_api_503"), "vision_api_503");
 });
 
 test("fatal identitetsfejl stopper før claim", async () => {
@@ -103,23 +518,14 @@ test("fatal identitetsfejl stopper før claim", async () => {
 test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed", async () => {
   const uploads = [];
   const completions = [];
+  const events = [];
   const originalPath = "org/contracts/original.pdf";
   const job = claimJob({ downloadUrl: `https://project.supabase.co/storage/v1/object/sign/kontrakter/${originalPath}?token=signed-secret` });
   const processor = createProcessor({
     config,
     identityTokenProvider: async () => "identity-secret",
-    storage: {
-      from(bucket) {
-        assert.equal(bucket, "kontrakter");
-        return {
-          async uploadToSignedUrl(path, token, bytes) {
-            uploads.push({ path, token, bytes: bytes.length });
-            return { error: null };
-          },
-        };
-      },
-    },
     spatialProcessor: async ({ outputPath, geometryPath }) => {
+      events.push("spatial-complete");
       await writeFile(outputPath, Buffer.from("%PDF-1.7\nprocessed"));
       await writeFile(geometryPath, Buffer.from("geometry"));
       return {
@@ -127,11 +533,33 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
         nativePageCount: 0, ocrPageCount: 2, unreadablePageCount: 0,
         textCharCount: 300, redactionCounts: { DENMARK_CPR_NUMBER: 1 },
         spatial: { score: 0.99, medianIou: 0.9, centerInsideRatio: 1 },
+        redactionProfile: "dfks-contract-redaction-v1",
+        spatialSchemaVersion: "google-vision-spatial-v2",
       };
     },
     fetchImpl: async (url, init) => {
       const value = String(url);
       if (value.endsWith("/claim")) return response(JSON.stringify(job), { status: 200 });
+      if (value.endsWith("/upload-authorisation")) {
+        events.push("upload-authorisation");
+        assert.deepEqual(JSON.parse(init.body), { jobId: job.jobId, leaseToken: job.leaseToken });
+        return response(JSON.stringify({
+          uploadToken: "fresh-upload-secret",
+          spatialUploadToken: "fresh-spatial-secret",
+        }), { status: 200 });
+      }
+      if (value.includes("/storage/v1/object/upload/sign/kontrakter/")) {
+        const uploadUrl = new URL(value);
+        uploads.push({
+          path: decodeURIComponent(uploadUrl.pathname.split("/kontrakter/")[1]),
+          token: uploadUrl.searchParams.get("token"),
+          bytes: init.body.length,
+        });
+        assert.equal(init.method, "PUT");
+        assert.equal(init.redirect, "error");
+        assert.equal(init.signal.aborted, false);
+        return response("{}", { status: 200 }, value);
+      }
       if (value.endsWith("/complete")) {
         completions.push(JSON.parse(init.body));
         return response("{}", { status: 200 });
@@ -142,12 +570,184 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
   assert.deepEqual(await processor(), { outcome: "completed" });
   assert.equal(uploads.length, 2);
   assert.equal(uploads[0].path, job.uploadPath);
+  assert.equal(uploads[0].token, "fresh-upload-secret");
   assert.notEqual(uploads[0].path, originalPath);
   assert.equal(uploads[1].path, job.spatialUploadPath);
+  assert.equal(uploads[1].token, "fresh-spatial-secret");
+  assert.deepEqual(events, ["spatial-complete", "upload-authorisation"]);
   assert.equal(completions[0].status, "completed");
   assert.equal(completions[0].pageCount, 2);
+  assert.equal(completions[0].redactionProfile, "dfks-contract-redaction-v1");
+  assert.equal(completions[0].spatialSchemaVersion, "google-vision-spatial-v2");
   assert.match(completions[0].originalSha256, /^[0-9a-f]{64}$/);
   assert.match(completions[0].processedSha256, /^[0-9a-f]{64}$/);
+  assert.match(completions[0].spatialSha256, /^[0-9a-f]{64}$/);
+  assert.notEqual(completions[0].processedSha256, completions[0].spatialSha256);
+});
+
+async function runOversizedDerivativeTest(artifact) {
+  const completions = [];
+  let uploadAuthorisationCalled = false;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    spatialProcessor: async ({ outputPath, geometryPath }) => {
+      await writeFile(outputPath, Buffer.from("%PDF-1.7\nprocessed"));
+      await writeFile(geometryPath, Buffer.from("geometry"));
+      await truncate(
+        artifact === "pdf" ? outputPath : geometryPath,
+        (25 * 1024 * 1024) + 1,
+      );
+      return {
+        status: "completed", classification: "image_only", pageCount: 1,
+        nativePageCount: 0, ocrPageCount: 1, unreadablePageCount: 0, textCharCount: 300,
+      };
+    },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/upload-authorisation")) {
+        uploadAuthorisationCalled = true;
+        return response("{}", { status: 200 });
+      }
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+  return { result: await processor(), completions, uploadAuthorisationCalled };
+}
+
+test("for stor behandlet PDF læses ikke i RAM og sendes til manuel kontrol", async () => {
+  const result = await runOversizedDerivativeTest("pdf");
+  assert.deepEqual(result.result, {
+    outcome: "needs_review",
+    diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.processedFileTooLarge,
+  });
+  assert.equal(result.completions[0].errorCode, "processed_file_too_large");
+  assert.equal(result.uploadAuthorisationCalled, false);
+});
+
+test("for stor geometri læses ikke i RAM og sendes til manuel kontrol", async () => {
+  const result = await runOversizedDerivativeTest("geometry");
+  assert.deepEqual(result.result, {
+    outcome: "needs_review",
+    diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.spatialArtifactTooLarge,
+  });
+  assert.equal(result.completions[0].errorCode, "spatial_artifact_too_large");
+  assert.equal(result.uploadAuthorisationCalled, false);
+});
+
+async function runHangingUploadTest(hangingArtifact) {
+  const completions = [];
+  const attemptedArtifacts = [];
+  let abortedSignal;
+  const job = claimJob();
+  const processor = createProcessor({
+    config,
+    uploadTimeoutMs: 20,
+    identityTokenProvider: async () => "identity-secret",
+    spatialProcessor: async ({ outputPath, geometryPath }) => {
+      await writeFile(outputPath, Buffer.from("%PDF-1.7\nprocessed"));
+      await writeFile(geometryPath, Buffer.from("geometry"));
+      return {
+        status: "completed", classification: "image_only", pageCount: 1,
+        nativePageCount: 0, ocrPageCount: 1, unreadablePageCount: 0, textCharCount: 300,
+      };
+    },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(job), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/upload-authorisation")) {
+        return response(JSON.stringify({
+          uploadToken: "fresh-upload-secret",
+          spatialUploadToken: "fresh-spatial-secret",
+        }), { status: 200 });
+      }
+      if (value.includes("/storage/v1/object/upload/sign/kontrakter/")) {
+        const artifact = value.includes("vision-layout") ? "geometry" : "pdf";
+        attemptedArtifacts.push(artifact);
+        assert.equal(init.redirect, "error");
+        if (artifact !== hangingArtifact) return response("{}", { status: 200 }, value);
+        abortedSignal = init.signal;
+        return new Promise((resolve, reject) => {
+          init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+        });
+      }
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  return {
+    result: await processor(),
+    attemptedArtifacts,
+    abortedSignal,
+    completions,
+  };
+}
+
+test("hængende PDF-upload afbrydes og registreres sikkert", async () => {
+  const result = await runHangingUploadTest("pdf");
+  assert.deepEqual(result.result, { outcome: "handled_failure" });
+  assert.deepEqual(result.attemptedArtifacts, ["pdf"]);
+  assert.equal(result.abortedSignal.aborted, true);
+  assert.equal(result.completions.length, 1);
+  assert.equal(result.completions[0].status, "failed");
+  assert.equal(result.completions[0].errorCode, "upload_failed");
+});
+
+test("hængende geometriupload afbrydes uden at genstarte PDF-uploaden", async () => {
+  const result = await runHangingUploadTest("geometry");
+  assert.deepEqual(result.result, { outcome: "handled_failure" });
+  assert.deepEqual(result.attemptedArtifacts, ["pdf", "geometry"]);
+  assert.equal(result.abortedSignal.aborted, true);
+  assert.equal(result.completions.length, 1);
+  assert.equal(result.completions[0].status, "failed");
+  assert.equal(result.completions[0].errorCode, "spatial_upload_failed");
+});
+
+test("ugyldig frisk uploadautorisation stopper uden at uploade derivater", async () => {
+  let uploadCalled = false;
+  let completionCalled = false;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { return { async uploadToSignedUrl() { uploadCalled = true; return { error: null }; } }; } },
+    spatialProcessor: async ({ outputPath, geometryPath }) => {
+      await writeFile(outputPath, Buffer.from("%PDF-1.7\nprocessed"));
+      await writeFile(geometryPath, Buffer.from("geometry"));
+      return {
+        status: "completed", classification: "image_only", pageCount: 1,
+        nativePageCount: 0, ocrPageCount: 1, unreadablePageCount: 0, textCharCount: 300,
+      };
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/upload-authorisation")) {
+        return response(JSON.stringify({ uploadToken: "", spatialUploadToken: "secret" }), { status: 200 });
+      }
+      if (value.endsWith("/complete")) {
+        completionCalled = true;
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  await assert.rejects(processor, (error) => error instanceof FatalProcessingError
+    && error.code === "invalid_upload_authorisation_response");
+  assert.equal(uploadCalled, false);
+  assert.equal(completionCalled, false);
 });
 
 test("native tekst ændrer ikke originalen og uploader intet derivat", async () => {

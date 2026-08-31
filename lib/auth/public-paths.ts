@@ -14,6 +14,10 @@ const PUBLIC_PATH_PREFIXES = [
 // den må være et eksakt match og ikke et bredt public prefix.
 const PUBLIC_EXACT_PATHS = new Set([
   "/api/contracts/jobs/process",
+  "/api/internal/document-processing/claim",
+  "/api/internal/document-processing/complete",
+  "/api/internal/document-processing/heartbeat",
+  "/api/internal/document-processing/upload-authorisation",
 ]);
 
 export function isPublicPath(pathname: string) {

@@ -9,6 +9,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.108.1"
+    "@supabase/supabase-js": "2.108.1",
+    "sharp": "0.35.0"
   }
 }

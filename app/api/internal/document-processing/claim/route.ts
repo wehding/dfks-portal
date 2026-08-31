@@ -1,10 +1,37 @@
 import { NextResponse } from "next/server";
 
 import { verifyOcrCloudRunRequest } from "@/lib/server/cloud-run-identity";
+import { parseContractDocumentLeaseArtifactPath } from "@/lib/server/contract-document-lease-artifacts";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+type ServiceClient = ReturnType<typeof createServiceClient>;
+const CLEANUP_TIMEOUT_MS = 2_000;
+
+function createCleanupFetch(signal: AbortSignal): typeof globalThis.fetch {
+  return (input, init) => globalThis.fetch(input, {
+    ...init,
+    redirect: "error",
+    signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+  });
+}
+
+async function cleanupAbandonedLeaseArtifacts(db: ServiceClient) {
+  const { data, error } = await db.rpc(
+    "list_abandoned_contract_document_lease_artifacts",
+    { p_limit: 25 },
+  );
+  if (error) return;
+  const entries = Array.isArray(data)
+    ? data as Array<{ storage_path?: unknown }>
+    : [];
+  const paths = entries
+    .map((entry): string | null => typeof entry.storage_path === "string" ? entry.storage_path : null)
+    .filter((path): path is string => Boolean(path && parseContractDocumentLeaseArtifactPath(path)));
+  if (paths.length > 0) await db.storage.from("kontrakter").remove(paths);
+}
 
 export async function POST(request: Request) {
   try {
@@ -13,43 +40,63 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
   }
 
-  const db = createServiceClient({ audit: { source: "cron", mode: "summary" } });
-  const { data: job, error } = await db.rpc("claim_next_contract_document_job", { p_lease_minutes: 15 });
+  const audit = { source: "cron" as const, mode: "summary" as const };
+  const db = createServiceClient({ audit });
+  const cleanupAbortController = new AbortController();
+  const cleanupTimer = setTimeout(() => cleanupAbortController.abort(), CLEANUP_TIMEOUT_MS);
+  cleanupTimer.unref?.();
+  const cleanupDb = createServiceClient({
+    audit,
+    fetch: createCleanupFetch(cleanupAbortController.signal),
+  });
+  // Best effort and non-blocking for the authoritative queue: claim starts at
+  // once, while abandoned lease artifacts are removed in parallel. Cleanup is
+  // bounded and abortable, so a slow Storage request cannot stall the worker.
+  const cleanup = cleanupAbandonedLeaseArtifacts(cleanupDb)
+    .catch(() => undefined)
+    .finally(() => clearTimeout(cleanupTimer));
+  const claim = db.rpc("claim_next_contract_document_job", { p_lease_minutes: 30 });
+  const [{ data: job, error }] = await Promise.all([claim, cleanup]);
   if (error) return NextResponse.json({ error: "Dokumentkøen kunne ikke læses" }, { status: 500 });
-  if (!job?.id) return new NextResponse(null, { status: 204 });
+  if (!job?.id || !job.lease_token) return new NextResponse(null, { status: 204 });
 
   const download = await db.storage.from("kontrakter").createSignedUrl(job.original_storage_path, 10 * 60, {
     download: false,
   });
-  const outputParts = String(job.output_storage_path).split("/");
-  outputParts[outputParts.length - 1] = "vision-layout.json.gz";
-  const spatialUploadPath = outputParts.join("/");
-  const { error: spatialPathError } = await db.from("contract_document_jobs")
-    .update({ spatial_data_path: spatialUploadPath })
+  // Every lease writes to its own immutable derivative namespace. A stale
+  // worker may retain a short-lived signed token, but it can then only write
+  // to its abandoned lease path and can never overwrite the active result.
+  // finish_contract_document_job_v5 promotes only the paths belonging to the
+  // currently locked lease into the contract row.
+  const leasePrefix = `${job.org_id}/processed/${job.contract_id}/leases/${job.lease_token}`;
+  const outputUploadPath = `${leasePrefix}/normalised.pdf`;
+  const spatialUploadPath = `${leasePrefix}/vision-layout.json.gz`;
+  const { data: leasedJob, error: derivativePathError } = await db.from("contract_document_jobs")
+    .update({
+      output_storage_path: outputUploadPath,
+      spatial_data_path: spatialUploadPath,
+    })
     .eq("id", job.id)
-    .eq("status", "processing");
-  // Derivater er reproducerbare og må aldrig genbruges fra et tidligere
-  // mislykket/manuelt afvist job. Originalen berøres ikke.
-  await db.storage.from("kontrakter").remove([job.output_storage_path, spatialUploadPath]);
-  const upload = await db.storage.from("kontrakter").createSignedUploadUrl(job.output_storage_path);
-  const spatialUpload = await db.storage.from("kontrakter").createSignedUploadUrl(spatialUploadPath);
-  if (download.error || upload.error || spatialUpload.error || spatialPathError) {
-    await db.rpc("finish_contract_document_job_v2", {
+    .eq("status", "processing")
+    .eq("lease_token", job.lease_token)
+    .select("id")
+    .maybeSingle();
+  if (download.error || derivativePathError || !leasedJob?.id) {
+    await db.rpc("finish_contract_document_job_v5", {
       p_job_id: job.id,
+      p_lease_token: job.lease_token,
       p_status: "failed",
       p_error_code: "signed_url_failed",
       p_safe_error_message: "Midlertidig filadgang kunne ikke oprettes.",
     });
     return NextResponse.json({ error: "Midlertidig filadgang kunne ikke oprettes" }, { status: 500 });
   }
-
   return NextResponse.json({
     jobId: job.id,
+    leaseToken: job.lease_token,
     downloadUrl: download.data.signedUrl,
-    uploadPath: job.output_storage_path,
-    uploadToken: upload.data.token,
+    uploadPath: outputUploadPath,
     spatialUploadPath,
-    spatialUploadToken: spatialUpload.data.token,
     maxBytes: 25 * 1024 * 1024,
   }, { headers: { "Cache-Control": "no-store" } });
 }

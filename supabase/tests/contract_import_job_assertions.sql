@@ -16,11 +16,11 @@ begin
   insert into public.organisations (id, name)
   values (test_org, 'Robust import test ' || test_org::text);
 
-  insert into public.contracts (id, org_id, type, status)
+  insert into public.contracts (id, org_id, type, status, pdf_url)
   values
-    (contract_one, test_org, 'A-løn', 'kladde'),
-    (contract_two, test_org, 'A-løn', 'kladde'),
-    (contract_three, test_org, 'A-løn', 'kladde');
+    (contract_one, test_org, 'A-løn', 'kladde', test_org || '/job-one.pdf'),
+    (contract_two, test_org, 'A-løn', 'kladde', test_org || '/job-two.pdf'),
+    (contract_three, test_org, 'A-løn', 'kladde', test_org || '/job-three.pdf');
 
   insert into public.contract_ai_jobs (id, contract_id, org_id, status, priority, next_attempt_at)
   values

@@ -35,12 +35,17 @@ jobs:
       - run: node scripts/check-i18n-coverage.mjs
       - run: npm run audit:coverage
       - run: node --import tsx --test tests/*.test.ts tests/*.test.tsx
+      - run: node --test tests/*.test.mjs
       - run: npm run build
       - name: Test OCR-worker
         working-directory: cloud-run/contract-document-worker
         run: npm ci && npm test && node --check server.mjs && node --check processor.mjs && node --check backfill.mjs
-      - name: Byg OCR-workerens container
-        run: docker build --tag dfks-contract-document-worker:test cloud-run/contract-document-worker
+      - name: Test OCR-workerens Linux-container
+        run: |
+          docker build --target test --tag dfks-contract-document-worker:test cloud-run/contract-document-worker
+          docker run --rm dfks-contract-document-worker:test
+      - name: Byg OCR-workerens produktionscontainer
+        run: docker build --target production --tag dfks-contract-document-worker:production cloud-run/contract-document-worker
       - name: Test og byg audit WORM-worker
         working-directory: cloud-run/audit-siem-worker
         run: npm ci && npm test && node --check server.mjs && node --check siem.mjs && docker build --tag dfks-audit-siem-worker:test .
@@ -58,6 +63,17 @@ jobs:
       - run: npm ci
       - run: npx supabase start
       - run: npx supabase test db
+      - name: Test samtidige OCR- og uploadlaase
+        run: |
+          eval "$(npx supabase status -o env 2>/dev/null)"
+          DFKS_LOCAL_SUPABASE_DB_TEST=1 \
+            DFKS_LOCAL_SUPABASE_DB_URL="$DB_URL" \
+            node --test \
+              tests/contract-ai-generation-fence-concurrency.test.mjs \
+              tests/contract-document-concurrent-claims.test.mjs \
+              tests/contract-upload-intent-cleanup-race.test.mjs \
+              tests/member-contract-upload-finalization-race.test.mjs \
+              tests/member-contract-upload-rollback-race.test.mjs
       - if: always()
         run: npx supabase stop --no-backup
 

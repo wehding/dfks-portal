@@ -204,11 +204,14 @@ begin
     select 1
     from (values
       ('claim_next_contract_ai_job(uuid,uuid)'),
-      ('save_contract_ai_extraction(uuid,jsonb,text)'),
-      ('renew_contract_ai_job_lease(uuid)'),
-      ('advance_contract_ai_job(uuid,text)'),
-      ('finalize_contract_ai_job(uuid)'),
-      ('fail_contract_ai_job(uuid,text,text,text,text,timestamptz,boolean)'),
+      ('set_contract_ai_job_runtime_v2(uuid,uuid,text,text,text,text,text)'),
+      ('set_contract_ai_import_item_stage_v2(uuid,uuid,text,text)'),
+      ('save_contract_ai_extraction_v2(uuid,uuid,text,jsonb,text)'),
+      ('renew_contract_ai_job_lease_v2(uuid,uuid,text)'),
+      ('apply_contract_ai_extraction_v2(uuid,uuid,text,jsonb)'),
+      ('apply_contract_attachment_extraction_v2(uuid,uuid,text,jsonb)'),
+      ('finalize_contract_ai_job_v2(uuid,uuid,text)'),
+      ('fail_contract_ai_job_v2(uuid,uuid,text,text,text,text,text,timestamptz,boolean)'),
       ('search_contract_duplicate_candidates(uuid,uuid,text,integer)'),
       ('configure_contract_import_cron(text,text)'),
       ('get_statistics_annual_cpi()'),
@@ -219,6 +222,14 @@ begin
        or not has_function_privilege('service_role', 'public.' || protected_function.signature, 'EXECUTE')
   ) then
     raise exception 'RLS failure: a contract-import worker function has unsafe execute privileges';
+  end if;
+
+  if has_function_privilege('service_role', 'public.save_contract_ai_extraction(uuid,jsonb,text)', 'EXECUTE')
+    or has_function_privilege('service_role', 'public.renew_contract_ai_job_lease(uuid)', 'EXECUTE')
+    or has_function_privilege('service_role', 'public.advance_contract_ai_job(uuid,text)', 'EXECUTE')
+    or has_function_privilege('service_role', 'public.finalize_contract_ai_job(uuid)', 'EXECUTE')
+    or has_function_privilege('service_role', 'public.fail_contract_ai_job(uuid,text,text,text,text,timestamptz,boolean)', 'EXECUTE') then
+    raise exception 'RLS failure: legacy unfenced AI worker functions remain executable by service_role';
   end if;
 
   if has_function_privilege('anon', 'public.replace_rights_holder_person_identity(uuid,text[],jsonb,text)', 'EXECUTE')

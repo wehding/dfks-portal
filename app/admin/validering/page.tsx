@@ -24,6 +24,7 @@ import { Separator } from "@/components/ui/separator"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { maskPersonalData } from "@/lib/mask-text"
 import { getContractValidationData } from "@/app/actions/contract-imports"
+import { getContractSignedUrl } from "@/app/actions/member-contracts"
 import { normaliseSources } from "@/lib/ai-sources"
 import { resolveAnker } from "@/lib/resolveAnker"
 import { SourceBtn } from "@/components/source-btn"
@@ -69,7 +70,6 @@ const WORK_PHASE_PAYMENT_LABELS: Record<string, string> = {
 const CREDIT_STATUS_LABELS: Record<string, string> = { precise: "Præcis klausul", vague: "Upræcis klausul", role_only: "Kun arbejdsfunktion", conditional: "Betinget kreditering", absent: "Ingen klausul", unclear: "Kræver manuel kontrol" }
 
 const ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
-const BUCKET = "kontrakter"
 
 // ── Fuzzy matching ────────────────────────────────────────────
 const LEGAL_SUFFIXES = /\b(aps|a\/s|as|ivs|i\/s|fmba|smba|productions?|film|media|company|group|entertainment|studios?|international|denmark|dk)\b/g
@@ -398,9 +398,8 @@ function AdminValideringPageInner() {
         const mapped: ValidatingContract[] = await Promise.all(data.map(async (c: any) => {
             let signedPdfUrl: string | null = null
             if (c.pdf_url) {
-                const { data: sd, error: signErr } = await supabase.storage.from(BUCKET).createSignedUrl(c.pdf_url, 3600)
-                if (signErr) console.error("[validering] createSignedUrl fejl:", signErr.message, "path:", c.pdf_url)
-                signedPdfUrl = sd?.signedUrl ?? null
+                const signed = await getContractSignedUrl(c.pdf_url)
+                signedPdfUrl = signed.url
             }
             return {
                 ...c,

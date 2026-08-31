@@ -4,23 +4,18 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { gunzipSync } from "node:zlib";
 
-import { maskSensitiveImageBytes } from "./google-secure-api.mjs";
 import {
   computeSpatialAccuracy,
+  parsePdfPageSize,
   parsePdftotextBbox,
   processPdfSpatially,
+  renderedPixelCount,
   sha256,
 } from "./spatial-ocr.mjs";
 
 const runtimeOnly = { skip: process.env.DFKS_CONTAINER_RUNTIME_TEST !== "1" };
-
-test("containeren maskerer følsomme billedområder med Pillow", runtimeOnly, async () => {
-  const source = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAKAAoDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q==", "base64");
-  const output = await maskSensitiveImageBytes(source, [{ top: 1, left: 1, width: 5, height: 5 }]);
-  assert.equal(output.subarray(0, 2).toString("hex"), "ffd8");
-  assert.notDeepEqual(output, source);
-});
 
 function run(command, args, { input } = {}) {
   return new Promise((resolve, reject) => {
@@ -53,7 +48,9 @@ test("containeren bevarer sider, rotation og cropbox ved geometrisk overlay", ru
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 import pikepdf, sys
+from PIL import Image
 path = sys.argv[1]
+image_dir = sys.argv[2]
 c = canvas.Canvas(path, pagesize=letter)
 for index in range(4):
     c.rect(30, 30, 10, 10, stroke=1, fill=0)
@@ -64,11 +61,14 @@ with pikepdf.open(path, allow_overwriting_input=True) as pdf:
         pdf.pages[index].Rotate = rotation
         pdf.pages[index].CropBox = pikepdf.Array([10, 20, 602, 772])
     pdf.save(path)
+for index, (width, height) in enumerate(((592, 752), (752, 592), (592, 752), (752, 592)), start=1):
+    color = (12, 34, 56) if index == 1 else (255, 255, 255)
+    Image.new("RGB", (width, height), color).save(f"{image_dir}/redacted-{index}.png", "PNG")
 `;
-    await run("python3", ["-c", generator, inputPath]);
+    await run("python3", ["-c", generator, inputPath, workDir]);
     const pdfInfo = (await run("pdfinfo", ["-f", "1", "-l", "4", "-box", inputPath])).toString("utf8");
     const geometry = {
-      schemaVersion: "google-vision-spatial-v1",
+      schemaVersion: "google-vision-spatial-v2",
       engine: "google-vision-document-text-detection",
       pages: [0, 90, 180, 270].map((rotation, index) => {
         const imageWidth = rotation % 180 === 0 ? 592 : 752;
@@ -92,9 +92,7 @@ with pikepdf.open(path, allow_overwriting_input=True) as pdf:
       }),
     };
     await writeFile(geometryPath, JSON.stringify(geometry));
-    const normalisedPath = join(workDir, "normalised.pdf");
-    await run("qpdf", ["--flatten-rotation", inputPath, normalisedPath]);
-    await run("python3", ["vision_overlay.py", normalisedPath, geometryPath, outputPath]);
+    await run("python3", ["vision_overlay.py", inputPath, geometryPath, workDir, outputPath]);
     const inspection = await run("python3", ["-c", `
 import json, pikepdf, sys
 with pikepdf.open(sys.argv[1]) as pdf:
@@ -109,6 +107,17 @@ with pikepdf.open(sys.argv[1]) as pdf:
     const text = (await run("pdftotext", [outputPath, "-"])).toString("utf8");
     for (let index = 1; index <= 4; index += 1) assert.match(text, new RegExp(`Test${index}`));
 
+    const renderedPrefix = join(workDir, "rendered");
+    await run("pdftoppm", ["-f", "1", "-singlefile", "-png", "-r", "72", outputPath, renderedPrefix]);
+    const visiblePixel = await run("python3", ["-c", `
+from PIL import Image
+import json, sys
+image = Image.open(sys.argv[1]).convert("RGB")
+print(json.dumps(image.getpixel((image.width // 2, image.height // 2))))
+`, `${renderedPrefix}.png`]);
+    const renderedColor = JSON.parse(visiblePixel.toString("utf8"));
+    assert.equal(renderedColor.every((value, index) => Math.abs(value - [12, 34, 56][index]) <= 4), true);
+
     const bboxPath = join(workDir, "bbox.html");
     await run("pdftotext", ["-cropbox", "-bbox-layout", outputPath, bboxPath]);
     const extracted = parsePdftotextBbox(await readFile(bboxPath, "utf8"));
@@ -120,7 +129,119 @@ with pikepdf.open(sys.argv[1]) as pdf:
   }
 });
 
-test("blandet PDF OCR-behandler kun billedsiden og bevarer originalen", runtimeOnly, async () => {
+test("fysiske 90/180/270-rettelser bevarer CropBox-rækkefølge og geometri", runtimeOnly, async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-physical-rotation-"));
+  try {
+    const inputPath = join(workDir, "input.pdf");
+    const outputPath = join(workDir, "output.pdf");
+    const geometryPath = join(workDir, "geometry.json");
+    await run("python3", ["-c", `
+from reportlab.pdfgen import canvas
+import pikepdf, sys
+from PIL import Image, ImageDraw
+path, image_dir = sys.argv[1:]
+c = canvas.Canvas(path, pagesize=(620, 820))
+for page in range(3):
+    c.drawString(20, 20, f"source-{page + 1}")
+    c.showPage()
+c.save()
+with pikepdf.open(path, allow_overwriting_input=True) as pdf:
+    for index, crop in enumerate(((10, 20, 510, 720), (20, 30, 530, 740), (30, 40, 550, 760))):
+        pdf.pages[index].CropBox = pikepdf.Array(crop)
+    pdf.save(path)
+for index in range(1, 4):
+    image = Image.new("RGB", (100, 150), (240, 240, 240))
+    ImageDraw.Draw(image).rectangle((10 * index, 10, 10 * index + 5, 20), fill=(10, 20, 30))
+    image.save(f"{image_dir}/source-{index}.jpg", "JPEG", quality=100)
+`, inputPath, workDir]);
+
+    const corrections = [270, 180, 90];
+    for (let page = 1; page <= 3; page += 1) {
+      await run("python3", [
+        "normalise_orientation.py",
+        join(workDir, `source-${page}.jpg`),
+        join(workDir, `redacted-${page}.png`),
+        String(corrections[page - 1]),
+      ]);
+    }
+    const geometry = {
+      pages: corrections.map((correction, index) => ({
+        pageNumber: index + 1,
+        imageWidth: correction % 180 === 0 ? 100 : 150,
+        imageHeight: correction % 180 === 0 ? 150 : 100,
+        orientationCorrection: correction,
+        words: [{
+          text: `RettetSide${index + 1}`,
+          vertices: [
+            { x: 10, y: 10 }, { x: 80, y: 10 },
+            { x: 80, y: 25 }, { x: 10, y: 25 },
+          ],
+        }],
+      })),
+    };
+    await writeFile(geometryPath, JSON.stringify(geometry));
+    await run("python3", ["vision_overlay.py", inputPath, geometryPath, workDir, outputPath]);
+    const inspection = JSON.parse((await run("python3", ["-c", `
+import json, pikepdf, sys
+with pikepdf.open(sys.argv[1]) as pdf:
+    print(json.dumps([[float(p.MediaBox[2]), float(p.MediaBox[3])] for p in pdf.pages]))
+`, outputPath])).toString("utf8"));
+    assert.deepEqual(inspection, [[700, 500], [510, 710], [720, 520]]);
+    const text = (await run("pdftotext", [outputPath, "-"])).toString("utf8");
+    assert.ok(text.indexOf("RettetSide1") < text.indexOf("RettetSide2"));
+    assert.ok(text.indexOf("RettetSide2") < text.indexOf("RettetSide3"));
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
+test("helsides raster med skjult tekstlag springer ikke DLP og Vision over", runtimeOnly, async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-hidden-text-scan-"));
+  try {
+    const inputPath = join(workDir, "input.pdf");
+    await run("python3", ["-c", `
+from PIL import Image, ImageDraw
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
+import sys
+image = Image.new("RGB", (2550, 3300), "white")
+ImageDraw.Draw(image).text((100, 100), "SCANNET KONTRAKT", fill="black")
+c = canvas.Canvas(sys.argv[1], pagesize=(612, 792))
+c.drawImage(ImageReader(image), 0, 0, width=612, height=792)
+text = c.beginText(20, 760)
+text.setTextRenderMode(3)
+for row in range(10):
+    text.textLine(" ".join(f"skjultkontraktord{row}_{word}" for word in range(15)))
+c.drawText(text)
+c.showPage()
+c.save()
+`, inputPath]);
+    let googleCalled = false;
+    const result = await processPdfSpatially({
+      inputPath,
+      outputPath: join(workDir, "output.pdf"),
+      geometryPath: join(workDir, "geometry.json.gz"),
+      workDir,
+      commandRunner,
+      googleClient: {
+        async redactAndAnnotate(pages) {
+          googleCalled = true;
+          return {
+            responses: [{ fullTextAnnotation: { pages: [] } }],
+            redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+          };
+        },
+      },
+    });
+    assert.equal(googleCalled, true);
+    assert.equal(result.status, "needs_review");
+    assert.notEqual(result.classification, "native_text");
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
+test("blandet PDF genopbygges konsekvent af DLP-sider og bevarer originalen", runtimeOnly, async () => {
   const workDir = await mkdtemp(join(tmpdir(), "dfks-mixed-pdf-"));
   try {
     const inputPath = join(workDir, "input.pdf");
@@ -141,33 +262,324 @@ c.save()
     const original = await readFile(inputPath);
     const googleClient = {
       async redactAndAnnotate(pages) {
-        assert.equal(pages.length, 1);
-        assert.equal(pages[0].pageNumber, 2);
+        assert.equal(pages.length, 2);
         return {
           redactionCounts: { IBAN_CODE: 1 },
-          responses: [{ fullTextAnnotation: { pages: [{
-            width: 2550,
-            height: 3300,
-            blocks: [{ paragraphs: [{ words: [{
-              confidence: 0.99,
-              boundingBox: { vertices: [{ x: 200, y: 200 }, { x: 800, y: 200 }, { x: 800, y: 300 }, { x: 200, y: 300 }] },
-              symbols: "Kontraktgrundlag".split("").map((text) => ({ text })),
-            }] }] }],
-          }] } }],
+          redactionRegions: [{ pageNumber: 2, top: 1, left: 1, width: 10, height: 10, infoType: "IBAN_CODE" }],
+          redactedPages: pages,
+          responses: [1, 2].map((pageNumber) => ({
+            fullTextAnnotation: { pages: [{
+              width: 2550,
+              height: 3300,
+              blocks: [{ paragraphs: [{ words: Array.from({ length: 10 }, (_, wordIndex) => {
+                const value = `KontraktOrd${pageNumber}${wordIndex}Lang`;
+                const top = 200 + wordIndex * 220;
+                return {
+                  confidence: 0.99,
+                  boundingBox: { vertices: [
+                    { x: 200, y: top }, { x: 800, y: top },
+                    { x: 800, y: top + 100 }, { x: 200, y: top + 100 },
+                  ] },
+                  symbols: value.split("").map((text) => ({ text })),
+                };
+              }) }] }],
+            }] },
+          })),
         };
       },
     };
     const result = await processPdfSpatially({
       inputPath, outputPath, geometryPath, workDir, commandRunner, googleClient,
     });
-    assert.equal(result.status, "completed");
+    assert.equal(result.status, "completed", JSON.stringify(result));
     assert.equal(result.nativePageCount, 1);
     assert.equal(result.ocrPageCount, 1);
+    assert.equal(result.nativePageCount + result.ocrPageCount, result.pageCount);
     assert.deepEqual(result.redactionCounts, { IBAN_CODE: 1 });
+    const persistedGeometry = JSON.parse(gunzipSync(await readFile(geometryPath)).toString("utf8"));
+    assert.deepEqual(persistedGeometry.spatialVerification, result.spatial);
+    assert.equal(persistedGeometry.spatialVerification.matchCoverage, 1);
+    assert.equal(persistedGeometry.spatialVerification.passed, true);
     assert.equal(sha256(await readFile(inputPath)), sha256(original));
     const text = (await run("pdftotext", [outputPath, "-"])).toString("utf8");
-    assert.match(text, /almindelig kontraktside/);
-    assert.match(text, /Kontraktgrundlag/);
+    assert.match(text, /KontraktOrd10Lang/);
+    assert.match(text, /KontraktOrd29Lang/);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
+test("for stor DLP-side genrenderes adaptivt før Google-kald", async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-dlp-resize-"));
+  try {
+    const renderArgs = [];
+    const adaptiveRunner = async (command, args) => {
+      if (command === "pdfinfo") return { stdout: "Pages: 1\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+      if (command === "pdftotext") {
+        await writeFile(args.at(-1), "");
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftoppm") {
+        renderArgs.push(args);
+        const bytes = renderArgs.length === 1 ? 3_000_000 : 2_000_000;
+        await writeFile(`${args.at(-1)}.jpg`, Buffer.alloc(bytes, 0xff));
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command: ${command}`);
+    };
+    const result = await processPdfSpatially({
+      inputPath: join(workDir, "input.pdf"),
+      outputPath: join(workDir, "output.pdf"),
+      geometryPath: join(workDir, "geometry.json.gz"),
+      workDir,
+      commandRunner: adaptiveRunner,
+      googleClient: {
+        async redactAndAnnotate(pages) {
+          assert.equal(pages.length, 1);
+          assert.equal(pages[0].imageBytes.length, 2_000_000);
+          return {
+            responses: [{ fullTextAnnotation: { pages: [] } }],
+            redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+          };
+        },
+      },
+    });
+    assert.equal(renderArgs.length, 2);
+    assert.equal(renderArgs[0].includes("300"), true);
+    assert.equal(renderArgs[1].includes("275"), true);
+    assert.equal(result.status, "needs_review");
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
+test("alle for store DLP-profiler stopper før Google-kald", async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-dlp-reject-"));
+  try {
+    let renderCount = 0;
+    let googleCalled = false;
+    const oversizedRunner = async (command, args) => {
+      if (command === "pdfinfo") return { stdout: "Pages: 1\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+      if (command === "pdftotext") {
+        await writeFile(args.at(-1), "");
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftoppm") {
+        renderCount += 1;
+        await writeFile(`${args.at(-1)}.jpg`, Buffer.alloc(2_900_001, 0xff));
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command: ${command}`);
+    };
+    await assert.rejects(() => processPdfSpatially({
+      inputPath: join(workDir, "input.pdf"),
+      outputPath: join(workDir, "output.pdf"),
+      geometryPath: join(workDir, "geometry.json.gz"),
+      workDir,
+      commandRunner: oversizedRunner,
+      googleClient: { async redactAndAnnotate() { googleCalled = true; } },
+    }), /dlp_request_too_large/);
+    assert.equal(renderCount, 5);
+    assert.equal(googleCalled, false);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
+test("PDF-sidestørrelse giver et afgrænset pixelbudget", () => {
+  const size = parsePdfPageSize("Page    1 size: 612 x 792 pts (letter)\n");
+  assert.deepEqual(size, { widthPoints: 612, heightPoints: 792 });
+  assert.equal(renderedPixelCount(size, 300), 2550 * 3300);
+  assert.equal(parsePdfPageSize("Page size: invalid"), null);
+});
+
+test("ekstrem sidestørrelse afvises før rendering og Google", async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-pixel-cap-"));
+  try {
+    let rendered = false;
+    let googleCalled = false;
+    const cappedRunner = async (command, args) => {
+      if (command === "pdfinfo") return { stdout: "Pages: 1\nPage    1 size: 20000 x 20000 pts\n", stderr: "" };
+      if (command === "pdftotext") {
+        await writeFile(args.at(-1), "");
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftoppm") rendered = true;
+      throw new Error(`unexpected command: ${command}`);
+    };
+    await assert.rejects(() => processPdfSpatially({
+      inputPath: join(workDir, "input.pdf"),
+      outputPath: join(workDir, "output.pdf"),
+      geometryPath: join(workDir, "geometry.json.gz"),
+      workDir,
+      commandRunner: cappedRunner,
+      googleClient: { async redactAndAnnotate() { googleCalled = true; } },
+    }), /dlp_request_too_large/);
+    assert.equal(rendered, false);
+    assert.equal(googleCalled, false);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
+test("dokumentets sidegrænse afvises før sideudtræk, rendering og Google", async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-page-limit-"));
+  try {
+    let pageCommandCalled = false;
+    let googleCalled = false;
+    const cappedRunner = async (command) => {
+      if (command === "pdfinfo") return { stdout: "Pages: 4\n", stderr: "" };
+      pageCommandCalled = true;
+      throw new Error(`unexpected command: ${command}`);
+    };
+    await assert.rejects(() => processPdfSpatially({
+      inputPath: join(workDir, "input.pdf"),
+      outputPath: join(workDir, "output.pdf"),
+      geometryPath: join(workDir, "geometry.json.gz"),
+      workDir,
+      commandRunner: cappedRunner,
+      googleClient: { async redactAndAnnotate() { googleCalled = true; } },
+      resourceLimits: { maxDocumentPages: 3 },
+    }), /document_page_limit_exceeded/);
+    assert.equal(pageCommandCalled, false);
+    assert.equal(googleCalled, false);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
+test("samlet rasterbudget stopper en flersidet PDF før alle sidebuffere samles", async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-raster-limit-"));
+  try {
+    let renderCount = 0;
+    let googleCalled = false;
+    const budgetRunner = async (command, args) => {
+      if (command === "pdfinfo" && !args.includes("-box")) {
+        return { stdout: "Pages: 4\n", stderr: "" };
+      }
+      if (command === "pdfinfo") {
+        return { stdout: "Pages: 1\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+      }
+      if (command === "pdftotext") {
+        await writeFile(args.at(-1), "");
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftoppm") {
+        renderCount += 1;
+        await writeFile(`${args.at(-1)}.jpg`, Buffer.alloc(800, 0xff));
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command: ${command}`);
+    };
+    await assert.rejects(() => processPdfSpatially({
+      inputPath: join(workDir, "input.pdf"),
+      outputPath: join(workDir, "output.pdf"),
+      geometryPath: join(workDir, "geometry.json.gz"),
+      workDir,
+      commandRunner: budgetRunner,
+      googleClient: { async redactAndAnnotate() { googleCalled = true; } },
+      resourceLimits: { maxDocumentPages: 4, maxDocumentRasterBytes: 2_000 },
+    }), /document_raster_budget_exceeded/);
+    assert.equal(renderCount, 3);
+    assert.equal(googleCalled, false);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
+test("en flersidet PDF på rasterbudgettets stramme testgrænse bevarer OCR-flowet", async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-raster-boundary-"));
+  try {
+    let googlePages = 0;
+    const boundaryRunner = async (command, args) => {
+      if (command === "pdfinfo" && !args.includes("-box")) {
+        return { stdout: "Pages: 3\n", stderr: "" };
+      }
+      if (command === "pdfinfo") {
+        return { stdout: "Pages: 1\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+      }
+      if (command === "pdftotext") {
+        await writeFile(args.at(-1), "");
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftoppm") {
+        await writeFile(`${args.at(-1)}.jpg`, Buffer.alloc(800, 0xff));
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command: ${command}`);
+    };
+    const result = await processPdfSpatially({
+      inputPath: join(workDir, "input.pdf"),
+      outputPath: join(workDir, "output.pdf"),
+      geometryPath: join(workDir, "geometry.json.gz"),
+      workDir,
+      commandRunner: boundaryRunner,
+      googleClient: {
+        async redactAndAnnotate(pages) {
+          googlePages = pages.length;
+          return {
+            responses: pages.map(() => ({ fullTextAnnotation: { pages: [] } })),
+            redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+          };
+        },
+      },
+      resourceLimits: { maxDocumentPages: 3, maxDocumentRasterBytes: 2_400 },
+    });
+    assert.equal(googlePages, 3);
+    assert.equal(result.status, "needs_review");
+    assert.equal(result.unreadablePageCount, 3);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
+test("reel støjside vælges i en lavere gyldig JPEG-profil", runtimeOnly, async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-dlp-real-adaptive-"));
+  try {
+    const inputPath = join(workDir, "input.pdf");
+    await run("python3", ["-c", `
+from PIL import Image
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+import os, sys
+image_path, pdf_path = sys.argv[1], sys.argv[2]
+width, height = 2550, 3300
+Image.frombytes("L", (width, height), os.urandom(width * height)).save(image_path, "PNG")
+c = canvas.Canvas(pdf_path, pagesize=letter)
+c.drawImage(image_path, 0, 0, width=letter[0], height=letter[1])
+c.showPage()
+c.save()
+`, join(workDir, "noise.png"), inputPath]);
+    let googleCalls = 0;
+    const result = await processPdfSpatially({
+      inputPath,
+      outputPath: join(workDir, "output.pdf"),
+      geometryPath: join(workDir, "geometry.json.gz"),
+      workDir,
+      commandRunner,
+      googleClient: {
+        async redactAndAnnotate(pages) {
+          googleCalls += 1;
+          assert.equal(pages.length, 1);
+          assert.equal(pages[0].imageBytes[0], 0xff);
+          assert.equal(pages[0].imageBytes[1], 0xd8);
+          const dimensions = await run("python3", ["-c", `
+from PIL import Image
+import io, json, sys
+image = Image.open(io.BytesIO(sys.stdin.buffer.read()))
+print(json.dumps([image.width, image.height]))
+`], { input: pages[0].imageBytes });
+          const [width, height] = JSON.parse(dimensions.toString("utf8"));
+          assert.equal(width < 2550 && height < 3300, true, JSON.stringify({ width, height }));
+          return {
+            responses: [{ fullTextAnnotation: { pages: [] } }],
+            redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+          };
+        },
+      },
+    });
+    assert.equal(result.status, "needs_review");
+    assert.equal(googleCalls, 1);
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
