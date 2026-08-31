@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  completionFailure,
-  isIdempotentReplay,
-} from "../app/api/internal/document-processing/complete/route";
+  classifyDocumentCompletionFailure,
+  isIdempotentDocumentCompletionReplay,
+} from "../lib/contract-document-completion";
 
 const completed = {
   contract_id: "contract",
@@ -18,17 +18,17 @@ const completed = {
 };
 
 test("completion-replay kræver samme terminale integritetsbevis", () => {
-  assert.equal(isIdempotentReplay(completed, {
+  assert.equal(isIdempotentDocumentCompletionReplay(completed, {
     status: "completed",
     processedSha256: "a".repeat(64),
     spatialSha256: "b".repeat(64),
   }), true);
-  assert.equal(isIdempotentReplay(completed, {
+  assert.equal(isIdempotentDocumentCompletionReplay(completed, {
     status: "completed",
     processedSha256: "c".repeat(64),
     spatialSha256: "b".repeat(64),
   }), false);
-  assert.equal(isIdempotentReplay({ ...completed, lease_token: "active" }, {
+  assert.equal(isIdempotentDocumentCompletionReplay({ ...completed, lease_token: "active" }, {
     status: "completed",
     processedSha256: "a".repeat(64),
     spatialSha256: "b".repeat(64),
@@ -36,7 +36,7 @@ test("completion-replay kræver samme terminale integritetsbevis", () => {
 });
 
 test("ikke-OCR og fejlreplays kræver samme terminale resultat", () => {
-  assert.equal(isIdempotentReplay({
+  assert.equal(isIdempotentDocumentCompletionReplay({
     ...completed,
     status: "not_required",
     document_classification: "native_text",
@@ -44,7 +44,7 @@ test("ikke-OCR og fejlreplays kræver samme terminale resultat", () => {
     processed_sha256: null,
     spatial_sha256: null,
   }, { status: "not_required" }), true);
-  assert.equal(isIdempotentReplay({
+  assert.equal(isIdempotentDocumentCompletionReplay({
     ...completed,
     status: "needs_review",
     ocr_applied: false,
@@ -55,19 +55,19 @@ test("ikke-OCR og fejlreplays kræver samme terminale resultat", () => {
 });
 
 test("databasefejl bliver til faste ufølsomme callbackkoder", () => {
-  assert.deepEqual(completionFailure("P0002"), {
+  assert.deepEqual(classifyDocumentCompletionFailure("P0002"), {
     code: "completion_lease_inactive",
     status: 409,
   });
-  assert.deepEqual(completionFailure("22023"), {
+  assert.deepEqual(classifyDocumentCompletionFailure("22023"), {
     code: "completion_integrity_rejected",
     status: 409,
   });
-  assert.deepEqual(completionFailure("23505"), {
+  assert.deepEqual(classifyDocumentCompletionFailure("23505"), {
     code: "completion_generation_conflict",
     status: 409,
   });
-  assert.deepEqual(completionFailure("unknown"), {
+  assert.deepEqual(classifyDocumentCompletionFailure("unknown"), {
     code: "completion_persistence_failed",
     status: 503,
   });
