@@ -24,7 +24,9 @@ import {
 } from "../scripts/audit-ocr-backfill.mjs";
 
 const pdftotextUnavailable = spawnSync("pdftotext", ["-v"], { stdio: "ignore" }).error?.code === "ENOENT";
-const pdfinfoUnavailable = spawnSync("pdfinfo", ["-v"], { stdio: "ignore" }).error?.code === "ENOENT";
+const pikepdfUnavailable = spawnSync(
+  "python3", ["-c", "import pikepdf"], { stdio: "ignore" },
+).status !== 0;
 
 async function pdf(pages) {
   const document = await PDFDocument.create();
@@ -201,7 +203,7 @@ test("produktionsaudit udtrækker bbox fra PDF uden shell eller dokumentlogs", {
 });
 
 test("produktionsaudit tæller PDF-sider med et uafhængigt værktøj", {
-  skip: pdfinfoUnavailable,
+  skip: pikepdfUnavailable,
 }, async () => {
   assert.equal(await extractPdfPageCount(await pdf(3)), 3);
   await assert.rejects(

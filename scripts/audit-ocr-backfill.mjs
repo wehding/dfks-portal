@@ -27,10 +27,10 @@ const MAX_PDF_BYTES = 100 * 1024 * 1024;
 const MAX_SPATIAL_COMPRESSED_BYTES = 25 * 1024 * 1024;
 const MAX_SPATIAL_JSON_BYTES = 32 * 1024 * 1024;
 const MAX_BBOX_BYTES = 64 * 1024 * 1024;
-const MAX_PDFINFO_BYTES = 1024 * 1024;
+const MAX_PAGE_COUNT_OUTPUT_BYTES = 64;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
 const PDFTOTEXT_TIMEOUT_MS = 120_000;
-const PDFINFO_TIMEOUT_MS = 60_000;
+const PDF_PAGE_COUNT_TIMEOUT_MS = 60_000;
 const BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v3";
 const MAX_BASELINE_BYTES = 64 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -404,58 +404,65 @@ export async function extractPdfPageCount(pdfBytes) {
     || pdfBytes.byteLength > MAX_PDF_BYTES) {
     throw new AuditOperationalError("pdf_page_count_failed");
   }
-  const directory = await mkdtemp(join(tmpdir(), "dfks-ocr-page-count-"));
-  const pdfPath = join(directory, "original.pdf");
-  try {
-    await writeFile(pdfPath, pdfBytes, { mode: 0o600 });
-    const output = await new Promise((resolve, reject) => {
-      const child = spawn("pdfinfo", [pdfPath], {
-        shell: false,
-        stdio: ["ignore", "pipe", "ignore"],
-        env: {
-          PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-          LANG: "C",
-          LC_ALL: "C",
-        },
-      });
-      const chunks = [];
-      let length = 0;
-      let settled = false;
-      const finish = (error, value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (error) reject(error);
-        else resolve(value);
-      };
-      const timer = setTimeout(() => {
-        child.kill("SIGKILL");
-        finish(new AuditOperationalError("pdf_page_count_failed"));
-      }, PDFINFO_TIMEOUT_MS);
-      child.stdout.on("data", (chunk) => {
-        length += chunk.length;
-        if (length > MAX_PDFINFO_BYTES) {
-          child.kill("SIGKILL");
-          finish(new AuditOperationalError("pdf_page_count_failed"));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      child.once("error", () => finish(new AuditOperationalError("pdf_page_count_failed")));
-      child.once("close", (code) => {
-        if (code !== 0) finish(new AuditOperationalError("pdf_page_count_failed"));
-        else finish(null, Buffer.concat(chunks).toString("utf8"));
-      });
+  const script = [
+    "import io, sys",
+    "import pikepdf",
+    "payload = sys.stdin.buffer.read()",
+    "with pikepdf.open(io.BytesIO(payload)) as document:",
+    "    print(len(document.pages))",
+  ].join("\n");
+  return new Promise((resolve, reject) => {
+    const child = spawn("python3", ["-c", script], {
+      shell: false,
+      stdio: ["pipe", "pipe", "ignore"],
+      env: {
+        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        LANG: "C",
+        LC_ALL: "C",
+        PYTHONDONTWRITEBYTECODE: "1",
+      },
     });
-    const match = /^Pages:\s+([0-9]+)\s*$/m.exec(output);
-    const pageCount = Number(match?.[1]);
-    if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 10_000) {
-      throw new AuditOperationalError("pdf_page_count_failed");
-    }
-    return pageCount;
-  } finally {
-    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
-  }
+    const chunks = [];
+    let length = 0;
+    let terminalError = null;
+    let settled = false;
+    const failAfterTermination = () => {
+      if (settled) return;
+      terminalError ??= new AuditOperationalError("pdf_page_count_failed");
+      child.kill("SIGKILL");
+    };
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const timer = setTimeout(failAfterTermination, PDF_PAGE_COUNT_TIMEOUT_MS);
+    child.stdout.on("data", (chunk) => {
+      length += chunk.length;
+      if (length > MAX_PAGE_COUNT_OUTPUT_BYTES) {
+        failAfterTermination();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.stdin.once("error", failAfterTermination);
+    child.once("error", () => finish(new AuditOperationalError("pdf_page_count_failed")));
+    child.once("close", (code) => {
+      if (terminalError || code !== 0) {
+        finish(terminalError ?? new AuditOperationalError("pdf_page_count_failed"));
+        return;
+      }
+      const pageCount = Number(Buffer.concat(chunks).toString("ascii").trim());
+      if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 10_000) {
+        finish(new AuditOperationalError("pdf_page_count_failed"));
+        return;
+      }
+      finish(null, pageCount);
+    });
+    child.stdin.end(pdfBytes);
+  });
 }
 
 function spatialMetricsEqual(stored, recomputed) {
