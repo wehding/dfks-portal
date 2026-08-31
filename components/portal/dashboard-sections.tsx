@@ -5,62 +5,62 @@ import { MemberInboxPanel } from "@/components/portal/member-inbox-panel";
 import { SalaryStatsCard, type SalaryStatPoint } from "@/components/portal/salary-stats-card";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 import { createServiceClient } from "@/lib/supabase/service";
-import { loadMemberWorkReviewTasks } from "@/lib/server/member-work-review-tasks";
-import { uniqueMemberWorkReviewCount } from "@/lib/member-work-review";
 import { salaryDataToWeekly } from "@/lib/statistics-calculations";
 import { EXPERIENCE_GROUPS, experienceGroupAt, type ExperienceGroup } from "@/lib/experience-groups";
 import { normalizeStatisticsMinimumGroupSize } from "@/lib/statistics-privacy";
 import { medianWeeklySalary, memberSalaryBenchmark, salaryProductionGroup, type SalaryProductionGroup } from "@/lib/member-statistics";
 import { createListLoadTimer } from "@/lib/server/list-load-timing";
 
-type ContractRow = { id: string; working_title: string | null; work_id: string | null; contract_comments: Array<{ author_role: string; member_read_at: string | null }> | null };
-type AssignmentRow = { work_id: string | null; works: { id: string; title: string | null; contracts: Array<{ id: string }> | null } | null };
-type ShareTaskRow = { id: string; case_id: string; works: { title: string | null } | null };
+type DashboardTaskOverview = {
+  works_missing_contract_count: number | string;
+  contracts_missing_work_count: number | string;
+  review_work_count: number | string;
+  share_task_count: number | string;
+  unread_contract_count: number | string;
+  pending_work_request_count: number | string;
+  pending_screening_count: number | string;
+  share_tasks: Array<{ id: string; caseId: string; title: string | null }> | null;
+  unread_contracts: Array<{ contractId: string; title: string | null }> | null;
+  pending_work_requests: Array<{ id: string }> | null;
+  pending_screenings: Array<{ id: string; title: string | null }> | null;
+};
 
 export async function DashboardTasksSection({ orgId, rightsHolderId, userId }: { orgId: string; rightsHolderId: string; userId: string }) {
   const timer = createListLoadTimer("member-dashboard-tasks");
   const db = createServiceClient();
-  const [contractsResult, workRequestsResult, screeningClaimsResult, assignmentsResult, shareTasksResult, reviewTasks] = await Promise.all([
-    db.from("contracts").select("id,working_title,work_id,contract_comments(author_role,member_read_at)").eq("org_id", orgId).eq("rights_holder_id", rightsHolderId),
-    db.from("work_change_requests").select("id,status,created_at").eq("org_id", orgId).eq("requested_by_rights_holder_id", rightsHolderId).eq("status", "pending"),
-    db.from("screening_claims").select("id,title,status,created_at").eq("org_id", orgId).eq("profile_id", userId).eq("status", "pending"),
-    db.from("work_assignments").select("work_id,works(id,title,contracts(id))").eq("org_id", orgId).eq("rights_holder_id", rightsHolderId),
-    db.from("work_share_participants").select("id,case_id,works:work_id(title)").eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).eq("relationship_status", "pending"),
-    loadMemberWorkReviewTasks(db, { orgId, rightsHolderId }),
-  ]);
-  const queryError = contractsResult.error ?? workRequestsResult.error ?? screeningClaimsResult.error ?? assignmentsResult.error ?? shareTasksResult.error;
-  if (queryError) return <DashboardSectionError title="Dine opgaver kunne ikke hentes" stage="first-row" />;
-  const contracts = contractsResult.data;
-  const workRequests = workRequestsResult.data;
-  const screeningClaims = screeningClaimsResult.data;
-  const assignments = assignmentsResult.data;
-  const shareTasks = shareTasksResult.data;
+  const { data, error } = await db.rpc("get_member_dashboard_task_overview", {
+    p_org_id: orgId,
+    p_rights_holder_id: rightsHolderId,
+    p_user_id: userId,
+    p_preview_limit: 5,
+  });
+  if (error) return <DashboardSectionError title="Dine opgaver kunne ikke hentes" stage="first-row" />;
+  const overview = ((Array.isArray(data) ? data[0] : data) ?? {}) as DashboardTaskOverview;
   timer.mark("queries");
-  const contractRows = (contracts ?? []) as ContractRow[];
-  const contractedWorkIds = new Set(contractRows.map(contract => contract.work_id).filter(Boolean));
-  const worksWithoutContract = Array.from(new Map(((assignments ?? []) as unknown as AssignmentRow[])
-    .map(assignment => assignment.works)
-    .filter((work): work is NonNullable<AssignmentRow["works"]> => Boolean(work?.id))
-    .map(work => [work.id, work] as const)).values())
-    .filter(work => (work.contracts ?? []).length === 0 && !contractedWorkIds.has(work.id));
-  const contractsWithoutWork = contractRows.filter(contract => !contract.work_id);
-  const reviewWorkCount = uniqueMemberWorkReviewCount(reviewTasks);
+  const worksWithoutContractCount = Number(overview.works_missing_contract_count ?? 0);
+  const contractsWithoutWorkCount = Number(overview.contracts_missing_work_count ?? 0);
+  const reviewWorkCount = Number(overview.review_work_count ?? 0);
+  const shareTaskCount = Number(overview.share_task_count ?? 0);
+  const unreadContractCount = Number(overview.unread_contract_count ?? 0);
   const actionItems = [
-    ...(worksWithoutContract.length ? [{ key: "works-missing-contract", href: "/portal/mine-kontrakter", icon: Upload, title: `${worksWithoutContract.length} værk${worksWithoutContract.length === 1 ? "" : "er"} mangler kontrakt`, text: "Gå til Mine kontrakter og upload kontrakterne." }] : []),
-    ...(contractsWithoutWork.length ? [{ key: "contracts-missing-work", href: "/portal/mine-kontrakter", icon: FileText, title: `${contractsWithoutWork.length} kontrakt${contractsWithoutWork.length === 1 ? "" : "er"} uden værk tilknyttet`, text: "Gå til Mine kontrakter og tilknyt de korrekte værker." }] : []),
+    ...(worksWithoutContractCount ? [{ key: "works-missing-contract", href: "/portal/mine-kontrakter", icon: Upload, title: `${worksWithoutContractCount} værk${worksWithoutContractCount === 1 ? "" : "er"} mangler kontrakt`, text: "Gå til Mine kontrakter og upload kontrakterne." }] : []),
+    ...(contractsWithoutWorkCount ? [{ key: "contracts-missing-work", href: "/portal/mine-kontrakter", icon: FileText, title: `${contractsWithoutWorkCount} kontrakt${contractsWithoutWorkCount === 1 ? "" : "er"} uden værk tilknyttet`, text: "Gå til Mine kontrakter og tilknyt de korrekte værker." }] : []),
     ...(reviewWorkCount ? [{ key: "work-review", href: "/portal/mine-vaerker?review=1", icon: ListTodo, title: `${reviewWorkCount} værk${reviewWorkCount === 1 ? "" : "er"} mangler gennemgang`, text: "Bekræft afsnit og eventuelle medklippere på dine værker." }] : []),
-    ...((shareTasks ?? []) as unknown as ShareTaskRow[]).map(task => ({ key: `share-task-${task.id}`, href: `/portal/mine-vaerker?shareTask=${task.case_id}`, icon: ListTodo, title: task.works?.title ?? "Arbejdsandel på et værk", text: "Du er angivet som medklipper. Angiv din egen foreløbige procent, eller oplys at du ikke arbejdede på værket." })),
-    ...contractRows.filter(contract => (contract.contract_comments ?? []).some(comment => comment.author_role === "admin" && !comment.member_read_at)).map(contract => ({ key: `message-${contract.id}`, href: `/portal/mine-kontrakter?contract=${contract.id}`, icon: MessageSquare, title: contract.working_title || "Ny kontraktbesked", text: "Læs det nye svar fra DFKS." })),
+    ...((overview.share_tasks ?? []).map(task => ({ key: `share-task-${task.id}`, href: `/portal/mine-vaerker?shareTask=${task.caseId}`, icon: ListTodo, title: task.title ?? "Arbejdsandel på et værk", text: "Du er angivet som medklipper. Angiv din egen foreløbige procent, eller oplys at du ikke arbejdede på værket." }))),
+    ...((overview.unread_contracts ?? []).map(contract => ({ key: `message-${contract.contractId}`, href: `/portal/mine-kontrakter?contract=${contract.contractId}`, icon: MessageSquare, title: contract.title || "Ny kontraktbesked", text: "Læs det nye svar fra DFKS." }))),
   ];
   const waitingItems = [
-    ...(workRequests ?? []).map(request => ({ key: `request-${request.id}`, href: `/portal/mine-vaerker?request=${request.id}`, icon: Clock3, title: "Værksrettelse", text: "Din rettelse afventer DFKS." })),
-    ...(screeningClaims ?? []).map(claim => ({ key: `claim-${claim.id}`, href: `/portal/mine-visninger?claim=${claim.id}`, icon: MonitorPlay, title: claim.title || "Visningsindberetning", text: "Din indberetning afventer DFKS." })),
+    ...(overview.pending_work_requests ?? []).map(request => ({ key: `request-${request.id}`, href: `/portal/mine-vaerker?request=${request.id}`, icon: Clock3, title: "Værksrettelse", text: "Din rettelse afventer DFKS." })),
+    ...(overview.pending_screenings ?? []).map(claim => ({ key: `claim-${claim.id}`, href: `/portal/mine-visninger?claim=${claim.id}`, icon: MonitorPlay, title: claim.title || "Visningsindberetning", text: "Din indberetning afventer DFKS." })),
   ];
-  timer.finish({ actionCount: actionItems.length, waitingCount: waitingItems.length });
+  const actionCount = (worksWithoutContractCount ? 1 : 0) + (contractsWithoutWorkCount ? 1 : 0)
+    + (reviewWorkCount ? 1 : 0) + shareTaskCount + unreadContractCount;
+  const waitingCount = Number(overview.pending_work_request_count ?? 0) + Number(overview.pending_screening_count ?? 0);
+  timer.finish({ actionCount, waitingCount });
   return <>
     <div className="grid gap-6 lg:grid-cols-2">
-      <DashboardCard title="Kræver handling" count={actionItems.length} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
-      <DashboardCard title="Afventer DFKS" count={waitingItems.length} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />
+      <DashboardCard title="Kræver handling" count={actionCount} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
+      <DashboardCard title="Afventer DFKS" count={waitingCount} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />
     </div>
     <ListReadinessMarker route="member-dashboard" stage="first-row" />
   </>;
@@ -75,7 +75,7 @@ export async function DashboardSalarySection({ orgId, rightsHolderId, optedOut }
     .maybeSingle();
   const includeDrafts = organisation?.statistics_contract_scope === "validated_and_drafts";
   const [{ data: facts, error: factsError }, ownContractsResult] = await Promise.all([
-    db.rpc("get_statistics_facts", { target_org_id: orgId, include_drafts: includeDrafts }),
+    db.rpc("get_member_salary_facts", { p_org_id: orgId, p_include_drafts: includeDrafts }),
     optedOut
       ? db.from("contracts").select("id,type,status,start_date,contract_date,rights_holder_id,rettighedshavere(professional_start_year)").eq("org_id", orgId).eq("rights_holder_id", rightsHolderId)
       : Promise.resolve({ data: [] as Array<{ id: string; type: string; status: string; start_date: string | null; contract_date: string | null; rights_holder_id: string | null; rettighedshavere: { professional_start_year: number | null } | Array<{ professional_start_year: number | null }> | null }> }),
@@ -91,9 +91,7 @@ export async function DashboardSalarySection({ orgId, rightsHolderId, optedOut }
   timer.mark("facts");
   const salaryRows: Array<{ year: number; weekly: number; mine: boolean; contributes: boolean; holderId: string | null; professionalStartYear: number | null; productionGroup: SalaryProductionGroup | null }> = [];
   for (const fact of facts ?? []) {
-    const data = fact.statistics_data as Record<string, unknown> | null;
-    if (!data?.salary || fact.contract_type === "leverandør") continue;
-    const weekly = salaryDataToWeekly(data);
+    const weekly = Number(fact.weekly_salary);
     const year = Number(fact.period_year);
     if (Number.isFinite(weekly) && weekly > 0 && Number.isFinite(year)) salaryRows.push({
       year,

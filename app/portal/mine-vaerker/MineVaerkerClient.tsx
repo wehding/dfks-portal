@@ -30,6 +30,7 @@ import { memberOverviewItemsToAssignments } from "@/lib/member-work-overview";
 import type { MemberOverviewItem } from "@/lib/member-work-overview";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 import { createClientId } from "@/lib/client-id";
+import { fetchMemberContractsForWorks } from "@/app/actions/member-contracts";
 
 const AddWorkModal = dynamic(() => import("./components/AddWorkModal").then(module => module.AddWorkModal), { ssr: false });
 const EditWorkModal = dynamic(() => import("./components/EditWorkModal").then(module => module.EditWorkModal), { ssr: false });
@@ -242,7 +243,7 @@ function isSeriesType(type: string | null | undefined) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName, defaultRoleLabel, coeditorWord, pageResult, initialQuery,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts: initialContracts, organisationShortName, defaultRoleLabel, coeditorWord, pageResult, initialQuery,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
@@ -260,6 +261,7 @@ export default function MineVaerkerClient({
   const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
   const [allAssignments, setAllAssignments] = useState(initialAllAssignments);
+  const [contracts, setContracts] = useState(initialContracts);
 
   const broadcasterLogoMap = React.useMemo(() => {
     const map: Record<string, string> = {};
@@ -397,9 +399,22 @@ export default function MineVaerkerClient({
   }, [rightsHolderId]);
 
   React.useEffect(() => {
-    const timer = window.setTimeout(() => { void loadCollaborationReviews(); }, 0);
+    const requestedReview = searchParams?.get("review") === "1" || searchParams?.get("collaborationReview") === "1";
+    if (requestedReview) {
+      void loadCollaborationReviews();
+      return;
+    }
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      const idleId = idleWindow.requestIdleCallback(() => { void loadCollaborationReviews(); }, { timeout: 1_500 });
+      return () => idleWindow.cancelIdleCallback?.(idleId);
+    }
+    const timer = window.setTimeout(() => { void loadCollaborationReviews(); }, 1_000);
     return () => window.clearTimeout(timer);
-  }, [loadCollaborationReviews]);
+  }, [loadCollaborationReviews, searchParams]);
 
   React.useEffect(() => {
     if (searchParams?.get("review") === "1" || searchParams?.get("collaborationReview") === "1") {
@@ -707,8 +722,7 @@ export default function MineVaerkerClient({
     return contracts.filter(contract => contract.work_id && workIds.has(contract.work_id));
   };
 
-  const openContractForWork = (work: Work) => {
-    const matches = contractsForWork(work);
+  const showContractMatches = (work: Work, matches: Contract[]) => {
     if (matches.length === 0) {
       router.push(`/portal/mine-kontrakter?upload=true&workId=${work.id}&workTitle=${encodeURIComponent(work.title)}`);
       return;
@@ -718,6 +732,28 @@ export default function MineVaerkerClient({
       return;
     }
     setContractChoices(matches);
+  };
+
+  const openContractForWork = async (work: Work) => {
+    const cachedMatches = contractsForWork(work);
+    if (cachedMatches.length > 0) {
+      showContractMatches(work, cachedMatches);
+      return;
+    }
+    if ((work.overview_contract_count ?? 0) < 1 || !rightsHolderId) {
+      showContractMatches(work, []);
+      return;
+    }
+    const workIds = [work.id, work.parent_work_id, ...(work.child_work_ids ?? [])]
+      .filter((id): id is string => Boolean(id));
+    const result = await fetchMemberContractsForWorks({ rightsHolderId, workIds });
+    if (!result.success) {
+      setMsg({ type: "error", text: result.error ?? "Kontrakterne kunne ikke hentes." });
+      return;
+    }
+    const matches = result.contracts as unknown as Contract[];
+    setContracts(current => [...new Map([...current, ...matches].map(contract => [contract.id, contract])).values()]);
+    showContractMatches(work, matches);
   };
 
   const renderSeriesEpisodes = (work: Work, children: Assignment[], isLoadingChildren: boolean, className = "px-14") => (
@@ -1252,7 +1288,6 @@ export default function MineVaerkerClient({
   return (
     <div className="flex flex-col gap-6">
       <ListReadinessMarker route="member-works" stage="primary" />
-      {assignments.length > 0 && <ListReadinessMarker route="member-works" stage="first-row" />}
       <ListReadinessMarker route="member-works" stage="secondary" />
       <ListReadinessMarker route="member-works" stage="complete" />
 
@@ -1447,10 +1482,13 @@ export default function MineVaerkerClient({
         {/* Rækker */}
         {filtered.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
+            <ListReadinessMarker route="member-works" stage="first-row" />
             <Film className="mx-auto h-10 w-10 text-muted-foreground/50 mb-3" />
             <p>{assignments.length === 0 ? t("works.emptyHint") : t("works.noSearchResults")}</p>
           </div>
-        ) : visibleAssignments.map(a => {
+        ) : <>
+          <ListReadinessMarker route="member-works" stage="first-row" />
+          {visibleAssignments.map(a => {
           const w = a.works;
           if (!w) return null;
           const posterSrc = w.poster_url
@@ -1681,6 +1719,7 @@ export default function MineVaerkerClient({
             </React.Fragment>
           );
         })}
+        </>}
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 border-t px-5 py-3 text-xs text-muted-foreground">
