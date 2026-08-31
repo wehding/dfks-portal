@@ -6,11 +6,17 @@ function routeSource(relativePath: string) {
   return readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8");
 }
 
-test("completion terminaliserer før karantæne-GC og sletter aldrig storage direkte", () => {
+test("completion promoverer før den service-role-afgrænsede artefaktsletning", () => {
   const source = routeSource("app/api/internal/document-processing/complete/route.ts");
-  assert.match(source, /finish_contract_document_job_v5/);
+  assert.match(source, /finish_contract_document_job_v6/);
   assert.match(source, /p_spatial_sha256:\s*safeHash\(body\.spatialSha256\)/);
   assert.doesNotMatch(source, /\.storage\.from\(["']kontrakter["']\)\.remove\(/);
+  assert.ok(source.indexOf("finish_contract_document_job_v6")
+    < source.lastIndexOf("processContractDocumentArtifactDeletions"));
+  const deletionHelper = routeSource("lib/server/contract-document-artifact-deletions.ts");
+  assert.match(deletionHelper, /parseContractDocumentLeaseArtifactPath/);
+  assert.match(deletionHelper, /\.storage\.from\(["']kontrakter["']\)\.remove\(\[storagePath\]\)/);
+  assert.match(deletionHelper, /finish_contract_document_artifact_deletion/);
 });
 
 test("uploadautorisation registreres atomisk og sletter aldrig et aktivt lease-artefakt", () => {

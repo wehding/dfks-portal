@@ -110,6 +110,10 @@ begin
     or has_function_privilege('authenticated', 'public.list_abandoned_contract_document_lease_artifacts(integer)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.finish_contract_document_job_v4(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text,text,text,text)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.finish_contract_document_job_v5(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text,text,text,text)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.finish_contract_document_job_v6(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.queue_direct_vision_replacement_generation(uuid,text,integer)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.claim_contract_document_artifact_deletions(integer,uuid)', 'EXECUTE')
+    or has_table_privilege('authenticated', 'public.contract_document_artifact_deletions', 'SELECT')
     or has_table_privilege('anon', 'public.contract_upload_intents', 'SELECT')
     or has_table_privilege('authenticated', 'public.contract_upload_intents', 'SELECT')
     or has_function_privilege('authenticated', 'public.create_contract_upload_intent(uuid,uuid,uuid,text,bigint)', 'EXECUTE')
@@ -122,7 +126,8 @@ begin
     or has_function_privilege('authenticated', 'public.finish_contract_upload_intent_cleanup(uuid,uuid,text,boolean)', 'EXECUTE')
     or has_function_privilege('service_role', 'public.finish_contract_document_job_v3(uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text,text,text)', 'EXECUTE')
     or has_function_privilege('service_role', 'public.finish_contract_document_job_v4(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text,text,text,text)', 'EXECUTE')
-    or not has_function_privilege('service_role', 'public.finish_contract_document_job_v5(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text,text,text,text)', 'EXECUTE') then
+    or not has_function_privilege('service_role', 'public.finish_contract_document_job_v5(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text,text,text,text)', 'EXECUTE')
+    or not has_function_privilege('service_role', 'public.finish_contract_document_job_v6(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text)', 'EXECUTE') then
     raise exception 'Document queue regression: browser roles can access the server-only queue';
   end if;
   if exists (

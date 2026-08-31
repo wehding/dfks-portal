@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a searchable PDF from DLP-redacted page images and Vision geometry."""
+"""Build a searchable PDF from source page images and Vision geometry."""
 
 import json
 import math
@@ -39,7 +39,7 @@ def rebuilt_page(page, geometry, image_path):
     with Image.open(image_path) as image:
         image.load()
         if image.format != "PNG" or image.size != (int(image_width), int(image_height)):
-            raise ValueError("redacted image dimensions do not match Vision geometry")
+            raise ValueError("OCR page dimensions do not match Vision geometry")
     output.drawImage(ImageReader(image_path), 0, 0, width=width, height=height,
                      preserveAspectRatio=False, mask=None)
 
@@ -89,9 +89,9 @@ def main():
         output_pdf = pikepdf.Pdf.new()
         for page_number, page in enumerate(pdf.pages, start=1):
             geometry = page_geometry.get(page_number)
-            image_path = os.path.join(image_dir, f"redacted-{page_number}.png")
+            image_path = os.path.join(image_dir, f"ocr-page-{page_number}.png")
             if geometry is None or not os.path.isfile(image_path):
-                raise ValueError("missing redacted page or Vision geometry")
+                raise ValueError("missing OCR page or Vision geometry")
             with pikepdf.open(rebuilt_page(page, geometry, image_path)) as rebuilt:
                 output_pdf.pages.append(rebuilt.pages[0])
                 output_pdf.pages[-1].CropBox = output_pdf.pages[-1].MediaBox

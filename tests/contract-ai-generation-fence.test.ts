@@ -14,6 +14,10 @@ const migration = fs.readFileSync(
   new URL("../supabase/migrations/20260830230930_contract_ai_job_generation_fence.sql", import.meta.url),
   "utf8",
 );
+const directVisionMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260831224204_direct_vision_ocr_without_dlp.sql", import.meta.url),
+  "utf8",
+);
 
 test("contract extraction uses only lease/input-generation fenced worker RPCs", () => {
   for (const rpc of [
@@ -34,8 +38,9 @@ test("contract extraction uses only lease/input-generation fenced worker RPCs", 
 });
 
 test("OCR completion and AI apply share one advisory generation lock", () => {
-  assert.match(completionRoute, /finish_contract_document_job_v5/);
+  assert.match(completionRoute, /finish_contract_document_job_v6/);
   assert.match(migration, /create or replace function public\.finish_contract_document_job_v5/);
+  assert.match(directVisionMigration, /create or replace function public\.finish_contract_document_job_v6/);
   const helper = migration.slice(
     migration.indexOf("create or replace function public.lock_current_contract_ai_job"),
     migration.indexOf("create or replace function public.set_contract_ai_job_runtime_v2"),
@@ -45,6 +50,10 @@ test("OCR completion and AI apply share one advisory generation lock", () => {
   );
   assert.match(helper, /pg_advisory_xact_lock/);
   assert.match(completion, /pg_advisory_xact_lock/);
+  assert.match(directVisionMigration, /pg_advisory_xact_lock/);
+  assert.match(directVisionMigration, /artifact_kind in \('masked_pdf', 'masked_spatial'\)/);
+  assert.match(directVisionMigration, /source_job\.output_storage_path = source_job\.original_storage_path/);
+  assert.doesNotMatch(directVisionMigration, /artifact_kind[^\n]*original/);
   assert.ok(helper.indexOf("pg_advisory_xact_lock") < helper.indexOf("for update"));
   assert.ok(completion.indexOf("pg_advisory_xact_lock") < completion.indexOf("finish_contract_document_job_v4"));
 });

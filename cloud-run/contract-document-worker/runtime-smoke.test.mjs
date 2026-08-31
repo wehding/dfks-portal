@@ -73,7 +73,7 @@ with pikepdf.open(path, allow_overwriting_input=True) as pdf:
     pdf.save(path)
 for index, (width, height) in enumerate(((592, 752), (752, 592), (592, 752), (752, 592)), start=1):
     color = (12, 34, 56) if index == 1 else (255, 255, 255)
-    Image.new("RGB", (width, height), color).save(f"{image_dir}/redacted-{index}.png", "PNG")
+    Image.new("RGB", (width, height), color).save(f"{image_dir}/ocr-page-{index}.png", "PNG")
 `;
     await run("python3", ["-c", generator, inputPath, workDir]);
     const pdfInfo = (await run("pdfinfo", ["-f", "1", "-l", "4", "-box", inputPath])).toString("utf8");
@@ -170,7 +170,7 @@ for index in range(1, 4):
       await run("python3", [
         "normalise_orientation.py",
         join(workDir, `source-${page}.jpg`),
-        join(workDir, `redacted-${page}.png`),
+        join(workDir, `ocr-page-${page}.png`),
         String(corrections[page - 1]),
       ]);
     }
@@ -205,7 +205,7 @@ with pikepdf.open(sys.argv[1]) as pdf:
   }
 });
 
-test("helsides raster med skjult tekstlag springer ikke DLP og Vision over", runtimeOnly, async () => {
+test("helsides raster med skjult tekstlag springer ikke Vision over", runtimeOnly, async () => {
   const workDir = await mkdtemp(join(tmpdir(), "dfks-hidden-text-scan-"));
   try {
     const inputPath = join(workDir, "input.pdf");
@@ -234,11 +234,11 @@ c.save()
       workDir,
       commandRunner,
       googleClient: {
-        async redactAndAnnotate(pages) {
+        async annotateDocument(pages) {
           googleCalled = true;
           return {
             responses: [{ fullTextAnnotation: { pages: [] } }],
-            redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+            sourcePages: pages,
             visionPageTransforms: identityVisionPageTransforms(pages),
           };
         },
@@ -252,7 +252,7 @@ c.save()
   }
 });
 
-test("blandet PDF genopbygges konsekvent af DLP-sider og bevarer originalen", runtimeOnly, async () => {
+test("blandet PDF genopbygges konsekvent af kildesider og bevarer originalen", runtimeOnly, async () => {
   const workDir = await mkdtemp(join(tmpdir(), "dfks-mixed-pdf-"));
   try {
     const inputPath = join(workDir, "input.pdf");
@@ -272,12 +272,10 @@ c.save()
 `, inputPath]);
     const original = await readFile(inputPath);
     const googleClient = {
-      async redactAndAnnotate(pages) {
+      async annotateDocument(pages) {
         assert.equal(pages.length, 2);
         return {
-          redactionCounts: { IBAN_CODE: 1 },
-          redactionRegions: [{ pageNumber: 2, top: 1, left: 1, width: 10, height: 10, infoType: "IBAN_CODE" }],
-          redactedPages: pages,
+          sourcePages: pages,
           visionPageTransforms: identityVisionPageTransforms(pages),
           responses: [1, 2].map((pageNumber) => ({
             fullTextAnnotation: { pages: [{
@@ -307,7 +305,7 @@ c.save()
     assert.equal(result.nativePageCount, 1);
     assert.equal(result.ocrPageCount, 1);
     assert.equal(result.nativePageCount + result.ocrPageCount, result.pageCount);
-    assert.deepEqual(result.redactionCounts, { IBAN_CODE: 1 });
+    assert.equal(result.processingProfile, "google-vision-direct-v1");
     const persistedGeometry = JSON.parse(gunzipSync(await readFile(geometryPath)).toString("utf8"));
     assert.deepEqual(persistedGeometry.spatialVerification, result.spatial);
     assert.equal(persistedGeometry.spatialVerification.matchCoverage, 1);
@@ -321,7 +319,7 @@ c.save()
   }
 });
 
-test("for stor DLP-side genrenderes adaptivt før Google-kald", async () => {
+test("Vision accepterer en side over den tidligere DLP-grænse", async () => {
   const workDir = await mkdtemp(join(tmpdir(), "dfks-dlp-resize-"));
   try {
     const renderArgs = [];
@@ -333,8 +331,7 @@ test("for stor DLP-side genrenderes adaptivt før Google-kald", async () => {
       }
       if (command === "pdftoppm") {
         renderArgs.push(args);
-        const bytes = renderArgs.length === 1 ? 3_000_000 : 2_000_000;
-        await writeFile(`${args.at(-1)}.jpg`, Buffer.alloc(bytes, 0xff));
+        await writeFile(`${args.at(-1)}.jpg`, Buffer.alloc(3_000_000, 0xff));
         return { stdout: "", stderr: "" };
       }
       throw new Error(`unexpected command: ${command}`);
@@ -346,27 +343,26 @@ test("for stor DLP-side genrenderes adaptivt før Google-kald", async () => {
       workDir,
       commandRunner: adaptiveRunner,
       googleClient: {
-        async redactAndAnnotate(pages) {
+        async annotateDocument(pages) {
           assert.equal(pages.length, 1);
-          assert.equal(pages[0].imageBytes.length, 2_000_000);
+          assert.equal(pages[0].imageBytes.length, 3_000_000);
           return {
             responses: [{ fullTextAnnotation: { pages: [] } }],
-            redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+            sourcePages: pages,
             visionPageTransforms: identityVisionPageTransforms(pages),
           };
         },
       },
     });
-    assert.equal(renderArgs.length, 2);
+    assert.equal(renderArgs.length, 1);
     assert.equal(renderArgs[0].includes("300"), true);
-    assert.equal(renderArgs[1].includes("275"), true);
     assert.equal(result.status, "needs_review");
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
 });
 
-test("alle for store DLP-profiler stopper før Google-kald", async () => {
+test("alle for store Vision-profiler stopper før Google-kald", async () => {
   const workDir = await mkdtemp(join(tmpdir(), "dfks-dlp-reject-"));
   try {
     let renderCount = 0;
@@ -379,7 +375,7 @@ test("alle for store DLP-profiler stopper før Google-kald", async () => {
       }
       if (command === "pdftoppm") {
         renderCount += 1;
-        await writeFile(`${args.at(-1)}.jpg`, Buffer.alloc(2_900_001, 0xff));
+        await writeFile(`${args.at(-1)}.jpg`, Buffer.alloc(20 * 1024 * 1024 + 1, 0xff));
         return { stdout: "", stderr: "" };
       }
       throw new Error(`unexpected command: ${command}`);
@@ -390,8 +386,8 @@ test("alle for store DLP-profiler stopper før Google-kald", async () => {
       geometryPath: join(workDir, "geometry.json.gz"),
       workDir,
       commandRunner: oversizedRunner,
-      googleClient: { async redactAndAnnotate() { googleCalled = true; } },
-    }), /dlp_request_too_large/);
+      googleClient: { async annotateDocument() { googleCalled = true; } },
+    }), /vision_page_too_large/);
     assert.equal(renderCount, 5);
     assert.equal(googleCalled, false);
   } finally {
@@ -426,8 +422,8 @@ test("ekstrem sidestørrelse afvises før rendering og Google", async () => {
       geometryPath: join(workDir, "geometry.json.gz"),
       workDir,
       commandRunner: cappedRunner,
-      googleClient: { async redactAndAnnotate() { googleCalled = true; } },
-    }), /dlp_request_too_large/);
+      googleClient: { async annotateDocument() { googleCalled = true; } },
+    }), /vision_page_too_large/);
     assert.equal(rendered, false);
     assert.equal(googleCalled, false);
   } finally {
@@ -451,7 +447,7 @@ test("dokumentets sidegrænse afvises før sideudtræk, rendering og Google", as
       geometryPath: join(workDir, "geometry.json.gz"),
       workDir,
       commandRunner: cappedRunner,
-      googleClient: { async redactAndAnnotate() { googleCalled = true; } },
+      googleClient: { async annotateDocument() { googleCalled = true; } },
       resourceLimits: { maxDocumentPages: 3 },
     }), /document_page_limit_exceeded/);
     assert.equal(pageCommandCalled, false);
@@ -490,7 +486,7 @@ test("samlet rasterbudget stopper en flersidet PDF før alle sidebuffere samles"
       geometryPath: join(workDir, "geometry.json.gz"),
       workDir,
       commandRunner: budgetRunner,
-      googleClient: { async redactAndAnnotate() { googleCalled = true; } },
+      googleClient: { async annotateDocument() { googleCalled = true; } },
       resourceLimits: { maxDocumentPages: 4, maxDocumentRasterBytes: 2_000 },
     }), /document_raster_budget_exceeded/);
     assert.equal(renderCount, 3);
@@ -528,11 +524,11 @@ test("en flersidet PDF på rasterbudgettets stramme testgrænse bevarer OCR-flow
       workDir,
       commandRunner: boundaryRunner,
       googleClient: {
-        async redactAndAnnotate(pages) {
+        async annotateDocument(pages) {
           googlePages = pages.length;
           return {
             responses: pages.map(() => ({ fullTextAnnotation: { pages: [] } })),
-            redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+            sourcePages: pages,
             visionPageTransforms: identityVisionPageTransforms(pages),
           };
         },
@@ -547,8 +543,8 @@ test("en flersidet PDF på rasterbudgettets stramme testgrænse bevarer OCR-flow
   }
 });
 
-test("reel støjside vælges i en lavere gyldig JPEG-profil", runtimeOnly, async () => {
-  const workDir = await mkdtemp(join(tmpdir(), "dfks-dlp-real-adaptive-"));
+test("reel støjside bevares kanonisk før Vision-klientens transportprofil", runtimeOnly, async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-vision-real-source-"));
   try {
     const inputPath = join(workDir, "input.pdf");
     await run("python3", ["-c", `
@@ -572,7 +568,7 @@ c.save()
       workDir,
       commandRunner,
       googleClient: {
-        async redactAndAnnotate(pages) {
+        async annotateDocument(pages) {
           googleCalls += 1;
           assert.equal(pages.length, 1);
           assert.equal(pages[0].imageBytes[0], 0xff);
@@ -584,10 +580,10 @@ image = Image.open(io.BytesIO(sys.stdin.buffer.read()))
 print(json.dumps([image.width, image.height]))
 `], { input: pages[0].imageBytes });
           const [width, height] = JSON.parse(dimensions.toString("utf8"));
-          assert.equal(width < 2550 && height < 3300, true, JSON.stringify({ width, height }));
+          assert.deepEqual([width, height], [2550, 3300]);
           return {
             responses: [{ fullTextAnnotation: { pages: [] } }],
-            redactionCounts: {}, redactionRegions: [], redactedPages: pages,
+            sourcePages: pages,
             visionPageTransforms: identityVisionPageTransforms(pages, width, height),
           };
         },
@@ -611,7 +607,7 @@ test("korrupte og krypterede PDF-filer afvises sikkert", runtimeOnly, async () =
       geometryPath: join(workDir, "corrupt-geometry.gz"),
       workDir,
       commandRunner,
-      googleClient: { async redactAndAnnotate() { throw new Error("should not run"); } },
+      googleClient: { async annotateDocument() { throw new Error("should not run"); } },
     }));
 
     const plainPath = join(workDir, "plain.pdf");
@@ -629,7 +625,7 @@ with pikepdf.open(sys.argv[1]) as pdf:
       geometryPath: join(workDir, "encrypted-geometry.gz"),
       workDir,
       commandRunner,
-      googleClient: { async redactAndAnnotate() { throw new Error("should not run"); } },
+      googleClient: { async annotateDocument() { throw new Error("should not run"); } },
     }));
   } finally {
     await rm(workDir, { recursive: true, force: true });

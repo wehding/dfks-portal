@@ -7,7 +7,7 @@ import {
   createGoogleOcrClient,
   GoogleOcrOperationalError,
   readGoogleConfig,
-} from "./google-secure-api.mjs";
+} from "./google-vision-api.mjs";
 import { MAX_SPATIAL_GZIP_BYTES } from "./resource-limits.mjs";
 import { processPdfSpatially, sha256 } from "./spatial-ocr.mjs";
 
@@ -22,15 +22,7 @@ export const OCR_QUALITY_DIAGNOSTIC_CODES = Object.freeze({
   spatialQuality: "ocr_spatial_quality",
   orientationUncertain: "orientation_uncertain",
   pageGeometryUnavailable: "page_geometry_unavailable",
-  dlpResponseTooLarge: "dlp_response_too_large",
-  dlpLocationInvalid: "dlp_location_invalid",
-  dlpLocationOutOfBounds: "dlp_location_out_of_bounds",
-  dlpLocationMissing: "dlp_location_missing",
-  dlpRedactedImageMissing: "dlp_redacted_image_missing",
-  dlpRedactedImageInvalid: "dlp_redacted_image_invalid",
-  dlpRedactionNotApplied: "dlp_redaction_not_applied",
-  dlpImageDimensionsChanged: "dlp_image_dimensions_changed",
-  dlpCanonicalImageInvalid: "dlp_canonical_image_invalid",
+  visionPageInvalid: "vision_page_invalid",
   documentTextLimitExceeded: "document_text_limit_exceeded",
   processedFileTooLarge: "processed_file_too_large",
   spatialArtifactTooLarge: "spatial_artifact_too_large",
@@ -42,18 +34,8 @@ const DOCUMENT_CLASSIFICATION_SET = new Set(["native_text", "image_only", "mixed
 const DOCUMENT_GOOGLE_ERROR_CODES = new Set([
   "document_page_limit_exceeded",
   "document_raster_budget_exceeded",
-  "dlp_request_too_large",
-  "dlp_too_many_locations",
   OCR_QUALITY_DIAGNOSTIC_CODES.pageGeometryUnavailable,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpResponseTooLarge,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationInvalid,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationOutOfBounds,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationMissing,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpRedactedImageMissing,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpRedactedImageInvalid,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpRedactionNotApplied,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpImageDimensionsChanged,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpCanonicalImageInvalid,
+  OCR_QUALITY_DIAGNOSTIC_CODES.visionPageInvalid,
   "vision_page_too_large",
   "vision_request_too_large",
   OCR_QUALITY_DIAGNOSTIC_CODES.documentTextLimitExceeded,
@@ -546,7 +528,7 @@ function safeDocumentError(error) {
 }
 
 export function safeGoogleErrorCode(value) {
-  if (SAFE_GOOGLE_ERROR_CODES.has(value) || /^(?:google|dlp|vision)_api_[1-5][0-9]{2}$/.test(value)) {
+  if (SAFE_GOOGLE_ERROR_CODES.has(value) || /^(?:google|vision)_api_[1-5][0-9]{2}$/.test(value)) {
     return value;
   }
   return "google_ocr_service_failed";
@@ -683,8 +665,7 @@ export function createProcessor(options = {}) {
         nativePageCount: result.nativePageCount,
         ocrPageCount: result.ocrPageCount,
         unreadablePageCount: result.unreadablePageCount,
-        redactionCounts: result.redactionCounts ?? {},
-        redactionProfile: result.redactionProfile ?? null,
+        processingProfile: result.processingProfile ?? null,
         spatialSchemaVersion: result.spatialSchemaVersion ?? null,
         spatialAccuracyScore: result.spatial?.score ?? null,
         spatialMedianIou: result.spatial?.medianIou ?? null,

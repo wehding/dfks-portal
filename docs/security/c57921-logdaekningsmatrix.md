@@ -1,6 +1,6 @@
 # C-579/21 logdækningsmatrix
 
-Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-08-31. Registry er autoritativ; den brede kildekodescanning rapporterer nye kandidater uden at blokere udvikling i del 1. Streng håndhævelse aktiveres først i del 2.
+Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-09-01. Registry er autoritativ; den brede kildekodescanning rapporterer nye kandidater uden at blokere udvikling i del 1. Streng håndhævelse aktiveres først i del 2.
 
 ## Behandlingsaktiviteter
 
@@ -8,7 +8,7 @@ Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-08-3
 |---|---|---|---|
 | PROC-CONTRACT-ACCESS | Kontraktadgang og sagsbehandling | use | Portalteam |
 | PROC-MEMBER-ADMIN | Medlemsadministration og søgning | use | Portalteam |
-| PROC-DOCUMENT-AI | Dokument-, OCR- og AI-behandling | analysis | AI- og portalteam |
+| PROC-DOCUMENT-AI | Dokument-, direkte Vision OCR-, derivatslette- og AI-behandling | analysis | AI- og portalteam |
 | PROC-STATISTICS | Statistik og diskretion | analysis | Statistikteam |
 | PROC-COMMUNICATION | Kommunikation og eksterne kladder | sharing | Juridisk team og portalteam |
 | PROC-RIGHTS-DISTRIBUTION | Afstemning og fordeling af arbejdsandele | use | Rettigheds- og portalteam |

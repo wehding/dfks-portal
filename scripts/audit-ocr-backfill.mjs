@@ -509,17 +509,23 @@ async function inspectSpatialArtifact(readStorage, job) {
     const geometry = JSON.parse(jsonBytes.toString("utf8"));
     const pages = geometry?.pages;
     const uniquePages = new Set(Array.isArray(pages) ? pages.map((page) => page?.pageNumber) : []);
-    const valid = hasExactKeys(geometry, [
+    const legacyRedacted = hasExactKeys(geometry, [
       "schemaVersion", "engine", "redactionEngine", "redactionProfile", "redactions", "pages",
       "spatialVerification",
     ])
       && geometry.schemaVersion === "google-vision-spatial-v2"
-      && geometry.engine === "google-vision-document-text-detection"
       && geometry.redactionEngine === "google-sensitive-data-protection-image-redact"
       && geometry.redactionProfile === "dfks-contract-redaction-v1"
-      && job.spatial_schema_version === geometry.schemaVersion
       && Array.isArray(geometry.redactions) && geometry.redactions.length <= 200_000
-      && geometry.redactions.every((redaction) => validRedaction(redaction, job.page_count))
+      && geometry.redactions.every((redaction) => validRedaction(redaction, job.page_count));
+    const directVision = hasExactKeys(geometry, [
+      "schemaVersion", "engine", "processingProfile", "pages", "spatialVerification",
+    ])
+      && geometry.schemaVersion === "google-vision-spatial-v3"
+      && geometry.processingProfile === "google-vision-direct-v1";
+    const valid = (legacyRedacted || directVision)
+      && geometry.engine === "google-vision-document-text-detection"
+      && job.spatial_schema_version === geometry.schemaVersion
       && Array.isArray(pages)
       && pages.length === job.page_count
       && uniquePages.size === pages.length
@@ -1021,6 +1027,10 @@ async function selectAllCompletedJobs(db) {
       .from("contract_document_jobs")
       .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,ocr_applied,page_count,original_sha256,processed_sha256,spatial_sha256,spatial_schema_version,completed_at")
       .eq("status", "completed")
+      // Superseded DLP generations retain immutable hashes and lineage in the
+      // database, but their masked Storage artifacts are intentionally deleted.
+      // Only the promoted generation is therefore subject to byte verification.
+      .is("superseded_by_job_id", null)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
