@@ -6,6 +6,7 @@ import { normalizeSharePercent, type ShareScope } from "@/lib/work-share-distrib
 import { markCollaborationReviewsCoeditorsReported } from "@/lib/server/work-collaboration-reviews";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { mergeWorkShareSourceEvidence, type WorkShareSourceDetails } from "@/lib/work-share-source-evidence";
+import { isEligibleWorkShareRole } from "@/lib/work-share-reconciliation";
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
 
@@ -169,7 +170,7 @@ export async function registerShareSuggestions(db: ServiceClient, params: {
 
   for (const suggestion of params.suggestions) {
     const name = suggestion.name.trim();
-    if (!name) continue;
+    if (!name || !isEligibleWorkShareRole(suggestion.role)) continue;
     if (suggestion.rightsHolderId) {
       await saveKnownShareParticipant(db, {
         case_id: shareCase.id,

@@ -30,6 +30,7 @@ import { getContractSignedUrl } from "@/app/actions/member-contracts"
 import { normaliseSources } from "@/lib/ai-sources"
 import { resolveAnker } from "@/lib/resolveAnker"
 import { SourceBtn } from "@/components/source-btn"
+import { SourcePictogram } from "@/components/source-pictogram"
 import { resolveOtherSupplements } from "@/lib/contract-supplements"
 import { resolvePensionSupplement } from "@/lib/contract-pension"
 import { resolveContractSalary } from "@/lib/contract-salary"
@@ -1302,9 +1303,7 @@ setActiveField(fieldId)
                                                                 className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 flex items-center justify-between gap-2"
                                                                 onClick={() => { setField("producerName", s.name); setSelectedEmployerId(s.id); setEmployerSuggestions([]) }}>
                                                                 <span className="font-medium">{s.name}</span>
-                                                                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${s.source === "db" ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"}`}>
-                                                                    {s.source === "db" ? "DB" : "DFI"}
-                                                                </span>
+                                                                <SourcePictogram source={s.source} />
                                                             </button>
                                                         ))}
                                                     </div>
@@ -1343,7 +1342,7 @@ setActiveField(fieldId)
                                                 <button key={i} type="button" className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 flex items-center justify-between gap-2"
                                                     onClick={() => { if (s.id) { setSelectedParentId(s.id); setSelectedDfiParent(null) } else if (s.dfi_id) { setSelectedDfiParent({ id: s.dfi_id, name: s.name }); setSelectedParentId(null) } setParentSuggestions([]) }}>
                                                     <span className="font-medium">{s.name}</span>
-                                                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${s.source === "db" ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"}`}>{s.source === "db" ? "DB" : "DFI"}</span>
+                                                    <SourcePictogram source={s.source} />
                                                 </button>
                                             ))}
                                             <button type="button" className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 text-muted-foreground italic"

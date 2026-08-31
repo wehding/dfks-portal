@@ -11,6 +11,7 @@ import { useI18n } from "@/lib/i18n";
 import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { seasonLookupMessage } from "@/lib/season-selection";
+import { SourcePictogram } from "@/components/source-pictogram";
 
 interface DfiImportWizardProps {
   isOpen: boolean;
@@ -312,10 +313,10 @@ export function DfiImportWizard({
                           <p className="text-sm font-medium text-foreground">
                             {c.title} {c.year ? `(${c.year})` : ""}
                           </p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            <span className="font-medium">{c.role}</span> · {c.category} · {c.source.toUpperCase()}
-                            {c.imdb_id ? ` · IMDb ${c.imdb_id}` : ""}
-                          </p>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                            <span className="font-medium">{c.role}</span><span>·</span><span>{c.category}</span><SourcePictogram source={c.source} />
+                            {c.imdb_id && <><span>·</span><SourcePictogram source="imdb" /><span>{c.imdb_id}</span></>}
+                          </div>
                         </div>
                       </label>
                       {isSeries && wizardSelected[c.id] && (

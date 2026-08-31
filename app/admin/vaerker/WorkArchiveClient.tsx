@@ -75,6 +75,7 @@ import { countAdminShareTasks, type fetchAdminShareQueue } from "@/app/actions/w
 import { normalizeWorkEditorRole, resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 import { useI18n } from "@/lib/i18n";
+import { SourcePictogram } from "@/components/source-pictogram";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -2973,7 +2974,7 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                     {editUnifiedResults.map(result => (
                       <button key={result.id} type="button" onClick={() => applyUnifiedToEdit(result)} className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-muted">
                         <span><span className="font-medium">{result.title}</span><span className="ml-2 text-xs text-muted-foreground">{result.year ?? "-"} · {workTypeLabel(result.type)}</span></span>
-                        <span className="flex gap-1">{result.sources.map(source => <Badge key={source} variant="secondary" className="uppercase">{source}</Badge>)}</span>
+                        <span className="flex gap-1">{result.sources.map(source => <SourcePictogram key={source} source={source} />)}</span>
                       </button>
                     ))}
                   </div>
@@ -3214,11 +3215,7 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
                                 <p className="truncate font-medium">{result.title}</p>
-                                {result.sources.map(source => (
-                                  <Badge key={source} variant={source === "local" ? "default" : "secondary"} className="uppercase">
-                                    {source === "local" ? "Findes allerede" : source}
-                                  </Badge>
-                                ))}
+                                {result.sources.map(source => <SourcePictogram key={source} source={source} />)}
                               </div>
                               <p className="mt-1 text-xs text-muted-foreground">
                                 {result.year ?? "-"} · {workTypeLabel(result.type)}{result.imdb_id ? ` · IMDb ${result.imdb_id}` : ""}

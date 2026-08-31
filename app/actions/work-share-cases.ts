@@ -12,7 +12,7 @@ import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { markCollaborationReviewsCoeditorsReported } from "@/lib/server/work-collaboration-reviews";
 import { buildReconciledWorkCredits, getWorkCreditSourceStates, matchWorkCreditsToRightsHolders, refreshWorkCreditEvidence } from "@/lib/server/work-credit-evidence";
-import { normalizeCreditName, proposeWorkShareCompromise } from "@/lib/work-share-reconciliation";
+import { isEligibleWorkShareRole, normalizeCreditName, proposeWorkShareCompromise } from "@/lib/work-share-reconciliation";
 import { normalizeSingleEmail } from "@/lib/email/mime";
 import { countUniqueWorkShareTasks } from "@/lib/work-share-task-count";
 import { isActionableAdminWorkShareCase, type WorkShareAdminParticipantSummary } from "@/lib/work-share-admin";
@@ -114,11 +114,12 @@ export async function fetchMemberShareTask(params: {
   const assignmentIds = [...new Set([workId, ...(targetIds.length ? targetIds : [workId])])];
   const { data: knownAssignments } = await db.from("work_assignments")
     .select("id,rights_holder_id,role,rettighedshavere(id,full_name)").eq("org_id", orgId).in("work_id", assignmentIds).not("rights_holder_id", "is", null);
-  const knownHolderIds = [...new Set((knownAssignments ?? []).map(row => row.rights_holder_id).filter(Boolean))];
+  const eligibleAssignments = (knownAssignments ?? []).filter(row => isEligibleWorkShareRole(row.role));
+  const knownHolderIds = [...new Set(eligibleAssignments.map(row => row.rights_holder_id).filter(Boolean))];
   if (!knownHolderIds.includes(holder.id)) {
     return { success: false as const, error: "Værket er ikke tilknyttet din profil." };
   }
-  const registeredCoEditors = [...new Map((knownAssignments ?? [])
+  const registeredCoEditors = [...new Map(eligibleAssignments
     .filter(row => row.rights_holder_id && row.rights_holder_id !== holder.id)
     .map(row => {
       const related = Array.isArray(row.rettighedshavere) ? row.rettighedshavere[0] : row.rettighedshavere;
@@ -139,7 +140,7 @@ export async function fetchMemberShareTask(params: {
       org_id: orgId,
       work_id: workId,
       rights_holder_id: rightsHolderId,
-      role: knownAssignments?.find(row => row.rights_holder_id === rightsHolderId)?.role ?? "Klipper",
+      role: eligibleAssignments.find(row => row.rights_holder_id === rightsHolderId)?.role ?? "Klipper",
       relationship_status: "pending",
       updated_at: new Date().toISOString(),
     })));
@@ -485,11 +486,26 @@ export async function refreshAdminShareCaseCredits(caseId: string, force = false
       seasonNumber: shareCase.season_number,
     }),
   });
-  const { data: participants } = await db.from("work_share_participants")
-    .select("id,proposed_name,rights_holder_id,source_tags,source_details").eq("case_id", caseId).is("excluded_at", null);
-  const participantByHolder = new Map((participants ?? []).filter(row => row.rights_holder_id).map(row => [row.rights_holder_id, row]));
-  const participantByName = new Map((participants ?? []).filter(row => row.proposed_name).map(row => [normalizeCreditName(row.proposed_name ?? ""), row]));
+  const { data: participantRows, error: participantError } = await db.from("work_share_participants")
+    .select("id,proposed_name,rights_holder_id,role,source_tags,source_details,excluded_at").eq("case_id", caseId);
+  if (participantError) throw new Error(participantError.message);
+  const now = new Date().toISOString();
+  const newlyIneligible = (participantRows ?? []).filter(row => !row.excluded_at && !isEligibleWorkShareRole(row.role));
+  if (newlyIneligible.length) {
+    const { error: exclusionError } = await db.from("work_share_participants")
+      .update({ excluded_at: now, updated_at: now })
+      .in("id", newlyIneligible.map(row => row.id))
+      .eq("org_id", admin.orgId);
+    if (exclusionError) throw new Error(exclusionError.message);
+  }
+  const excludedRows = (participantRows ?? []).filter(row => row.excluded_at || !isEligibleWorkShareRole(row.role));
+  const excludedHolderIds = new Set(excludedRows.map(row => row.rights_holder_id).filter((value): value is string => Boolean(value)));
+  const excludedNames = new Set(excludedRows.map(row => normalizeCreditName(row.proposed_name ?? "")).filter(Boolean));
+  const participants = (participantRows ?? []).filter(row => !row.excluded_at && isEligibleWorkShareRole(row.role));
+  const participantByHolder = new Map(participants.filter(row => row.rights_holder_id).map(row => [row.rights_holder_id, row]));
+  const participantByName = new Map(participants.filter(row => row.proposed_name).map(row => [normalizeCreditName(row.proposed_name ?? ""), row]));
   for (const credit of credits) {
+    if ((credit.rightsHolderId && excludedHolderIds.has(credit.rightsHolderId)) || excludedNames.has(normalizeCreditName(credit.name))) continue;
     const holderParticipant = credit.rightsHolderId ? participantByHolder.get(credit.rightsHolderId) : null;
     const nameParticipant = participantByName.get(normalizeCreditName(credit.name));
     const matchedParticipant = holderParticipant ?? nameParticipant;
@@ -541,7 +557,7 @@ export async function refreshAdminShareCaseCredits(caseId: string, force = false
       relationship_status: credit.rightsHolderId && credit.matchType !== "conflict" ? "pending" : "pending_match",
       source_tags: credit.sources,
       source_details: details,
-    }).select("id,proposed_name,rights_holder_id,source_tags,source_details").single();
+    }).select("id,proposed_name,rights_holder_id,role,source_tags,source_details,excluded_at").single();
     if (error) throw new Error(error.message);
     if (insertedParticipant.rights_holder_id) {
       participantByHolder.set(insertedParticipant.rights_holder_id, insertedParticipant);

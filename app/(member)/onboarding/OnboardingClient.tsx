@@ -21,6 +21,7 @@ import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/ser
 import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 import { seasonLookupMessage } from "@/lib/season-selection";
 import { LEGAL_DOCUMENT_TYPE_LABELS, PRIVACY_POLICY_URL, type LegalDocumentRecord } from "@/lib/legal-documents";
+import { SourcePictogram } from "@/components/source-pictogram";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -764,7 +765,7 @@ export default function OnboardingClient({
                         style={{ display: "flex", alignItems: "center", gap: "8px", border: selectedPortraitUrl === url ? "2px solid var(--foreground)" : "1px solid var(--input)", borderRadius: "8px", padding: "6px 8px", background: "var(--card)", cursor: "pointer", color: "var(--foreground)" }}
                       >
                         <Image src={url} alt="" width={36} height={44} unoptimized style={{ width: "36px", height: "44px", borderRadius: "6px", objectFit: "cover" }} />
-                        <span style={{ fontSize: "12px", fontWeight: 600 }}>{candidate.source.toUpperCase()}</span>
+                        <SourcePictogram source={candidate.source} />
                       </button>
                     ))}
                   </div>
@@ -853,7 +854,7 @@ export default function OnboardingClient({
                                 <span>•</span>
                                 <span>{c.category}</span>
                                 <span>•</span>
-                                <span>{c.source.toUpperCase()}</span>
+                                <SourcePictogram source={c.source} />
                                 {c.imdb_id && <span>IMDb {c.imdb_id}</span>}
                                 {isSeries && selectedDfiCredits[c.id] && <span className="font-semibold text-amber-800 dark:text-amber-200">• {displayEpisodeOptions(c).length} afsnit fundet</span>}
                               </div>

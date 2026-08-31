@@ -27,10 +27,12 @@ test("sæsonssager samler klippere fra seriens afsnit", () => {
   assert.match(evidence, /\.in\("work_id", assignmentWorkIds\)/);
 });
 
-test("klipper og arbejdsandel vises samlet i en kompakt dialog", () => {
+test("klipper, kilder, arbejdsandel og handlinger vises samlet i en kompakt række", () => {
   assert.match(wizard, /1\. Klippere og arbejdsandele/);
   assert.match(wizard, /Arbejdsandel i procent/);
-  assert.match(wizard, /grid grid-cols-2/);
+  assert.match(wizard, /grid-cols-\[minmax\(0,1fr\)_92px\]/);
+  assert.match(wizard, /Oplyst: \{participant\.proposed_percent != null/);
+  assert.match(wizard, />Fjern<\/Button>/);
   assert.match(wizard, /Forrige værk/);
   assert.match(wizard, /Spring til næste værk/);
   assert.doesNotMatch(wizard, /Portalens oplysninger samles med krediteringer/);

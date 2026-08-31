@@ -69,6 +69,7 @@ export function isEligibleWorkShareRole(role: string | null | undefined) {
   if (!normalized) return true;
   if (
     normalized.includes("b klipper")
+    || normalized.includes("klippeassistent")
     || normalized.includes("klipperassistent")
     || normalized.includes("assistant editor")
     || normalized.includes("assistant klipper")
