@@ -13,13 +13,6 @@ import type { AdminWorkShareQueueItem, WorkShareQueuePage, WorkShareQueueTaskTyp
 import { useI18n } from "@/lib/i18n";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 
-const reasonLabels: Record<AdminWorkShareQueueItem["reasons"][number], string> = {
-  shares: "Andele skal godkendes",
-  dispute: "Indsigelse",
-  unresolved: "Uafklarede personer",
-  missing_responses: "Mangler svar",
-};
-
 export function WorkShareReconciliationTab({
   initialPage,
   onCountChange,
@@ -36,6 +29,12 @@ export function WorkShareReconciliationTab({
   const [pageSize, setPageSize] = useState([20, 50, 100].includes(Number(searchParams.get("sharePageSize"))) ? Number(searchParams.get("sharePageSize")) : initialPage.pageSize);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const reasonLabels: Record<AdminWorkShareQueueItem["reasons"][number], string> = {
+    shares: t("works.shareQueue.reasonShares"),
+    dispute: t("works.shareQueue.reasonDispute"),
+    unresolved: t("works.shareQueue.reasonUnresolved"),
+    missing_responses: t("works.shareQueue.reasonMissingResponses"),
+  };
   const activeTask = searchParams.get("shareTask");
   const initialLoadKey = JSON.stringify({ page: initialPage.page, pageSize: initialPage.pageSize, search: searchParams.get("shareQ") ?? "", taskType: searchParams.get("shareType") ?? "all" });
   const lastLoadKey = useRef(initialLoadKey);
@@ -59,9 +58,9 @@ export function WorkShareReconciliationTab({
       void fetchAdminShareQueue(params).then(next => {
         setResult(next);
         onCountChange?.(next.totalCount);
-      }).catch(cause => setError(cause instanceof Error ? cause.message : "Køen kunne ikke hentes."));
+      }).catch(cause => setError(cause instanceof Error ? cause.message : t("works.shareQueue.loadError")));
     });
-  }, [onCountChange]);
+  }, [onCountChange, t]);
 
   useEffect(() => {
     if (activeTask) return;
@@ -93,7 +92,7 @@ export function WorkShareReconciliationTab({
       onCountChange?.(next.totalCount);
       const stillPending = nextCandidate && next.rows.some(row => row.key === nextCandidate.key) ? nextCandidate.key : next.rows[0]?.key ?? null;
       openTask(stillPending);
-    }).catch(cause => setError(cause instanceof Error ? cause.message : "Køen kunne ikke opdateres."));
+    }).catch(cause => setError(cause instanceof Error ? cause.message : t("works.shareQueue.updateError")));
   };
 
   if (activeTask) {
@@ -121,18 +120,18 @@ export function WorkShareReconciliationTab({
     </div>
     <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px_120px]">
       <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={event => setSearch(event.target.value)} placeholder={t("works.shareQueue.search")} aria-label={t("works.shareQueue.search")} /></div>
-      <Select value={taskType} onValueChange={value => setTaskType(value as WorkShareQueueTaskType)}><SelectTrigger aria-label="Opgavetype"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle opgaver</SelectItem><SelectItem value="shares">Andele</SelectItem><SelectItem value="missing_responses">Mangler svar</SelectItem><SelectItem value="unresolved">Uafklarede personer</SelectItem><SelectItem value="disputes">Indsigelser</SelectItem></SelectContent></Select>
-      <Select value={String(pageSize)} onValueChange={value => setPageSize(Number(value))}><SelectTrigger aria-label="Rækker pr. side"><SelectValue /></SelectTrigger><SelectContent>{[20, 50, 100].map(size => <SelectItem key={size} value={String(size)}>{size} pr. side</SelectItem>)}</SelectContent></Select>
+      <Select value={taskType} onValueChange={value => setTaskType(value as WorkShareQueueTaskType)}><SelectTrigger aria-label={t("works.shareQueue.taskType")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t("works.shareQueue.allTasks")}</SelectItem><SelectItem value="shares">{t("works.shareQueue.shares")}</SelectItem><SelectItem value="missing_responses">{t("works.shareQueue.missingResponses")}</SelectItem><SelectItem value="unresolved">{t("works.shareQueue.unresolvedPeople")}</SelectItem><SelectItem value="disputes">{t("works.shareQueue.disputes")}</SelectItem></SelectContent></Select>
+      <Select value={String(pageSize)} onValueChange={value => setPageSize(Number(value))}><SelectTrigger aria-label={t("works.shareQueue.rowsPerPage")}><SelectValue /></SelectTrigger><SelectContent>{[20, 50, 100].map(size => <SelectItem key={size} value={String(size)}>{size} {t("works.shareQueue.perPage")}</SelectItem>)}</SelectContent></Select>
     </div>
     {error && <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{error}</div>}
     {isPending && <p role="status" className="text-sm text-muted-foreground">{t("works.shareQueue.updating")}</p>}
     {!isPending && !result.rows.length ? <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">{t("works.shareQueue.empty")}</div> : <div className="space-y-2">
       {result.rows.map(row => <button key={row.key} type="button" onClick={() => openTask(row.key)} className="grid w-full gap-3 rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto] md:items-center">
-        <div><p className="font-medium">{row.title}{row.seasonNumber != null ? ` · sæson ${row.seasonNumber}` : ""}{row.episodeNumber != null ? ` · afsnit ${row.episodeNumber}` : ""}</p><div className="mt-2 flex flex-wrap gap-1">{row.reasons.map(reason => <Badge key={reason} variant={reason === "dispute" ? "destructive" : "secondary"}>{reasonLabels[reason]}</Badge>)}</div></div>
-        <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground"><span><strong className="block text-base text-foreground">{row.participantCount}</strong>Klippere</span><span><strong className="block text-base text-foreground">{row.missingResponseCount}</strong>Mangler svar</span><span><strong className="block text-base text-foreground">{row.unresolvedCount}</strong>Uafklarede</span></div>
-        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground md:justify-end"><span>{new Date(row.updatedAt).toLocaleDateString("da-DK")}</span><ChevronRight className="h-4 w-4" aria-hidden="true" /></div>
+        <div><p className="font-medium">{row.title}{row.seasonNumber != null ? ` · ${t("works.shareQueue.season")} ${row.seasonNumber}` : ""}{row.episodeNumber != null ? ` · ${t("works.shareQueue.episode")} ${row.episodeNumber}` : ""}</p><div className="mt-2 flex flex-wrap gap-1">{row.reasons.map(reason => <Badge key={reason} variant={reason === "dispute" ? "destructive" : "secondary"}>{reasonLabels[reason]}</Badge>)}</div></div>
+        <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground"><span><strong className="block text-base text-foreground">{row.participantCount}</strong>{t("works.shareQueue.editors")}</span><span><strong className="block text-base text-foreground">{row.missingResponseCount}</strong>{t("works.shareQueue.missingResponses")}</span><span><strong className="block text-base text-foreground">{row.unresolvedCount}</strong>{t("works.shareQueue.unresolved")}</span></div>
+        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground md:justify-end"><span>{new Date(row.updatedAt).toLocaleDateString()}</span><ChevronRight className="h-4 w-4" aria-hidden="true" /></div>
       </button>)}
     </div>}
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"><p className="text-sm text-muted-foreground">Side {result.page} af {totalPages} · {result.filteredCount} opgaver</p><div className="flex gap-2"><Button variant="outline" disabled={result.page <= 1 || isPending} onClick={() => goToPage(result.page - 1)}><ChevronLeft className="mr-1 h-4 w-4" />{t("works.shareQueue.previous")}</Button><Button variant="outline" disabled={!result.hasNextPage || isPending} onClick={() => goToPage(result.page + 1)}>{t("works.shareQueue.next")}<ChevronRight className="ml-1 h-4 w-4" /></Button></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"><p className="text-sm text-muted-foreground">{t("works.shareQueue.page")} {result.page} {t("works.shareQueue.of")} {totalPages} · {result.filteredCount} {t("works.shareQueue.tasks")}</p><div className="flex gap-2"><Button variant="outline" disabled={result.page <= 1 || isPending} onClick={() => goToPage(result.page - 1)}><ChevronLeft className="mr-1 h-4 w-4" />{t("works.shareQueue.previous")}</Button><Button variant="outline" disabled={!result.hasNextPage || isPending} onClick={() => goToPage(result.page + 1)}>{t("works.shareQueue.next")}<ChevronRight className="ml-1 h-4 w-4" /></Button></div></div>
   </section>;
 }
