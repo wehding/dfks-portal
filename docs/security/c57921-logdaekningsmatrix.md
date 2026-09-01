@@ -14,6 +14,12 @@ Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-09-0
 | PROC-RIGHTS-DISTRIBUTION | Afstemning og fordeling af arbejdsandele | use | Rettigheds- og portalteam |
 | PROC-DATA-SUBJECT-RIGHTS | Indsigtsret og sikker udlevering | sharing | Privacyteam |
 
+## Dataflows
+
+| ID | Dataflow | Aktivitet | Livscyklus | Status | Kilder | Ekstern behandling | Destinationer | Originalhåndtering | Aktivering | Test | Ejer |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| FLOW-VISION-V3-GEOMETRY-BACKFILL | Afgrænset Vision v3-geometri-backfill | PROC-DOCUMENT-AI | analysis | implemented | STORE-SUPABASE-DB, STORE-SUPABASE-STORAGE | Google Vision EU via den private Cloud Run-worker | STORE-SUPABASE-DB, STORE-SUPABASE-STORAGE | originale storage-objekter og deres stier ændres aldrig; kun afledt PDF og v3-geometri promoveres efter integritetskontrol | Afventer produktionsmigration, Cloud Run-revision, pilot og godkendt kvalitetsport | tests/vision-v3-geometry-backfill-compliance.test.ts | AI-, sikkerheds- og portalteam |
+
 ## Registrerede flows
 
 | Endpoint/serverhandling | Behandling | Livscyklus | Status | Datakategorier | Berørte medlemmer | Formål | Retsgrundlag | Audit-event | Målmedlem | Fejler lukket | Test | Ejer |
@@ -40,6 +46,7 @@ Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-09-0
 | app/api/portal/audit-log/sar/[id]/export/route.ts | Medlemsdownload af Art. 15-rapport | Ikke klassificeret | implemented | audit_metadata | session til rettighedshaver | indsigtsret | GDPR Art. 15 | download / portal.audit.sar-export | autentificeret medlem | Ja | tests/audit-sar.test.ts | Privacyteam |
 | app/api/portal/audit-log/sar/route.ts | Medlemmets indsigtsanmodninger | Ikke klassificeret | implemented | audit_metadata | session til rettighedshaver | indsigtsret | GDPR Art. 15 | security_review / portal.audit.sar | autentificeret medlem | Ja | tests/audit-sar.test.ts | Privacyteam |
 | app/api/portal/contracts/[contractId]/versions/route.ts | Medlemmets kontraktversioner | Ikke klassificeret | implemented | contract_data | autentificeret medlems rettighedshaver-id | egen adgang | GDPR Art. 15 | read / portal.contracts.versions | session til rettighedshaver | Ja | tests/audit-log.test.ts | Portalteam |
+| scripts/one-off/vision-v3-geometry-backfill.ts | Hashbundet engangskørsel af eksisterende PDF-kontrakter gennem direkte Vision OCR med præcis v3-ordgeometri | analysis | implemented | contract_data, document_data, ai_analysis | alle rettighedshavere i den eksakte, forhåndskontrollerede kohorte | kvalitetssikring af kontraktdokumenter og præcise kildehenvisninger | GDPR Art. 6(1)(b)/(f), Art. 9(2)(d) | create / update / one-off.vision-v3-geometry-backfill / vision_v3_geometry_backfill | contracts.rights_holder_id samles atomisk for kø og afsluttende kvalitetsport | Ja | tests/vision-v3-geometry-backfill-compliance.test.ts | AI-, sikkerheds- og portalteam |
 
 ## Klassificerede kandidater
 

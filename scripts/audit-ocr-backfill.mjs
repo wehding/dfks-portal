@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -32,8 +32,19 @@ const DOWNLOAD_TIMEOUT_MS = 90_000;
 const PDFTOTEXT_TIMEOUT_MS = 120_000;
 const PDF_PAGE_COUNT_TIMEOUT_MS = 60_000;
 const BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v3";
+const GEOMETRY_BACKFILL_QUALITY_SCHEMA_VERSION = "dfks-vision-v3-geometry-quality-v1";
 const MAX_BASELINE_BYTES = 64 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const GEOMETRY_BACKFILL_TERMINAL_STATUSES = Object.freeze([
+  "not_required",
+  "needs_review",
+  "failed",
+]);
+const GEOMETRY_BACKFILL_BUSINESS_STATUSES = Object.freeze([
+  "kladde",
+  "afventer",
+  "valideret",
+]);
 
 // The OCR callback atomically creates one replacement AI job. It may already
 // be `done` by the time the audit runs, so both active states and `done` count
@@ -126,6 +137,15 @@ function emptyViolations() {
     replacementLineageMismatch: 0,
     supersededArtifactDeletionMismatch: 0,
     originalDeletionCandidate: 0,
+    geometryRunMetadataMismatch: 0,
+    geometryTargetCountMismatch: 0,
+    geometryTargetBaselineMismatch: 0,
+    geometryJobMissingOrMismatch: 0,
+    geometryOutcomeStatusMismatch: 0,
+    geometryPriorStateMismatch: 0,
+    geometrySourceLineageMismatch: 0,
+    geometryUnexpectedArtifactDeletion: 0,
+    geometryNonTerminalJob: 0,
   };
 }
 
@@ -819,6 +839,11 @@ function assertValidBaseline(baseline) {
       || typeof record.contractStatus !== "string"
       || record.contractStatus.length < 1
       || record.contractStatus.length > 80
+      || (record.priorProcessingStatus !== undefined && (
+        typeof record.priorProcessingStatus !== "string"
+        || record.priorProcessingStatus.length < 1
+        || record.priorProcessingStatus.length > 80
+      ))
       || jobIds.has(record.jobId)) {
       throw new AuditOperationalError("baseline_invalid");
     }
@@ -887,6 +912,7 @@ export async function captureBaseline({
         originalPdfReadable,
         originalPageCount: originalPdfReadable ? fingerprint.pageCount : null,
         contractStatus: contract.status,
+        priorProcessingStatus: typeof job.status === "string" ? job.status : "unknown",
       },
     };
   });
@@ -975,6 +1001,69 @@ export async function verifyBaseline({
     }
   }
   return summary;
+}
+
+/**
+ * Turns one secure baseline file into the exact immutable target payload used
+ * by the preparation RPC. The digest intentionally binds source generation,
+ * bytes, path and both business/document state.
+ *
+ * @param {unknown} baseline
+ * @param {{ expectedCount?: number | null }} options
+ */
+export function geometryBackfillBaselineCohort(baseline, { expectedCount = null } = {}) {
+  assertValidBaseline(baseline);
+  if (expectedCount !== null && (
+    !Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount > 1000
+  )) {
+    throw new AuditOperationalError("geometry_backfill_expected_count_invalid");
+  }
+  const targets = baseline.records.map((record) => {
+    if (record.originalPdfReadable !== true
+      || !Number.isInteger(record.originalPageCount)
+      || record.originalPageCount < 1
+      || record.originalPageCount > 200
+      || !GEOMETRY_BACKFILL_BUSINESS_STATUSES.includes(record.contractStatus)
+      || !GEOMETRY_BACKFILL_TERMINAL_STATUSES.includes(record.priorProcessingStatus)) {
+      throw new AuditOperationalError("geometry_backfill_baseline_ineligible");
+    }
+    return {
+      contractId: record.contractId.toLowerCase(),
+      sourceJobId: record.jobId.toLowerCase(),
+      originalSha256: record.originalSha256.toLowerCase(),
+      originalPageCount: record.originalPageCount,
+      originalPathDigest: record.originalStoragePathSha256.toLowerCase(),
+      contractStatus: record.contractStatus,
+      priorProcessingStatus: record.priorProcessingStatus,
+    };
+  }).sort((left, right) => left.contractId.localeCompare(right.contractId));
+  if (new Set(targets.map((target) => target.contractId)).size !== targets.length
+    || new Set(targets.map((target) => target.sourceJobId)).size !== targets.length) {
+    throw new AuditOperationalError("geometry_backfill_baseline_duplicate");
+  }
+  if (expectedCount !== null && targets.length !== expectedCount) {
+    throw new AuditOperationalError("geometry_backfill_cohort_count_drift");
+  }
+  const canonical = targets.map((target) => [
+    target.contractId,
+    target.sourceJobId,
+    target.originalSha256,
+    target.originalPageCount,
+    target.originalPathDigest,
+    target.contractStatus,
+    target.priorProcessingStatus,
+  ].join("|")).join("\n");
+  const countBy = (key) => targets.reduce((counts, target) => {
+    const value = target[key];
+    counts[value] = (counts[value] ?? 0) + 1;
+    return counts;
+  }, {});
+  return {
+    targets,
+    digest: sha256(Buffer.from(canonical, "utf8")),
+    contractStatuses: countBy("contractStatus"),
+    processingStatuses: countBy("priorProcessingStatus"),
+  };
 }
 
 function assertSecureBaselinePath(filePath) {
@@ -1199,6 +1288,134 @@ async function selectActiveDlpReplacementJobs(db) {
   };
 }
 
+function isPdfStoragePath(value) {
+  return typeof value === "string" && /[.]pdf$/i.test(value);
+}
+
+function compareJobGeneration(left, right) {
+  const leftCreatedAt = typeof left?.created_at === "string"
+    ? Date.parse(left.created_at) : Number.NaN;
+  const rightCreatedAt = typeof right?.created_at === "string"
+    ? Date.parse(right.created_at) : Number.NaN;
+  if (!Number.isFinite(leftCreatedAt) || !Number.isFinite(rightCreatedAt)) return 0;
+  if (leftCreatedAt !== rightCreatedAt) return leftCreatedAt - rightCreatedAt;
+  return String(left?.id ?? "").localeCompare(String(right?.id ?? ""));
+}
+
+/**
+ * Selects the exact source generation for the one-off geometry backfill.
+ *
+ * The selector deliberately operates on a complete snapshot supplied by the
+ * caller. It never guesses a missing source job and never falls back to an
+ * older generation. The database preparation RPC repeats these fences under
+ * row locks before it creates any job.
+ */
+export function selectGeometryBackfillSources({ contracts, jobs, expectedCount = null }) {
+  if (!Array.isArray(contracts) || !Array.isArray(jobs)
+    || (expectedCount !== null && (
+      !Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount > 1000
+    ))) {
+    throw new AuditOperationalError("geometry_backfill_selection_invalid");
+  }
+  const jobsByContract = new Map();
+  for (const job of jobs) {
+    if (!UUID_PATTERN.test(job?.id ?? "") || !UUID_PATTERN.test(job?.contract_id ?? "")) {
+      throw new AuditOperationalError("geometry_backfill_selection_invalid");
+    }
+    const rows = jobsByContract.get(job.contract_id) ?? [];
+    rows.push(job);
+    jobsByContract.set(job.contract_id, rows);
+  }
+
+  const selectedJobs = [];
+  const selectedContractsById = new Map();
+  const rejectedByReason = {
+    contract_invalid: 0,
+    source_missing: 0,
+    source_not_latest_terminal: 0,
+    source_state_drift: 0,
+    source_lineage_conflict: 0,
+    already_qualified: 0,
+  };
+  const seenContracts = new Set();
+
+  for (const contract of contracts) {
+    if (!UUID_PATTERN.test(contract?.id ?? "") || seenContracts.has(contract.id)
+      || !UUID_PATTERN.test(contract?.org_id ?? "")
+      || !isPdfStoragePath(contract?.pdf_url)
+      || !GEOMETRY_BACKFILL_BUSINESS_STATUSES.includes(contract?.status)
+      || !GEOMETRY_BACKFILL_TERMINAL_STATUSES.includes(
+        contract?.document_processing_status,
+      )) {
+      rejectedByReason.contract_invalid += 1;
+      continue;
+    }
+    seenContracts.add(contract.id);
+    const generations = [...(jobsByContract.get(contract.id) ?? [])]
+      .sort(compareJobGeneration);
+    if (!generations.length || generations.some((job) => (
+      !Number.isFinite(Date.parse(job.created_at ?? ""))
+      || job.org_id !== contract.org_id
+    ))) {
+      rejectedByReason.source_missing += 1;
+      continue;
+    }
+    const qualified = generations.some((job) => (
+      job.status === "completed"
+      && job.ocr_applied === true
+      && job.ocr_engine === "google-vision-eu-v1"
+      && job.processing_profile === "google-vision-direct-v1"
+      && job.spatial_schema_version === "google-vision-spatial-v3"
+      && Number(job.spatial_accuracy_score) >= 0.95
+      && Number(job.spatial_median_iou) >= 0.85
+      && Number(job.spatial_center_inside_ratio) >= 0.98
+      && job.output_storage_path === contract.processed_pdf_url
+      && job.spatial_data_path === contract.document_spatial_data_path
+    ));
+    if (qualified) {
+      rejectedByReason.already_qualified += 1;
+      continue;
+    }
+    const latest = generations.at(-1);
+    if (!GEOMETRY_BACKFILL_TERMINAL_STATUSES.includes(latest.status)) {
+      rejectedByReason.source_not_latest_terminal += 1;
+      continue;
+    }
+    if (latest.status !== contract.document_processing_status
+      || latest.original_storage_path !== contract.pdf_url
+      || latest.processing_profile === "google-vision-direct-v1"
+      || latest.spatial_schema_version === "google-vision-spatial-v3") {
+      rejectedByReason.source_state_drift += 1;
+      continue;
+    }
+    if (latest.superseded_by_job_id != null
+      || latest.replacement_of_job_id != null
+      || latest.backfill_run_id != null
+      || latest.backfill_source_job_id != null
+      || generations.some((job) => job.id !== latest.id && (
+        job.status === "queued"
+        || job.status === "processing"
+        || (job.status === "failed" && Number(job.attempts) < 5
+          && compareJobGeneration(job, latest) > 0)
+      ))) {
+      rejectedByReason.source_lineage_conflict += 1;
+      continue;
+    }
+    selectedJobs.push(latest);
+    selectedContractsById.set(contract.id, contract);
+  }
+
+  selectedJobs.sort((left, right) => left.contract_id.localeCompare(right.contract_id));
+  if (expectedCount !== null && selectedJobs.length !== expectedCount) {
+    throw new AuditOperationalError("geometry_backfill_cohort_count_drift");
+  }
+  return {
+    jobs: selectedJobs,
+    contractsById: selectedContractsById,
+    rejectedByReason,
+  };
+}
+
 function chunks(values, size) {
   const result = [];
   for (let index = 0; index < values.length; index += size) {
@@ -1221,13 +1438,52 @@ async function loadContracts(db, contractIds) {
   return result;
 }
 
+async function selectGeometryBackfillCandidateContracts(db) {
+  const rows = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await db
+      .from("contracts")
+      .select("id,org_id,status,pdf_url,processed_pdf_url,document_spatial_data_path,document_processing_status,document_processing_error_code,document_processing_profile,document_spatial_schema_version,document_spatial_accuracy")
+      .in("document_processing_status", GEOMETRY_BACKFILL_TERMINAL_STATUSES)
+      .not("pdf_url", "is", null)
+      .order("id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new AuditOperationalError("database_query_failed");
+    const page = data ?? [];
+    rows.push(...page.filter((contract) => isPdfStoragePath(contract.pdf_url)));
+    if (page.length < PAGE_SIZE) break;
+  }
+  return rows;
+}
+
+async function loadGeometryBackfillGenerations(db, contractIds) {
+  const rows = [];
+  for (const ids of chunks(contractIds, QUERY_CHUNK_SIZE)) {
+    if (!ids.length) continue;
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await db
+        .from("contract_document_jobs")
+        .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,status,ocr_applied,ocr_engine,page_count,attempts,original_sha256,processing_profile,spatial_schema_version,spatial_accuracy_score,spatial_median_iou,spatial_center_inside_ratio,superseded_by_job_id,replacement_of_job_id,backfill_run_id,backfill_source_job_id,created_at")
+        .in("contract_id", ids)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) throw new AuditOperationalError("database_query_failed");
+      const page = data ?? [];
+      rows.push(...page);
+      if (page.length < PAGE_SIZE) break;
+    }
+  }
+  return rows;
+}
+
 async function loadDocumentJobsById(db, jobIds) {
   const result = new Map();
   for (const ids of chunks(jobIds, QUERY_CHUNK_SIZE)) {
     if (!ids.length) continue;
     const { data, error } = await db
       .from("contract_document_jobs")
-      .select("id,contract_id,original_storage_path")
+      .select("id,contract_id,original_storage_path,status")
       .in("id", ids);
     if (error) throw new AuditOperationalError("database_query_failed");
     for (const job of data ?? []) result.set(job.id, job);
@@ -1349,6 +1605,99 @@ export async function captureDatabaseDirectVisionBaseline({
   });
 }
 
+export async function captureDatabaseGeometryBackfillBaseline({
+  db,
+  expectedCount,
+  concurrency = DEFAULT_CONCURRENCY,
+}) {
+  const contracts = await selectGeometryBackfillCandidateContracts(db);
+  const generations = await loadGeometryBackfillGenerations(
+    db,
+    contracts.map((contract) => contract.id),
+  );
+  const selected = selectGeometryBackfillSources({
+    contracts,
+    jobs: generations,
+    expectedCount,
+  });
+  const result = await captureBaseline({
+    jobs: selected.jobs,
+    contractsById: selected.contractsById,
+    readStorage: createStorageReader(db),
+    concurrency,
+  });
+  if (result.baseline && !summaryHasViolations(result.summary)) {
+    const cohort = geometryBackfillBaselineCohort(result.baseline, { expectedCount });
+    result.summary.geometryCohort = {
+      selected: cohort.targets.length,
+      expected: expectedCount,
+      cohortDigest: cohort.digest,
+      contractStatuses: cohort.contractStatuses,
+      processingStatuses: cohort.processingStatuses,
+      rejectedByReason: selected.rejectedByReason,
+    };
+  }
+  return result;
+}
+
+export async function verifyDatabaseGeometryBackfillBaseline({
+  db,
+  baseline,
+  expectedCount,
+  concurrency = DEFAULT_CONCURRENCY,
+}) {
+  const cohort = geometryBackfillBaselineCohort(baseline, { expectedCount });
+  const contracts = await selectGeometryBackfillCandidateContracts(db);
+  const generations = await loadGeometryBackfillGenerations(
+    db,
+    contracts.map((contract) => contract.id),
+  );
+  const current = selectGeometryBackfillSources({
+    contracts,
+    jobs: generations,
+    expectedCount,
+  });
+  const currentJobIds = new Set(current.jobs.map((job) => job.id));
+  const currentById = new Map(current.jobs.map((job) => [job.id, job]));
+  if (cohort.targets.some((target) => {
+    const job = currentById.get(target.sourceJobId);
+    return !currentJobIds.has(target.sourceJobId)
+      || (job.original_sha256 != null && job.original_sha256 !== target.originalSha256)
+      || (job.page_count != null && job.page_count !== target.originalPageCount);
+  })) {
+    throw new AuditOperationalError("geometry_backfill_cohort_changed");
+  }
+  const currentBaseline = {
+    ...baseline,
+    records: baseline.records.map((record) => ({
+      ...record,
+      priorProcessingStatus: currentById.get(record.jobId)?.status,
+    })),
+  };
+  const currentCohort = geometryBackfillBaselineCohort({
+    ...currentBaseline,
+    integritySha256: baselineDigest(currentBaseline),
+  }, { expectedCount });
+  if (currentCohort.digest !== cohort.digest) {
+    throw new AuditOperationalError("geometry_backfill_cohort_changed");
+  }
+  const summary = await verifyBaseline({
+    baseline,
+    jobsById: currentById,
+    contractsById: current.contractsById,
+    readStorage: createStorageReader(db),
+    concurrency,
+  });
+  summary.geometryCohort = {
+    selected: cohort.targets.length,
+    expected: expectedCount,
+    cohortDigest: cohort.digest,
+    contractStatuses: cohort.contractStatuses,
+    processingStatuses: cohort.processingStatuses,
+  };
+  return summary;
+}
+
 export async function verifyDatabaseDirectVisionBaseline({
   db,
   baseline,
@@ -1368,6 +1717,325 @@ export async function verifyDatabaseDirectVisionBaseline({
     readStorage: createStorageReader(db),
     concurrency,
   });
+}
+
+function sameNullable(left, right) {
+  return (left ?? null) === (right ?? null);
+}
+
+function nullablePathDigest(value) {
+  return value == null ? null : sha256(Buffer.from(value, "utf8"));
+}
+
+function addViolations(target, source) {
+  for (const [key, value] of Object.entries(source)) {
+    target[key] = (target[key] ?? 0) + value;
+  }
+}
+
+/**
+ * Checks the relational/state portion of one exact geometry run without
+ * reading document bytes. The separate byte audit below verifies original,
+ * derived PDF and spatial data.
+ */
+export function auditGeometryBackfillRunRecords({
+  run,
+  targets,
+  jobsById,
+  sourceJobsById,
+  contractsById,
+  artifactDeletionRows,
+  baseline,
+}) {
+  const cohort = geometryBackfillBaselineCohort(baseline, {
+    expectedCount: run?.expected_count,
+  });
+  const violations = emptyViolations();
+  const outcomes = statusDistribution([
+    "queued", "processing", "completed", "needs_review", "failed",
+  ]);
+  const jobsByStatus = statusDistribution(DOCUMENT_JOB_STATUSES);
+  const baselineByContract = new Map(
+    cohort.targets.map((target) => [target.contractId, target]),
+  );
+
+  if (!run || !UUID_PATTERN.test(run.id ?? "")
+    || run.kind !== "direct_vision_geometry_v3"
+    || run.processing_profile !== "google-vision-direct-v1"
+    || run.spatial_schema_version !== "google-vision-spatial-v3"
+    || !["quality_pending", "completed"].includes(run.state)
+    || run.expected_count !== cohort.targets.length
+    || run.cohort_digest !== cohort.digest) {
+    violations.geometryRunMetadataMismatch += 1;
+  }
+  if (!Array.isArray(targets) || targets.length !== cohort.targets.length
+    || new Set(targets?.map((target) => target.contract_id)).size !== targets?.length) {
+    violations.geometryTargetCountMismatch += 1;
+  }
+
+  for (const target of targets ?? []) {
+    const baselineTarget = baselineByContract.get(target.contract_id);
+    const outcome = ["queued", "processing", "completed", "needs_review", "failed"]
+      .includes(target.outcome) ? target.outcome : "unknown";
+    outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+    if (!baselineTarget
+      || target.run_id !== run?.id
+      || target.source_job_id !== baselineTarget.sourceJobId
+      || target.original_sha256 !== baselineTarget.originalSha256
+      || target.original_page_count !== baselineTarget.originalPageCount
+      || target.original_path_digest !== baselineTarget.originalPathDigest
+      || target.contract_status !== baselineTarget.contractStatus
+      || target.prior_processing_status !== baselineTarget.priorProcessingStatus
+      || !UUID_PATTERN.test(target.queued_job_id ?? "")) {
+      violations.geometryTargetBaselineMismatch += 1;
+      continue;
+    }
+
+    const job = jobsById.get(target.queued_job_id);
+    const source = sourceJobsById.get(target.source_job_id);
+    const contract = normalizeContract(contractsById.get(target.contract_id));
+    const jobStatus = DOCUMENT_JOB_STATUSES.includes(job?.status) ? job.status : "unknown";
+    jobsByStatus[jobStatus] = (jobsByStatus[jobStatus] ?? 0) + 1;
+    if (!job || job.contract_id !== target.contract_id || job.org_id !== target.org_id
+      || job.backfill_run_id !== run?.id
+      || job.backfill_source_job_id !== target.source_job_id
+      || job.processing_intent !== "direct_vision_geometry_backfill_v1"
+      || job.replacement_of_job_id != null
+      || job.downstream_ai_policy !== "preserve"
+      || job.processing_profile !== "google-vision-direct-v1"
+      || job.original_storage_path !== source?.original_storage_path
+      || job.original_sha256 !== target.original_sha256) {
+      violations.geometryJobMissingOrMismatch += 1;
+    }
+    const expectedOutcome = job?.status === "completed" ? "completed"
+      : job?.status === "needs_review" ? "needs_review"
+        : job?.status === "failed" ? "failed"
+          : job?.status === "processing" ? "processing"
+            : job?.status === "queued" ? "queued" : null;
+    if (expectedOutcome !== target.outcome) {
+      violations.geometryOutcomeStatusMismatch += 1;
+    }
+    if (["queued", "processing"].includes(job?.status)
+      || (job?.status === "failed" && Number(job.attempts) < 5)) {
+      violations.geometryNonTerminalJob += 1;
+    }
+    if (!source || source.contract_id !== target.contract_id
+      || source.org_id !== target.org_id
+      || source.status !== target.prior_processing_status
+      || source.original_storage_path !== job?.original_storage_path
+      || nullablePathDigest(source.original_storage_path) !== target.original_path_digest
+      || (source.original_sha256 != null
+        && source.original_sha256 !== target.original_sha256)
+      || (source.page_count != null
+        && source.page_count !== target.original_page_count)) {
+      violations.geometrySourceLineageMismatch += 1;
+    }
+    if (!contract || contract.status !== target.contract_status
+      || nullablePathDigest(contract.pdf_url) !== target.original_path_digest) {
+      violations.geometryPriorStateMismatch += 1;
+      continue;
+    }
+
+    if (job?.status === "completed") {
+      if (source?.superseded_by_job_id !== job.id
+        || contract.document_processing_status !== "ready"
+        || contract.processed_pdf_url !== job.output_storage_path
+        || contract.document_spatial_data_path !== job.spatial_data_path
+        || contract.document_processing_profile !== "google-vision-direct-v1"
+        || contract.document_spatial_schema_version !== "google-vision-spatial-v3") {
+        violations.geometrySourceLineageMismatch += 1;
+      }
+    } else if (source?.superseded_by_job_id != null
+      || contract.document_processing_status !== target.prior_processing_status
+      || !sameNullable(
+        contract.document_processing_error_code,
+        target.prior_processing_error_code,
+      )
+      || !sameNullable(
+        contract.document_processing_profile,
+        target.prior_processing_profile,
+      )
+      || !sameNullable(
+        contract.document_spatial_schema_version,
+        target.prior_spatial_schema_version,
+      )
+      || !sameNullable(
+        contract.document_spatial_accuracy,
+        target.prior_spatial_accuracy,
+      )
+      || nullablePathDigest(contract.processed_pdf_url)
+        !== (target.prior_processed_path_digest ?? null)
+      || nullablePathDigest(contract.document_spatial_data_path)
+        !== (target.prior_spatial_path_digest ?? null)) {
+      violations.geometryPriorStateMismatch += 1;
+    }
+  }
+  if ((artifactDeletionRows ?? []).length > 0) {
+    violations.geometryUnexpectedArtifactDeletion += artifactDeletionRows.length;
+  }
+  return {
+    expectedDocuments: cohort.targets.length,
+    targetsExamined: targets?.length ?? 0,
+    cohortDigest: cohort.digest,
+    runState: run?.state ?? "missing",
+    outcomes,
+    jobsByStatus,
+    violations,
+  };
+}
+
+async function loadGeometryBackfillRunSnapshot(db, runId) {
+  const { data: run, error: runError } = await db
+    .from("contract_document_backfill_runs")
+    .select("id,kind,processing_profile,spatial_schema_version,state,expected_count,cohort_digest,quality_report_digest,created_at,completed_at")
+    .eq("id", runId)
+    .maybeSingle();
+  if (runError || !run) throw new AuditOperationalError("geometry_backfill_run_not_found");
+  const targets = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await db
+      .from("contract_document_backfill_targets")
+      .select("run_id,contract_id,org_id,source_job_id,queued_job_id,original_sha256,original_page_count,original_path_digest,contract_status,prior_processing_status,prior_processing_error_code,prior_processing_profile,prior_spatial_schema_version,prior_spatial_accuracy,prior_processed_path_digest,prior_spatial_path_digest,outcome")
+      .eq("run_id", runId)
+      .order("contract_id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new AuditOperationalError("database_query_failed");
+    const page = data ?? [];
+    targets.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  const allJobIds = [...new Set(targets.flatMap((target) => (
+    [target.source_job_id, target.queued_job_id].filter(Boolean)
+  )))];
+  const jobsById = new Map();
+  for (const ids of chunks(allJobIds, QUERY_CHUNK_SIZE)) {
+    if (!ids.length) continue;
+    const { data, error } = await db
+      .from("contract_document_jobs")
+      .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,status,ocr_applied,ocr_engine,page_count,text_char_count,native_page_count,ocr_page_count,unreadable_page_count,attempts,original_sha256,processed_sha256,spatial_sha256,redaction_profile,processing_profile,spatial_schema_version,spatial_accuracy_score,spatial_median_iou,spatial_center_inside_ratio,downstream_ai_policy,replacement_of_job_id,superseded_by_job_id,backfill_run_id,backfill_source_job_id,processing_intent,completed_at,created_at")
+      .in("id", ids);
+    if (error) throw new AuditOperationalError("database_query_failed");
+    for (const job of data ?? []) jobsById.set(job.id, job);
+  }
+  const contractsById = new Map();
+  for (const ids of chunks(targets.map((target) => target.contract_id), QUERY_CHUNK_SIZE)) {
+    if (!ids.length) continue;
+    const { data, error } = await db
+      .from("contracts")
+      .select("id,org_id,status,pdf_url,processed_pdf_url,document_spatial_data_path,document_processing_status,document_processing_error_code,document_processing_profile,document_spatial_schema_version,document_spatial_accuracy")
+      .in("id", ids);
+    if (error) throw new AuditOperationalError("database_query_failed");
+    for (const contract of data ?? []) contractsById.set(contract.id, contract);
+  }
+  const artifactDeletionRows = [];
+  for (const ids of chunks(targets.map((target) => target.queued_job_id), QUERY_CHUNK_SIZE)) {
+    if (!ids.length) continue;
+    const { data, error } = await db
+      .from("contract_document_artifact_deletions")
+      .select("replacement_job_id")
+      .in("replacement_job_id", ids);
+    if (error) throw new AuditOperationalError("database_query_failed");
+    artifactDeletionRows.push(...(data ?? []));
+  }
+  return { run, targets, jobsById, contractsById, artifactDeletionRows };
+}
+
+export function geometryBackfillQualityReportDigest(summary) {
+  const sortedViolations = Object.fromEntries(
+    Object.entries(summary.violations ?? {}).sort(([left], [right]) => left.localeCompare(right)),
+  );
+  return sha256(Buffer.from(JSON.stringify({
+    schemaVersion: GEOMETRY_BACKFILL_QUALITY_SCHEMA_VERSION,
+    cohortDigest: summary.cohortDigest,
+    expectedDocuments: summary.expectedDocuments,
+    targetsExamined: summary.targetsExamined,
+    outcomes: summary.outcomes,
+    jobsByStatus: summary.jobsByStatus,
+    completedDocumentsPassingAllChecks: summary.completedDocumentsPassingAllChecks,
+    baselineDocumentsPassingAllChecks: summary.baselineDocumentsPassingAllChecks,
+    violations: sortedViolations,
+  }), "utf8"));
+}
+
+export async function runGeometryBackfillAudit({
+  db,
+  runId,
+  baseline,
+  concurrency = DEFAULT_CONCURRENCY,
+}) {
+  if (!UUID_PATTERN.test(runId ?? "")) {
+    throw new AuditOperationalError("geometry_backfill_run_id_invalid");
+  }
+  const snapshot = await loadGeometryBackfillRunSnapshot(db, runId);
+  const sourceJobsById = new Map(snapshot.targets.map((target) => [
+    target.source_job_id,
+    snapshot.jobsById.get(target.source_job_id),
+  ]));
+  const stateSummary = auditGeometryBackfillRunRecords({
+    ...snapshot,
+    sourceJobsById,
+    baseline,
+  });
+  const baselineJobsById = new Map(snapshot.targets.map((target) => [
+    target.source_job_id,
+    snapshot.jobsById.get(target.source_job_id),
+  ]));
+  const baselineSummary = await verifyBaseline({
+    baseline,
+    jobsById: baselineJobsById,
+    contractsById: snapshot.contractsById,
+    readStorage: createStorageReader(db),
+    concurrency,
+  });
+  const completedJobs = snapshot.targets
+    .map((target) => snapshot.jobsById.get(target.queued_job_id))
+    .filter((job) => job?.status === "completed");
+  const activeAiCounts = await loadActiveAiCounts(db, completedJobs);
+  const baselineStatusByContract = new Map(
+    baseline.records.map((record) => [record.contractId, record.contractStatus]),
+  );
+  const baselineOriginalByJob = new Map(baseline.records.map((record) => [
+    record.contractId,
+    {
+      jobId: record.jobId,
+      contractId: record.contractId,
+      originalSha256: record.originalSha256,
+      originalStoragePathDigest: record.originalStoragePathSha256,
+      originalPdfReadable: record.originalPdfReadable,
+      originalPageCount: record.originalPageCount,
+    },
+  ]));
+  const completedSummary = await auditCompletedJobs({
+    jobs: completedJobs,
+    contractsById: snapshot.contractsById,
+    activeAiCounts,
+    baselineStatusByContract,
+    baselineOriginalByJob,
+    readStorage: createStorageReader(db),
+    concurrency,
+  });
+  const violations = emptyViolations();
+  addViolations(violations, stateSummary.violations);
+  addViolations(violations, baselineSummary.violations);
+  addViolations(violations, completedSummary.violations);
+  const summary = {
+    expectedDocuments: stateSummary.expectedDocuments,
+    targetsExamined: stateSummary.targetsExamined,
+    cohortDigest: stateSummary.cohortDigest,
+    runState: stateSummary.runState,
+    outcomes: stateSummary.outcomes,
+    jobsByStatus: stateSummary.jobsByStatus,
+    completedDocumentsPassingAllChecks: completedSummary.documentsPassingAllChecks,
+    baselineDocumentsPassingAllChecks: baselineSummary.baselineDocumentsPassingAllChecks,
+    baselineSourceState: baselineSummary.baselineSourceState,
+    violations,
+  };
+  const qualityReportDigest = geometryBackfillQualityReportDigest(summary);
+  if (snapshot.run.state === "completed"
+    && snapshot.run.quality_report_digest !== qualityReportDigest) {
+    summary.violations.geometryRunMetadataMismatch += 1;
+  }
+  return { summary: { ...summary, qualityReportDigest }, run: snapshot.run };
 }
 
 export async function runAudit({ db, concurrency = DEFAULT_CONCURRENCY, baseline = null }) {
@@ -1453,10 +2121,58 @@ export function safeSummaryJson(summary) {
   return JSON.stringify(summary, null, 2);
 }
 
+function geometryBackfillExpectedCount() {
+  return readPositiveInteger(
+    process.env.OCR_GEOMETRY_BACKFILL_EXPECTED_COUNT,
+    251,
+    1000,
+  );
+}
+
+async function approveGeometryBackfillQualityGate({ db, runId, audit }) {
+  if (summaryHasViolations(audit.summary)) {
+    throw new AuditOperationalError("geometry_backfill_quality_failed");
+  }
+  if (audit.run.state === "completed") {
+    if (audit.run.quality_report_digest !== audit.summary.qualityReportDigest) {
+      throw new AuditOperationalError("geometry_backfill_quality_digest_drift");
+    }
+    return "already_approved";
+  }
+  if (audit.run.state !== "quality_pending") {
+    throw new AuditOperationalError("geometry_backfill_quality_not_ready");
+  }
+  const { data, error } = await db.rpc(
+    "complete_contract_document_geometry_backfill_run",
+    {
+      p_run_id: runId,
+      p_cohort_digest: audit.summary.cohortDigest,
+      p_quality_report_digest: audit.summary.qualityReportDigest,
+      p_completed: audit.summary.outcomes.completed,
+      p_needs_review: audit.summary.outcomes.needs_review,
+      p_failed: audit.summary.outcomes.failed,
+    },
+  );
+  if (error || data !== true) {
+    throw new AuditOperationalError("geometry_backfill_quality_commit_failed");
+  }
+  return "approved";
+}
+
 async function main() {
   loadEnv({ path: ".env.local", quiet: true });
   const mode = process.argv[2] ?? "audit";
-  if (!["audit", "capture-baseline", "capture-direct-vision-baseline", "verify-baseline", "verify-direct-vision-baseline"].includes(mode)) {
+  if (![
+    "audit",
+    "capture-baseline",
+    "capture-direct-vision-baseline",
+    "capture-geometry-backfill-baseline",
+    "verify-baseline",
+    "verify-direct-vision-baseline",
+    "verify-geometry-backfill-baseline",
+    "audit-geometry-backfill",
+    "approve-geometry-backfill",
+  ].includes(mode)) {
     throw new AuditOperationalError("invalid_mode");
   }
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
@@ -1468,13 +2184,26 @@ async function main() {
   );
   const db = createReadOnlySupabaseClient(url, serviceRoleKey);
 
-  if (mode === "capture-baseline" || mode === "capture-direct-vision-baseline") {
-    const baselinePath = process.env.OCR_BACKFILL_BASELINE_PATH;
+  if ([
+    "capture-baseline",
+    "capture-direct-vision-baseline",
+    "capture-geometry-backfill-baseline",
+  ].includes(mode)) {
+    const geometryMode = mode === "capture-geometry-backfill-baseline";
+    const baselinePath = geometryMode
+      ? process.env.OCR_GEOMETRY_BACKFILL_BASELINE_PATH
+      : process.env.OCR_BACKFILL_BASELINE_PATH;
     assertSecureBaselinePath(baselinePath);
-    const capture = mode === "capture-direct-vision-baseline"
-      ? captureDatabaseDirectVisionBaseline
-      : captureDatabaseBaseline;
-    const { baseline, summary } = await capture({ db, concurrency });
+    const capture = geometryMode
+      ? captureDatabaseGeometryBackfillBaseline
+      : mode === "capture-direct-vision-baseline"
+        ? captureDatabaseDirectVisionBaseline
+        : captureDatabaseBaseline;
+    const { baseline, summary } = await capture({
+      db,
+      concurrency,
+      ...(geometryMode ? { expectedCount: geometryBackfillExpectedCount() } : {}),
+    });
     if (!baseline || summaryHasViolations(summary)) {
       process.stdout.write(`${safeSummaryJson({ mode, ...summary })}\n`);
       process.exitCode = 1;
@@ -1490,6 +2219,59 @@ async function main() {
     const summary = await verifyDatabaseDirectVisionBaseline({ db, baseline, concurrency });
     process.stdout.write(`${safeSummaryJson({ mode, ...summary })}\n`);
     if (summaryHasViolations(summary)) process.exitCode = 1;
+    return;
+  }
+
+  if (mode === "verify-geometry-backfill-baseline") {
+    const baseline = await readBaselineFile(
+      process.env.OCR_GEOMETRY_BACKFILL_BASELINE_PATH,
+    );
+    const summary = await verifyDatabaseGeometryBackfillBaseline({
+      db,
+      baseline,
+      expectedCount: geometryBackfillExpectedCount(),
+      concurrency,
+    });
+    process.stdout.write(`${safeSummaryJson({ mode, ...summary })}\n`);
+    if (summaryHasViolations(summary)) process.exitCode = 1;
+    return;
+  }
+
+  if (mode === "audit-geometry-backfill" || mode === "approve-geometry-backfill") {
+    const runId = process.env.OCR_GEOMETRY_BACKFILL_RUN_ID;
+    const baseline = await readBaselineFile(
+      process.env.OCR_GEOMETRY_BACKFILL_BASELINE_PATH,
+    );
+    geometryBackfillBaselineCohort(baseline, {
+      expectedCount: geometryBackfillExpectedCount(),
+    });
+    const audit = await runGeometryBackfillAudit({
+      db,
+      runId,
+      baseline,
+      concurrency,
+    });
+    if (mode === "audit-geometry-backfill") {
+      process.stdout.write(`${safeSummaryJson({ mode, ...audit.summary })}\n`);
+      if (summaryHasViolations(audit.summary)) process.exitCode = 1;
+      return;
+    }
+    if (process.env.OCR_GEOMETRY_BACKFILL_APPROVE !== "APPROVE_VISION_V3_GEOMETRY_BACKFILL") {
+      throw new AuditOperationalError("geometry_backfill_approval_required");
+    }
+    const writeDb = createClient(url, serviceRoleKey, {
+      auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
+    });
+    const outcome = await approveGeometryBackfillQualityGate({
+      db: writeDb,
+      runId,
+      audit,
+    });
+    process.stdout.write(`${safeSummaryJson({
+      mode,
+      ...audit.summary,
+      qualityGate: outcome,
+    })}\n`);
     return;
   }
 

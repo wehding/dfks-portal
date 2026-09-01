@@ -282,7 +282,10 @@ export function classifyOcrDocument(pageStates) {
 export function completionPageCounts(pageStates, forceOcr = false) {
   const sourceNativePageCount = pageStates
     .filter((page) => page.classification === "native_text").length;
-  if (forceOcr && sourceNativePageCount === pageStates.length) {
+  // Forced Vision rebuilds every source page from a Vision response. This is
+  // also true for mixed PDFs, so completion evidence must count every page as
+  // OCR-processed rather than retaining the source document's classification.
+  if (forceOcr) {
     return { nativePageCount: 0, ocrPageCount: pageStates.length };
   }
   return {

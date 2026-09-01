@@ -11,6 +11,7 @@ declare
   replacement record;
   replacement_job public.contract_document_jobs;
   ordinary_job_id uuid := gen_random_uuid();
+  claimed_ordinary public.contract_document_jobs;
   test_lease_token uuid := gen_random_uuid();
   deletion_finished boolean;
   original_hash text := repeat('a', 64);
@@ -24,12 +25,13 @@ begin
     or has_function_privilege('authenticated', 'public.queue_direct_vision_replacement_generation(uuid,text,integer)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.claim_next_direct_vision_replacement_job(integer)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.requeue_direct_vision_not_required_replacements()', 'EXECUTE')
-    or has_function_privilege('authenticated', 'public.finish_contract_document_job_v7(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.finish_contract_document_job_v8(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.claim_contract_document_artifact_deletions(integer,uuid)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.queue_direct_vision_replacement_generation(uuid,text,integer)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.claim_next_direct_vision_replacement_job(integer)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.requeue_direct_vision_not_required_replacements()', 'EXECUTE')
-    or not has_function_privilege('service_role', 'public.finish_contract_document_job_v7(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE') then
+    or has_function_privilege('service_role', 'public.finish_contract_document_job_v7(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE')
+    or not has_function_privilege('service_role', 'public.finish_contract_document_job_v8(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE') then
     raise exception 'Direct Vision replacement regression: privileged API exposure';
   end if;
 
@@ -98,12 +100,20 @@ begin
     'queued', 1000, 0, now(), original_hash
   );
 
+  select * into claimed_ordinary
+  from public.claim_next_contract_document_job(30);
+  if claimed_ordinary.id <> ordinary_job_id
+    or (select status from public.contract_document_jobs
+      where id = replacement.replacement_job_id) <> 'queued' then
+    raise exception 'Direct Vision replacement regression: ordinary claim crossed into replacement cohort';
+  end if;
+
   select * into replacement_job
   from public.claim_next_direct_vision_replacement_job(30);
   if replacement_job.id <> replacement.replacement_job_id
     or replacement_job.replacement_of_job_id <> source_job_id
     or replacement_job.lease_token is null
-    or (select status from public.contract_document_jobs where id = ordinary_job_id) <> 'queued' then
+    or (select status from public.contract_document_jobs where id = ordinary_job_id) <> 'processing' then
     raise exception 'Direct Vision replacement regression: replacement-only claim crossed its cohort fence';
   end if;
   test_lease_token := replacement_job.lease_token;
@@ -114,7 +124,7 @@ begin
   where id = replacement.replacement_job_id;
 
   select * into replacement_job
-  from public.finish_contract_document_job_v7(
+  from public.finish_contract_document_job_v8(
     replacement.replacement_job_id, test_lease_token, 'completed', 'image_only',
     'google-vision-eu-v1', '[]'::jsonb, true, 1, 500, 0, 1, 0,
     0.99, 0.90, 1.0, original_hash, repeat('d', 64),

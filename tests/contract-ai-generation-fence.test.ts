@@ -42,7 +42,7 @@ test("contract extraction uses only lease/input-generation fenced worker RPCs", 
 });
 
 test("OCR completion and AI apply share one advisory generation lock", () => {
-  assert.match(completionRoute, /finish_contract_document_job_v7/);
+  assert.match(completionRoute, /finish_contract_document_job_v8/);
   assert.match(recoveryMigration, /create or replace function public\.finish_contract_document_job_v6/);
   assert.match(recoveryMigration, /public\.finish_contract_document_job_v5/);
   assert.match(migration, /create or replace function public\.finish_contract_document_job_v5/);

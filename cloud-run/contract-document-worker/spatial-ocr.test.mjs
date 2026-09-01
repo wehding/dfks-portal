@@ -51,6 +51,13 @@ test("tvungen Vision rapporterer alle faktisk behandlede native sider som OCR-si
     nativePageCount: 0,
     ocrPageCount: 2,
   });
+  assert.deepEqual(completionPageCounts([
+    { classification: "native_text" },
+    { classification: "image_only" },
+  ], true), {
+    nativePageCount: 0,
+    ocrPageCount: 2,
+  });
 });
 
 test("kort men pålideligt digitalt tekstlag genkendes uden at stole på helsides raster", () => {
@@ -178,6 +185,119 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
     assert.equal(result.status, "completed", JSON.stringify(result));
     assert.equal(result.blankPageCount, 1);
     assert.equal(result.unreadablePageCount, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("forced Vision behandler alle native sider, mens normal behandling fortsat er not_required", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dfks-force-native-"));
+  try {
+    const sourceJpeg = await sharp({
+      create: { width: 100, height: 100, channels: 3, background: "white" },
+    }).jpeg({ quality: 95 }).toBuffer();
+    const nativeText = Array.from(
+      { length: 30 },
+      (_, index) => `Kontraktens tydelige native tekst nummer ${index + 1}`,
+    ).join(" ");
+    const visionWords = [
+      ["Ord1", 10],
+      ["Ord2", 30],
+      ["Ord3", 50],
+      ["Ord4", 70],
+    ].map(([text, top]) => ({
+      confidence: 0.99,
+      boundingBox: { vertices: [
+        { x: 10, y: top }, { x: 30, y: top },
+        { x: 30, y: top + 10 }, { x: 10, y: top + 10 },
+      ] },
+      symbols: text.split("").map((symbol) => ({ text: symbol })),
+    }));
+    let visionCalls = 0;
+    const runner = async (command, args) => {
+      if (command === "pdfinfo") {
+        return { stdout: "Pages: 1\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+      }
+      if (command === "pdfimages") {
+        return {
+          stdout: "page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio\n",
+          stderr: "",
+        };
+      }
+      if (command === "pdftoppm") {
+        await writeFile(`${args.at(-1)}.jpg`, sourceJpeg);
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftotext") {
+        const target = args.at(-1);
+        if (args.includes("-bbox-layout")) {
+          await writeFile(target, `<page width="612" height="792">
+            <word xMin="61.2" yMin="79.2" xMax="183.6" yMax="158.4">Ord1</word>
+            <word xMin="61.2" yMin="237.6" xMax="183.6" yMax="316.8">Ord2</word>
+            <word xMin="61.2" yMin="396" xMax="183.6" yMax="475.2">Ord3</word>
+            <word xMin="61.2" yMin="554.4" xMax="183.6" yMax="633.6">Ord4</word>
+          </page>`);
+        } else if (args[0] === "-f") {
+          await writeFile(target, nativeText);
+        } else {
+          await writeFile(target, "A".repeat(200));
+        }
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "python3" && args[0].endsWith("normalise_orientation.py")) {
+        await writeFile(args[2], sourceJpeg);
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "python3" && args[0].endsWith("vision_overlay.py")) {
+        await writeFile(args[4], "%PDF-force-native-test");
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command ${command}`);
+    };
+    const googleClient = {
+      async annotateDocument() {
+        visionCalls += 1;
+        return {
+          responses: [{ fullTextAnnotation: { pages: [{
+            width: 100,
+            height: 100,
+            blocks: [{ paragraphs: [{ words: visionWords }] }],
+          }] } }],
+          sourcePages: [{ pageNumber: 1, imageBytes: sourceJpeg }],
+          visionPageTransforms: [{
+            pageNumber: 1,
+            sourceWidth: 100,
+            sourceHeight: 100,
+            visionWidth: 100,
+            visionHeight: 100,
+          }],
+        };
+      },
+    };
+    const paths = {
+      inputPath: join(directory, "input.pdf"),
+      outputPath: join(directory, "output.pdf"),
+      geometryPath: join(directory, "geometry.json.gz"),
+      workDir: directory,
+      commandRunner: runner,
+      googleClient,
+    };
+
+    const normal = await processPdfSpatially(paths);
+    assert.equal(normal.status, "not_required");
+    assert.equal(normal.classification, "native_text");
+    assert.equal(normal.nativePageCount, 1);
+    assert.equal(normal.ocrPageCount, 0);
+    assert.equal(visionCalls, 0);
+
+    const forced = await processPdfSpatially({ ...paths, forceOcr: true });
+    assert.equal(forced.status, "completed", JSON.stringify(forced));
+    assert.equal(forced.classification, "mixed");
+    assert.equal(forced.nativePageCount, 0);
+    assert.equal(forced.ocrPageCount, 1);
+    assert.equal(forced.processingProfile, "google-vision-direct-v1");
+    assert.equal(forced.spatialSchemaVersion, "google-vision-spatial-v3");
+    assert.equal(visionCalls, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

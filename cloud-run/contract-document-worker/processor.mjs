@@ -167,6 +167,16 @@ export function readRuntimeConfig(env = process.env) {
     && env.OCR_REPLACEMENT_ONLY !== "false") {
     throw new FatalProcessingError("invalid_replacement_only_configuration");
   }
+  const geometryBackfillRunId = env.OCR_GEOMETRY_BACKFILL_RUN_ID?.trim() || null;
+  if (geometryBackfillRunId != null
+    && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      geometryBackfillRunId,
+    )) {
+    throw new FatalProcessingError("invalid_geometry_backfill_configuration");
+  }
+  if (geometryBackfillRunId != null && env.OCR_REPLACEMENT_ONLY === "true") {
+    throw new FatalProcessingError("conflicting_backfill_configuration");
+  }
   return {
     portalBaseUrl,
     audience: env.OCR_CLOUD_RUN_AUDIENCE,
@@ -178,6 +188,7 @@ export function readRuntimeConfig(env = process.env) {
     maxBytes: MAX_BYTES,
     processingDeadlineMs: parseProcessingDeadlineSeconds(env.OCR_PROCESSING_DEADLINE_SECONDS) * 1000,
     replacementOnly: env.OCR_REPLACEMENT_ONLY === "true",
+    geometryBackfillRunId,
   };
 }
 
@@ -590,13 +601,18 @@ export function createProcessor(options = {}) {
   const now = options.now ?? Date.now;
 
   return async function processOne() {
+    const claimHeaders = config.geometryBackfillRunId
+      ? { "X-DFKS-OCR-Geometry-Backfill-Run": config.geometryBackfillRunId }
+      : config.replacementOnly
+        ? { "X-DFKS-OCR-Replacement-Only": "1" }
+        : undefined;
     const claim = await portalRequest(
       config,
       identityTokenProvider,
       "/api/internal/document-processing/claim",
       {
         method: "POST",
-        headers: config.replacementOnly ? { "X-DFKS-OCR-Replacement-Only": "1" } : undefined,
+        headers: claimHeaders,
       },
       fetchImpl,
     );
@@ -684,7 +700,7 @@ export function createProcessor(options = {}) {
       const result = await spatialProcessor({
         inputPath, outputPath, geometryPath, workDir, commandRunner, googleClient,
         assertLeaseHealthy: assertProcessingHealthy,
-        forceOcr: config.replacementOnly === true,
+        forceOcr: config.replacementOnly === true || config.geometryBackfillRunId != null,
         signal: processingSignal,
       });
       assertProcessingHealthy();
