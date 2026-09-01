@@ -17,6 +17,7 @@ import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
 import { LocalRightsHolderAutocomplete } from "@/components/works/local-rights-holder-autocomplete";
 import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormSeed, type ManualWorkFormValue } from "@/lib/manual-work";
 import { createClientId } from "@/lib/client-id";
+import { externalLookupWarning, runWithLookupDeadline } from "@/lib/external-lookup";
 
 const DEFAULT_ROLES = ["Klipper", "B-klipper", "Konceptuerende klipper"];
 
@@ -173,8 +174,18 @@ export function AddWorkModal({
         setEpisodesError(null);
         try {
           const sNum = parseInt(addSeason) || 1;
-          const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedResult, sNum);
+          const lookup = await runWithLookupDeadline(() => resolveUnifiedSearchResultDetails(pickedUnifiedResult, sNum));
           if (cancelled) return;
+          if (lookup.status !== "success") {
+            setDetectedEpisodeCount(null);
+            setEpisodeOptions([]);
+            setSelectedEpisodes([]);
+            setEpisodesError(locale === "da"
+              ? `Eksterne kilder svarede ikke. Indtast sæson ${sNum} og afsnit manuelt.`
+              : `External sources did not respond. Enter season ${sNum} and episodes manually.`);
+            return;
+          }
+          const detailsRes = lookup.value;
           if (detailsRes.success && detailsRes.details?.episode_lookup_status === "found") {
             const d = detailsRes.details;
             const options = (d.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
@@ -257,8 +268,13 @@ export function AddWorkModal({
       const res = await searchWorksUnified(query);
       if (res.success && res.results) {
         setUnifiedResults(res.results);
+        const warning = externalLookupWarning(res.externalLookup, locale);
+        if (warning) setSearchError(warning);
         if (res.results.length > 0) {
           await pickUnifiedResult(res.results[0]);
+        } else if (warning) {
+          setManualMode(true);
+          setManualWork(emptyManualWorkForm({ title: query }));
         }
       } else {
         setSearchError(locale === "da" ? "Søgningen mislykkedes." : "The search failed.");
@@ -301,7 +317,12 @@ export function AddWorkModal({
 
       const isSeries = result.type === "tv-serie" || result.type === "dokumentar-serie";
       if (isSeries) {
-        const detRes = await resolveUnifiedSearchResultDetails(result);
+        const lookup = await runWithLookupDeadline(() => resolveUnifiedSearchResultDetails(result));
+        if (lookup.status !== "success") {
+          setEpisodesError(locale === "da" ? "Eksterne kilder svarede ikke. Brug manuel sæson og afsnit." : "External sources did not respond. Use manual season and episode entry.");
+          return;
+        }
+        const detRes = lookup.value;
         if (detRes.success && detRes.details) {
           const d = detRes.details;
           const options = d.episode_options || [];
@@ -431,8 +452,22 @@ export function AddWorkModal({
           return;
         } else {
           setDetailsLoading(true);
-          const detailsRes = await resolveUnifiedSearchResultDetails(u);
+          const lookup = await runWithLookupDeadline(() => resolveUnifiedSearchResultDetails(u));
           setDetailsLoading(false);
+          if (lookup.status !== "success") {
+            setManualMode(true);
+            setManualWork(emptyManualWorkForm({
+              title: u.title,
+              type: u.type ?? "spillefilm",
+              year: u.year ? String(u.year) : "",
+              director: u.director ?? "",
+            }));
+            setSearchError(locale === "da"
+              ? "Eksterne kilder svarede ikke. Kontrollér de manuelle værksdata og gem igen."
+              : "External sources did not respond. Review the manual work details and save again.");
+            return;
+          }
+          const detailsRes = lookup.value;
           if (!detailsRes.success || !detailsRes.details) {
             throw new Error(locale === "da" ? "Kunne ikke hente detaljer for det valgte værk." : "Could not fetch details for selected work.");
           }
@@ -511,7 +546,7 @@ export function AddWorkModal({
             setSelectedEpisodes([]);
           }}
         />
-        {!episodesLoading && detectedEpisodeCount === null && !episodesError && (
+        {!episodesLoading && detectedEpisodeCount === null && (
           <div className="space-y-1.5">
             <Label className="text-sm font-medium text-gray-500">{t("works.episode")}</Label>
             <Input type="number" min="1" placeholder="1" value={addEpisode} onChange={e => setAddEpisode(e.target.value)} />

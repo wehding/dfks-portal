@@ -4,7 +4,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDB, getTMDBWorkDetails, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
+import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDBWithStatus, getTMDBWorkDetails, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { getDFIFilmDetails, normalizeDfiSeriesResults, searchDFIFilms } from "@/app/actions/dfi";
 import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
@@ -29,6 +29,7 @@ import { ensureMemberCollaborationReviews, markCollaborationReviewsCoeditorsRepo
 import { collaborationReviewStatusForSoloClaim } from "@/lib/work-collaboration-review";
 import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
+import { INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS, runExternalLookup, type ExternalLookupStatus } from "@/lib/external-lookup";
 
 import { requireMemberContext } from "@/lib/org";
 
@@ -1809,9 +1810,15 @@ export type UnifiedSearchWorkResult = {
   raw_tmdb?: any;
 };
 
-export async function searchWorksUnified(query: string, options: { preferLocalOnly?: boolean } = {}) {
+export type UnifiedWorkSearchResponse = {
+  success: true;
+  results: UnifiedSearchWorkResult[];
+  externalLookup: Record<"dfi" | "tmdb", ExternalLookupStatus>;
+};
+
+export async function searchWorksUnified(query: string, options: { preferLocalOnly?: boolean } = {}): Promise<UnifiedWorkSearchResponse> {
   const q = query.trim();
-  if (!q) return { success: true, results: [] };
+  if (!q) return { success: true, results: [], externalLookup: { dfi: "success", tmdb: "success" } };
 
   const db = createServiceClient();
   const user = await currentUser();
@@ -1927,17 +1934,30 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
   if (options.preferLocalOnly && results.length > 0) {
     results.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
-    return { success: true, results };
+    return { success: true, results, externalLookup: { dfi: "success", tmdb: "success" } };
   }
 
-  // Fetch in parallel: DFI, TMDB
-  const [dfiRes, tmdbRes] = await Promise.all([
-    searchDFIFilms(q).catch(() => ({ success: false, results: [] })),
-    searchTMDB(q).catch(() => []),
+  // Hele kildearbejdet har én kort interaktiv deadline. Det omfatter også
+  // DFI's serie-normalisering, som ellers kan hente flere forældreværker.
+  const [dfiLookup, tmdbLookup] = await Promise.all([
+    runExternalLookup("dfi", async () => {
+      const response = await searchDFIFilms(q, { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS });
+      if (!response.success && response.error !== "Ingen film fundet.") throw new Error(response.error ?? "DFI-opslag fejlede");
+      return normalizeDfiSeriesResults((response.success ? response.results ?? [] : []) as any[], { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS });
+    }),
+    runExternalLookup("tmdb", async () => {
+      const response = await searchTMDBWithStatus(q, { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS, retry: false });
+      if (!response.success) throw new Error(response.error);
+      return response.results;
+    }),
   ]);
 
-  const dfiFilms = await normalizeDfiSeriesResults((dfiRes.success ? dfiRes.results ?? [] : []) as any[]);
-  const tmdbItems = (Array.isArray(tmdbRes) ? tmdbRes : []) as any[];
+  const dfiFilms = dfiLookup.status === "success" ? dfiLookup.value : [];
+  const tmdbItems = (tmdbLookup.status === "success" ? tmdbLookup.value : []) as any[];
+  const externalLookup: Record<"dfi" | "tmdb", ExternalLookupStatus> = {
+    dfi: dfiLookup.status,
+    tmdb: tmdbLookup.status,
+  };
 
   // 2. Merge DFI results
   dfiFilms.forEach((film: any) => {
@@ -2027,7 +2047,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
   });
 
   results.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
-  return { success: true, results };
+  return { success: true, results, externalLookup };
 }
 
 export async function searchRightsHoldersForMember(query: string) {

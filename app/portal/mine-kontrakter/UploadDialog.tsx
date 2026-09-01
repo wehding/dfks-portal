@@ -19,6 +19,7 @@ import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { createClientId } from "@/lib/client-id";
 import { MemberDriveConnections } from "@/components/portal/member-drive-connections";
+import { externalLookupWarning, runWithLookupDeadline } from "@/lib/external-lookup";
 
 const MAX_FILES = 15;
 
@@ -201,8 +202,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       setPickerEpisodesLoading(true);
       setPickerEpisodesError(null);
       try {
-        const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedResult, sNum);
+        const lookup = await runWithLookupDeadline(() => resolveUnifiedSearchResultDetails(pickedUnifiedResult, sNum));
         if (cancelled) return;
+        if (lookup.status !== "success") {
+          setPickerEpisodeOptions([]);
+          setPickerEpisodesError(`Eksterne kilder svarede ikke. Indtast sæson ${sNum} og afsnit manuelt.`);
+          return;
+        }
+        const detailsRes = lookup.value;
         const details = detailsRes.success ? detailsRes.details : null;
         const options = (details?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
         const count = Math.max(details?.episode_count ?? 0, options.length);
@@ -337,6 +344,12 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       }
       const results = result.results ?? [];
       setUnifiedResults(results);
+      const warning = externalLookupWarning(result.externalLookup, "da");
+      if (warning) setSearchError(warning);
+      if (!results.length && warning) {
+        setManualMode(true);
+        setManualWork(emptyManualWorkForm({ title: query }));
+      }
       // AI-typen sættes som første forslag før den automatiske søgning.
       // Ved manuelle søgninger bevares brugerens aktuelle typevalg.
       if (preferredTypeOverride) setTypeFilter(preferredTypeOverride);
@@ -544,7 +557,18 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       return { success: true as const, workId: contractWorkId, pending: Boolean(linked.pending) };
     }
 
-    const detailsResult = await resolveUnifiedSearchResultDetails(pickedUnifiedResult);
+    const lookup = await runWithLookupDeadline(() => resolveUnifiedSearchResultDetails(pickedUnifiedResult));
+    if (lookup.status !== "success") {
+      setManualMode(true);
+      setManualWork(emptyManualWorkForm({
+        title: pickedUnifiedResult.title,
+        type: pickedUnifiedResult.type ?? "spillefilm",
+        year: pickedUnifiedResult.year ? String(pickedUnifiedResult.year) : "",
+        director: pickedUnifiedResult.director ?? "",
+      }));
+      return { success: false as const, error: "Eksterne kilder svarede ikke. Kontrollér de manuelle værksdata og prøv igen." };
+    }
+    const detailsResult = lookup.value;
     if (!detailsResult.success || !detailsResult.details) {
       return { success: false as const, error: "Kunne ikke hente detaljer for det valgte værk." };
     }
