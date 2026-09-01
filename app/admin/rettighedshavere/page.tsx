@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Fragment, type ReactNode } from "react"
 import Image from "next/image"
 import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
@@ -163,10 +163,13 @@ export default function RettighedshavereAdminPage() {
     const [loading, setLoading] = useState(true)
     const [loadingMore, setLoadingMore] = useState(false)
     const loadAllPromiseRef = useRef<Promise<void> | null>(null)
+    const loadRequestRef = useRef(0)
+    const searchReadyRef = useRef(false)
+    const lastLoadedSearchRef = useRef<string | null>(null)
     const [expandedRightsHolderId, setExpandedRightsHolderId] = useState<string | null>(null)
     const [hasMore, setHasMore] = useState(false)
+    const [filteredResultCount, setFilteredResultCount] = useState(0)
     const [search, setSearch] = useState("")
-    useEffect(() => { setSearch(new URLSearchParams(window.location.search).get("search") ?? "") }, [])
     const [filter, setFilter] = useState<Filter>("alle")
     const [sortKey, setSortKey] = useState<SortKey>("name")
     const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
@@ -220,40 +223,58 @@ export default function RettighedshavereAdminPage() {
     const [importSortKey, setImportSortKey] = useState<ImportSortKey>("name")
     const [importSortDirection, setImportSortDirection] = useState<"asc" | "desc">("asc")
 
-    useEffect(() => {
-        void load().then(result => {
-            if (!result) return
-            void loadDfksMembers(result.orgId)
-            void refreshMemberSyncStatus()
-        })
-    }, [])
-
-    async function load() {
+    const load = useCallback(async (query: string, includeSummary = true) => {
+        const requestId = ++loadRequestRef.current
         setLoading(true)
         try {
-            const result = await getAdminRightsHolders()
+            const result = await getAdminRightsHolders({ search: query, includeSummary })
+            if (requestId !== loadRequestRef.current) return null
             setRows(result.rows)
             setCountsByRightsHolder(result.countsByRightsHolder)
             setOrgId(result.orgId)
             setCanSeeAllOrganisations(result.canSeeAllOrganisations)
             setHasMore(result.hasMore)
-            setRightsHolderSummary(result.summary)
+            setFilteredResultCount(result.filteredCount)
+            lastLoadedSearchRef.current = query
+            if (result.summary) setRightsHolderSummary(result.summary)
             return result
         } catch (error) {
             toast.error(errorMessage(error))
             return null
         } finally {
-            setLoading(false)
+            if (requestId === loadRequestRef.current) setLoading(false)
         }
-    }
+    }, [])
+
+    useEffect(() => {
+        const initialSearch = new URLSearchParams(window.location.search).get("search") ?? ""
+        setSearch(initialSearch)
+        void load(initialSearch, true).then(result => {
+            if (!result) return
+            void loadDfksMembers(result.orgId)
+            void refreshMemberSyncStatus()
+        }).finally(() => {
+            searchReadyRef.current = true
+        })
+    }, [load])
+
+    useEffect(() => {
+        if (!searchReadyRef.current) return
+        if (search.trim() === lastLoadedSearchRef.current) return
+        const timer = window.setTimeout(() => {
+            void load(search.trim(), false)
+        }, 300)
+        return () => window.clearTimeout(timer)
+    }, [load, search])
 
     async function loadMore() {
         setLoadingMore(true)
         try {
-            const result = await getAdminRightsHolders({ offset: rows.length, limit: 100 })
+            const result = await getAdminRightsHolders({ offset: rows.length, limit: 100, search: search.trim(), includeSummary: false })
             setRows(current => [...current, ...result.rows.filter(row => !current.some(existing => existing.id === row.id))])
             setCountsByRightsHolder(current => ({ ...current, ...result.countsByRightsHolder }))
             setHasMore(result.hasMore)
+            setFilteredResultCount(result.filteredCount)
         } catch (error) {
             toast.error(errorMessage(error))
         } finally { setLoadingMore(false) }
@@ -268,7 +289,7 @@ export default function RettighedshavereAdminPage() {
                 let accumulatedCounts = { ...countsByRightsHolder }
                 let more = hasMore
                 while (more) {
-                    const result = await getAdminRightsHolders({ offset: accumulatedRows.length, limit: 200 })
+                    const result = await getAdminRightsHolders({ offset: accumulatedRows.length, limit: 200, search: search.trim(), includeSummary: false })
                     accumulatedRows = [...accumulatedRows, ...result.rows.filter(row => !accumulatedRows.some(existing => existing.id === row.id))]
                     accumulatedCounts = { ...accumulatedCounts, ...result.countsByRightsHolder }
                     more = result.hasMore
@@ -372,7 +393,7 @@ export default function RettighedshavereAdminPage() {
         toast.success(`${result.created} oprettet, ${result.updated} opdateret, ${result.skipped} sprunget over`)
         setImportOpen(false)
         setSelectedImportIds(new Set())
-        await load()
+        await load(search.trim())
         await refreshMemberSyncStatus()
     }
 
@@ -567,7 +588,7 @@ export default function RettighedshavereAdminPage() {
                 else if (json) toast.warning("Oprettet, men invitationsmailen kunne ikke sendes.")
             }
             setCreateSaving(false)
-            setCreateOpen(false); load()
+            setCreateOpen(false); void load(search.trim())
         } else {
             setCreateSaving(false)
             toast.error(result.error ?? "Kunne ikke oprette rettighedshaver")
@@ -622,7 +643,7 @@ export default function RettighedshavereAdminPage() {
         if (sent < targets.length) {
             toast.warning(`${targets.length - sent} adgangslink(s) blev ikke sendt${emailErrors[0] ? `: ${emailErrors[0]}` : "."}`)
         }
-        load()
+        void load(search.trim())
     }
 
     function handleArchiveSelected() {
@@ -644,7 +665,7 @@ export default function RettighedshavereAdminPage() {
             toast.warning(`${result.blocked.length} kunne ikke arkiveres: ${result.blocked.slice(0, 3).map(item => item.name).join(", ")}`)
         }
         setSelectedIds(new Set())
-        await load()
+        await load(search.trim())
     }
 
     async function handleRestoreSelected() {
@@ -658,7 +679,7 @@ export default function RettighedshavereAdminPage() {
         }
         toast.success(`${result.restoredCount} rettighedshaver(e) gendannet`)
         setSelectedIds(new Set())
-        await load()
+        await load(search.trim())
     }
 
     async function handlePermanentDeleteSelected() {
@@ -677,7 +698,7 @@ export default function RettighedshavereAdminPage() {
         setPermanentDeleteOpen(false)
         setDeleteConfirmation("")
         setSelectedIds(new Set())
-        await load()
+        await load(search.trim())
     }
 
     function openEdit(rh: RettighedshaverWithAffiliation) {
@@ -754,7 +775,7 @@ export default function RettighedshavereAdminPage() {
         setEditSaving(false)
         toast.success("Gemt")
         setEditTarget(null)
-        load()
+        void load(search.trim())
     }
 
     async function handleOnboardingAction() {
@@ -772,7 +793,7 @@ export default function RettighedshavereAdminPage() {
         window.dispatchEvent(new Event("onboarding-requirement-changed"))
         setOnboardingAction(null)
         setEditTarget(null)
-        await load()
+        await load(search.trim())
     }
 
     async function toggleMember(rh: RettighedshaverWithAffiliation) {
@@ -782,7 +803,7 @@ export default function RettighedshavereAdminPage() {
         await setMemberStatus(rh.id, orgId, next, aff?.member_no ?? undefined)
         if (!next) await setAffiliationEnd(rh.id, orgId, new Date().toISOString().slice(0, 10))
         toast.success(next ? `${rh.full_name} er nu medlem` : `${rh.full_name} er udmeldt`)
-        load()
+        void load(search.trim())
     }
 
     async function handlePortalAction() {
@@ -891,7 +912,7 @@ export default function RettighedshavereAdminPage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <div className="relative w-full sm:max-w-xs">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg navn, email, telefon..." className="pl-8" value={search} onChange={e => { setSearch(e.target.value); if (e.target.value.trim() && hasMore) void loadAllRightsHolders() }} />
+                    <Input placeholder="Søg navn, email, telefon eller medlemsnummer..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
                     {search && <button type="button" aria-label="Ryd søgning" className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSearch("")}><X className="h-4 w-4" /></button>}
                 </div>
                 <Select value={filter} onValueChange={v => applyListFilter(v as Filter)}>
@@ -920,7 +941,7 @@ export default function RettighedshavereAdminPage() {
             </div>
 
             <ListResultSummary
-                filteredCount={visible.length}
+                filteredCount={filter === "alle" ? filteredResultCount : visible.length}
                 totalCount={Math.max(rightsHolderSummary.total, visible.length)}
                 selectedCount={selectedIds.size}
                 loading={loadingMore}
@@ -1127,7 +1148,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await restoreRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver gendannet")
-                                                            if (orgId) load()
+                                                            if (orgId) void load(search.trim())
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke gendanne")
                                                         }
@@ -1152,7 +1173,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await restoreRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver gendannet")
-                                                            if (orgId) load()
+                                                            if (orgId) void load(search.trim())
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke gendanne")
                                                         }
@@ -1164,7 +1185,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await archiveRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver arkiveret")
-                                                            if (orgId) load()
+                                                            if (orgId) void load(search.trim())
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke arkivere")
                                                         }
