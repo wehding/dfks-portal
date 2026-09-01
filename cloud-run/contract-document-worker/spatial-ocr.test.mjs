@@ -9,6 +9,7 @@ import sharp from "sharp";
 import {
   LEGACY_SPATIAL_VERIFICATION_PROFILE,
   SPATIAL_VERIFICATION_PROFILE,
+  V2_SPATIAL_VERIFICATION_PROFILE,
   canonicaliseSpatialGeometryPage,
   classifyOcrDocument,
   classifyPageText,
@@ -1166,6 +1167,276 @@ test("geometrisk præcision måles mod PDF-tekstlaget", () => {
   assert.equal(result.matchCoverage, 1);
   assert.equal(result.score, 1);
   assert.equal(result.medianIou, 1);
+});
+
+function shortTokenHorizontalScaleFixture({
+  token = "i",
+  actualToken = token,
+  confidence = 0.95,
+  target = { xMin: 20, yMin: 10, xMax: 30, yMax: 20 },
+  actual = { xMin: 14.25, yMin: 10, xMax: 35.75, yMax: 20 },
+  anchorY = 10,
+} = {}) {
+  const geometryWords = [{
+    text: token,
+    confidence,
+    vertices: [
+      { x: target.xMin, y: target.yMin }, { x: target.xMax, y: target.yMin },
+      { x: target.xMax, y: target.yMax }, { x: target.xMin, y: target.yMax },
+    ],
+  }];
+  const extractedWords = [{ text: actualToken, ...actual }];
+  for (let index = 0; index < 49; index += 1) {
+    const yMin = index === 0 ? anchorY : 40 + index * 20;
+    const yMax = yMin + 10;
+    const xMin = index === 0 ? 40 : 80;
+    const xMax = index === 0 ? 70 : 120;
+    const text = `Anker${index}`;
+    geometryWords.push({
+      text,
+      confidence: 0.99,
+      vertices: [
+        { x: xMin, y: yMin }, { x: xMax, y: yMin },
+        { x: xMax, y: yMax }, { x: xMin, y: yMax },
+      ],
+    });
+    extractedWords.push({ text, xMin, yMin, xMax, yMax });
+  }
+  return {
+    geometry: [{
+      pageNumber: 1,
+      imageWidth: 160,
+      imageHeight: 1100,
+      words: geometryWords,
+    }],
+    extracted: [{ width: 160, height: 1100, words: extractedWords }],
+  };
+}
+
+test("v3 accepterer kun det kendte korte Poppler-breddeartefakt og bevarer v2", () => {
+  const { geometry, extracted } = shortTokenHorizontalScaleFixture();
+  const v2 = computeSpatialAccuracy(geometry, extracted, V2_SPATIAL_VERIFICATION_PROFILE);
+  const v3 = computeSpatialAccuracy(geometry, extracted, SPATIAL_VERIFICATION_PROFILE);
+
+  assert.deepEqual(v2, {
+    expectedWords: 50,
+    matchedWords: 50,
+    measurableWords: 50,
+    matchCoverage: 1,
+    score: 49 / 50,
+    medianIou: 1,
+    centerInsideRatio: 1,
+    passed: true,
+  });
+  assert.equal(v3.score, 1);
+  assert.equal(v3.centerInsideRatio, 1);
+  assert.equal(v3.passed, true);
+});
+
+test("v3 løfter den verificerede 150-token fixture uden at ændre IoU-målingerne", () => {
+  const geometryWords = [];
+  const extractedWords = [];
+  for (let index = 0; index < 128; index += 1) {
+    const yMin = 20 + index * 12;
+    const text = `Eksakt${index}`;
+    geometryWords.push({
+      text,
+      confidence: 0.99,
+      vertices: [
+        { x: 100, y: yMin }, { x: 140, y: yMin },
+        { x: 140, y: yMin + 8 }, { x: 100, y: yMin + 8 },
+      ],
+    });
+    extractedWords.push({ text, xMin: 100, yMin, xMax: 140, yMax: yMin + 8 });
+  }
+  for (let index = 0; index < 11; index += 1) {
+    const yMin = 1600 + index * 14;
+    const token = `x${index}`;
+    geometryWords.push({
+      text: token,
+      confidence: 0.948 + index * 0.003,
+      vertices: [
+        { x: 20, y: yMin }, { x: 30, y: yMin },
+        { x: 30, y: yMin + 10 }, { x: 20, y: yMin + 10 },
+      ],
+    }, {
+      text: `Nabo${index}`,
+      confidence: 0.99,
+      vertices: [
+        { x: 40, y: yMin }, { x: 70, y: yMin },
+        { x: 70, y: yMin + 10 }, { x: 40, y: yMin + 10 },
+      ],
+    });
+    extractedWords.push({
+      text: token, xMin: 14.25, yMin, xMax: 35.75, yMax: yMin + 10,
+    }, {
+      text: `Nabo${index}`, xMin: 40, yMin, xMax: 70, yMax: yMin + 10,
+    });
+  }
+  const geometry = [{
+    pageNumber: 1, imageWidth: 180, imageHeight: 1800, words: geometryWords,
+  }];
+  const extracted = [{ width: 180, height: 1800, words: extractedWords }];
+  const v2 = computeSpatialAccuracy(geometry, extracted, V2_SPATIAL_VERIFICATION_PROFILE);
+  const v3 = computeSpatialAccuracy(geometry, extracted, SPATIAL_VERIFICATION_PROFILE);
+
+  assert.equal(v2.expectedWords, 150);
+  assert.equal(v2.matchedWords, 150);
+  assert.equal(v2.score, 139 / 150);
+  assert.equal(v2.centerInsideRatio, 1);
+  assert.equal(v2.passed, false);
+  assert.equal(v3.score, 1);
+  assert.equal(v3.centerInsideRatio, 1);
+  assert.equal(v3.medianIou, v2.medianIou);
+  assert.equal(v3.passed, true);
+});
+
+test("v3 afviser lav confidence, forkert center, højde, bredde, lang og forkert tekst", () => {
+  const cases = [
+    shortTokenHorizontalScaleFixture({ confidence: 0.899 }),
+    shortTokenHorizontalScaleFixture({
+      actual: { xMin: 31, yMin: 10, xMax: 52.5, yMax: 20 },
+    }),
+    shortTokenHorizontalScaleFixture({
+      actual: { xMin: 23.8, yMin: 10, xMax: 33.8, yMax: 20 },
+    }),
+    shortTokenHorizontalScaleFixture({
+      actual: { xMin: 14.25, yMin: 12, xMax: 35.75, yMax: 18 },
+    }),
+    shortTokenHorizontalScaleFixture({
+      actual: { xMin: 13.5, yMin: 10, xMax: 36.5, yMax: 20 },
+    }),
+    shortTokenHorizontalScaleFixture({ token: "femte" }),
+    shortTokenHorizontalScaleFixture({ actualToken: "x" }),
+  ];
+  for (const { geometry, extracted } of cases) {
+    const result = computeSpatialAccuracy(geometry, extracted, SPATIAL_VERIFICATION_PROFILE);
+    assert.notEqual(result.score, 1);
+  }
+});
+
+test("v3 kræver entydigt 1:1 tekstmatch og en pålidelig nabo på samme linje", () => {
+  const withoutNeighbour = shortTokenHorizontalScaleFixture({ anchorY: 80 });
+  assert.notEqual(computeSpatialAccuracy(
+    withoutNeighbour.geometry,
+    withoutNeighbour.extracted,
+    SPATIAL_VERIFICATION_PROFILE,
+  ).score, 1);
+
+  const ambiguous = shortTokenHorizontalScaleFixture();
+  ambiguous.geometry[0].words.push({
+    ...ambiguous.geometry[0].words[0],
+    vertices: [
+      { x: 20, y: 10 }, { x: 30, y: 10 },
+      { x: 30, y: 20 }, { x: 20, y: 20 },
+    ],
+  });
+  ambiguous.extracted[0].words.push({
+    text: "i", xMin: 14.25, yMin: 10, xMax: 35.75, yMax: 20,
+  });
+  assert.notEqual(computeSpatialAccuracy(
+    ambiguous.geometry,
+    ambiguous.extracted,
+    SPATIAL_VERIFICATION_PROFILE,
+  ).score, 1);
+});
+
+test("v3 begrænser breddeundtagelsen til højst tolv tokens pr. side", () => {
+  const geometryWords = [];
+  const extractedWords = [];
+  for (let index = 0; index < 13; index += 1) {
+    const yMin = 10 + index * 15;
+    const token = `x${index}`;
+    const anchor = `Nabo${index}`;
+    geometryWords.push({
+      text: token,
+      confidence: 0.96,
+      vertices: [
+        { x: 20, y: yMin }, { x: 30, y: yMin },
+        { x: 30, y: yMin + 10 }, { x: 20, y: yMin + 10 },
+      ],
+    }, {
+      text: anchor,
+      confidence: 0.99,
+      vertices: [
+        { x: 40, y: yMin }, { x: 70, y: yMin },
+        { x: 70, y: yMin + 10 }, { x: 40, y: yMin + 10 },
+      ],
+    });
+    extractedWords.push({
+      text: token, xMin: 14.25, yMin, xMax: 35.75, yMax: yMin + 10,
+    }, {
+      text: anchor, xMin: 40, yMin, xMax: 70, yMax: yMin + 10,
+    });
+  }
+  for (let index = 0; index < 150; index += 1) {
+    const yMin = 250 + index * 8;
+    const text = `Eksakt${index}`;
+    geometryWords.push({
+      text,
+      confidence: 0.99,
+      vertices: [
+        { x: 20, y: yMin }, { x: 60, y: yMin },
+        { x: 60, y: yMin + 6 }, { x: 20, y: yMin + 6 },
+      ],
+    });
+    extractedWords.push({ text, xMin: 20, yMin, xMax: 60, yMax: yMin + 6 });
+  }
+  const result = computeSpatialAccuracy([{
+    pageNumber: 1, imageWidth: 100, imageHeight: 1500, words: geometryWords,
+  }], [{ width: 100, height: 1500, words: extractedWords }], SPATIAL_VERIFICATION_PROFILE);
+  assert.equal(result.expectedWords, 176);
+  assert.equal(result.score, 163 / 176);
+  assert.notEqual(result.score, 1);
+});
+
+test("v3 begrænser breddeundtagelsen til højst otte procent af en side", () => {
+  const geometryWords = [];
+  const extractedWords = [];
+  for (let index = 0; index < 5; index += 1) {
+    const yMin = 10 + index * 15;
+    const token = `x${index}`;
+    const anchor = `Nabo${index}`;
+    geometryWords.push({
+      text: token,
+      confidence: 0.96,
+      vertices: [
+        { x: 20, y: yMin }, { x: 30, y: yMin },
+        { x: 30, y: yMin + 10 }, { x: 20, y: yMin + 10 },
+      ],
+    }, {
+      text: anchor,
+      confidence: 0.99,
+      vertices: [
+        { x: 40, y: yMin }, { x: 70, y: yMin },
+        { x: 70, y: yMin + 10 }, { x: 40, y: yMin + 10 },
+      ],
+    });
+    extractedWords.push({
+      text: token, xMin: 14.25, yMin, xMax: 35.75, yMax: yMin + 10,
+    }, {
+      text: anchor, xMin: 40, yMin, xMax: 70, yMax: yMin + 10,
+    });
+  }
+  for (let index = 0; index < 40; index += 1) {
+    const yMin = 100 + index * 10;
+    const text = `Eksakt${index}`;
+    geometryWords.push({
+      text,
+      confidence: 0.99,
+      vertices: [
+        { x: 20, y: yMin }, { x: 60, y: yMin },
+        { x: 60, y: yMin + 8 }, { x: 20, y: yMin + 8 },
+      ],
+    });
+    extractedWords.push({ text, xMin: 20, yMin, xMax: 60, yMax: yMin + 8 });
+  }
+  const result = computeSpatialAccuracy([{
+    pageNumber: 1, imageWidth: 100, imageHeight: 520, words: geometryWords,
+  }], [{ width: 100, height: 520, words: extractedWords }], SPATIAL_VERIFICATION_PROFILE);
+  assert.equal(result.expectedWords, 50);
+  assert.equal(result.score, 45 / 50);
+  assert.equal(result.passed, false);
 });
 
 test("gentagne ord matches samlet i stedet for med en grådig kaskade", () => {

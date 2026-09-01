@@ -9,6 +9,8 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import {
   SPATIAL_VERIFICATION_PROFILE,
+  V2_SPATIAL_VERIFICATION_PROFILE,
+  computeSpatialAccuracy,
 } from "../cloud-run/contract-document-worker/spatial-ocr.mjs";
 
 import {
@@ -836,6 +838,86 @@ test("direkte Vision v3 kræver en allowlistet spatial-verifikationsprofil når 
     completedAt: "2026-09-01T12:00:00.000Z",
   }));
   assert.equal(currentBeforeCutover.violations.invalidSpatialArtifact, 0);
+});
+
+test("audit accepterer historisk v2 og genberegner med artefaktets eksakte profil", async () => {
+  const original = await pdf(1);
+  const output = await pdf(1);
+  const input = fixture({
+    original,
+    output,
+    expectedPages: 1,
+    direct: true,
+    directSpatialVerificationProfile: V2_SPATIAL_VERIFICATION_PROFILE,
+  });
+  const geometryWords = [];
+  const extractedWords = [];
+  for (let index = 0; index < 100; index += 1) {
+    const isScaled = index < 5;
+    const isAnchor = index >= 5 && index < 10;
+    const pairIndex = isAnchor ? index - 5 : index;
+    const text = isScaled ? `x${index}` : isAnchor ? `Nabo${pairIndex}` : `Ord${index}`;
+    const yMin = index < 10 ? 10 + pairIndex * 15 : 100 + index * 10;
+    const xMin = isAnchor ? 40 : 20;
+    const xMax = isAnchor ? 70 : 30;
+    geometryWords.push({
+      text,
+      confidence: 0.96,
+      vertices: [
+        { x: xMin, y: yMin }, { x: xMax, y: yMin },
+        { x: xMax, y: yMin + 8 }, { x: xMin, y: yMin + 8 },
+      ],
+    });
+    extractedWords.push(isScaled
+      ? { text, xMin: 14.25, yMin, xMax: 35.75, yMax: yMin + 8 }
+      : { text, xMin, yMin, xMax, yMax: yMin + 8 });
+  }
+  const geometryPages = [{
+    pageNumber: 1,
+    sourceImageWidth: 100,
+    sourceImageHeight: 1200,
+    imageWidth: 100,
+    imageHeight: 1200,
+    orientationCorrection: 0,
+    words: geometryWords,
+  }];
+  const extractedPages = [{ width: 100, height: 1200, words: extractedWords }];
+  const storedV2Metrics = computeSpatialAccuracy(
+    geometryPages,
+    extractedPages,
+    V2_SPATIAL_VERIFICATION_PROFILE,
+  );
+  assert.equal(storedV2Metrics.passed, true);
+  assert.equal(storedV2Metrics.score, 0.95);
+
+  const spatialPath = input.jobs[0].spatial_data_path;
+  const originalReader = input.readStorage;
+  const geometry = JSON.parse(gunzipSync(await originalReader(spatialPath)).toString("utf8"));
+  geometry.pages = geometryPages;
+  geometry.spatialVerification = storedV2Metrics;
+  const v2Artifact = gzipSync(Buffer.from(JSON.stringify(geometry)));
+  input.jobs[0].spatial_sha256 = sha256(v2Artifact);
+  input.readStorage = async (path) => path === spatialPath ? v2Artifact : originalReader(path);
+  input.extractBboxPages = async () => extractedPages;
+
+  const historical = await auditCompletedJobs(input);
+  assert.equal(historical.violations.invalidSpatialArtifact, 0);
+  assert.equal(historical.violations.spatialMetricMismatch, 0);
+  assert.equal(historical.violations.spatialIndependentVerificationFailure, 0);
+  assert.equal(historical.documentsPassingAllChecks, 1);
+
+  geometry.spatialVerificationProfile = SPATIAL_VERIFICATION_PROFILE;
+  const falselyRelabelledArtifact = gzipSync(Buffer.from(JSON.stringify(geometry)));
+  const relabelled = await auditCompletedJobs({
+    ...input,
+    jobs: [{ ...input.jobs[0], spatial_sha256: sha256(falselyRelabelledArtifact) }],
+    readStorage: async (path) => path === spatialPath
+      ? falselyRelabelledArtifact
+      : originalReader(path),
+  });
+  assert.equal(relabelled.violations.invalidSpatialArtifact, 0);
+  assert.equal(relabelled.violations.spatialMetricMismatch, 1);
+  assert.equal(relabelled.documentsPassingAllChecks, 0);
 });
 
 test("v3 uden profil genberegnes med præcis legacy-matcher uden nye geometrigates", async () => {

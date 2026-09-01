@@ -47,10 +47,14 @@ const MAX_EXACT_ASSIGNMENT_WORDS_PER_GROUP = 128;
 const MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE = 2_000_000;
 // Existing v3 artefacts were verified with the original three-token matcher.
 // They have no persisted profile and must remain reproducible at audit time.
-// New artefacts explicitly opt into the stricter, bounded matcher.
+// Every later profile is immutable: v2 remains the exact bounded matcher that
+// produced historical artefacts, while v3 adds one narrowly-scoped Poppler
+// 22.12 horizontal-scaling tolerance for short, high-confidence tokens.
 export const LEGACY_SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-legacy-v1";
-export const SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v2-poppler22.12";
+export const V2_SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v2-poppler22.12";
+export const SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v3-short-token-width-poppler22.12";
 export const ALLOWED_SPATIAL_VERIFICATION_PROFILES = Object.freeze([
+  V2_SPATIAL_VERIFICATION_PROFILE,
   SPATIAL_VERIFICATION_PROFILE,
 ]);
 const SPATIAL_MATCHER_CONFIG = Object.freeze({
@@ -58,15 +62,46 @@ const SPATIAL_MATCHER_CONFIG = Object.freeze({
     maxJoinedTokens: 3,
     maxJoinedTokenChars: null,
     requireJoinedTokenGeometry: false,
+    allowShortTokenHorizontalScaling: false,
+  }),
+  [V2_SPATIAL_VERIFICATION_PROFILE]: Object.freeze({
+    maxJoinedTokens: 8,
+    maxJoinedTokenChars: 96,
+    requireJoinedTokenGeometry: true,
+    allowShortTokenHorizontalScaling: false,
   }),
   [SPATIAL_VERIFICATION_PROFILE]: Object.freeze({
     maxJoinedTokens: 8,
     maxJoinedTokenChars: 96,
     requireJoinedTokenGeometry: true,
+    allowShortTokenHorizontalScaling: true,
   }),
 });
 const MIN_JOINED_TOKEN_VERTICAL_OVERLAP_RATIO = 0.5;
 const MAX_JOINED_TOKEN_GAP_HEIGHT_RATIO = 1.5;
+// A hash-bound 150-token artefact showed eleven one-to-four-character tokens
+// with exact text, confidence 0.948-0.979 and correct centres/heights, while
+// Poppler 22.12 widened only their horizontal bbox (IoU 0.46-0.71). These
+// limits recognise only that representation artefact; the ordinary 0.75 IoU
+// gate and every text-matching rule remain unchanged.
+const MAX_HORIZONTAL_SCALE_TOKEN_LENGTH = 4;
+const MIN_HORIZONTAL_SCALE_VISION_CONFIDENCE = 0.9;
+const MIN_HORIZONTAL_SCALE_IOU = 0.45;
+const MIN_HORIZONTAL_SCALE_VERTICAL_OVERLAP_RATIO = 0.9;
+const MIN_HORIZONTAL_SCALE_HEIGHT_RATIO = 0.9;
+const MAX_HORIZONTAL_SCALE_VERTICAL_CENTER_DELTA_RATIO = 0.05;
+const MAX_HORIZONTAL_SCALE_HORIZONTAL_CENTER_DELTA_RATIO = 0.3;
+const MAX_HORIZONTAL_SCALE_WIDTH_RATIO = 2.2;
+const MIN_HORIZONTAL_SCALE_NEIGHBOUR_IOU = 0.75;
+const MIN_HORIZONTAL_SCALE_NEIGHBOUR_LINE_OVERLAP_RATIO = 0.8;
+const MAX_HORIZONTAL_SCALE_NEIGHBOUR_GAP_HEIGHT_RATIO = 4;
+const MAX_HORIZONTAL_SCALE_NEIGHBOUR_CANDIDATES = 16;
+const MAX_HORIZONTAL_SCALE_ASSIGNMENT_GROUP_SIZE = MAX_EXACT_ASSIGNMENT_WORDS_PER_GROUP;
+const MIN_HORIZONTAL_SCALE_PAGE_WORDS = 50;
+const MAX_HORIZONTAL_SCALE_TOKENS_PER_PAGE = 12;
+const MAX_HORIZONTAL_SCALE_TOKEN_RATIO_PER_PAGE = 0.08;
+const MIN_HORIZONTAL_SCALE_ORDINARY_PLACEMENT_RATIO = 0.9;
+const MIN_HORIZONTAL_SCALE_PAGE_MEDIAN_IOU = 0.95;
 const MAX_UNREADABLE_RECOVERY_PAGES = 4;
 const MAX_ORIENTATION_RECOVERY_PAGES = 4;
 const MIN_ORIENTATION_RECOVERY_VARIANTS = 2;
@@ -903,6 +938,169 @@ function geometricallyAdjacent(previous, next) {
   return next.xMin - previous.xMax <= maximumGap;
 }
 
+function centersAlignedForGeometry(target, actualBox, polygon = null) {
+  const actualCenter = boxCenter(actualBox);
+  const expectedCenter = polygon ? polygonCenter(polygon) : boxCenter(target);
+  return polygon
+    ? pointInPolygonInclusive(actualCenter, polygon)
+      || pointInAxisBoxInclusive(expectedCenter, actualBox)
+    : pointInAxisBoxInclusive(actualCenter, target)
+      || pointInAxisBoxInclusive(expectedCenter, actualBox);
+}
+
+function boxCenterDistance(first, second) {
+  const firstCenter = boxCenter(first);
+  const secondCenter = boxCenter(second);
+  return Math.hypot(firstCenter.x - secondCenter.x, firstCenter.y - secondCenter.y);
+}
+
+function isStrictlyClosest(selectedDistance, alternatives) {
+  if (!alternatives.length) return true;
+  const closestAlternative = Math.min(...alternatives);
+  // A half-pixel margin rejects geometrically indistinguishable duplicate
+  // assignments while tolerating only the deterministic sub-pixel rounding
+  // already present in the PDF/Vision coordinate conversion.
+  return selectedDistance + 0.5 <= closestAlternative;
+}
+
+function assignmentIsMutuallyUnique(match, expectedGroup, actualGroup) {
+  if (expectedGroup.length !== actualGroup.length) return false;
+  const selectedDistance = boxCenterDistance(match.expected.target, match.actual.box);
+  const competingActualDistances = actualGroup
+    .filter((entry) => entry !== match.actual)
+    .map((entry) => boxCenterDistance(match.expected.target, entry.box));
+  const competingExpectedDistances = expectedGroup
+    .filter((entry) => entry !== match.expected)
+    .map((entry) => boxCenterDistance(entry.target, match.actual.box));
+  return isStrictlyClosest(selectedDistance, competingActualDistances)
+    && isStrictlyClosest(selectedDistance, competingExpectedDistances);
+}
+
+function sameLineNeighbour(first, second) {
+  const firstHeight = first.yMax - first.yMin;
+  const secondHeight = second.yMax - second.yMin;
+  if (!(firstHeight > 0) || !(secondHeight > 0)) return false;
+  const overlap = Math.max(0,
+    Math.min(first.yMax, second.yMax) - Math.max(first.yMin, second.yMin));
+  const minimumHeight = Math.min(firstHeight, secondHeight);
+  if (overlap / minimumHeight < MIN_HORIZONTAL_SCALE_NEIGHBOUR_LINE_OVERLAP_RATIO) {
+    return false;
+  }
+  const gap = Math.max(0,
+    Math.max(first.xMin, second.xMin) - Math.min(first.xMax, second.xMax));
+  return gap <= Math.max(firstHeight, secondHeight)
+    * MAX_HORIZONTAL_SCALE_NEIGHBOUR_GAP_HEIGHT_RATIO;
+}
+
+function reliableDirectAnchor(match) {
+  return match.assignmentUnique === true
+    && match.expected.normalized === match.actual.normalized
+    && intersectionOverUnion(match.expected.target, match.actual.box)
+      >= MIN_HORIZONTAL_SCALE_NEIGHBOUR_IOU
+    && centersAlignedForGeometry(
+      match.expected.target,
+      match.actual.box,
+      match.expected.polygon,
+    );
+}
+
+function directMatchesAreNeighbours(first, second) {
+  if (!sameLineNeighbour(first.expected.target, second.expected.target)
+    || !sameLineNeighbour(first.actual.box, second.actual.box)) return false;
+  const expectedDirection = Math.sign(
+    boxCenter(second.expected.target).x - boxCenter(first.expected.target).x,
+  );
+  const actualDirection = Math.sign(
+    boxCenter(second.actual.box).x - boxCenter(first.actual.box).x,
+  );
+  return expectedDirection !== 0 && expectedDirection === actualDirection;
+}
+
+function horizontalScaleNeighbourMatches(directMatches) {
+  const matchesWithAnchor = new Set();
+  const ordered = [...directMatches].sort((left, right) => {
+    const leftCenter = boxCenter(left.expected.target);
+    const rightCenter = boxCenter(right.expected.target);
+    return leftCenter.y - rightCenter.y || leftCenter.x - rightCenter.x;
+  });
+  for (let index = 0; index < ordered.length; index += 1) {
+    const match = ordered[index];
+    for (let distance = 1;
+      distance <= MAX_HORIZONTAL_SCALE_NEIGHBOUR_CANDIDATES;
+      distance += 1) {
+      for (const candidateIndex of [index - distance, index + distance]) {
+        const candidate = ordered[candidateIndex];
+        if (!candidate || !directMatchesAreNeighbours(match, candidate)) continue;
+        if (reliableDirectAnchor(candidate)) matchesWithAnchor.add(match);
+        if (reliableDirectAnchor(match)) matchesWithAnchor.add(candidate);
+      }
+    }
+  }
+  return matchesWithAnchor;
+}
+
+function shortTokenHorizontalScalePlacement({
+  expectedParts,
+  actualParts,
+  target,
+  actualBox,
+  centersAligned,
+  hasReliableNeighbour,
+  assignmentUnique,
+  iou,
+  matcherConfig,
+}) {
+  if (!matcherConfig.allowShortTokenHorizontalScaling
+    || !centersAligned
+    || !hasReliableNeighbour
+    || !assignmentUnique
+    || iou < MIN_HORIZONTAL_SCALE_IOU
+    || iou >= 0.75
+    || expectedParts.length !== 1
+    || actualParts.length !== 1) return false;
+
+  const [expected] = expectedParts;
+  const [actual] = actualParts;
+  // The existing matcher has already required exact normalised text. Keep the
+  // equality explicit here so the spatial exception can never become a second
+  // or fuzzier text-matching path.
+  if (!expected.normalized
+    || expected.normalized !== actual.normalized
+    || expected.normalized.length > MAX_HORIZONTAL_SCALE_TOKEN_LENGTH) return false;
+
+  const confidence = Number(expected.expected?.confidence);
+  if (!Number.isFinite(confidence)
+    || confidence < MIN_HORIZONTAL_SCALE_VISION_CONFIDENCE
+    || confidence > 1) return false;
+
+  const targetWidth = target.xMax - target.xMin;
+  const actualWidth = actualBox.xMax - actualBox.xMin;
+  const targetHeight = target.yMax - target.yMin;
+  const actualHeight = actualBox.yMax - actualBox.yMin;
+  if (!(targetWidth > 0) || !(actualWidth > 0)
+    || !(targetHeight > 0) || !(actualHeight > 0)) return false;
+
+  const verticalOverlap = Math.max(0,
+    Math.min(target.yMax, actualBox.yMax) - Math.max(target.yMin, actualBox.yMin));
+  const maximumHeight = Math.max(targetHeight, actualHeight);
+  const minimumHeight = Math.min(targetHeight, actualHeight);
+  const heightRatio = minimumHeight / maximumHeight;
+  const verticalOverlapRatio = verticalOverlap / maximumHeight;
+  const verticalCenterDelta = Math.abs(
+    boxCenter(target).y - boxCenter(actualBox).y,
+  ) / maximumHeight;
+  const widthRatio = Math.max(targetWidth, actualWidth) / Math.min(targetWidth, actualWidth);
+  const horizontalCenterDelta = Math.abs(
+    boxCenter(target).x - boxCenter(actualBox).x,
+  ) / Math.max(targetWidth, actualWidth);
+
+  return verticalOverlapRatio >= MIN_HORIZONTAL_SCALE_VERTICAL_OVERLAP_RATIO
+    && heightRatio >= MIN_HORIZONTAL_SCALE_HEIGHT_RATIO
+    && verticalCenterDelta <= MAX_HORIZONTAL_SCALE_VERTICAL_CENTER_DELTA_RATIO
+    && horizontalCenterDelta <= MAX_HORIZONTAL_SCALE_HORIZONTAL_CENTER_DELTA_RATIO
+    && widthRatio <= MAX_HORIZONTAL_SCALE_WIDTH_RATIO;
+}
+
 function adjacentTokenWindows(items, used, boxKey, matcherConfig) {
   const windowsByText = new Map();
   for (let start = 0; start < items.length; start += 1) {
@@ -1056,10 +1254,11 @@ export function computeSpatialAccuracy(
     const scaleY = canMeasurePage ? actualPage.height / geometry.imageHeight : 0;
     const expectedGroups = new Map();
     const expectedEntries = [];
+    let pageExpectedWords = 0;
     for (const expected of geometry.words) {
       const normalized = normaliseWord(expected.text);
       if (!normalized) continue;
-      expectedWords += 1;
+      pageExpectedWords += 1;
       if (!canMeasurePage) continue;
       const target = axisBox(expected.vertices, scaleX, scaleY);
       const polygon = expected.vertices.map((vertex) => ({
@@ -1071,6 +1270,7 @@ export function computeSpatialAccuracy(
       group.push(entry);
       expectedGroups.set(normalized, group);
     }
+    expectedWords += pageExpectedWords;
     if (!canMeasurePage) continue;
     const actualGroups = new Map();
     const actualEntries = [];
@@ -1087,23 +1287,35 @@ export function computeSpatialAccuracy(
     const exactAssignmentBudget = { remaining: MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE };
     const usedExpected = new Set();
     const usedActual = new Set();
-    const recordMatch = ({ expectedParts, actualParts, target, actualBox, polygon = null }) => {
+    const pageMatches = [];
+    const recordMatch = ({
+      expectedParts,
+      actualParts,
+      target,
+      actualBox,
+      polygon = null,
+      hasReliableNeighbour = false,
+      assignmentUnique = false,
+    }) => {
       const weight = expectedParts.length;
       const iou = intersectionOverUnion(target, actualBox);
-      matchedWords += weight;
-      for (let count = 0; count < weight; count += 1) ious.push(iou);
-      const actualCenter = boxCenter(actualBox);
-      const expectedCenter = polygon ? polygonCenter(polygon) : boxCenter(target);
-      const centersAligned = polygon
-        ? pointInPolygonInclusive(actualCenter, polygon)
-          || pointInAxisBoxInclusive(expectedCenter, actualBox)
-        : pointInAxisBoxInclusive(actualCenter, target)
-          || pointInAxisBoxInclusive(expectedCenter, actualBox);
-      if (centersAligned) centerInside += weight;
-      if (centersAligned && iou >= 0.75) passed += weight;
+      const centersAligned = centersAlignedForGeometry(target, actualBox, polygon);
+      const acceptedShortTokenHorizontalScale = shortTokenHorizontalScalePlacement({
+        expectedParts,
+        actualParts,
+        target,
+        actualBox,
+        centersAligned,
+        hasReliableNeighbour,
+        assignmentUnique,
+        iou,
+        matcherConfig,
+      });
+      pageMatches.push({ weight, iou, centersAligned, acceptedShortTokenHorizontalScale });
       for (const part of expectedParts) usedExpected.add(part);
       for (const part of actualParts) usedActual.add(part);
     };
+    const directMatches = [];
     for (const [normalized, expectedGroup] of expectedGroups) {
       const actualGroup = actualGroups.get(normalized) ?? [];
       for (const match of assignEqualWords(
@@ -1112,17 +1324,33 @@ export function computeSpatialAccuracy(
         pageDiagonal,
         exactAssignmentBudget,
       )) {
-        // Poppler and Vision may round opposite sides of a slanted word box.
-        // Requiring either box's centre to be contained in the other is robust
-        // to that representation difference without relaxing the 0.75 IoU gate.
-        recordMatch({
-          expectedParts: [match.expected],
-          actualParts: [match.actual],
-          target: match.expected.target,
-          actualBox: match.actual.box,
-          polygon: match.expected.polygon,
+        directMatches.push({
+          ...match,
+          assignmentUnique: matcherConfig.allowShortTokenHorizontalScaling
+            && expectedGroup.length <= MAX_HORIZONTAL_SCALE_ASSIGNMENT_GROUP_SIZE
+            && actualGroup.length <= MAX_HORIZONTAL_SCALE_ASSIGNMENT_GROUP_SIZE
+            && assignmentIsMutuallyUnique(match, expectedGroup, actualGroup),
         });
       }
+    }
+    const directMatchesWithReliableNeighbour = matcherConfig.allowShortTokenHorizontalScaling
+      ? horizontalScaleNeighbourMatches(directMatches)
+      : new Set();
+    for (const match of directMatches) {
+      // Poppler and Vision may round opposite sides of a slanted word box.
+      // Requiring either box's centre to be contained in the other is robust
+      // to that representation difference. Profile v3 additionally recognises
+      // a bounded horizontal scaling artefact, but only beside a reliable word
+      // on the same line; v2 keeps the exact original 0.75 IoU behaviour.
+      recordMatch({
+        expectedParts: [match.expected],
+        actualParts: [match.actual],
+        target: match.expected.target,
+        actualBox: match.actual.box,
+        polygon: match.expected.polygon,
+        assignmentUnique: match.assignmentUnique,
+        hasReliableNeighbour: directMatchesWithReliableNeighbour.has(match),
+      });
     }
 
     // PDF text extractors may split a Vision token at a hyphen/ligature or join
@@ -1171,6 +1399,38 @@ export function computeSpatialAccuracy(
         target: window.box,
         actualBox: actual.box,
       });
+    }
+    const pageMatchedWords = pageMatches.reduce((sum, match) => sum + match.weight, 0);
+    const pageCenterInside = pageMatches.reduce((sum, match) => (
+      sum + (match.centersAligned ? match.weight : 0)
+    ), 0);
+    const pageOrdinaryPlacedWords = pageMatches.reduce((sum, match) => (
+      sum + (match.centersAligned && match.iou >= 0.75 ? match.weight : 0)
+    ), 0);
+    const pageHorizontalScaleTokens = pageMatches.reduce((sum, match) => (
+      sum + (match.acceptedShortTokenHorizontalScale ? match.weight : 0)
+    ), 0);
+    const pageIous = pageMatches.flatMap((match) => Array(match.weight).fill(match.iou));
+    const pageAllowsHorizontalScale = matcherConfig.allowShortTokenHorizontalScaling
+      && pageExpectedWords >= MIN_HORIZONTAL_SCALE_PAGE_WORDS
+      && pageMatchedWords === pageExpectedWords
+      && pageCenterInside === pageMatchedWords
+      && median(pageIous) >= MIN_HORIZONTAL_SCALE_PAGE_MEDIAN_IOU
+      && pageOrdinaryPlacedWords / Math.max(pageMatchedWords, 1)
+        >= MIN_HORIZONTAL_SCALE_ORDINARY_PLACEMENT_RATIO
+      && pageHorizontalScaleTokens > 0
+      && pageHorizontalScaleTokens <= MAX_HORIZONTAL_SCALE_TOKENS_PER_PAGE
+      && pageHorizontalScaleTokens / Math.max(pageMatchedWords, 1)
+        <= MAX_HORIZONTAL_SCALE_TOKEN_RATIO_PER_PAGE;
+    matchedWords += pageMatchedWords;
+    centerInside += pageCenterInside;
+    ious.push(...pageIous);
+    for (const match of pageMatches) {
+      if (match.centersAligned
+        && (match.iou >= 0.75
+          || (pageAllowsHorizontalScale && match.acceptedShortTokenHorizontalScale))) {
+        passed += match.weight;
+      }
     }
   }
   const matchCoverage = expectedWords ? matchedWords / expectedWords : 0;

@@ -11,7 +11,7 @@ export type DocumentCompletion = {
   reviewDetails?: unknown;
 };
 
-export const CURRENT_SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v2-poppler22.12";
+export const CURRENT_SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v3-short-token-width-poppler22.12";
 
 /**
  * A direct Vision v3 completion is promotable only when the worker explicitly
