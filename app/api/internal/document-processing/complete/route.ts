@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 
 import {
   classifyDocumentCompletionFailure,
+  isContractDocumentReviewCode,
   isContractDocumentClassification,
   isIdempotentDocumentCompletionReplay,
+  normaliseDocumentReviewDetails,
   type StoredDocumentCompletion,
 } from "@/lib/contract-document-completion";
 import { verifyOcrCloudRunRequest } from "@/lib/server/cloud-run-identity";
@@ -38,6 +40,7 @@ type Completion = {
   spatialSha256?: string | null;
   errorCode?: string | null;
   safeErrorMessage?: string | null;
+  reviewDetails?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -72,8 +75,32 @@ export async function POST(request: Request) {
   const safeHash = (value: unknown) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value) ? value : null;
   const safeProfile = (value: unknown) => typeof value === "string"
     && /^[a-z0-9][a-z0-9._-]{2,79}$/.test(value) ? value : null;
+  const safeErrorCode = safeProfile(body.errorCode);
+  if (body.errorCode != null && !safeErrorCode) {
+    return NextResponse.json({ error: "Ugyldig fejlkode" }, { status: 400 });
+  }
+  if (body.status === "needs_review" && !isContractDocumentReviewCode(safeErrorCode)) {
+    return NextResponse.json({ error: "Ugyldig kontrolårsag" }, { status: 400 });
+  }
+  const pageCount = Number.isInteger(body.pageCount)
+    && Number(body.pageCount) >= 1 && Number(body.pageCount) <= MAX_DOCUMENT_PAGES
+    ? Number(body.pageCount)
+    : null;
+  let reviewDetails;
+  try {
+    reviewDetails = normaliseDocumentReviewDetails(
+      body.reviewDetails,
+      pageCount,
+      body.status === "needs_review" ? safeErrorCode : null,
+    );
+    if (body.status !== "needs_review" && reviewDetails.reasons.length > 0) {
+      throw new TypeError("invalid_document_review_details");
+    }
+  } catch {
+    return NextResponse.json({ error: "Ugyldig sidediagnostik" }, { status: 400 });
+  }
 
-  const completionResult = await db.rpc("finish_contract_document_job_v6", {
+  const completionResult = await db.rpc("finish_contract_document_job_v7", {
     p_job_id: body.jobId,
     p_lease_token: body.leaseToken,
     p_status: body.status,
@@ -81,8 +108,7 @@ export async function POST(request: Request) {
     p_ocr_engine: body.ocrEngine?.slice(0, 80) || null,
     p_orientation_corrections: corrections,
     p_ocr_applied: Boolean(body.ocrApplied),
-    p_page_count: Number.isInteger(body.pageCount)
-      && Number(body.pageCount) >= 1 && Number(body.pageCount) <= MAX_DOCUMENT_PAGES ? body.pageCount : null,
+    p_page_count: pageCount,
     p_text_char_count: Number.isInteger(body.textCharCount) && Number(body.textCharCount) >= 0 && Number(body.textCharCount) <= 100_000_000 ? body.textCharCount : null,
     p_native_page_count: safeCount(body.nativePageCount),
     p_ocr_page_count: safeCount(body.ocrPageCount),
@@ -95,8 +121,9 @@ export async function POST(request: Request) {
     p_processing_profile: safeProfile(body.processingProfile),
     p_spatial_schema_version: safeProfile(body.spatialSchemaVersion),
     p_spatial_sha256: safeHash(body.spatialSha256),
-    p_error_code: body.errorCode?.slice(0, 80) || null,
+    p_error_code: safeErrorCode,
     p_safe_error_message: body.safeErrorMessage?.slice(0, 500) || null,
+    p_review_details: reviewDetails,
   });
   let finished = completionResult.data;
   const { error } = completionResult;

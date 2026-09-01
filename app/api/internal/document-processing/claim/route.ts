@@ -93,9 +93,32 @@ export async function POST(request: Request) {
     .catch(() => undefined)
     .finally(() => clearTimeout(cleanupTimer));
   const claim = db.rpc("claim_next_contract_document_job", { p_lease_minutes: 30 });
-  const [{ data: job, error }] = await Promise.all([claim, cleanup]);
+  let [{ data: job, error }] = await Promise.all([claim, cleanup]);
   if (error) return NextResponse.json({ error: "Dokumentkøen kunne ikke læses" }, { status: 500 });
+
+  // An empty ordinary queue is also the bounded recovery trigger for older
+  // technical needs-review results. Supabase remains the only queue and the
+  // service-only RPC applies the immutable-source, generation and retry caps
+  // before creating at most one recovery generation. Rescan requests are
+  // explicitly excluded by the database policy.
+  if (!job?.id || !job.lease_token) {
+    const recovery = await db.rpc(
+      "queue_contract_document_job_automatic_recovery_batch",
+      { p_limit: 1 },
+    );
+    if (recovery.error) {
+      return NextResponse.json({ error: "Dokumentkøens genbehandling kunne ikke planlægges" }, { status: 500 });
+    }
+    const retriedClaim = await db.rpc("claim_next_contract_document_job", { p_lease_minutes: 30 });
+    job = retriedClaim.data;
+    error = retriedClaim.error;
+    if (error) return NextResponse.json({ error: "Dokumentkøen kunne ikke læses" }, { status: 500 });
+  }
   if (!job?.id || !job.lease_token) return new NextResponse(null, { status: 204 });
+  const expectedOriginalSha256 = typeof job.original_sha256 === "string"
+    && /^[0-9a-f]{64}$/i.test(job.original_sha256)
+    ? job.original_sha256.toLowerCase()
+    : null;
 
   const download = await db.storage.from("kontrakter").createSignedUrl(job.original_storage_path, 10 * 60, {
     download: false,
@@ -103,7 +126,7 @@ export async function POST(request: Request) {
   // Every lease writes to its own immutable derivative namespace. A stale
   // worker may retain a short-lived signed token, but it can then only write
   // to its abandoned lease path and can never overwrite the active result.
-  // finish_contract_document_job_v6 promotes only the paths belonging to the
+  // finish_contract_document_job_v7 promotes only the paths belonging to the
   // currently locked lease into the contract row.
   const leasePrefix = `${job.org_id}/processed/${job.contract_id}/leases/${job.lease_token}`;
   const outputUploadPath = `${leasePrefix}/normalised.pdf`;
@@ -119,12 +142,13 @@ export async function POST(request: Request) {
     .select("id")
     .maybeSingle();
   if (download.error || derivativePathError || !leasedJob?.id) {
-    await db.rpc("finish_contract_document_job_v6", {
+    await db.rpc("finish_contract_document_job_v7", {
       p_job_id: job.id,
       p_lease_token: job.lease_token,
       p_status: "failed",
       p_error_code: "signed_url_failed",
       p_safe_error_message: "Midlertidig filadgang kunne ikke oprettes.",
+      p_original_sha256: expectedOriginalSha256,
     });
     return NextResponse.json({ error: "Midlertidig filadgang kunne ikke oprettes" }, { status: 500 });
   }
@@ -149,10 +173,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     jobId: job.id,
     leaseToken: job.lease_token,
-    expectedOriginalSha256: typeof job.original_sha256 === "string"
-      && /^[0-9a-f]{64}$/i.test(job.original_sha256)
-      ? job.original_sha256.toLowerCase()
-      : null,
+    expectedOriginalSha256,
     downloadUrl: download.data.signedUrl,
     uploadPath: outputUploadPath,
     spatialUploadPath,

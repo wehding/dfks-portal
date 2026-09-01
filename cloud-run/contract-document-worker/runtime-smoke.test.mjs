@@ -139,6 +139,63 @@ print(json.dumps(image.getpixel((image.width // 2, image.height // 2))))
   }
 });
 
+test("stor verificeret PNG bliver en afledt PDF under bytegrænsen uden at ændre originalen", runtimeOnly, async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-derived-compression-"));
+  try {
+    const inputPath = join(workDir, "input.pdf");
+    const outputPath = join(workDir, "output.pdf");
+    const geometryPath = join(workDir, "geometry.json");
+    await run("python3", ["-c", `
+from PIL import Image
+from reportlab.pdfgen import canvas
+import sys
+input_path, image_dir = sys.argv[1:]
+c = canvas.Canvas(input_path, pagesize=(612, 792))
+c.showPage()
+c.save()
+# Deterministic high-entropy raster: lossless PNG is large, while the bounded
+# derivative JPEG remains readable and substantially smaller.
+image = Image.effect_noise((1400, 1800), 70).convert("RGB")
+image.save(f"{image_dir}/ocr-page-1.png", "PNG")
+`, inputPath, workDir]);
+    await writeFile(geometryPath, JSON.stringify({
+      pages: [{
+        pageNumber: 1,
+        imageWidth: 1400,
+        imageHeight: 1800,
+        words: [{
+          text: "SikkerKontrakt",
+          vertices: [
+            { x: 100, y: 100 }, { x: 400, y: 100 },
+            { x: 400, y: 150 }, { x: 100, y: 150 },
+          ],
+        }],
+      }],
+    }));
+    const originalHash = sha256(await readFile(inputPath));
+    const byteLimit = 2_000_000;
+    await run("python3", [
+      "vision_overlay.py", inputPath, geometryPath, workDir, outputPath, String(byteLimit),
+    ]);
+    const output = await readFile(outputPath);
+    assert.ok(output.length <= byteLimit, `afledt PDF er ${output.length} bytes`);
+    assert.equal(sha256(await readFile(inputPath)), originalHash);
+    assert.match((await run("pdftotext", [outputPath, "-"])).toString("utf8"), /SikkerKontrakt/);
+    const usesBoundedDerivative = (await run("python3", ["-c", `
+import pikepdf, sys
+with pikepdf.open(sys.argv[1]) as pdf:
+    filters = []
+    for _, value in pdf.pages[0].Resources.XObject.items():
+        current = value.get('/Filter')
+        filters.extend(str(item) for item in current) if isinstance(current, pikepdf.Array) else filters.append(str(current))
+    print('/DCTDecode' in filters)
+`, outputPath])).toString("utf8").trim();
+    assert.equal(usesBoundedDerivative, "True");
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
 test("fysiske 90/180/270-rettelser bevarer CropBox-rækkefølge og geometri", runtimeOnly, async () => {
   const workDir = await mkdtemp(join(tmpdir(), "dfks-physical-rotation-"));
   try {

@@ -10,8 +10,10 @@ import {
 const VISION_HOST = "eu-vision.googleapis.com";
 const MAX_VISION_IMAGES = 16;
 const VISION_BODY_MARGIN_BYTES = 128_000;
-const MIN_VISION_LONG_EDGE = 1_600;
-const MAX_VISION_DOWNSCALE_ATTEMPTS = 6;
+const MIN_VISION_LONG_EDGE = 1_200;
+const MAX_VISION_DOWNSCALE_ATTEMPTS = 7;
+const VISION_RESPONSE_RECOVERY_SCALE = 0.75;
+const MAX_VISION_RESPONSE_RECOVERY_ATTEMPTS = 1;
 export const MAX_VISION_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_VISION_IMAGE_PIXELS = 75_000_000;
 const VISION_RESPONSE_FIELDS = "responses(error,fullTextAnnotation/pages)";
@@ -276,6 +278,40 @@ function visionResponseByteSize(value) {
   }
 }
 
+async function recoverVisionTransportPage(page, transform) {
+  if (!transform || transform.recoveryAttempts >= MAX_VISION_RESPONSE_RECOVERY_ATTEMPTS) {
+    throw new GoogleOcrOperationalError("vision_response_too_large");
+  }
+  const currentLongEdge = Math.max(transform.visionWidth, transform.visionHeight);
+  const scaledLongEdge = Math.floor(currentLongEdge * VISION_RESPONSE_RECOVERY_SCALE);
+  const targetLongEdge = currentLongEdge > MIN_VISION_LONG_EDGE
+    ? Math.max(MIN_VISION_LONG_EDGE, scaledLongEdge)
+    : scaledLongEdge;
+  if (!Number.isSafeInteger(targetLongEdge) || targetLongEdge < 1
+    || targetLongEdge >= currentLongEdge) {
+    throw new GoogleOcrOperationalError("vision_response_too_large");
+  }
+  const scale = targetLongEdge / currentLongEdge;
+  const width = Math.max(1, Math.floor(transform.visionWidth * scale));
+  const height = Math.max(1, Math.floor(transform.visionHeight * scale));
+  let resized;
+  try {
+    resized = await sharp(page.imageBytes, {
+      failOn: "warning", limitInputPixels: MAX_VISION_IMAGE_PIXELS, sequentialRead: true,
+    }).resize({ width, height, fit: "fill", kernel: sharp.kernel.lanczos3, withoutEnlargement: true })
+      .jpeg({ quality: 88, chromaSubsampling: "4:4:4" }).toBuffer();
+  } catch (error) {
+    throw new GoogleOcrOperationalError("vision_response_too_large", { cause: error });
+  }
+  const previousRetainedTransportBytes = transform.retainedTransportBytes;
+  page.imageBytes = resized;
+  transform.visionWidth = width;
+  transform.visionHeight = height;
+  transform.recoveryAttempts += 1;
+  transform.retainedTransportBytes = resized.length;
+  return resized.length - previousRetainedTransportBytes;
+}
+
 export function createGoogleOcrClient({
   config = readGoogleConfig(),
   accessTokenProvider = ({ signal } = {}) => fetchGoogleAccessToken(fetch, { signal }),
@@ -358,16 +394,21 @@ export function createGoogleOcrClient({
         pageNumber: page.pageNumber,
         sourceWidth: prepared.sourceWidth, sourceHeight: prepared.sourceHeight,
         visionWidth: prepared.visionWidth, visionHeight: prepared.visionHeight,
+        recoveryAttempts: 0,
+        retainedTransportBytes: prepared.downscaled ? prepared.imageBytes.length : 0,
       });
     }
 
     const responses = [];
     let retainedVisionResponseBytes = 0;
     const appendResponses = (batchResponses) => {
-      retainedVisionResponseBytes += visionResponseByteSize(batchResponses);
-      if (retainedVisionResponseBytes > limits.maxVisionResponseBytesTotal) {
-        throw new GoogleOcrOperationalError("vision_response_too_large");
+      const nextRetainedBytes = retainedVisionResponseBytes + visionResponseByteSize(batchResponses);
+      if (nextRetainedBytes > limits.maxVisionResponseBytesTotal) {
+        const error = new GoogleOcrOperationalError("vision_response_too_large");
+        error.documentBudgetExceeded = true;
+        throw error;
       }
+      retainedVisionResponseBytes = nextRetainedBytes;
       responses.push(...batchResponses);
     };
     const annotateAdaptive = async (batch) => {
@@ -376,7 +417,20 @@ export function createGoogleOcrClient({
         appendResponses(await annotateBatch(batch, { signal, resourceLimits: limits }));
       } catch (error) {
         if (!(error instanceof GoogleOcrOperationalError)
-          || error.code !== "vision_response_too_large" || batch.length <= 1) throw error;
+          || error.code !== "vision_response_too_large"
+          || error.documentBudgetExceeded === true) throw error;
+        if (batch.length === 1) {
+          const page = batch[0];
+          const transform = visionPageTransforms.find(
+            (candidate) => candidate.pageNumber === page.pageNumber,
+          );
+          retainedRasterBytes += await recoverVisionTransportPage(page, transform);
+          if (retainedRasterBytes > limits.maxDocumentTotalRasterBytes) {
+            throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
+          }
+          appendResponses(await annotateBatch([page], { signal, resourceLimits: limits }));
+          return;
+        }
         const middle = Math.ceil(batch.length / 2);
         await annotateAdaptive(batch.slice(0, middle));
         await annotateAdaptive(batch.slice(middle));

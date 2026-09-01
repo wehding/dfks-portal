@@ -105,6 +105,28 @@ test("for stor Vision-respons splittes deterministisk", async () => {
   assert.deepEqual(batches, [4, 2, 1, 1, 2, 1, 1]);
 });
 
+test("for stor enkeltsiderespons genprøves én gang med en mindre transportkopi", async () => {
+  const page = await jpeg(1200, 800, true);
+  let calls = 0;
+  const client = createGoogleOcrClient({
+    config: readGoogleConfig({ GOOGLE_CLOUD_PROJECT: "dfks-prod" }),
+    accessTokenProvider: async () => "token",
+    jsonPost: async () => {
+      calls += 1;
+      return calls === 1
+        ? { responses: [{ fullTextAnnotation: { text: "x".repeat(2_000) } }] }
+        : { responses: [{}] };
+    },
+  });
+  const result = await client.annotateDocument(
+    [{ pageNumber: 1, imageBytes: page }],
+    { resourceLimits: { maxVisionResponseBytesPerBatch: 1_000 } },
+  );
+  assert.equal(calls, 2);
+  assert.equal(result.sourcePages[0].imageBytes.equals(page), true);
+  assert.equal(result.visionPageTransforms[0].visionWidth < 1200, true);
+});
+
 test("transport afviser alle andre Google-hosts", async () => {
   await assert.rejects(
     () => secureJsonPost("https://vision.googleapis.com/v1/images:annotate", "token", {}),

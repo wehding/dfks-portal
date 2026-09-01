@@ -8,10 +8,11 @@ function routeSource(relativePath: string) {
 
 test("completion promoverer før den service-role-afgrænsede artefaktsletning", () => {
   const source = routeSource("app/api/internal/document-processing/complete/route.ts");
-  assert.match(source, /finish_contract_document_job_v6/);
+  assert.match(source, /finish_contract_document_job_v7/);
+  assert.match(source, /p_review_details:\s*reviewDetails/);
   assert.match(source, /p_spatial_sha256:\s*safeHash\(body\.spatialSha256\)/);
   assert.doesNotMatch(source, /\.storage\.from\(["']kontrakter["']\)\.remove\(/);
-  assert.ok(source.indexOf("finish_contract_document_job_v6")
+  assert.ok(source.indexOf("finish_contract_document_job_v7")
     < source.lastIndexOf("processContractDocumentArtifactDeletions"));
   const deletionHelper = routeSource("lib/server/contract-document-artifact-deletions.ts");
   assert.match(deletionHelper, /parseContractDocumentLeaseArtifactPath/);
@@ -32,6 +33,8 @@ test("claim bruger kun den databasegodkendte karantæne-GC til storage-oprydning
   assert.ok(gcIndex >= 0 && claimIndex > gcIndex);
   assert.equal(source.match(/\.storage\.from\(["']kontrakter["']\)\.remove\(/g)?.length, 1);
   assert.doesNotMatch(source, /remove\(\[outputUploadPath, spatialUploadPath\]\)/);
+  assert.match(source, /queue_contract_document_job_automatic_recovery_batch/);
+  assert.match(source, /p_original_sha256:\s*expectedOriginalSha256/);
 });
 
 test("karantæne-GC er parallel, tidsbegrænset og afbryder hængende Supabase-kald", () => {

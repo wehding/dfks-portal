@@ -20,7 +20,7 @@ import { WORK_TYPES } from "@/lib/work-types";
 import { ExpandableListTrigger, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { ListResultSummary } from "@/components/list-result-summary";
-import { fetchMemberCoEditorSuggestions, fetchMemberShareTaskTarget } from "@/app/actions/work-share-cases";
+import { fetchMemberCoEditorSuggestions, fetchMemberShareTaskTarget, respondToWorkShareTask } from "@/app/actions/work-share-cases";
 import { confirmNoCoeditors, fetchMemberCollaborationReviews, fetchMemberWorkReviewTasks } from "@/app/actions/work-collaboration-reviews";
 import type { Contract } from "../mine-kontrakter/MineKontrakterClient";
 import { resolveWorkEditorRelation } from "@/lib/work-editor-roles";
@@ -81,6 +81,18 @@ type WorkProductionNumber = { tv_station: string | null; number: string | null }
 export type BroadcasterLogo = { name: string; logo_path: string | null };
 type SortKey = "date" | "title" | "year" | "type" | "role" | "episode" | "coEditors" | "contract";
 type EditReturnContext = "list" | "review" | "contract";
+type LinkedShareTask = {
+  id: string;
+  workId: string;
+  title: string;
+  type: string | null;
+  year: number | null;
+  seasonNumber: number | null;
+  episodeNumber: number | null;
+  status: string;
+  relationshipStatus: string;
+  proposedPercent: number | null;
+};
 const ADD_WORK_PREFILL_KEY = "dfks_add_work_prefill";
 
 type RequestComment = {
@@ -243,6 +255,12 @@ function isSeriesType(type: string | null | undefined) {
   return label === "TV-serie" || label === "Dokumentarserie";
 }
 
+function parseSharePercent(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number(value.trim().replace(",", "."));
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
+}
+
 export default function MineVaerkerClient({
   initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts: initialContracts, organisationShortName, defaultRoleLabel, coeditorWord, pageResult, initialQuery,
 }: {
@@ -329,6 +347,9 @@ export default function MineVaerkerClient({
   const [collaborationFeedback, setCollaborationFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [contractChoices, setContractChoices] = useState<Contract[]>([]);
   const [editingContractId, setEditingContractId] = useState<string | null>(null);
+  const [linkedShareTask, setLinkedShareTask] = useState<LinkedShareTask | null>(null);
+  const [linkedSharePercent, setLinkedSharePercent] = useState("");
+  const [linkedShareTaskSaving, setLinkedShareTaskSaving] = useState(false);
 
   // Dialoger og modaler
   const [isAdding, setIsAdding]             = useState(false);
@@ -996,18 +1017,46 @@ export default function MineVaerkerClient({
         setMsg({ type: "error", text: result.error });
         return;
       }
-      const target = result.target;
-      const assignment = assignments.find(item => item.works?.id === target.work_id || item.works?.parent_work_id === target.work_id);
-      if (!assignment?.works) {
-        setMsg({ type: "error", text: "Værket til procentopgaven kunne ikke findes under Mine værker." });
-        return;
-      }
-      if (target.season_number && (assignment.works.parent_work_id || assignment.works.id === target.work_id)) void openSeasonEdit({ ...assignment.works, parent_work_id: target.work_id, season_number: target.season_number });
-      else void openEdit(assignment);
+      setLinkedShareTask(result.target as LinkedShareTask);
+      setLinkedSharePercent(result.target.proposedPercent == null ? "" : String(result.target.proposedPercent));
     });
-    // Deep-link handling intentionally uses the current assignment state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignments, rightsHolderId, searchParams]);
+  }, [rightsHolderId, searchParams]);
+
+  const closeLinkedShareTask = () => {
+    setLinkedShareTask(null);
+    setLinkedSharePercent("");
+    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    params.delete("shareTask");
+    const next = params.toString();
+    router.replace(next ? `/portal/mine-vaerker?${next}` : "/portal/mine-vaerker", { scroll: false });
+  };
+
+  const submitLinkedShareTask = async (declined: boolean) => {
+    if (!linkedShareTask || !rightsHolderId) return;
+    const percent = declined ? null : parseSharePercent(linkedSharePercent);
+    if (!declined && percent === null) {
+      setMsg({ type: "error", text: t("works.shareTask.invalidPercent") });
+      return;
+    }
+    setLinkedShareTaskSaving(true);
+    try {
+      const result = await respondToWorkShareTask({
+        rightsHolderId,
+        caseId: linkedShareTask.id,
+        percent,
+        declined,
+        responseScope: linkedShareTask.episodeNumber != null ? "episode" : linkedShareTask.seasonNumber != null ? "season" : "work",
+      });
+      if (!result.success) throw new Error(result.error);
+      setMsg({ type: "success", text: t(declined ? "works.shareTask.declined" : "works.shareTask.saved") });
+      closeLinkedShareTask();
+      await reloadAssignments();
+    } catch (error) {
+      setMsg({ type: "error", text: error instanceof Error ? error.message : t("works.shareTask.saveError") });
+    } finally {
+      setLinkedShareTaskSaving(false);
+    }
+  };
 
   async function markRequestCommentsRead(a: Assignment) {
     const requests = a.works?.work_change_requests ?? [];
@@ -2135,6 +2184,61 @@ export default function MineVaerkerClient({
                 </div>
               </DialogFooter>
             </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(linkedShareTask)} onOpenChange={open => { if (!open && !linkedShareTaskSaving) closeLinkedShareTask(); }}>
+        <DialogContent className="w-[min(480px,calc(100vw-2rem))]">
+          <DialogHeader>
+            <DialogTitle>{t("works.shareTask.title")}</DialogTitle>
+            <DialogDescription>
+              {t("works.shareTask.description").replace("{title}", linkedShareTask?.title ?? "")}
+            </DialogDescription>
+          </DialogHeader>
+          {linkedShareTask && (
+            <div className="space-y-4">
+              <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                <p className="font-medium">{linkedShareTask.title}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {[
+                    linkedShareTask.year,
+                    linkedShareTask.seasonNumber != null ? `${t("works.shareQueue.season")} ${linkedShareTask.seasonNumber}` : null,
+                    linkedShareTask.episodeNumber != null ? `${t("works.shareQueue.episode")} ${linkedShareTask.episodeNumber}` : null,
+                  ].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+              {linkedShareTask.relationshipStatus === "pending" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="linked-share-percent">{t("works.shareTask.percentLabel")}</Label>
+                    <Input
+                      id="linked-share-percent"
+                      inputMode="decimal"
+                      value={linkedSharePercent}
+                      onChange={event => setLinkedSharePercent(event.target.value)}
+                      placeholder={t("works.shareTask.percentPlaceholder")}
+                    />
+                    <p className="text-xs text-muted-foreground">{t("works.shareTask.percentHint")}</p>
+                  </div>
+                  <DialogFooter className="gap-2 sm:justify-between">
+                    <Button type="button" variant="outline" disabled={linkedShareTaskSaving} onClick={() => void submitLinkedShareTask(true)}>
+                      {t("works.shareTask.decline")}
+                    </Button>
+                    <Button type="button" disabled={linkedShareTaskSaving || parseSharePercent(linkedSharePercent) === null} onClick={() => void submitLinkedShareTask(false)}>
+                      {t("works.shareTask.save")}
+                    </Button>
+                  </DialogFooter>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">{t("works.shareTask.alreadyAnswered")}</p>
+                  <DialogFooter>
+                    <Button type="button" onClick={closeLinkedShareTask}>{t("works.shareTask.close")}</Button>
+                  </DialogFooter>
+                </>
+              )}
+            </div>
           )}
         </DialogContent>
       </Dialog>

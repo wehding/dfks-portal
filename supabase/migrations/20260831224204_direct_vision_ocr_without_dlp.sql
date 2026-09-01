@@ -2,6 +2,36 @@
 -- This migration is intentionally deployment-only: it does not queue or run
 -- the historical production backfill.
 
+-- Extend master's typed review allowlist with the direct Vision transport
+-- diagnostic. Historical DLP codes remain readable as immutable job history.
+create or replace function private.contract_document_review_error_code_valid(
+  p_error_code text
+)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select nullif(btrim(p_error_code), '') = any (array[
+    'processing_deadline_exceeded', 'invalid_download_origin', 'file_too_large',
+    'invalid_pdf', 'original_sha256_mismatch', 'ocr_no_readable_text',
+    'ocr_unreadable_page', 'ocr_spatial_quality', 'orientation_uncertain',
+    'page_geometry_unavailable', 'document_page_limit_exceeded',
+    'document_raster_budget_exceeded', 'document_text_limit_exceeded',
+    'processed_file_too_large', 'spatial_artifact_too_large',
+    'dlp_request_too_large', 'dlp_too_many_locations', 'dlp_response_too_large',
+    'dlp_location_invalid', 'dlp_location_out_of_bounds', 'dlp_location_missing',
+    'dlp_redacted_image_missing', 'dlp_redacted_image_invalid',
+    'dlp_redaction_not_applied', 'dlp_image_dimensions_changed',
+    'dlp_canonical_image_invalid', 'vision_page_too_large',
+    'vision_page_invalid', 'vision_request_too_large',
+    'vision_response_too_large', 'vision_word_limit_exceeded', 'low_text_quality'
+  ]::text[]);
+$$;
+
+revoke all on function private.contract_document_review_error_code_valid(text)
+  from public, anon, authenticated, service_role;
+
 alter table public.contracts
   add column if not exists document_processing_profile text;
 
@@ -81,6 +111,7 @@ as $$
 declare
   source_job public.contract_document_jobs;
   source_contract public.contracts;
+  fenced_contract_id uuid;
   replacement_id uuid := gen_random_uuid();
   selected_policy text;
 begin
@@ -93,17 +124,24 @@ begin
     raise exception 'invalid replacement input' using errcode = '22023';
   end if;
 
+  select job.contract_id into fenced_contract_id
+  from public.contract_document_jobs as job
+  where job.id = p_source_job_id;
+  if fenced_contract_id is null then
+    return query select 'source_missing'::text, p_source_job_id, null::uuid, null::text;
+    return;
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(fenced_contract_id::text, 438221948)
+  );
   select job.* into source_job
   from public.contract_document_jobs as job
-  where job.id = p_source_job_id
+  where job.id = p_source_job_id and job.contract_id = fenced_contract_id
   for update of job;
   if source_job.id is null then
     return query select 'source_missing'::text, p_source_job_id, null::uuid, null::text;
     return;
   end if;
-  perform pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtextextended(source_job.contract_id::text, 438221948)
-  );
   select contract.* into source_contract
   from public.contracts as contract
   where contract.id = source_job.contract_id
@@ -172,7 +210,7 @@ revoke all on function public.queue_direct_vision_replacement_generation(uuid, t
 grant execute on function public.queue_direct_vision_replacement_generation(uuid, text, integer)
   to service_role;
 
-create or replace function public.finish_contract_document_job_v6(
+create or replace function public.finish_contract_document_job_v7(
   p_job_id uuid,
   p_lease_token uuid,
   p_status text,
@@ -194,7 +232,8 @@ create or replace function public.finish_contract_document_job_v6(
   p_spatial_schema_version text default null,
   p_spatial_sha256 text default null,
   p_error_code text default null,
-  p_safe_error_message text default null
+  p_safe_error_message text default null,
+  p_review_details jsonb default '{"schemaVersion":1,"reasons":[]}'::jsonb
 )
 returns public.contract_document_jobs
 language plpgsql
@@ -206,6 +245,9 @@ declare
   source_job public.contract_document_jobs;
   active_contract public.contracts;
   finished public.contract_document_jobs;
+  canonical_details jsonb;
+  effective_original_sha256 text;
+  fenced_contract_id uuid;
 begin
   if (select auth.role()) <> 'service_role' then
     raise exception 'forbidden' using errcode = '42501';
@@ -213,17 +255,72 @@ begin
   if p_status not in ('completed', 'failed', 'needs_review', 'not_required') then
     raise exception 'invalid status' using errcode = '22023';
   end if;
+  if not private.contract_document_review_details_valid(
+    coalesce(p_review_details, '{"schemaVersion":1,"reasons":[]}'::jsonb)
+  ) then
+    raise exception 'invalid review details' using errcode = '22023';
+  end if;
+  if p_status = 'needs_review'
+    and (p_error_code is null
+      or not private.contract_document_review_error_code_valid(p_error_code)) then
+    raise exception 'needs_review requires a known safe error code'
+      using errcode = '22023';
+  end if;
+  if p_page_count is not null and exists (
+    select 1
+    from jsonb_array_elements(p_review_details -> 'reasons') as reason_rows(reason)
+    cross join lateral jsonb_array_elements(reason_rows.reason -> 'pageNumbers') as pages(page_number)
+    where (pages.page_number::text)::integer > p_page_count
+  ) then
+    raise exception 'review page exceeds document page count' using errcode = '22023';
+  end if;
+  if p_status <> 'needs_review'
+    and p_review_details <> '{"schemaVersion":1,"reasons":[]}'::jsonb then
+    raise exception 'review details require needs_review status' using errcode = '22023';
+  end if;
+  if p_original_sha256 is not null and p_original_sha256 !~ '^[0-9a-fA-F]{64}$' then
+    raise exception 'invalid original hash' using errcode = '22023';
+  end if;
+  select job.contract_id into fenced_contract_id
+  from public.contract_document_jobs as job
+  where job.id = p_job_id;
+  if fenced_contract_id is null then
+    raise exception 'job not found or lease inactive' using errcode = 'P0002';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(fenced_contract_id::text, 438221948)
+  );
   select job.* into active_job
   from public.contract_document_jobs as job
-  where job.id = p_job_id and job.status = 'processing'
-    and job.lease_token = p_lease_token and job.lease_expires_at > now()
+  where job.id = p_job_id and job.contract_id = fenced_contract_id
+    and job.status = 'processing' and job.lease_token = p_lease_token
+    and job.lease_expires_at > now()
   for update of job;
   if active_job.id is null then
     raise exception 'job not found or lease inactive' using errcode = 'P0002';
   end if;
-  perform pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtextextended(active_job.contract_id::text, 438221948)
+  if active_job.original_sha256 is not null
+    and p_original_sha256 is not null
+    and lower(active_job.original_sha256) <> lower(p_original_sha256) then
+    raise exception 'original hash changed during processing' using errcode = '55000';
+  end if;
+  effective_original_sha256 := coalesce(
+    lower(p_original_sha256), lower(active_job.original_sha256)
   );
+  canonical_details := case
+    when p_status = 'needs_review' then
+      private.canonical_contract_document_review_details(
+        jsonb_build_object(
+          'schemaVersion', 1,
+          'reasons', coalesce(p_review_details -> 'reasons', '[]'::jsonb)
+            || jsonb_build_array(jsonb_build_object(
+              'code', p_error_code,
+              'pageNumbers', '[]'::jsonb
+            ))
+        )
+      )
+    else '{"schemaVersion":1,"reasons":[]}'::jsonb
+  end;
   select contract.* into active_contract
   from public.contracts as contract where contract.id = active_job.contract_id
   for update of contract;
@@ -297,7 +394,8 @@ begin
           native_page_count = greatest(0, coalesce(p_native_page_count, 0)),
           ocr_page_count = greatest(0, coalesce(p_ocr_page_count, 0)),
           unreadable_page_count = greatest(0, coalesce(p_unreadable_page_count, 0)),
-          original_sha256 = lower(p_original_sha256),
+          original_sha256 = effective_original_sha256,
+          review_details = canonical_details,
           error_code = left(p_error_code, 80),
           safe_error_message = left(p_safe_error_message, 500),
           lease_token = null, lease_expires_at = null,
@@ -319,7 +417,7 @@ begin
     p_orientation_corrections, p_ocr_applied, p_page_count, p_text_char_count,
     p_native_page_count, p_ocr_page_count, p_unreadable_page_count,
     '{}'::jsonb, p_spatial_accuracy_score, p_spatial_median_iou,
-    p_spatial_center_inside_ratio, p_original_sha256, p_processed_sha256,
+    p_spatial_center_inside_ratio, effective_original_sha256, p_processed_sha256,
     p_error_code, p_safe_error_message
   );
 
@@ -329,6 +427,7 @@ begin
       redaction_counts = '{}'::jsonb,
       spatial_schema_version = left(p_spatial_schema_version, 80),
       spatial_sha256 = case when p_status = 'completed' then p_spatial_sha256 else null end,
+      review_details = canonical_details,
       lease_token = null,
       updated_at = now()
   where id = finished.id
@@ -351,20 +450,37 @@ begin
     ) values
       (finished.org_id, finished.contract_id, source_job.id, finished.id, 'masked_pdf', source_job.output_storage_path),
       (finished.org_id, finished.contract_id, source_job.id, finished.id, 'masked_spatial', source_job.spatial_data_path);
+  elsif finished.recovery_origin = 'automatic'
+    and p_status in ('completed', 'not_required') then
+    with recursive lineage(id, recovery_of_job_id) as (
+      select job.id, job.recovery_of_job_id
+      from public.contract_document_jobs as job
+      where job.id = finished.id
+      union all
+      select parent.id, parent.recovery_of_job_id
+      from public.contract_document_jobs as parent
+      join lineage on parent.id = lineage.recovery_of_job_id
+    )
+    update public.contract_document_jobs as ancestor
+    set automatic_recovery_state = 'completed', updated_at = now()
+    where ancestor.id in (select lineage.id from lineage);
+  elsif p_status = 'needs_review' then
+    perform 1
+    from private.queue_contract_document_job_automatic_recovery_core(finished.id, null);
   end if;
   return finished;
 end;
 $$;
 
-revoke all on function public.finish_contract_document_job_v6(
+revoke all on function public.finish_contract_document_job_v7(
   uuid, uuid, text, text, text, jsonb, boolean, integer, integer, integer,
   integer, integer, numeric, numeric, numeric, text, text, text, text, text,
-  text, text
+  text, text, jsonb
 ) from public, anon, authenticated;
-grant execute on function public.finish_contract_document_job_v6(
+grant execute on function public.finish_contract_document_job_v7(
   uuid, uuid, text, text, text, jsonb, boolean, integer, integer, integer,
   integer, integer, numeric, numeric, numeric, text, text, text, text, text,
-  text, text
+  text, text, jsonb
 ) to service_role;
 
 create or replace function public.claim_contract_document_artifact_deletions(

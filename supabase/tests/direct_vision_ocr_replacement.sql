@@ -19,10 +19,10 @@ begin
   if has_table_privilege('anon', 'public.contract_document_artifact_deletions', 'SELECT')
     or has_table_privilege('authenticated', 'public.contract_document_artifact_deletions', 'SELECT')
     or has_function_privilege('authenticated', 'public.queue_direct_vision_replacement_generation(uuid,text,integer)', 'EXECUTE')
-    or has_function_privilege('authenticated', 'public.finish_contract_document_job_v6(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.finish_contract_document_job_v7(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.claim_contract_document_artifact_deletions(integer,uuid)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.queue_direct_vision_replacement_generation(uuid,text,integer)', 'EXECUTE')
-    or not has_function_privilege('service_role', 'public.finish_contract_document_job_v6(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text)', 'EXECUTE') then
+    or not has_function_privilege('service_role', 'public.finish_contract_document_job_v7(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE') then
     raise exception 'Direct Vision replacement regression: privileged API exposure';
   end if;
 
@@ -73,11 +73,12 @@ begin
   where id = replacement.replacement_job_id;
 
   select * into replacement_job
-  from public.finish_contract_document_job_v6(
+  from public.finish_contract_document_job_v7(
     replacement.replacement_job_id, test_lease_token, 'completed', 'image_only',
     'google-vision-eu-v1', '[]'::jsonb, true, 1, 500, 0, 1, 0,
     0.99, 0.90, 1.0, original_hash, repeat('d', 64),
-    'google-vision-direct-v1', 'google-vision-spatial-v3', repeat('e', 64), null, null
+    'google-vision-direct-v1', 'google-vision-spatial-v3', repeat('e', 64), null, null,
+    '{"schemaVersion":1,"reasons":[]}'::jsonb
   );
   if replacement_job.status <> 'completed'
     or replacement_job.processing_profile <> 'google-vision-direct-v1'

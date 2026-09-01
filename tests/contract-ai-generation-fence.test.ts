@@ -18,6 +18,10 @@ const directVisionMigration = fs.readFileSync(
   new URL("../supabase/migrations/20260831224204_direct_vision_ocr_without_dlp.sql", import.meta.url),
   "utf8",
 );
+const recoveryMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260831213238_ocr_automatic_recovery.sql", import.meta.url),
+  "utf8",
+);
 
 test("contract extraction uses only lease/input-generation fenced worker RPCs", () => {
   for (const rpc of [
@@ -38,15 +42,25 @@ test("contract extraction uses only lease/input-generation fenced worker RPCs", 
 });
 
 test("OCR completion and AI apply share one advisory generation lock", () => {
-  assert.match(completionRoute, /finish_contract_document_job_v6/);
+  assert.match(completionRoute, /finish_contract_document_job_v7/);
+  assert.match(recoveryMigration, /create or replace function public\.finish_contract_document_job_v6/);
+  assert.match(recoveryMigration, /public\.finish_contract_document_job_v5/);
   assert.match(migration, /create or replace function public\.finish_contract_document_job_v5/);
-  assert.match(directVisionMigration, /create or replace function public\.finish_contract_document_job_v6/);
+  assert.match(directVisionMigration, /create or replace function public\.finish_contract_document_job_v7/);
   const helper = migration.slice(
     migration.indexOf("create or replace function public.lock_current_contract_ai_job"),
     migration.indexOf("create or replace function public.set_contract_ai_job_runtime_v2"),
   );
   const completion = migration.slice(
     migration.indexOf("create or replace function public.finish_contract_document_job_v5"),
+  );
+  const directQueue = directVisionMigration.slice(
+    directVisionMigration.indexOf("create or replace function public.queue_direct_vision_replacement_generation"),
+    directVisionMigration.indexOf("create or replace function public.finish_contract_document_job_v7"),
+  );
+  const directCompletion = directVisionMigration.slice(
+    directVisionMigration.indexOf("create or replace function public.finish_contract_document_job_v7"),
+    directVisionMigration.indexOf("create or replace function public.claim_contract_document_artifact_deletions"),
   );
   assert.match(helper, /pg_advisory_xact_lock/);
   assert.match(completion, /pg_advisory_xact_lock/);
@@ -56,6 +70,8 @@ test("OCR completion and AI apply share one advisory generation lock", () => {
   assert.doesNotMatch(directVisionMigration, /artifact_kind[^\n]*original/);
   assert.ok(helper.indexOf("pg_advisory_xact_lock") < helper.indexOf("for update"));
   assert.ok(completion.indexOf("pg_advisory_xact_lock") < completion.indexOf("finish_contract_document_job_v4"));
+  assert.ok(directQueue.indexOf("pg_advisory_xact_lock") < directQueue.indexOf("for update"));
+  assert.ok(directCompletion.indexOf("pg_advisory_xact_lock") < directCompletion.indexOf("for update"));
 });
 
 test("AI/OCR reanalysis never changes the contract's legal status", () => {

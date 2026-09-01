@@ -40,6 +40,7 @@ const MAX_EXACT_ASSIGNMENT_WORDS_PER_GROUP = 128;
 // many repeated tokens cannot monopolise the worker. The deterministic
 // reading-order fallback preserves fail-closed spatial verification.
 const MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE = 2_000_000;
+const MAX_JOINED_TOKENS = 3;
 const VISION_RENDER_PROFILES = Object.freeze([
   { dpi: 300, quality: 95 },
   { dpi: 275, quality: 90 },
@@ -683,11 +684,64 @@ function assignEqualWords(expected, actual, pageDiagonal, exactAssignmentBudget)
   ));
 }
 
+function unionAxisBoxes(boxes) {
+  return {
+    xMin: Math.min(...boxes.map((box) => box.xMin)),
+    yMin: Math.min(...boxes.map((box) => box.yMin)),
+    xMax: Math.max(...boxes.map((box) => box.xMax)),
+    yMax: Math.max(...boxes.map((box) => box.yMax)),
+  };
+}
+
+function adjacentTokenWindows(items, used, boxKey) {
+  const windowsByText = new Map();
+  for (let start = 0; start < items.length; start += 1) {
+    if (used.has(items[start])) continue;
+    let text = items[start].normalized;
+    for (let length = 2; length <= MAX_JOINED_TOKENS; length += 1) {
+      const end = start + length;
+      const part = items[end - 1];
+      if (!part || used.has(part)) break;
+      text += part.normalized;
+      if (!text) continue;
+      const parts = items.slice(start, end);
+      const window = { parts, box: unionAxisBoxes(parts.map((item) => item[boxKey])) };
+      const candidates = windowsByText.get(text) ?? [];
+      candidates.push(window);
+      windowsByText.set(text, candidates);
+    }
+  }
+  return windowsByText;
+}
+
+function closestUnusedWindow(singleBox, windows, used) {
+  const singleCenter = boxCenter(singleBox);
+  let selected = null;
+  let selectedDistance = Number.POSITIVE_INFINITY;
+  for (const window of windows ?? []) {
+    if (window.parts.some((part) => used.has(part))) continue;
+    const center = boxCenter(window.box);
+    const distance = Math.hypot(singleCenter.x - center.x, singleCenter.y - center.y);
+    if (distance < selectedDistance) {
+      selected = window;
+      selectedDistance = distance;
+    }
+  }
+  return selected;
+}
+
 function median(values) {
   if (!values.length) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function sanitisePageNumbers(values, pageCount) {
+  const maximum = Number.isSafeInteger(pageCount) && pageCount > 0 ? pageCount : 0;
+  return [...new Set((values ?? []).filter((value) => (
+    Number.isSafeInteger(value) && value >= 1 && value <= maximum
+  )))].sort((left, right) => left - right);
 }
 
 export function computeSpatialAccuracy(geometryPages, extractedPages) {
@@ -702,27 +756,55 @@ export function computeSpatialAccuracy(geometryPages, extractedPages) {
     const scaleX = canMeasurePage ? actualPage.width / geometry.imageWidth : 0;
     const scaleY = canMeasurePage ? actualPage.height / geometry.imageHeight : 0;
     const expectedGroups = new Map();
+    const expectedEntries = [];
     for (const expected of geometry.words) {
       const normalized = normaliseWord(expected.text);
       if (!normalized) continue;
       expectedWords += 1;
       if (!canMeasurePage) continue;
       const target = axisBox(expected.vertices, scaleX, scaleY);
+      const polygon = expected.vertices.map((vertex) => ({
+        x: vertex.x * scaleX, y: vertex.y * scaleY,
+      }));
+      const entry = { expected, target, polygon, normalized };
+      expectedEntries.push(entry);
       const group = expectedGroups.get(normalized) ?? [];
-      group.push({ expected, target });
+      group.push(entry);
       expectedGroups.set(normalized, group);
     }
     if (!canMeasurePage) continue;
     const actualGroups = new Map();
+    const actualEntries = [];
     for (const candidate of actualPage.words) {
       const normalized = normaliseWord(candidate.text);
       if (!normalized) continue;
+      const entry = { candidate, box: candidate, normalized };
+      actualEntries.push(entry);
       const group = actualGroups.get(normalized) ?? [];
-      group.push({ candidate, box: candidate });
+      group.push(entry);
       actualGroups.set(normalized, group);
     }
     const pageDiagonal = Math.hypot(actualPage.width, actualPage.height);
     const exactAssignmentBudget = { remaining: MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE };
+    const usedExpected = new Set();
+    const usedActual = new Set();
+    const recordMatch = ({ expectedParts, actualParts, target, actualBox, polygon = null }) => {
+      const weight = expectedParts.length;
+      const iou = intersectionOverUnion(target, actualBox);
+      matchedWords += weight;
+      for (let count = 0; count < weight; count += 1) ious.push(iou);
+      const actualCenter = boxCenter(actualBox);
+      const expectedCenter = polygon ? polygonCenter(polygon) : boxCenter(target);
+      const centersAligned = polygon
+        ? pointInPolygonInclusive(actualCenter, polygon)
+          || pointInAxisBoxInclusive(expectedCenter, actualBox)
+        : pointInAxisBoxInclusive(actualCenter, target)
+          || pointInAxisBoxInclusive(expectedCenter, actualBox);
+      if (centersAligned) centerInside += weight;
+      if (centersAligned && iou >= 0.75) passed += weight;
+      for (const part of expectedParts) usedExpected.add(part);
+      for (const part of actualParts) usedActual.add(part);
+    };
     for (const [normalized, expectedGroup] of expectedGroups) {
       const actualGroup = actualGroups.get(normalized) ?? [];
       for (const match of assignEqualWords(
@@ -731,27 +813,55 @@ export function computeSpatialAccuracy(geometryPages, extractedPages) {
         pageDiagonal,
         exactAssignmentBudget,
       )) {
-        const best = {
-          candidate: match.actual.candidate,
-          iou: intersectionOverUnion(match.expected.target, match.actual.box),
-        };
-        matchedWords += 1;
-        ious.push(best.iou);
-        const center = {
-          x: (best.candidate.xMin + best.candidate.xMax) / 2,
-          y: (best.candidate.yMin + best.candidate.yMax) / 2,
-        };
-        const polygon = match.expected.expected.vertices.map((vertex) => ({
-          x: vertex.x * scaleX, y: vertex.y * scaleY,
-        }));
         // Poppler and Vision may round opposite sides of a slanted word box.
         // Requiring either box's centre to be contained in the other is robust
         // to that representation difference without relaxing the 0.75 IoU gate.
-        const centersAligned = pointInPolygonInclusive(center, polygon)
-          || pointInAxisBoxInclusive(polygonCenter(polygon), best.candidate);
-        if (centersAligned) centerInside += 1;
-        if (centersAligned && best.iou >= 0.75) passed += 1;
+        recordMatch({
+          expectedParts: [match.expected],
+          actualParts: [match.actual],
+          target: match.expected.target,
+          actualBox: match.actual.box,
+          polygon: match.expected.polygon,
+        });
       }
+    }
+
+    // PDF text extractors may split a Vision token at a hyphen/ligature or join
+    // two adjacent Vision tokens. Reconcile only 1:n or n:1 adjacent sequences,
+    // bounded to three tokens. Text still has to match exactly after the same
+    // normalisation, and the unchanged centre/IoU gates verify the union box.
+    const actualWindows = adjacentTokenWindows(actualEntries, usedActual, "box");
+    for (const expected of expectedEntries) {
+      if (usedExpected.has(expected)) continue;
+      const window = closestUnusedWindow(
+        expected.target,
+        actualWindows.get(expected.normalized),
+        usedActual,
+      );
+      if (!window) continue;
+      recordMatch({
+        expectedParts: [expected],
+        actualParts: window.parts,
+        target: expected.target,
+        actualBox: window.box,
+        polygon: expected.polygon,
+      });
+    }
+    const expectedWindows = adjacentTokenWindows(expectedEntries, usedExpected, "target");
+    for (const actual of actualEntries) {
+      if (usedActual.has(actual)) continue;
+      const window = closestUnusedWindow(
+        actual.box,
+        expectedWindows.get(actual.normalized),
+        usedExpected,
+      );
+      if (!window) continue;
+      recordMatch({
+        expectedParts: window.parts,
+        actualParts: [actual],
+        target: window.box,
+        actualBox: actual.box,
+      });
     }
   }
   const matchCoverage = expectedWords ? matchedWords / expectedWords : 0;
@@ -955,13 +1065,21 @@ export async function processPdfSpatially({
   const orientationCorrections = rawGeometryPages
     .map((page) => ({ page: page.pageNumber, degrees: orientationByPage.get(page.pageNumber).correctionDegrees }))
     .filter((entry) => entry.degrees !== 0);
-  const orientationUncertainPageCount = rawGeometryPages.filter((page) => (
-    page.words.length > 0 && !orientationByPage.get(page.pageNumber).reliable
-  )).length;
+  const orientationUncertainPageNumbers = sanitisePageNumbers(
+    rawGeometryPages.filter((page) => (
+      page.words.length > 0 && !orientationByPage.get(page.pageNumber).reliable
+    )).map((page) => page.pageNumber),
+    pageCount,
+  );
+  const orientationUncertainPageCount = orientationUncertainPageNumbers.length;
   const blankPageCount = blankPageNumbers.size;
-  const unreadablePageCount = rawGeometryPages.filter((page) => (
-    page.words.length === 0 && !blankPageNumbers.has(page.pageNumber)
-  )).length;
+  const unreadablePageNumbers = sanitisePageNumbers(
+    rawGeometryPages.filter((page) => (
+      page.words.length === 0 && !blankPageNumbers.has(page.pageNumber)
+    )).map((page) => page.pageNumber),
+    pageCount,
+  );
+  const unreadablePageCount = unreadablePageNumbers.length;
   if (unreadablePageCount > 0) {
     return {
       status: "needs_review", classification: "unreadable", pageCount,
@@ -970,6 +1088,7 @@ export async function processPdfSpatially({
       unreadablePageCount,
       orientationCorrections,
       orientationUncertainPageCount,
+      affectedPageNumbers: unreadablePageNumbers,
       blankPageCount,
       processingProfile: "google-vision-direct-v1",
       spatialSchemaVersion: "google-vision-spatial-v3",
@@ -983,6 +1102,7 @@ export async function processPdfSpatially({
       unreadablePageCount,
       orientationCorrections,
       orientationUncertainPageCount,
+      affectedPageNumbers: orientationUncertainPageNumbers,
       blankPageCount,
       orientationQualityFailed: true,
       processingProfile: "google-vision-direct-v1",
@@ -1022,6 +1142,7 @@ export async function processPdfSpatially({
   }
   await runCommand("python3", [
     join(process.cwd(), "vision_overlay.py"), inputPath, plainGeometryPath, workDir, outputPath,
+    String(25 * 1024 * 1024),
   ], 180_000);
 
   const bboxPath = join(workDir, "output-bbox.html");
@@ -1055,8 +1176,23 @@ export async function processPdfSpatially({
     { mode: 0o600 },
   );
   assertProcessingHealthy();
+  const spatialPassed = spatial.passed && textCharCount >= 120;
+  let spatialPageNumbers = sanitisePageNumbers(
+    geometryPages.filter((page) => page.words.length > 0 && (
+      !spatial.passed
+        ? !computeSpatialAccuracy([page], extractedPages).passed
+        : textCharCount < 120
+    )).map((page) => page.pageNumber),
+    pageCount,
+  );
+  if (!spatialPassed && spatialPageNumbers.length === 0) {
+    spatialPageNumbers = sanitisePageNumbers(
+      geometryPages.filter((page) => page.words.length > 0).map((page) => page.pageNumber),
+      pageCount,
+    );
+  }
   return {
-    status: spatial.passed && textCharCount >= 120 ? "completed" : "needs_review",
+    status: spatialPassed ? "completed" : "needs_review",
     classification: ocrDocumentClassification,
     pageCount,
     nativePageCount,
@@ -1069,5 +1205,6 @@ export async function processPdfSpatially({
     spatialSchemaVersion: "google-vision-spatial-v3",
     spatial,
     textCharCount,
+    affectedPageNumbers: spatialPassed ? [] : spatialPageNumbers,
   };
 }
