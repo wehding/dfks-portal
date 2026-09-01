@@ -169,7 +169,7 @@ begin
       '^' || source_job.org_id::text || '/processed/' || source_job.contract_id::text
       || '/leases/[0-9a-f-]{36}/vision-layout[.]json[.]gz$'
     )
-    or source_contract.status not in ('kladde', 'valideret') then
+    or source_contract.status not in ('kladde', 'afventer', 'valideret') then
     return query select 'skipped_state_changed'::text, source_job.id, null::uuid, null::text;
     return;
   end if;
@@ -184,7 +184,7 @@ begin
     return;
   end if;
 
-  selected_policy := case when source_contract.status = 'kladde' then 'reanalyze' else 'preserve' end;
+  selected_policy := case when source_contract.status = 'valideret' then 'preserve' else 'reanalyze' end;
   insert into public.contract_document_jobs (
     id, org_id, contract_id, created_by, original_storage_path, output_storage_path,
     status, priority, attempts, next_attempt_at, original_sha256,
@@ -377,7 +377,8 @@ begin
       or active_contract.document_spatial_data_path is distinct from source_job.spatial_data_path then
       raise exception 'replacement source generation mismatch' using errcode = '55000';
     end if;
-    if (active_job.downstream_ai_policy = 'reanalyze' and active_contract.status <> 'kladde')
+    if (active_job.downstream_ai_policy = 'reanalyze'
+        and active_contract.status not in ('kladde', 'afventer'))
       or (active_job.downstream_ai_policy = 'preserve' and active_contract.status <> 'valideret') then
       raise exception 'replacement downstream policy changed' using errcode = '55000';
     end if;

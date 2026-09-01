@@ -33,7 +33,7 @@ begin
     document_spatial_data_path, document_processing_status,
     document_redaction_profile, document_spatial_schema_version
   ) values (
-    test_contract_id, test_org, 'a-løn', 'kladde',
+    test_contract_id, test_org, 'a-løn', 'afventer',
     test_org || '/' || test_contract_id || '/original.pdf',
     test_org || '/processed/' || test_contract_id || '/leases/00000000-0000-4000-8000-000000000001/normalised.pdf',
     test_org || '/processed/' || test_contract_id || '/leases/00000000-0000-4000-8000-000000000001/vision-layout.json.gz',
@@ -62,7 +62,7 @@ begin
   select * into replacement
   from public.queue_direct_vision_replacement_generation(source_job_id, original_hash, 100);
   if replacement.outcome <> 'queued' or replacement.downstream_ai_policy <> 'reanalyze' then
-    raise exception 'Direct Vision replacement regression: draft was not queued for reanalysis';
+    raise exception 'Direct Vision replacement regression: unvalidated contract was not queued for reanalysis';
   end if;
 
   update public.contract_document_jobs

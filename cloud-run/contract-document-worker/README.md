@@ -81,3 +81,20 @@ direkte til Vision EU. En stor side kan få en midlertidig, nedskaleret transpor
 mens den kanoniske kildeside fortsat bruges til PDF'en og koordinaterne mappes tilbage.
 Dokumenttekst og råbilleder gemmes aldrig i logs eller databasen. Geometrien gemmes
 privat med skemaet `google-vision-spatial-v3` og profilen `google-vision-direct-v1`.
+
+Før DLP-erstatningskørslen oprettes en ejerbeskyttet v3-baseline med præcis de
+aktive DLP-generationer. Udvælgelsen kræver, at kontraktens aktive original,
+behandlede PDF og koordinatfil alle peger på samme færdige DLP-job:
+
+```bash
+OCR_BACKFILL_BASELINE_PATH=/private/tmp/dfks-direct-vision-active-dlp-baseline.json \
+  node scripts/audit-ocr-backfill.mjs capture-direct-vision-baseline
+```
+
+Baselinefilen verificeres igen umiddelbart før pilot og fuld kølægning. Historiske,
+superseded eller allerede direkte Vision-behandlede generationer medtages ikke.
+
+```bash
+OCR_BACKFILL_BASELINE_PATH=/private/tmp/dfks-direct-vision-active-dlp-baseline.json \
+  node scripts/audit-ocr-backfill.mjs verify-direct-vision-baseline
+```

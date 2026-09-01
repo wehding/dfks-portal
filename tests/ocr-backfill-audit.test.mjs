@@ -11,6 +11,7 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 import {
   auditCompletedJobs,
   captureBaseline,
+  isActiveDlpReplacementCandidate,
   createReadOnlyFetch,
   extractPdfBboxPages,
   extractPdfPageCount,
@@ -22,6 +23,35 @@ import {
   verifyBaseline,
   writeBaselineFile,
 } from "../scripts/audit-ocr-backfill.mjs";
+
+test("direct Vision-kohorten accepterer kun den aktive DLP-generation", () => {
+  const job = {
+    status: "completed",
+    ocr_applied: true,
+    redaction_profile: "dfks-contract-redaction-v1",
+    spatial_schema_version: "google-vision-spatial-v2",
+    superseded_by_job_id: null,
+    original_storage_path: "org/contract/original.pdf",
+    output_storage_path: "org/processed/contract/leases/lease/normalised.pdf",
+    spatial_data_path: "org/processed/contract/leases/lease/vision-layout.json.gz",
+  };
+  const contract = {
+    status: "afventer",
+    pdf_url: job.original_storage_path,
+    processed_pdf_url: job.output_storage_path,
+    document_spatial_data_path: job.spatial_data_path,
+  };
+  assert.equal(isActiveDlpReplacementCandidate(job, contract), true);
+  assert.equal(isActiveDlpReplacementCandidate(
+    { ...job, redaction_profile: null }, contract,
+  ), false);
+  assert.equal(isActiveDlpReplacementCandidate(
+    job, { ...contract, processed_pdf_url: "org/processed/newer.pdf" },
+  ), false);
+  assert.equal(isActiveDlpReplacementCandidate(
+    { ...job, superseded_by_job_id: "00000000-0000-4000-8000-000000000001" }, contract,
+  ), false);
+});
 
 const pdftotextUnavailable = spawnSync("pdftotext", ["-v"], { stdio: "ignore" }).error?.code === "ENOENT";
 const pikepdfUnavailable = spawnSync(
