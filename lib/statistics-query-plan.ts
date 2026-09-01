@@ -232,16 +232,42 @@ function pushUnique<T>(items: T[], item: T) {
  * frie spørgsmål sendes fortsat til den lukkede AI-planlægger.
  */
 export function predefinedStatisticsQueryPlan(question: string): StatisticsQueryPlan | null {
+  const personNameProbe = question.replace(/\b(?:Vis|Hvordan|Hvor|Hvad|Har|Er|Ja|Nej|Copydan|AI|TV|A)\b/g, "");
+  if ((
+    /\b[A-ZÆØÅ][a-zæøå]+(?:\s+[A-ZÆØÅ][a-zæøå]+)+\b/.test(personNameProbe)
+    || /\b(?:kan|for|hos|fra)\s+[A-ZÆØÅ][a-zæøå]+\b/.test(question)
+  ) && !/\bproducent/i.test(question)) {
+    throw new StatisticsQueryPlanError("person_query_not_allowed", "Statistikmotoren må ikke besvare spørgsmål om identificerbare personer.");
+  }
   const value = normalizedQuestion(question);
-  if (includesAny(value, ["produktionsland", "efter land", "fordelt pa land", "fordelt på land"])) return null;
-  if (includesAny(value, ["hvad tjener", "hvem tjener", "højest lønnede", "hojest lonnede", "lavest lønnede", "lavest lonnede"])) {
+  if (includesAny(value, ["budget", "budgetter", "produktionsland", "efter land", "fordelt pa land", "fordelt på land"])) return null;
+  if (includesAny(value, ["hvad tjener", "hvem tjener", "hvem har", "højest lønnede", "hojest lonnede", "lavest lønnede", "lavest lonnede"])) {
     throw new StatisticsQueryPlanError("person_query_not_allowed", "Statistikmotoren må ikke besvare spørgsmål om identificerbare personer.");
   }
   const metrics: StatisticsMetric[] = [];
   const addMetric = (metric: StatisticsMetric) => pushUnique(metrics, metric);
 
   const withoutContractTypeNames = value.replace(/a[- ]?(?:løn|lon)\w*/g, "");
-  const salaryMentioned = includesAny(withoutContractTypeNames, ["lon", "løn", "ugeløn", "ugelon", "manedslon", "månedsløn", "betaler bedst", "købekraft", "kobekraft"]);
+  const realWageCoreMentioned = includesAny(value, [
+    "reallon", "realløn", "reallons", "realløns", "købekraft", "kobekraft",
+    "faktiske kobekraft", "faktiske købekraft", "varer og tjenester", "flere varer", "rad til mere",
+    "råd til mere", "faerre varer", "færre varer", "raekker pengene", "rækker pengene",
+  ]);
+  const realWageMentioned = realWageCoreMentioned || includesAny(value, [
+    "inflation", "inflationen", "prisudvikling", "prisstigning", "prisstigninger",
+  ]);
+  const nominalWageMentioned = includesAny(value, [
+    "nominel", "nominelle", "nominellon", "nominelløn", "nominellonnen", "nominellønnen",
+    "nominal", "for inflation", "før inflation", "lonseddel", "lønseddel", "lonsedlen", "lønsedlen",
+    "belobet pa lonsedlen", "beløbet på lønsedlen", "kroner og orer", "kroner og ører", "lønnen i kroner", "lonnen i kroner",
+  ]);
+  const nonSalaryMetricMentioned = includesAny(value, [
+    "pension", "arbejdsuger", "arbejdsuge", "antal uger", "antal kontrakter", "hvor mange kontrakter",
+    "kontraktantal", "kontrakter er der", "producentbidrag", "feriepenge", "beta-bidrag", "beta bidrag",
+    "copydan", "streaming", "svod", "royalty", "ai-forbehold", "ai forbehold", "data-mining", "datamining",
+  ]);
+  const explicitSalaryMentioned = includesAny(withoutContractTypeNames, ["lon", "løn", "ugeløn", "ugelon", "manedslon", "månedsløn", "betaler bedst"]) || nominalWageMentioned;
+  const salaryMentioned = explicitSalaryMentioned || realWageCoreMentioned || (realWageMentioned && !nonSalaryMetricMentioned);
   const contractCountMentioned = includesAny(value, ["antal kontrakter", "hvor mange kontrakter", "kontraktantal", "kontrakter er der"])
     || /hvor mange.*kontrakt/.test(value);
   if (salaryMentioned) addMetric(includesAny(value, ["gennemsnit", "middelværdi", "middelvaerdi"]) ? "average_monthly_salary" : "median_monthly_salary");
@@ -309,13 +335,15 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
 
   if (plan.filters.categories.length > 1 || includesAny(value, ["efter produktionstype", "fordelt pa produktionstype", "fordelt på produktionstype"])) plan.compareBy.push("category");
   if (plan.filters.contractTypes.length > 1 || includesAny(value, ["efter kontrakttype", "fordelt pa kontrakttype", "fordelt på kontrakttype"])) plan.compareBy.push("contract_type");
-  if (salaryMentioned && includesAny(value, ["hvilke producenter", "bedste producenter", "producenter giver bedst", "producenter betaler bedst", "top producenter", "efter producent", "fordelt pa producent", "fordelt på producent"])) plan.compareBy.push("producer");
+  const producerTypeGroupingMentioned = includesAny(value, ["efter producenttype", "fordelt pa producenttype", "fordelt på producenttype"]);
+  if (!producerTypeGroupingMentioned && salaryMentioned && includesAny(value, ["hvilke producenter", "bedste producenter", "producenter giver bedst", "producenter betaler bedst", "top producenter", "efter producent", "fordelt pa producent", "fordelt på producent"])) plan.compareBy.push("producer");
   if (plan.filters.genders.length > 1 || /\b(?:efter|fordelt (?:pa|på)) (?:kon|køn)\b/.test(value)) plan.compareBy.push("gender");
-  if (plan.filters.experienceGroups.length > 1 || includesAny(value, ["efter erfaringsgruppe", "fordelt pa erfaring", "fordelt på erfaring"])) plan.compareBy.push("experience_group");
+  if (plan.filters.experienceGroups.length > 1 || includesAny(value, ["efter erfaringsgruppe", "efter erfaring", "fordelt pa erfaring", "fordelt på erfaring"])) plan.compareBy.push("experience_group");
   if (plan.filters.professionTypes.length > 1 || includesAny(value, ["efter faggruppe", "fordelt pa faggruppe", "fordelt på faggruppe"])) plan.compareBy.push("profession_type");
   if (plan.filters.membershipTypes.length > 1 || includesAny(value, ["efter medlemsstatus", "fordelt pa medlemsstatus", "fordelt på medlemsstatus"])) plan.compareBy.push("membership_type");
-  if (plan.filters.producerTypeCodes.length > 1 || includesAny(value, ["efter producenttype", "fordelt pa producenttype", "fordelt på producenttype"])) plan.compareBy.push("producer_type");
-  if (includesAny(value, ["inflation", "reallon", "realløn", "købekraft", "kobekraft"])) plan.adjustForInflation = true;
+  if (plan.filters.producerTypeCodes.length > 1 || producerTypeGroupingMentioned) plan.compareBy.push("producer_type");
+  if (realWageMentioned) plan.adjustForInflation = true;
+  if (nominalWageMentioned && !realWageCoreMentioned) plan.adjustForInflation = false;
   const requestedTable = includesAny(value, ["tabel", "oversigt"]);
   const requestedBar = includesAny(value, ["søjle", "sojle"]);
   const countComparison = plan.metrics.length === 1 && plan.metrics[0] === "contract_count" && plan.compareBy.length > 0;
