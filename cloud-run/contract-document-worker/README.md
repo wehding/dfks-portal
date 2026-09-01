@@ -81,6 +81,51 @@ til præcis én databasegodkendt kohorte og sender run-id'et med hvert claim. De
 aldrig bruges sammen med `OCR_REPLACEMENT_ONLY`; workeren afviser kombinationen ved
 opstart. Den almindelige Scheduler-service må heller ikke have run-id'et.
 
+### Runbundet recovery af fem kendte støjende slutsider
+
+De fem på forhånd undersøgte slutsider, hvor scannerstøj ellers giver et falsk
+OCR-ord, kan kun behandles i en særskilt engangskørsel med et privat proof-manifest.
+Dette er ikke en generel blank-side-undtagelse. Den eksisterende fire-variant-
+Vision-kontrol og begge stramme rasterkontroller skal fortsat bestå.
+
+Manifestet har et eksakt versionsstyret schema og binder hver tilladelse til:
+
+- det konkrete geometri-run;
+- originalfilens SHA-256;
+- slutsidens nummer og dokumentets sideantal;
+- SHA-256 af workerens faste kilderaster;
+- SHA-256 af en separat, fast recovery-raster;
+- et udløbstidspunkt på højst 48 timer.
+
+Manifestet indeholder præcis de fem godkendte anvendelser til denne recovery. Det
+opbevares som en konkret, nummereret Secret Manager-version (aldrig `latest`) og
+monteres read-only **kun** på det midlertidige Cloud Run Job. Mountet bruger en
+fast absolut filsti og Cloud Runs skrivebeskyttede secret-volume-mode. Jobbet får filstien i
+`OCR_TAIL_BLANK_PROOF_FILE`. HTTP-servicen må hverken have secret-mountet eller
+miljøvariablen; service-entrypointet afviser konfigurationen før filen læses.
+Et almindeligt backfill uden det eksakte `OCR_GEOMETRY_BACKFILL_RUN_ID` kan heller
+ikke bruge manifestet.
+
+Selve geometriartefaktet gemmer kun recoveryprofil, manifestdigest og slutsidetal.
+Rå original-, raster- og dokumenthashes, run-id, dokument-id, storage-stier og
+kontraktindhold må ikke gemmes i artefakt, callback eller logs. Ingen database- eller
+callback-undtagelse er nødvendig: den eksisterende lease-, run-, originalhash- og
+artefakthashbinding forbliver autoritativ.
+
+Slutauditten skal køres med en lokal, ejerbeskyttet kopi af manifestet (absolut sti,
+mode `0600`). Den genrenderer originalen med workerens to faste Poppler-profiler og
+kræver præcis fem unikke, matchende anvendelser; en manglende, ekstra, dubleret eller
+ændret anvendelse blokerer kvalitetsgodkendelsen. Historiske jobs uden denne særlige
+recoveryprofil kan fortsat auditeres uden manifestet.
+
+Efter en godkendt zero-violation-audit skal driftsoperatøren:
+
+1. fjerne `OCR_TAIL_BLANK_PROOF_FILE` og secret-mountet fra Cloud Run Jobbet;
+2. deaktivere Secret Manager-versionen og fjerne Job-servicekontoens adgang;
+3. kontrollere, at HTTP-servicen aldrig har fået secret, env-binding eller adgang;
+4. beholde Scheduler pauset, indtil hele geometri-backfillens almindelige
+   kvalitetsport er godkendt.
+
 Før kølægning oprettes én ejerbeskyttet baselinefil med de præcise 251 kilder. Den
 binder kontrakt, kildejob, originalhash, sideantal, hash af originalstien samt
 kontraktens forretnings- og dokumentstatus. Hele kohorten genvælges og verificeres

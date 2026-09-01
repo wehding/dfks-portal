@@ -17,6 +17,11 @@ import {
   recoverTailOrientationFromVariants,
   TAIL_RASTER_EDGE_MARGIN_RATIO,
 } from "./tail-page-recovery.mjs";
+import {
+  authoriseTailBlankProof,
+  hasTailBlankProofCandidate,
+  tailBlankRecoveryMarker,
+} from "./tail-blank-proof.mjs";
 
 const gzipAsync = promisify(gzip);
 const MIN_NATIVE_CHARS = 160;
@@ -113,14 +118,14 @@ const MIN_UNREADABLE_RECOVERY_CONFIDENCE = 0.75;
 const MIN_UNREADABLE_RECOVERY_WORD_IOU = 0.65;
 const MIN_UNREADABLE_RECOVERY_MEDIAN_IOU = 0.85;
 const MAX_UNREADABLE_RECOVERY_CENTER_DISTANCE_RATIO = 0.01;
-const VISION_RENDER_PROFILES = Object.freeze([
+export const VISION_RENDER_PROFILES = Object.freeze([
   { dpi: 300, quality: 95 },
   { dpi: 275, quality: 90 },
   { dpi: 250, quality: 88 },
   { dpi: 225, quality: 86 },
   { dpi: 200, quality: 85 },
 ]);
-const MAX_RENDERED_PAGE_PIXELS = 40_000_000;
+export const MAX_RENDERED_PAGE_PIXELS = 40_000_000;
 const MIN_SPATIAL_TEXT_CHARS = 120;
 const SPATIAL_OVERLAY_FALLBACK_PROFILES = Object.freeze([
   "font-metrics-v1",
@@ -204,6 +209,49 @@ export function renderedPixelCount(pageSize, dpi) {
   if (!pageSize) return Number.POSITIVE_INFINITY;
   return Math.ceil(pageSize.widthPoints * dpi / 72)
     * Math.ceil(pageSize.heightPoints * dpi / 72);
+}
+
+export async function renderVisionSourceRaster({
+  inputPath,
+  pageNumber,
+  pageSize,
+  outputPrefix,
+  runCommand,
+}) {
+  for (const profile of VISION_RENDER_PROFILES) {
+    if (renderedPixelCount(pageSize, profile.dpi) > MAX_RENDERED_PAGE_PIXELS) continue;
+    await runCommand("pdftoppm", [
+      "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
+      "-jpeg", "-jpegopt", `quality=${profile.quality}`, "-r", String(profile.dpi),
+      "-gray", inputPath, outputPrefix,
+    ], 120_000);
+    const candidatePath = `${outputPrefix}.jpg`;
+    const candidateInfo = await stat(candidatePath);
+    if (candidateInfo.size > MAX_VISION_IMAGE_BYTES) continue;
+    return readFile(candidatePath);
+  }
+  throw new GoogleOcrOperationalError("vision_page_too_large");
+}
+
+export async function renderTailRecoveryRaster({
+  inputPath,
+  pageNumber,
+  sourceWidth,
+  sourceHeight,
+  outputPrefix,
+  runCommand,
+}) {
+  await runCommand("pdftoppm", [
+    "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
+    "-jpeg", "-jpegopt", "quality=96",
+    "-scale-to-x", String(sourceWidth),
+    "-scale-to-y", String(sourceHeight),
+    inputPath, outputPrefix,
+  ], 120_000);
+  const recoveryPath = `${outputPrefix}.jpg`;
+  const recoveryInfo = await stat(recoveryPath);
+  if (recoveryInfo.size < 1 || recoveryInfo.size > MAX_VISION_IMAGE_BYTES) return null;
+  return readFile(recoveryPath);
 }
 
 export function sha256(bytes) {
@@ -1596,6 +1644,9 @@ export async function processPdfSpatially({
   googleClient,
   assertLeaseHealthy = () => {},
   forceOcr = false,
+  geometryBackfillRunId = null,
+  originalSha256 = null,
+  tailBlankProofManifest = null,
   resourceLimits,
   signal,
 }) {
@@ -1695,23 +1746,13 @@ export async function processPdfSpatially({
     const prefix = join(workDir, `page-${pageNumber}`);
     const pageSize = pageStates[pageNumber - 1]?.pageSize;
     if (!pageSize) throw new GoogleOcrOperationalError("page_geometry_unavailable");
-    let imageBytes = null;
-    for (const profile of VISION_RENDER_PROFILES) {
-      assertProcessingHealthy();
-      if (renderedPixelCount(pageSize, profile.dpi) > MAX_RENDERED_PAGE_PIXELS) continue;
-      await runCommand("pdftoppm", [
-        "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
-        "-jpeg", "-jpegopt", `quality=${profile.quality}`, "-r", String(profile.dpi),
-        "-gray", inputPath, prefix,
-      ], 120_000);
-      const candidatePath = `${prefix}.jpg`;
-      const candidateInfo = await stat(candidatePath);
-      if (candidateInfo.size > MAX_VISION_IMAGE_BYTES) continue;
-      const candidate = await readFile(candidatePath);
-      imageBytes = candidate;
-      break;
-    }
-    if (!imageBytes) throw new GoogleOcrOperationalError("vision_page_too_large");
+    const imageBytes = await renderVisionSourceRaster({
+      inputPath,
+      pageNumber,
+      pageSize,
+      outputPrefix: prefix,
+      runCommand,
+    });
     retainedRasterBytes += imageBytes.length;
     if (retainedRasterBytes > limits.maxDocumentRasterBytes) {
       throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
@@ -1754,14 +1795,25 @@ export async function processPdfSpatially({
   const blankPageNumbers = new Set();
   const verifiedBlankCandidates = new Map();
   const blankInspectionByPage = new Map();
+  const tailBlankRecoveryMarkers = new Map();
+  const hasProofCandidate = (pageNumber) => hasTailBlankProofCandidate(
+    tailBlankProofManifest,
+    {
+      runId: geometryBackfillRunId,
+      originalSha256,
+      pageNumber,
+      pageCount,
+    },
+  );
   // A completely blank document is still rejected. Within an otherwise
   // readable document, however, a verified blank page is preserved in its
   // original position without being mistaken for an OCR failure.
   for (const page of rawGeometryPages) {
-    const edgeArtifactCandidate = isSparseTailEdgeArtifactCandidate(page, {
-      pageNumber: page.pageNumber,
-      pageCount,
-    });
+    const edgeArtifactCandidate = hasProofCandidate(page.pageNumber)
+      && isSparseTailEdgeArtifactCandidate(page, {
+        pageNumber: page.pageNumber,
+        pageCount,
+      });
     if (page.words.length > 0 && !edgeArtifactCandidate) continue;
     const pageState = pageStates[page.pageNumber - 1];
     const sourcePage = sourcePageByNumber.get(page.pageNumber);
@@ -1780,7 +1832,7 @@ export async function processPdfSpatially({
       if (!page || (page.words.length > 0 && !isSparseTailEdgeArtifactCandidate(page, {
         pageNumber,
         pageCount,
-      }))) continue;
+      })) || (page.words.length > 0 && !hasProofCandidate(pageNumber))) continue;
       blankPageNumbers.add(pageNumber);
       page.words = [];
       page.imageWidth = inspection.width;
@@ -1791,10 +1843,11 @@ export async function processPdfSpatially({
 
   const recoveryCandidates = rawGeometryPages.filter((page) => (
     (page.words.length === 0 && !verifiedBlankCandidates.has(page.pageNumber))
-      || isSparseTailEdgeArtifactCandidate(page, {
-        pageNumber: page.pageNumber,
-        pageCount,
-      })
+      || (hasProofCandidate(page.pageNumber)
+        && isSparseTailEdgeArtifactCandidate(page, {
+          pageNumber: page.pageNumber,
+          pageCount,
+        }))
   ));
   if (recoveryCandidates.length > 0
     && recoveryCandidates.length <= MAX_UNREADABLE_RECOVERY_PAGES
@@ -1804,21 +1857,19 @@ export async function processPdfSpatially({
       const sourceTransform = transformByPage.get(page.pageNumber);
       if (!(sourceTransform?.sourceWidth > 0) || !(sourceTransform?.sourceHeight > 0)) continue;
       const recoveryPrefix = join(workDir, `recovery-colour-${page.pageNumber}`);
-      await runCommand("pdftoppm", [
-        "-f", String(page.pageNumber), "-l", String(page.pageNumber), "-singlefile", "-cropbox",
-        "-jpeg", "-jpegopt", "quality=96",
-        "-scale-to-x", String(sourceTransform.sourceWidth),
-        "-scale-to-y", String(sourceTransform.sourceHeight),
-        inputPath, recoveryPrefix,
-      ], 120_000);
-      const recoveryPath = `${recoveryPrefix}.jpg`;
-      const recoveryInfo = await stat(recoveryPath);
+      const recoveryImageBytes = await renderTailRecoveryRaster({
+        inputPath,
+        pageNumber: page.pageNumber,
+        sourceWidth: sourceTransform.sourceWidth,
+        sourceHeight: sourceTransform.sourceHeight,
+        outputPrefix: recoveryPrefix,
+        runCommand,
+      });
       const remainingRasterBytes = limits.maxDocumentTotalRasterBytes - retainedRecoveryRasterBytes;
       const remainingResponseBytes = limits.maxVisionResponseBytesTotal
         - retainedRecoveryResponseBytes;
-      if (recoveryInfo.size < 1 || recoveryInfo.size > MAX_VISION_IMAGE_BYTES
-        || recoveryInfo.size >= remainingRasterBytes || remainingResponseBytes < 1) continue;
-      const recoveryImageBytes = await readFile(recoveryPath);
+      if (!recoveryImageBytes
+        || recoveryImageBytes.length >= remainingRasterBytes || remainingResponseBytes < 1) continue;
       const retry = await googleClient.annotateUnreadablePageVariants({
         pageNumber: page.pageNumber,
         imageBytes: recoveryImageBytes,
@@ -1868,13 +1919,24 @@ export async function processPdfSpatially({
       const sourceEvidence = blankInspectionByPage.get(page.pageNumber);
       const recoveryEvidence = await inspectRasterBlankness(recoveryImageBytes);
       assertProcessingHealthy();
-      if (hasSparseTailBlankConsensus({
+      const proofToken = authoriseTailBlankProof(tailBlankProofManifest, {
+        runId: geometryBackfillRunId,
+        originalSha256,
+        pageNumber: page.pageNumber,
+        pageCount,
+        sourceRasterBytes: sourcePageByNumber.get(page.pageNumber)?.imageBytes,
+        recoveryRasterBytes: recoveryImageBytes,
+      });
+      const recoveryMarker = tailBlankRecoveryMarker(proofToken);
+      if (recoveryMarker && hasSparseTailBlankConsensus({
         pageNumber: page.pageNumber,
         pageCount,
         variantPages: recoveredVariants,
         sourceEvidence,
         recoveryEvidence,
+        proofToken,
       })) {
+        tailBlankRecoveryMarkers.set(page.pageNumber, recoveryMarker);
         verifiedBlankCandidates.set(page.pageNumber, {
           ...sourceEvidence,
           width: page.imageWidth,
@@ -2099,6 +2161,12 @@ export async function processPdfSpatially({
   }
 
   const { extractedPages, spatial, textCharCount } = overlayAudit;
+  const usedTailBlankRecoveryPages = [...tailBlankRecoveryMarkers.keys()]
+    .filter((pageNumber) => blankPageNumbers.has(pageNumber))
+    .sort((left, right) => left - right);
+  const firstTailBlankRecoveryMarker = usedTailBlankRecoveryPages.length > 0
+    ? tailBlankRecoveryMarkers.get(usedTailBlankRecoveryPages[0])
+    : null;
   // Persist the independently measured metrics only after the derivative has
   // been rebuilt and verified. The uploaded artefact therefore cannot claim
   // spatial success based solely on Vision's source geometry.
@@ -2106,6 +2174,13 @@ export async function processPdfSpatially({
     ...geometry,
     overlayProfile: selectedOverlayProfile,
     spatialVerification: spatial,
+    ...(firstTailBlankRecoveryMarker ? {
+      tailBlankRecovery: {
+        profile: firstTailBlankRecoveryMarker.profile,
+        manifestDigest: firstTailBlankRecoveryMarker.manifestDigest,
+        pageNumbers: usedTailBlankRecoveryPages,
+      },
+    } : {}),
   };
   const verifiedGeometryJson = serializeSpatialGeometry(
     verifiedGeometry,

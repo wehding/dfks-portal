@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -9,6 +10,53 @@ import {
   recoverTailOrientationFromVariants,
   recoverTailPageNumberOrientationFromVariants,
 } from "./tail-page-recovery.mjs";
+import {
+  authoriseTailBlankProof,
+  createTailBlankProofManifest,
+  parseTailBlankProofManifest,
+} from "./tail-blank-proof.mjs";
+
+const PROOF_RUN_ID = "33333333-3333-4333-8333-333333333333";
+const PROOF_ORIGINAL_HASH = "1".repeat(64);
+const PROOF_SOURCE_BYTES = Buffer.from("synthetic-source-raster");
+const PROOF_RECOVERY_BYTES = Buffer.from("synthetic-recovery-raster");
+
+function digest(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function sparseTailProofToken(pageNumber = 8, pageCount = 8) {
+  const primaryEntry = {
+    originalSha256: PROOF_ORIGINAL_HASH,
+    pageNumber,
+    pageCount,
+    sourceRasterSha256: digest(PROOF_SOURCE_BYTES),
+    recoveryRasterSha256: digest(PROOF_RECOVERY_BYTES),
+  };
+  const value = createTailBlankProofManifest({
+    runId: PROOF_RUN_ID,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    entries: [primaryEntry, ...[4, 5, 6, 7].map((digit, index) => ({
+      originalSha256: String(digit).repeat(64),
+      pageNumber: pageCount + index + 1,
+      pageCount: pageCount + index + 1,
+      sourceRasterSha256: String(digit + 1).repeat(64),
+      recoveryRasterSha256: String(digit + 2).repeat(64),
+    }))],
+  });
+  const manifest = parseTailBlankProofManifest(JSON.stringify(value), {
+    executionMode: "backfill",
+    expectedRunId: PROOF_RUN_ID,
+  });
+  return authoriseTailBlankProof(manifest, {
+    runId: PROOF_RUN_ID,
+    originalSha256: PROOF_ORIGINAL_HASH,
+    pageNumber,
+    pageCount,
+    sourceRasterBytes: PROOF_SOURCE_BYTES,
+    recoveryRasterBytes: PROOF_RECOVERY_BYTES,
+  });
+}
 
 function word(text, {
   left = 20,
@@ -110,7 +158,15 @@ test("tom slutsider kræver både tomme Vision-varianter og to enige rastermåli
     variantPages: emptyVariants,
     sourceEvidence: evidence,
     recoveryEvidence: { ...evidence, nonWhiteRatio: 0.00145, mean: 254.9 },
+    proofToken: sparseTailProofToken(),
   }), true);
+  assert.equal(hasSparseTailBlankConsensus({
+    pageNumber: 8,
+    pageCount: 8,
+    variantPages: emptyVariants,
+    sourceEvidence: evidence,
+    recoveryEvidence: evidence,
+  }), false);
   assert.equal(hasSparseTailBlankConsensus({
     pageNumber: 8,
     pageCount: 8,
@@ -120,6 +176,7 @@ test("tom slutsider kræver både tomme Vision-varianter og to enige rastermåli
     ],
     sourceEvidence: evidence,
     recoveryEvidence: evidence,
+    proofToken: sparseTailProofToken(),
   }), false);
   assert.equal(hasSparseTailBlankConsensus({
     pageNumber: 8,
@@ -127,6 +184,7 @@ test("tom slutsider kræver både tomme Vision-varianter og to enige rastermåli
     variantPages: emptyVariants,
     sourceEvidence: evidence,
     recoveryEvidence: blankEvidence({ maxInteriorLocalDarkRatio: 0.08 }),
+    proofToken: sparseTailProofToken(),
   }), false);
 });
 
@@ -156,6 +214,7 @@ test("scanner-randstøj må kun skjule højst to korte lav-confidence artefakter
     variantPages: variants,
     sourceEvidence: blankEvidence(),
     recoveryEvidence: blankEvidence({ nonWhiteRatio: 0.00145, mean: 254.9 }),
+    proofToken: sparseTailProofToken(),
   }), true);
 
   const rejects = [
@@ -198,6 +257,7 @@ test("scanner-randstøj må kun skjule højst to korte lav-confidence artefakter
       variantPages: [rejected, ...variants.slice(1)],
       sourceEvidence: blankEvidence(),
       recoveryEvidence: blankEvidence(),
+      proofToken: sparseTailProofToken(),
     }), false);
   }
 });
@@ -224,6 +284,7 @@ test("randstøj kan ikke skjule signatur eller tekst i indholdsfeltet", () => {
       variantPages: emptyVariants,
       sourceEvidence: blankEvidence(),
       recoveryEvidence: unsafeEvidence,
+      proofToken: sparseTailProofToken(),
     }), false);
   }
 });

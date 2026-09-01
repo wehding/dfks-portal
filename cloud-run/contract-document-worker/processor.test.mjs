@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { truncate, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 
 import { GoogleOcrOperationalError } from "./google-vision-api.mjs";
@@ -19,6 +20,7 @@ import {
   processPdfSpatially,
   SPATIAL_VERIFICATION_PROFILE,
 } from "./spatial-ocr.mjs";
+import { createTailBlankProofManifest } from "./tail-blank-proof.mjs";
 
 const config = {
   portalBaseUrl: "https://portal.example",
@@ -157,6 +159,88 @@ test("geometry-backfill worker afgrænser claim til det signerede run-id", async
   );
   assert.equal(claimHeaders["X-DFKS-OCR-Replacement-Only"], undefined);
   assert.equal(claimHeaders.Authorization, "Bearer identity-secret");
+});
+
+test("HTTP-service afviser et job-only blank-side-manifest før filen læses", () => {
+  assert.throws(() => createProcessor({
+    executionMode: "service",
+    env: { OCR_TAIL_BLANK_PROOF_FILE: "/private/does-not-exist.json" },
+    config: {
+      ...config,
+      geometryBackfillRunId: "33333333-3333-4333-8333-333333333333",
+    },
+    googleClient: {},
+  }), (error) => error instanceof FatalProcessingError
+    && error.code === "tail_blank_proof_forbidden");
+});
+
+test("backfill binder det private manifest til run og den verificerede original", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dfks-processor-tail-proof-"));
+  const proofPath = join(directory, "proof.json");
+  const runId = "33333333-3333-4333-8333-333333333333";
+  const original = Buffer.from("%PDF-1.7\nproof-bound-original");
+  const proof = createTailBlankProofManifest({
+    runId,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    entries: [{
+      originalSha256: "1".repeat(64),
+      pageNumber: 2,
+      pageCount: 2,
+      sourceRasterSha256: "2".repeat(64),
+      recoveryRasterSha256: "3".repeat(64),
+    }, ...[4, 5, 6, 7].map((digit, index) => ({
+      originalSha256: String(digit).repeat(64),
+      pageNumber: 3 + index,
+      pageCount: 3 + index,
+      sourceRasterSha256: String(digit + 1).repeat(64),
+      recoveryRasterSha256: String(digit + 2).repeat(64),
+    }))],
+  });
+  await writeFile(proofPath, JSON.stringify(proof), { mode: 0o400 });
+  let spatialOptions;
+  try {
+    const processor = createProcessor({
+      executionMode: "backfill",
+      env: { OCR_TAIL_BLANK_PROOF_FILE: proofPath },
+      config: { ...config, geometryBackfillRunId: runId, processingDeadlineMs: 0 },
+      identityTokenProvider: async () => "identity-secret",
+      googleClient: {},
+      leaseHeartbeatFactory: async () => ({ assertHealthy() {}, async stop() {} }),
+      spatialProcessor: async (options) => {
+        spatialOptions = options;
+        return {
+          status: "needs_review",
+          classification: "image_only",
+          pageCount: 2,
+          nativePageCount: 0,
+          ocrPageCount: 2,
+          unreadablePageCount: 1,
+          affectedPageNumbers: [2],
+        };
+      },
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value.endsWith("/claim")) {
+          return response(JSON.stringify(claimJob()), { status: 200 });
+        }
+        if (value.endsWith("/complete")) return response("{}", { status: 200 });
+        return response(original, { status: 200 }, value);
+      },
+    });
+    assert.deepEqual(await processor(), {
+      outcome: "needs_review",
+      diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.unreadablePage,
+      reviewDetails: {
+        schemaVersion: 1,
+        reasons: [{ code: OCR_QUALITY_DIAGNOSTIC_CODES.unreadablePage, pageNumbers: [2] }],
+      },
+    });
+    assert.equal(spatialOptions.geometryBackfillRunId, runId);
+    assert.equal(spatialOptions.originalSha256.length, 64);
+    assert.equal(spatialOptions.tailBlankProofManifest.manifestDigest, proof.manifestDigest);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("HTTP-processoren stopper kontrolleret før Cloud Run-requestens hårde timeout", async () => {

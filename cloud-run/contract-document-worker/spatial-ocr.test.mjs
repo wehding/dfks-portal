@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +36,48 @@ import {
 } from "./spatial-ocr.mjs";
 import { GoogleOcrOperationalError } from "./google-vision-api.mjs";
 import { hasSparseTailBlankConsensus } from "./tail-page-recovery.mjs";
+import {
+  authoriseTailBlankProof,
+  createTailBlankProofManifest,
+  parseTailBlankProofManifest,
+} from "./tail-blank-proof.mjs";
+
+function spatialTestProofToken() {
+  const source = Buffer.from("synthetic-source-raster");
+  const recovery = Buffer.from("synthetic-recovery-raster");
+  const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  const runId = "33333333-3333-4333-8333-333333333333";
+  const originalSha256 = "1".repeat(64);
+  const value = createTailBlankProofManifest({
+    runId,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    entries: [{
+      originalSha256,
+      pageNumber: 8,
+      pageCount: 8,
+      sourceRasterSha256: digest(source),
+      recoveryRasterSha256: digest(recovery),
+    }, ...[4, 5, 6, 7].map((digit, index) => ({
+      originalSha256: String(digit).repeat(64),
+      pageNumber: 9 + index,
+      pageCount: 9 + index,
+      sourceRasterSha256: String(digit + 1).repeat(64),
+      recoveryRasterSha256: String(digit + 2).repeat(64),
+    }))],
+  });
+  const manifest = parseTailBlankProofManifest(JSON.stringify(value), {
+    executionMode: "backfill",
+    expectedRunId: runId,
+  });
+  return authoriseTailBlankProof(manifest, {
+    runId,
+    originalSha256,
+    pageNumber: 8,
+    pageCount: 8,
+    sourceRasterBytes: source,
+    recoveryRasterBytes: recovery,
+  });
+}
 
 test("native tekst og billedside klassificeres forskelligt", () => {
   const nativeText = Array.from(
@@ -199,6 +242,7 @@ test("to rastere med scanner-randstøj bevarer indholdsfeltets fail-closed kontr
     variantPages: variants,
     sourceEvidence,
     recoveryEvidence,
+    proofToken: spatialTestProofToken(),
   }), true);
 
   const signature = await sharp({
@@ -216,6 +260,7 @@ test("to rastere med scanner-randstøj bevarer indholdsfeltets fail-closed kontr
     variantPages: variants,
     sourceEvidence,
     recoveryEvidence: signedEvidence,
+    proofToken: spatialTestProofToken(),
   }), false);
 });
 
@@ -281,6 +326,29 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
       ] },
       symbols: [{ text: "x" }],
     };
+    const runId = "33333333-3333-4333-8333-333333333333";
+    const originalSha256 = "1".repeat(64);
+    const proofValue = createTailBlankProofManifest({
+      runId,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      entries: [{
+        originalSha256,
+        pageNumber: 2,
+        pageCount: 2,
+        sourceRasterSha256: createHash("sha256").update(whiteJpeg).digest("hex"),
+        recoveryRasterSha256: createHash("sha256").update(whiteJpeg).digest("hex"),
+      }, ...[4, 5, 6, 7].map((digit, index) => ({
+        originalSha256: String(digit).repeat(64),
+        pageNumber: 3 + index,
+        pageCount: 3 + index,
+        sourceRasterSha256: String(digit + 1).repeat(64),
+        recoveryRasterSha256: String(digit + 2).repeat(64),
+      }))],
+    });
+    const tailBlankProofManifest = parseTailBlankProofManifest(JSON.stringify(proofValue), {
+      executionMode: "backfill",
+      expectedRunId: runId,
+    });
     let recoveryCalls = 0;
     const result = await processPdfSpatially({
       inputPath: join(directory, "input.pdf"),
@@ -288,6 +356,9 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
       geometryPath: join(directory, "geometry.json.gz"),
       workDir: directory,
       commandRunner: runner,
+      geometryBackfillRunId: runId,
+      originalSha256,
+      tailBlankProofManifest,
       googleClient: {
         async annotateDocument() {
           return {
@@ -340,6 +411,14 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
     assert.equal(result.status, "completed", JSON.stringify(result));
     assert.equal(result.blankPageCount, 1);
     assert.equal(result.unreadablePageCount, 0);
+    const geometry = JSON.parse(gunzipSync(await readFile(
+      join(directory, "geometry.json.gz"),
+    )).toString("utf8"));
+    assert.deepEqual(geometry.tailBlankRecovery, {
+      profile: "dfks-run-bound-tail-blank-v1",
+      manifestDigest: proofValue.manifestDigest,
+      pageNumbers: [2],
+    });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

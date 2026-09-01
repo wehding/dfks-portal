@@ -10,6 +10,10 @@ import {
 } from "./google-vision-api.mjs";
 import { MAX_SPATIAL_GZIP_BYTES } from "./resource-limits.mjs";
 import { processPdfSpatially, sha256 } from "./spatial-ocr.mjs";
+import {
+  readTailBlankProofManifestFile,
+  TailBlankProofError,
+} from "./tail-blank-proof.mjs";
 
 const REQUIRED_ENV = ["PORTAL_BASE_URL", "OCR_CLOUD_RUN_AUDIENCE", "SUPABASE_URL", "SUPABASE_ANON_KEY", "GOOGLE_CLOUD_PROJECT"];
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -577,7 +581,29 @@ function isDocumentGoogleError(value) {
 
 export function createProcessor(options = {}) {
   const env = options.env ?? process.env;
+  const executionMode = options.executionMode ?? "service";
+  if (executionMode !== "service" && executionMode !== "backfill") {
+    throw new FatalProcessingError("invalid_execution_mode");
+  }
   const config = options.config ?? readRuntimeConfig(env);
+  const tailBlankProofPath = env.OCR_TAIL_BLANK_PROOF_FILE?.trim() || null;
+  if (tailBlankProofPath != null && executionMode !== "backfill") {
+    throw new FatalProcessingError("tail_blank_proof_forbidden");
+  }
+  let tailBlankProofManifest = null;
+  if (tailBlankProofPath != null) {
+    try {
+      tailBlankProofManifest = readTailBlankProofManifestFile(tailBlankProofPath, {
+        executionMode,
+        expectedRunId: config.geometryBackfillRunId,
+      });
+    } catch (error) {
+      if (error instanceof TailBlankProofError) {
+        throw new FatalProcessingError(error.code, { cause: error });
+      }
+      throw error;
+    }
+  }
   const fetchImpl = options.fetchImpl ?? fetch;
   const commandRunner = options.commandRunner ?? runCommand;
   const identityTokenProvider = options.identityTokenProvider
@@ -701,6 +727,9 @@ export function createProcessor(options = {}) {
         inputPath, outputPath, geometryPath, workDir, commandRunner, googleClient,
         assertLeaseHealthy: assertProcessingHealthy,
         forceOcr: config.replacementOnly === true || config.geometryBackfillRunId != null,
+        geometryBackfillRunId: config.geometryBackfillRunId,
+        originalSha256,
+        tailBlankProofManifest,
         signal: processingSignal,
       });
       assertProcessingHealthy();

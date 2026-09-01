@@ -1,3 +1,5 @@
+import { isTailBlankProofToken } from "./tail-blank-proof.mjs";
+
 const MIN_VARIANT_CONSENSUS = 2;
 const MIN_ORIENTATION_VARIANT_CONSENSUS = 3;
 const MAX_SPARSE_TAIL_WORDS = 8;
@@ -295,8 +297,10 @@ export function hasSparseTailBlankConsensus({
   variantPages,
   sourceEvidence,
   recoveryEvidence,
+  proofToken,
 } = {}) {
   if (!isTailContext(pageNumber, pageCount)
+    || !isTailBlankProofToken(proofToken, { pageNumber, pageCount })
     || !Array.isArray(variantPages)
     || variantPages.length !== 4
     || variantPages.some((page) => page?.pageNumber !== pageNumber
