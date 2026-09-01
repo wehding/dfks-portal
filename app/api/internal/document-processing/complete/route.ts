@@ -100,7 +100,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Ugyldig sidediagnostik" }, { status: 400 });
   }
 
-  const completionResult = await db.rpc("finish_contract_document_job_v7", {
+  const completionResult = await db.rpc("finish_contract_document_job_v8", {
     p_job_id: body.jobId,
     p_lease_token: body.leaseToken,
     p_status: body.status,

@@ -72,6 +72,28 @@ test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () 
     OCR_TMP_DIR: "/mnt/ramdisk",
     OCR_REPLACEMENT_ONLY: "true",
   }).replacementOnly, true);
+  assert.equal(readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_GEOMETRY_BACKFILL_RUN_ID: "33333333-3333-4333-8333-333333333333",
+  }).geometryBackfillRunId, "33333333-3333-4333-8333-333333333333");
+  assert.throws(() => readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_GEOMETRY_BACKFILL_RUN_ID: "not-a-run-id",
+  }), (error) => (
+    error instanceof FatalProcessingError
+    && error.code === "invalid_geometry_backfill_configuration"
+  ));
+  assert.throws(() => readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_REPLACEMENT_ONLY: "true",
+    OCR_GEOMETRY_BACKFILL_RUN_ID: "33333333-3333-4333-8333-333333333333",
+  }), (error) => (
+    error instanceof FatalProcessingError
+    && error.code === "conflicting_backfill_configuration"
+  ));
   assert.throws(() => readRuntimeConfig({
     ...env,
     OCR_TMP_DIR: "/mnt/ramdisk",
@@ -105,6 +127,32 @@ test("replacement-only worker markerer kun claim-kaldet eksplicit", async () => 
 
   assert.deepEqual(await processor(), { outcome: "empty" });
   assert.equal(claimHeaders["X-DFKS-OCR-Replacement-Only"], "1");
+  assert.equal(claimHeaders.Authorization, "Bearer identity-secret");
+});
+
+test("geometry-backfill worker afgrænser claim til det signerede run-id", async () => {
+  let claimHeaders;
+  const processor = createProcessor({
+    config: {
+      ...config,
+      replacementOnly: false,
+      geometryBackfillRunId: "33333333-3333-4333-8333-333333333333",
+    },
+    identityTokenProvider: async () => "identity-secret",
+    googleClient: {},
+    fetchImpl: async (url, init) => {
+      assert.ok(String(url).endsWith("/claim"));
+      claimHeaders = init.headers;
+      return response(null, { status: 204 });
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "empty" });
+  assert.equal(
+    claimHeaders["X-DFKS-OCR-Geometry-Backfill-Run"],
+    "33333333-3333-4333-8333-333333333333",
+  );
+  assert.equal(claimHeaders["X-DFKS-OCR-Replacement-Only"], undefined);
   assert.equal(claimHeaders.Authorization, "Bearer identity-secret");
 });
 
@@ -1047,6 +1095,34 @@ test("replacement-only sender native kilder gennem den tvungne OCR-port", async 
   let forceOcr;
   const processor = createProcessor({
     config: { ...config, replacementOnly: true },
+    identityTokenProvider: async () => "identity-secret",
+    googleClient: {},
+    spatialProcessor: async (options) => {
+      forceOcr = options.forceOcr;
+      return {
+        status: "not_required", classification: "native_text", pageCount: 1,
+        nativePageCount: 1, ocrPageCount: 0, unreadablePageCount: 0, textCharCount: 500,
+      };
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) return response("{}", { status: 200 });
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+  assert.deepEqual(await processor(), { outcome: "completed" });
+  assert.equal(forceOcr, true);
+});
+
+test("geometry-backfill sender native kilder gennem den tvungne OCR-port", async () => {
+  let forceOcr;
+  const processor = createProcessor({
+    config: {
+      ...config,
+      replacementOnly: false,
+      geometryBackfillRunId: "33333333-3333-4333-8333-333333333333",
+    },
     identityTokenProvider: async () => "identity-secret",
     googleClient: {},
     spatialProcessor: async (options) => {

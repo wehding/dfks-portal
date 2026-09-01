@@ -115,11 +115,32 @@
   "processingActivities": [
     { "id": "PROC-CONTRACT-ACCESS", "name": "Kontraktadgang og sagsbehandling", "lifecyclePhase": "use", "categories": ["contract_data", "salary_data", "union_membership_data"], "owner": "Portalteam" },
     { "id": "PROC-MEMBER-ADMIN", "name": "Medlemsadministration og søgning", "lifecyclePhase": "use", "categories": ["identity_data", "contact_data", "union_membership_data"], "owner": "Portalteam" },
-    { "id": "PROC-DOCUMENT-AI", "name": "Dokument-, direkte Vision OCR-, derivatslette- og AI-behandling", "lifecyclePhase": "analysis", "categories": ["contract_data", "salary_data", "ai_analysis"], "owner": "AI- og portalteam" },
+    { "id": "PROC-DOCUMENT-AI", "name": "Dokument-, direkte Vision OCR-, derivatslette- og AI-behandling", "lifecyclePhase": "analysis", "categories": ["contract_data", "document_data", "salary_data", "ai_analysis"], "owner": "AI- og portalteam" },
     { "id": "PROC-STATISTICS", "name": "Statistik og diskretion", "lifecyclePhase": "analysis", "categories": ["salary_data", "contract_data", "union_membership_data"], "owner": "Statistikteam" },
     { "id": "PROC-COMMUNICATION", "name": "Kommunikation og eksterne kladder", "lifecyclePhase": "sharing", "categories": ["contact_data", "communication_data", "contract_data"], "owner": "Juridisk team og portalteam" },
     { "id": "PROC-RIGHTS-DISTRIBUTION", "name": "Afstemning og fordeling af arbejdsandele", "lifecyclePhase": "use", "categories": ["work_credit_data", "union_membership_data"], "owner": "Rettigheds- og portalteam" },
     { "id": "PROC-DATA-SUBJECT-RIGHTS", "name": "Indsigtsret og sikker udlevering", "lifecyclePhase": "sharing", "categories": ["audit_metadata"], "owner": "Privacyteam" }
+  ],
+  "dataFlows": [
+    {
+      "id": "FLOW-VISION-V3-GEOMETRY-BACKFILL",
+      "name": "Afgrænset Vision v3-geometri-backfill",
+      "processingActivity": "PROC-DOCUMENT-AI",
+      "lifecycleStage": "analysis",
+      "status": "implemented",
+      "entrypoint": "scripts/one-off/vision-v3-geometry-backfill.ts",
+      "auditImplementation": "supabase/migrations/20260901081533_vision_v3_geometry_backfill.sql",
+      "sourceStores": ["STORE-SUPABASE-DB", "STORE-SUPABASE-STORAGE"],
+      "destinationStores": ["STORE-SUPABASE-DB", "STORE-SUPABASE-STORAGE"],
+      "externalProcessor": "Google Vision EU via den private Cloud Run-worker",
+      "categories": ["contract_data", "document_data", "ai_analysis"],
+      "members": "rettighedshavere fra den hashbundne og antalslåste backfill-kohorte",
+      "organisationScope": "hver target- og jobrække bevarer kontraktens org_id; servicefunktionerne validerer kohorte, kontrakt og kildegeneration",
+      "originalHandling": "originale storage-objekter og deres stier ændres aldrig; kun afledt PDF og v3-geometri promoveres efter integritetskontrol",
+      "activation": "Afventer produktionsmigration, Cloud Run-revision, pilot og godkendt kvalitetsport",
+      "test": "tests/vision-v3-geometry-backfill-compliance.test.ts",
+      "owner": "AI-, sikkerheds- og portalteam"
+    }
   ],
   "dataStores": [
     { "id": "STORE-SUPABASE-DB", "type": "database", "organisationScoped": true, "encryption": "managed_at_rest_and_tls", "retention": "table_specific", "owner": "Portalteam" },
@@ -137,6 +158,7 @@
     { "path": "app/api/admin/contracts/status/route.ts", "reason": "Returnerer kun teknisk jobstatus for allerede synlige, organisationsafgrænsede review-id'er. Den smalle polling må ikke oprette gentagne læseaudit-events.", "test": "tests/list-load-performance.test.ts", "owner": "Portalteam" }
   ],
   "entries": [
+    { "path": "scripts/one-off/vision-v3-geometry-backfill.ts", "auditImplementation": "supabase/migrations/20260901081533_vision_v3_geometry_backfill.sql", "processing": "Hashbundet engangskørsel af eksisterende PDF-kontrakter gennem direkte Vision OCR med præcis v3-ordgeometri", "lifecycleStage": "analysis", "status": "implemented", "categories": ["contract_data", "document_data", "ai_analysis"], "members": "alle rettighedshavere i den eksakte, forhåndskontrollerede kohorte", "purpose": "kvalitetssikring af kontraktdokumenter og præcise kildehenvisninger", "legalBasis": "GDPR Art. 6(1)(b)/(f), Art. 9(2)(d)", "action": "create / update", "component": "one-off.vision-v3-geometry-backfill / vision_v3_geometry_backfill", "targetResolution": "contracts.rights_holder_id samles atomisk for kø og afsluttende kvalitetsport", "failClosed": true, "test": "tests/vision-v3-geometry-backfill-compliance.test.ts", "owner": "AI-, sikkerheds- og portalteam" },
     { "path": "app/actions/work-share-cases.ts", "processing": "Administrativ arbejdsandelskø, sagsdetaljer og medlemmets opgavedybdelink", "lifecycleStage": "use", "status": "implemented", "categories": ["work_credit_data", "union_membership_data"], "members": "rettighedshavere fra køen samt det autentificerede medlem i en åbnet opgave", "purpose": "fordeling af rettighedsmidler", "legalBasis": "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", "action": "read", "component": "admin.work-shares", "targetResolution": "organisationsafgrænsede deltagere eller det autentificerede medlems egen opgave", "failClosed": true, "test": "tests/work-share-queue.test.ts", "owner": "Rettigheds- og portalteam" },
     { "path": "app/api/admin/contracts/route.ts", "auditImplementation": "lib/server/contract-review-list.ts", "processing": "Kontraktliste og søgning", "categories": ["contract_data", "salary_data"], "members": "rights_holder_id fra resultater", "purpose": "sagsbehandling", "legalBasis": "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", "action": "search", "component": "admin.contracts.list", "targetResolution": "resultaternes rettighedshavere", "failClosed": true, "test": "tests/audit-log.test.ts", "owner": "Portalteam" },
     { "path": "app/api/admin/contracts/[id]/route.ts", "processing": "Kontraktdetaljer", "categories": ["contract_data", "salary_data"], "members": "contracts.rights_holder_id", "purpose": "sagsbehandling", "legalBasis": "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", "action": "read", "component": "admin.contracts.detail", "targetResolution": "kontraktens rettighedshaver", "failClosed": true, "test": "tests/audit-log.test.ts", "owner": "Portalteam" },

@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
 const CLEANUP_TIMEOUT_MS = 2_000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function createCleanupFetch(signal: AbortSignal): typeof globalThis.fetch {
   return (input, init) => globalThis.fetch(input, {
@@ -75,6 +76,11 @@ export async function POST(request: Request) {
   }
 
   const replacementOnly = request.headers.get("X-DFKS-OCR-Replacement-Only") === "1";
+  const geometryBackfillRunId = request.headers.get("X-DFKS-OCR-Geometry-Backfill-Run");
+  if ((geometryBackfillRunId != null && !UUID_PATTERN.test(geometryBackfillRunId))
+    || (replacementOnly && geometryBackfillRunId != null)) {
+    return NextResponse.json({ error: "Ugyldig dokumentkø" }, { status: 400 });
+  }
 
   const audit = { source: "cron" as const, mode: "summary" as const };
   const db = createServiceClient({ audit });
@@ -94,9 +100,14 @@ export async function POST(request: Request) {
   ])
     .catch(() => undefined)
     .finally(() => clearTimeout(cleanupTimer));
-  const claim = replacementOnly
-    ? db.rpc("claim_next_direct_vision_replacement_job", { p_lease_minutes: 30 })
-    : db.rpc("claim_next_contract_document_job", { p_lease_minutes: 30 });
+  const claim = geometryBackfillRunId
+    ? db.rpc("claim_next_contract_document_geometry_backfill_job", {
+      p_run_id: geometryBackfillRunId,
+      p_lease_minutes: 30,
+    })
+    : replacementOnly
+      ? db.rpc("claim_next_direct_vision_replacement_job", { p_lease_minutes: 30 })
+      : db.rpc("claim_next_contract_document_job", { p_lease_minutes: 30 });
   let [{ data: job, error }] = await Promise.all([claim, cleanup]);
   if (error) return NextResponse.json({ error: "Dokumentkøen kunne ikke læses" }, { status: 500 });
 
@@ -105,7 +116,7 @@ export async function POST(request: Request) {
   // service-only RPC applies the immutable-source, generation and retry caps
   // before creating at most one recovery generation. Rescan requests are
   // explicitly excluded by the database policy.
-  if ((!job?.id || !job.lease_token) && !replacementOnly) {
+  if ((!job?.id || !job.lease_token) && !replacementOnly && !geometryBackfillRunId) {
     const recovery = await db.rpc(
       "queue_contract_document_job_automatic_recovery_batch",
       { p_limit: 1 },
@@ -130,7 +141,7 @@ export async function POST(request: Request) {
   // Every lease writes to its own immutable derivative namespace. A stale
   // worker may retain a short-lived signed token, but it can then only write
   // to its abandoned lease path and can never overwrite the active result.
-  // finish_contract_document_job_v7 promotes only the paths belonging to the
+  // finish_contract_document_job_v8 promotes only the paths belonging to the
   // currently locked lease into the contract row.
   const leasePrefix = `${job.org_id}/processed/${job.contract_id}/leases/${job.lease_token}`;
   const outputUploadPath = `${leasePrefix}/normalised.pdf`;
@@ -146,7 +157,7 @@ export async function POST(request: Request) {
     .select("id")
     .maybeSingle();
   if (download.error || derivativePathError || !leasedJob?.id) {
-    await db.rpc("finish_contract_document_job_v7", {
+    await db.rpc("finish_contract_document_job_v8", {
       p_job_id: job.id,
       p_lease_token: job.lease_token,
       p_status: "failed",

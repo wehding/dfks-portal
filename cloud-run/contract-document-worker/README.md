@@ -75,6 +75,62 @@ Tilstanden opretter aldrig automatiske recovery-generationer. Den almindelige
 Scheduler-service må ikke have variablen, så fremtidige uploads fortsat bruger den
 normale kø. Andre stavemåder end de eksakte værdier `true` og `false` afvises.
 
+Den særskilte engangskørsel, der supplerer ældre kontrakter med direkte Vision-v3-
+geometri, bruger i stedet `OCR_GEOMETRY_BACKFILL_RUN_ID=<uuid>`. Variablen bindes
+til præcis én databasegodkendt kohorte og sender run-id'et med hvert claim. Den må
+aldrig bruges sammen med `OCR_REPLACEMENT_ONLY`; workeren afviser kombinationen ved
+opstart. Den almindelige Scheduler-service må heller ikke have run-id'et.
+
+Før kølægning oprettes én ejerbeskyttet baselinefil med de præcise 251 kilder. Den
+binder kontrakt, kildejob, originalhash, sideantal, hash af originalstien samt
+kontraktens forretnings- og dokumentstatus. Hele kohorten genvælges og verificeres
+umiddelbart før den atomiske kølægning. Den nye skemamigration skal være anvendt,
+før baselinekommandoerne køres, men ingen jobs må være kølagt endnu:
+
+```bash
+OCR_GEOMETRY_BACKFILL_BASELINE_PATH=/private/tmp/dfks-vision-v3-geometry-baseline.json \
+OCR_GEOMETRY_BACKFILL_EXPECTED_COUNT=251 \
+  node scripts/audit-ocr-backfill.mjs capture-geometry-backfill-baseline
+
+OCR_GEOMETRY_BACKFILL_BASELINE_PATH=/private/tmp/dfks-vision-v3-geometry-baseline.json \
+OCR_GEOMETRY_BACKFILL_EXPECTED_COUNT=251 \
+  node scripts/audit-ocr-backfill.mjs verify-geometry-backfill-baseline
+
+OCR_GEOMETRY_BACKFILL_BASELINE_PATH=/private/tmp/dfks-vision-v3-geometry-baseline.json \
+OCR_GEOMETRY_BACKFILL_EXPECTED_COUNT=251 \
+  npm run one-off:vision-v3-geometry-backfill -- preview
+```
+
+Kølægning kræver desuden et stabilt `OCR_GEOMETRY_BACKFILL_RUN_ID` og den eksakte
+bekræftelse `OCR_GEOMETRY_BACKFILL_CONFIRM=QUEUE_VISION_V3_GEOMETRY_BACKFILL`.
+Kørslen opretter nye jobgenerationer ved siden af kilderne. Originalfil, `pdf_url`,
+kontraktstatus og strukturerede AI-data ændres ikke; kun et godkendt derivat og dets
+private v3-geometri promoveres. Der oprettes ingen sletteopgaver for denne kørsel.
+
+```bash
+OCR_GEOMETRY_BACKFILL_BASELINE_PATH=/private/tmp/dfks-vision-v3-geometry-baseline.json \
+OCR_GEOMETRY_BACKFILL_EXPECTED_COUNT=251 \
+OCR_GEOMETRY_BACKFILL_RUN_ID=<uuid> \
+OCR_GEOMETRY_BACKFILL_CONFIRM=QUEUE_VISION_V3_GEOMETRY_BACKFILL \
+  npm run one-off:vision-v3-geometry-backfill -- queue
+```
+
+Efter pilot og fuld kørsel kontrollerer slutauditten originalbytes, sideantal,
+afledt PDF, ordkoordinater, lineage, status, fravær af nye AI-job og fravær af
+automatiske valideringer. Kvalitetsporten er en separat, eksplicit handling:
+
+```bash
+OCR_GEOMETRY_BACKFILL_BASELINE_PATH=/private/tmp/dfks-vision-v3-geometry-baseline.json \
+OCR_GEOMETRY_BACKFILL_RUN_ID=<uuid> \
+OCR_GEOMETRY_BACKFILL_EXPECTED_COUNT=251 \
+  node scripts/audit-ocr-backfill.mjs audit-geometry-backfill
+```
+
+Godkendelse kræver også
+`OCR_GEOMETRY_BACKFILL_APPROVE=APPROVE_VISION_V3_GEOMETRY_BACKFILL`. Et run kan
+først godkendes, når alle jobs er terminale og den deterministiske rapportdigest
+matcher databasen. Scheduler forbliver pauset under hele engangskørslen.
+
 Portalen accepterer kun output fra den konfigurerede Google-servicekonto og en aktiv
 joblease. Output- og geometristier er deterministisk bundet til kontrakt, job og det
 tilfældige lease-token. Workeren afleverer SHA-256 for begge artefakter; den særskilte
