@@ -1181,7 +1181,14 @@ type MemberContractListRow = {
   works: unknown;
   employers: unknown;
   contract_validations: unknown;
-  contract_attachments: never[];
+  contract_attachments: Array<{
+    id: string;
+    type: string;
+    title: string | null;
+    pdf_url: string | null;
+    created_at: string;
+    ai_status: "analyserer" | "klar" | "fejl" | null;
+  }>;
   contract_comments: Array<{
     id: string;
     author_role: "admin";
@@ -1320,15 +1327,23 @@ export async function fetchMemberContractsPage(
 
   const rawRows = (listResult.data ?? []) as unknown as Array<Omit<MemberContractListRow, "contract_comments" | "contract_attachments" | "episode_confirmed">>;
   const ids = rawRows.map(row => row.id);
-  const [commentsResult, confirmationsResult] = await Promise.all([
+  const [commentsResult, confirmationsResult, attachmentsResult] = await Promise.all([
     ids.length
       ? db.from("contract_comments").select("id,contract_id,created_at,member_read_at,admin_read_at").in("contract_id", ids).eq("author_role", "admin").is("member_read_at", null).order("created_at")
       : Promise.resolve({ data: [], error: null }),
     ids.length
       ? db.from("contract_episode_confirmations").select("contract_id").in("contract_id", ids).is("invalidated_at", null)
       : Promise.resolve({ data: [], error: null }),
+    ids.length
+      ? db.from("contract_attachments")
+          .select("id,contract_id,type,title,pdf_url,created_at,ai_status")
+          .eq("org_id", context.orgId)
+          .eq("type", "allonge")
+          .in("contract_id", ids)
+          .order("created_at", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
   ]);
-  const detailError = commentsResult.error ?? confirmationsResult.error;
+  const detailError = commentsResult.error ?? confirmationsResult.error ?? attachmentsResult.error;
   if (detailError) return { success: false, error: detailError.message };
   const confirmed = new Set((confirmationsResult.data ?? []).map(row => row.contract_id));
   const comments = new Map<string, MemberContractListRow["contract_comments"]>();
@@ -1337,9 +1352,22 @@ export async function fetchMemberContractsPage(
     values.push({ ...row, author_role: "admin", message: "", member_read_at: null });
     comments.set(row.contract_id, values);
   }
+  const attachments = new Map<string, MemberContractListRow["contract_attachments"]>();
+  for (const row of attachmentsResult.data ?? []) {
+    const values = attachments.get(row.contract_id) ?? [];
+    values.push({
+      id: row.id,
+      type: row.type,
+      title: row.title,
+      pdf_url: row.pdf_url,
+      created_at: row.created_at,
+      ai_status: row.ai_status as "analyserer" | "klar" | "fejl" | null,
+    });
+    attachments.set(row.contract_id, values);
+  }
   const rows = rawRows.map(row => ({
     ...row,
-    contract_attachments: [] as never[],
+    contract_attachments: attachments.get(row.id) ?? [],
     contract_comments: comments.get(row.id) ?? [],
     episode_confirmed: confirmed.has(row.id),
   }));

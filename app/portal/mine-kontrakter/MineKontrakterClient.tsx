@@ -1447,6 +1447,22 @@ export default function MineKontrakterClient({
                   {unreadMessages > 0 && <MessageStatusBadge count={unreadMessages} label="Ny besked" tone="attention" />}
                 </div>
               </div>
+              {(c.contract_attachments ?? []).map((attachment, index) => (
+                <button
+                  key={attachment.id}
+                  type="button"
+                  onClick={() => openContract(c)}
+                  className="grid w-full grid-cols-[36px_1fr_auto] items-center gap-3 border-b bg-muted/20 px-4 py-2.5 text-left text-sm hover:bg-muted/50 md:pl-12"
+                  aria-label={`Åbn allonge ${attachment.title ?? index + 1} til ${title}`}
+                >
+                  <span className="flex justify-center text-muted-foreground" aria-hidden="true">└</span>
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2 font-medium"><Paperclip className="h-3.5 w-3.5" />{attachment.title?.trim() || `Allonge ${index + 1}`}</span>
+                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">Tillæg til {title}</span>
+                  </span>
+                  <span className="text-xs text-muted-foreground">{attachment.ai_status === "klar" ? "Klar" : attachment.ai_status === "fejl" ? "Fejl" : "Analyserer"}</span>
+                </button>
+              ))}
               {(() => {
                 const suggested = (val?.extracted_data as any)?.suggested_work_match;
                 if (!suggested || c.work_id) return null;

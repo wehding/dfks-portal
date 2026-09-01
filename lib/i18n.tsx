@@ -348,6 +348,12 @@ const translations = {
 
         // Works
         "works.title": "Mine Værker",
+        "works.quickFilters": "Hurtigfiltre og filmografieksport",
+        "works.quickFilm": "Film",
+        "works.quickSeries": "TV-serier",
+        "works.quickDocumentaries": "Dokumentarer",
+        "works.quickMissingContract": "Mangler kontrakt",
+        "works.quickUnresolvedShares": "Uafklarede arbejdsandele",
         "works.subtitle": "Oversigt over dine krediterede værker",
         "works.registeredSubtitle": "Dine registrerede film- og serieproduktioner og tilhørende rettigheder.",
         "works.workTitle": "Værktitel",
@@ -1280,6 +1286,12 @@ const translations = {
 
         // Works
         "works.title": "My Works",
+        "works.quickFilters": "Quick filters and filmography export",
+        "works.quickFilm": "Films",
+        "works.quickSeries": "TV series",
+        "works.quickDocumentaries": "Documentaries",
+        "works.quickMissingContract": "Missing contract",
+        "works.quickUnresolvedShares": "Unresolved work shares",
         "works.subtitle": "Overview of your credited works",
         "works.registeredSubtitle": "Your registered film and series productions and associated rights.",
         "works.workTitle": "Work Title",

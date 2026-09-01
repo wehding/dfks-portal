@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useEffect } from "react";
-import { Upload, X, Loader2, CheckCircle2, Sparkles, Plus } from "lucide-react";
+import { Upload, X, Loader2, CheckCircle2, FileText, Sparkles, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { linkContractToWork, prepareMemberContractUpload, queueUploadedContractAiJob, saveUploadedContract } from "@/app/actions/member-contracts";
 import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, findManualWorkDuplicates, linkExistingWorkForMember, resolveUnifiedSearchResultDetails, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
@@ -49,6 +49,11 @@ type UploadedContract = {
 };
 
 type UploadStage = "checking" | "uploading" | "saving" | "linking" | "finishing";
+type BatchFileStage = "queued" | "uploading" | "analyzing" | "ready" | "error";
+
+function batchFileKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
 
 type CoEditorDraft = {
   id: string;
@@ -94,6 +99,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   const [pickerEpisodesError, setPickerEpisodesError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploadStage, setUploadStage] = useState<UploadStage | null>(null);
+  const [batchFileStages, setBatchFileStages] = useState<Record<string, { stage: BatchFileStage; error?: string }>>({});
+  const [batchSavedContracts, setBatchSavedContracts] = useState<UploadedContract[]>([]);
   const [workPickerOpen, setWorkPickerOpen] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualWork, setManualWork] = useState<ManualWorkFormValue>(emptyManualWorkForm());
@@ -166,9 +173,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     if (valid.length > MAX_FILES) toast.error(`Du kan højst vælge ${MAX_FILES} kontrakter ad gangen`);
 
     setFiles(limited);
+    setBatchFileStages(Object.fromEntries(limited.map(selectedFile => [batchFileKey(selectedFile), { stage: "queued" as const }])));
+    setBatchSavedContracts([]);
     setIsDevelopmentContract(false);
     setDevelopmentConfirmed(null);
-    batchAutoSubmittedRef.current = false;
     setEpisodesTouched(false);
     setWorkPickerOpen(false);
     setManualMode(false);
@@ -234,22 +242,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     return () => { cancelled = true; };
   }, [seriesSeason, pickedUnifiedResult]);
 
-  // Batch-upload indsendes automatisk ved filvalg — uden formular-trin.
-  const batchAutoSubmittedRef = React.useRef(false);
+  // Batch-upload viser status pr. fil og startes samlet af medlemmet.
   const [batchSeconds, setBatchSeconds] = useState(0);
   useEffect(() => {
-    if (!isBatchUpload) return;
+    if (!isBatchUpload || !saving) return;
     setBatchSeconds(0);
     const interval = setInterval(() => setBatchSeconds(s => s + 1), 1000);
     return () => clearInterval(interval);
-  }, [isBatchUpload]);
-  useEffect(() => {
-    if (files.length > 1 && !batchAutoSubmittedRef.current && !saving) {
-      batchAutoSubmittedRef.current = true;
-      void handleSubmit(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files.length]);
+  }, [isBatchUpload, saving]);
 
   useEffect(() => {
     // Batch-upload: ingen screening/preview af første fil — filerne uploades blot,
@@ -407,17 +407,26 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         : creditedRoles.filter(Boolean);
 
       const savedContracts: UploadedContract[] = [];
+      let failed = 0;
       const supabase = createClient();
 
-      for (const selectedFile of files) {
+      const filesToProcess = isBatchUpload
+        ? files.filter(selectedFile => batchFileStages[batchFileKey(selectedFile)]?.stage !== "ready")
+        : files;
+
+      for (const selectedFile of filesToProcess) {
+        const key = batchFileKey(selectedFile);
+        if (isBatchUpload) setBatchFileStages(current => ({ ...current, [key]: { stage: "uploading" } }));
         setUploadStage("uploading");
         const prepared = await prepareMemberContractUpload({
           fileName: selectedFile.name,
           fileSize: selectedFile.size,
         });
         if (!prepared.success) {
-          toast.error(prepared.error);
-          return null;
+          if (!isBatchUpload) { toast.error(prepared.error); return null; }
+          failed += 1;
+          setBatchFileStages(current => ({ ...current, [key]: { stage: "error", error: prepared.error } }));
+          continue;
         }
         const uploaded = await supabase.storage.from("kontrakter").uploadToSignedUrl(
           prepared.filePath,
@@ -426,9 +435,12 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           { contentType: selectedFile.type || "application/octet-stream", upsert: false },
         );
         if (uploaded.error) {
-          toast.error(`Upload fejlede for ${selectedFile.name}`);
-          return null;
+          if (!isBatchUpload) { toast.error(`Upload fejlede for ${selectedFile.name}`); return null; }
+          failed += 1;
+          setBatchFileStages(current => ({ ...current, [key]: { stage: "error", error: "Upload fejlede" } }));
+          continue;
         }
+        if (isBatchUpload) setBatchFileStages(current => ({ ...current, [key]: { stage: "analyzing" } }));
         setUploadStage("saving");
         const res = await saveUploadedContract({
           filePath: prepared.filePath,
@@ -446,11 +458,17 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           producerSelections: manualMode ? manualWork.production_companies : productionCompanySelections,
         });
 
-        if (!res.success) { toast.error(res.error ?? `Kunne ikke gemme ${selectedFile.name}`); return null; }
+        if (!res.success) {
+          if (!isBatchUpload) { toast.error(res.error ?? `Kunne ikke gemme ${selectedFile.name}`); return null; }
+          failed += 1;
+          setBatchFileStages(current => ({ ...current, [key]: { stage: "error", error: res.error ?? "Kunne ikke gemmes" } }));
+          continue;
+        }
         savedContracts.push(res.contract);
+        if (isBatchUpload) setBatchFileStages(current => ({ ...current, [key]: { stage: "ready" } }));
       }
 
-      return savedContracts;
+      return { contracts: savedContracts, failed };
     } catch (e: unknown) {
       toast.error(errorText(e) || "Fejl ved upload");
       return null;
@@ -651,8 +669,20 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       setManualDuplicateMatches([]);
     }
 
-    const savedContracts = await saveContracts();
-    if (!savedContracts) return;
+    const savedResult = await saveContracts();
+    if (!savedResult) return;
+    const savedContracts = savedResult.contracts;
+    if (isBatchUpload) {
+      const allSavedContracts = [...batchSavedContracts, ...savedContracts]
+        .filter((contract, index, contracts) => contracts.findIndex(candidate => candidate.id === contract.id) === index);
+      setBatchSavedContracts(allSavedContracts);
+      if (savedResult.failed > 0) {
+        toast.error(`${savedContracts.length} kontrakter er klar. ${savedResult.failed} filer fejlede og kan fjernes eller prøves igen.`);
+        return;
+      }
+      window.setTimeout(() => completeUpload(allSavedContracts, null), 700);
+      return;
+    }
     const needsWorkAttachment = manualMode || Boolean(pickedUnifiedResult) || proposedCoEditors().length > 0;
     if (savedContracts.length !== 1 || !needsWorkAttachment) {
       completeUpload(savedContracts, selectedWorkId || null);
@@ -806,18 +836,33 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
           {/* Batch: kun status + timer — ingen forhåndsvisning eller formular */}
           {isBatchUpload && (
-            <div className="flex flex-col items-center gap-4 py-10 text-center">
-              <Loader2 className="h-10 w-10 animate-spin text-primary" />
+            <div className="flex flex-col gap-4 py-3">
               <div>
-                <p className="text-base font-semibold text-foreground">Uploader {files.length} kontrakter…</p>
+                <p className="text-base font-semibold text-foreground">{files.length} kontrakter valgt</p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Kontrakterne lægges i kø til automatisk analyse og kobles til dine værker.
-                  Vinduet lukker selv, når upload er færdig.
                 </p>
               </div>
-              <div className="font-mono text-2xl font-bold text-primary">
-                {Math.floor(batchSeconds / 60)}:{String(batchSeconds % 60).padStart(2, "0")}
+              <div className="max-h-64 space-y-2 overflow-y-auto" aria-live="polite">
+                {files.map(selectedFile => {
+                  const key = batchFileKey(selectedFile);
+                  const status = batchFileStages[key] ?? { stage: "queued" as const };
+                  const labels: Record<BatchFileStage, string> = { queued: "Afventer", uploading: "Uploader", analyzing: "Analyserer", ready: "Klar", error: "Fejl" };
+                  return <div key={key} className="flex items-center gap-3 rounded-md border px-3 py-2 text-left text-sm">
+                    {status.stage === "uploading" || status.stage === "analyzing" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : status.stage === "ready" ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                    <span className="min-w-0 flex-1"><span className="block truncate font-medium">{selectedFile.name}</span>{status.error && <span className="block text-xs text-destructive">{status.error}</span>}</span>
+                    <span className="text-xs text-muted-foreground">{labels[status.stage]}</span>
+                    {!saving && status.stage !== "ready" && <button type="button" onClick={() => {
+                      setFiles(current => current.filter(fileItem => batchFileKey(fileItem) !== key));
+                      setBatchFileStages(current => { const next = { ...current }; delete next[key]; return next; });
+                    }} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label={`Fjern ${selectedFile.name}`}><X className="h-4 w-4" /></button>}
+                  </div>;
+                })}
               </div>
+              {saving && <div className="font-mono text-center text-sm font-semibold text-primary">{Math.floor(batchSeconds / 60)}:{String(batchSeconds % 60).padStart(2, "0")}</div>}
+              <Button type="button" disabled={saving || files.length < 2} onClick={() => void handleSubmit(false)}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Upload og analysér
+              </Button>
             </div>
           )}
 

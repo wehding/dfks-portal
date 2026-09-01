@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import dynamic from "next/dynamic";
-import { ChevronLeft, ChevronRight, Film, Plus, Search, X, Trash2, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Film, Plus, Search, X, Trash2, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -114,6 +114,14 @@ type ChangeRequest = {
 };
 
 type SortValue = string | number;
+
+function matchesQuickWorkType(workType: string, filter: string) {
+  if (filter === "all") return true;
+  if (filter === "film") return ["spillefilm", "kortfilm"].includes(workType);
+  if (filter === "series") return ["tv-serie", "tv-program", "reality", "sport"].includes(workType);
+  if (filter === "documentary") return ["dokumentarfilm", "dokumentar-serie"].includes(workType);
+  return workType === filter;
+}
 type ReviewCoEditorDraft = {
   id: string;
   name: string;
@@ -476,7 +484,7 @@ export default function MineVaerkerClient({
       if (!w) return false;
       const t = search.toLowerCase();
       if (t && !w.title.toLowerCase().includes(t)) return false;
-      if (catFilter !== "all" && w.type !== catFilter) return false;
+      if (!matchesQuickWorkType(w.type, catFilter)) return false;
       const requests = w.work_change_requests ?? [];
       const hasUnread = (w.overview_unread_count ?? 0) > 0 || requests.some(request => (request.work_change_request_comments ?? []).some(comment => comment.author_role === "admin" && !comment.member_read_at));
       const hasPending = (w.overview_pending_count ?? 0) > 0 || requests.some(request => request.status === "pending") || w.status === "til_godkendelse";
@@ -491,6 +499,8 @@ export default function MineVaerkerClient({
       if (statusFilter === "hasContract" && !hasContract) return false;
       if (statusFilter === "missingData" && !missingData) return false;
       if (statusFilter === "missingEpisodes" && !missingEpisodes) return false;
+      // Uafklarede arbejdsandele er allerede afgrænset server-side. Det
+      // detaljerede opgavegrundlag streames ind efter den synlige liste.
       return true;
     })
     .sort((a, b) => {
@@ -1371,6 +1381,30 @@ export default function MineVaerkerClient({
           onClick={() => { setSearch(""); setCatFilter("all"); setStatusFilter("missingContract"); }}
         />
       </SummaryGrid>
+
+      <section aria-label={t("works.quickFilters")} className="flex flex-col gap-3 rounded-lg border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-2">
+          {[
+            ["film", t("works.quickFilm")],
+            ["series", t("works.quickSeries")],
+            ["documentary", t("works.quickDocumentaries")],
+          ].map(([value, label]) => (
+            <Button key={value} type="button" size="sm" variant={catFilter === value ? "default" : "outline"} onClick={() => setCatFilter(catFilter === value ? "all" : value)}>
+              {label}
+            </Button>
+          ))}
+          <Button type="button" size="sm" variant={statusFilter === "missingContract" ? "default" : "outline"} onClick={() => setStatusFilter(statusFilter === "missingContract" ? "all" : "missingContract")}>
+            {t("works.quickMissingContract")}
+          </Button>
+          <Button type="button" size="sm" variant={statusFilter === "unresolvedShares" ? "default" : "outline"} onClick={() => setStatusFilter(statusFilter === "unresolvedShares" ? "all" : "unresolvedShares")}>
+            {t("works.quickUnresolvedShares")}
+          </Button>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <Button asChild type="button" size="sm" variant="outline"><a href="/api/portal/filmography/export?format=pdf"><Download className="h-4 w-4" />PDF</a></Button>
+          <Button asChild type="button" size="sm" variant="outline"><a href="/api/portal/filmography/export?format=csv"><Download className="h-4 w-4" />CSV</a></Button>
+        </div>
+      </section>
 
       {/* Toast */}
       {msg && (
