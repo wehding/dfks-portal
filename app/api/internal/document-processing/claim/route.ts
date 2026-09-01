@@ -74,6 +74,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
   }
 
+  const replacementOnly = request.headers.get("X-DFKS-OCR-Replacement-Only") === "1";
+
   const audit = { source: "cron" as const, mode: "summary" as const };
   const db = createServiceClient({ audit });
   const cleanupAbortController = new AbortController();
@@ -92,7 +94,9 @@ export async function POST(request: Request) {
   ])
     .catch(() => undefined)
     .finally(() => clearTimeout(cleanupTimer));
-  const claim = db.rpc("claim_next_contract_document_job", { p_lease_minutes: 30 });
+  const claim = replacementOnly
+    ? db.rpc("claim_next_direct_vision_replacement_job", { p_lease_minutes: 30 })
+    : db.rpc("claim_next_contract_document_job", { p_lease_minutes: 30 });
   let [{ data: job, error }] = await Promise.all([claim, cleanup]);
   if (error) return NextResponse.json({ error: "Dokumentkøen kunne ikke læses" }, { status: 500 });
 
@@ -101,7 +105,7 @@ export async function POST(request: Request) {
   // service-only RPC applies the immutable-source, generation and retry caps
   // before creating at most one recovery generation. Rescan requests are
   // explicitly excluded by the database policy.
-  if (!job?.id || !job.lease_token) {
+  if ((!job?.id || !job.lease_token) && !replacementOnly) {
     const recovery = await db.rpc(
       "queue_contract_document_job_automatic_recovery_batch",
       { p_limit: 1 },

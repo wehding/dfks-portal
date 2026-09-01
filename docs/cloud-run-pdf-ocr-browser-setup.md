@@ -138,6 +138,7 @@ højst tre i parallel, task-timeout 12 timer og ingen retries under piloten.
 
 Pilot:
 
+- `OCR_REPLACEMENT_ONLY=true` (kun det tidsbegrænsede DLP-erstatningsjob)
 - `OCR_MAX_DOCUMENTS_PER_TASK=4`
 - `OCR_MAX_CONSECUTIVE_FAILURES=1`
 - `OCR_MAX_CONSECUTIVE_QUALITY_FAILURES=1`
@@ -146,6 +147,7 @@ Pilot:
 
 Fuld backfill:
 
+- `OCR_REPLACEMENT_ONLY=true` (kun det tidsbegrænsede DLP-erstatningsjob)
 - `OCR_MAX_DOCUMENTS_PER_TASK=0`
 - `OCR_MAX_CONSECUTIVE_FAILURES=5`
 - `OCR_MAX_CONSECUTIVE_QUALITY_FAILURES=5`
@@ -156,6 +158,9 @@ Selv hvis pilotens kvalitetstærskel fejlagtigt sættes højere, håndhæver wor
 første-fejl-stop, når dokumentgrænsen er højst fire. I fuld backfill kan isolerede
 reviewdokumenter fortsætte, men fem sammenhængende kvalitetsfejl eller mere end
 50 % kvalitetsfejl i det rullende vindue stopper tasken med non-zero status.
+Replacement-only-claimet accepterer kun kølagte generationer med
+`replacement_of_job_id` og kan derfor ikke tømme den almindelige upload- eller
+recoverykø. Scheduler-servicen skal fortsat køre uden `OCR_REPLACEMENT_ONLY`.
 
 ### Kontrolleret overgang fra DLP-OCR
 

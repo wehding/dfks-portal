@@ -6,9 +6,11 @@ do $$
 declare
   test_org uuid := gen_random_uuid();
   test_contract_id uuid := gen_random_uuid();
+  ordinary_contract_id uuid := gen_random_uuid();
   source_job_id uuid := gen_random_uuid();
   replacement record;
   replacement_job public.contract_document_jobs;
+  ordinary_job_id uuid := gen_random_uuid();
   test_lease_token uuid := gen_random_uuid();
   deletion_finished boolean;
   original_hash text := repeat('a', 64);
@@ -19,9 +21,11 @@ begin
   if has_table_privilege('anon', 'public.contract_document_artifact_deletions', 'SELECT')
     or has_table_privilege('authenticated', 'public.contract_document_artifact_deletions', 'SELECT')
     or has_function_privilege('authenticated', 'public.queue_direct_vision_replacement_generation(uuid,text,integer)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.claim_next_direct_vision_replacement_job(integer)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.finish_contract_document_job_v7(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.claim_contract_document_artifact_deletions(integer,uuid)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.queue_direct_vision_replacement_generation(uuid,text,integer)', 'EXECUTE')
+    or not has_function_privilege('service_role', 'public.claim_next_direct_vision_replacement_job(integer)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.finish_contract_document_job_v7(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE') then
     raise exception 'Direct Vision replacement regression: privileged API exposure';
   end if;
@@ -65,10 +69,35 @@ begin
     raise exception 'Direct Vision replacement regression: unvalidated contract was not queued for reanalysis';
   end if;
 
+  insert into public.contracts(
+    id, org_id, type, status, pdf_url, document_processing_status
+  ) values (
+    ordinary_contract_id, test_org, 'a-løn', 'kladde',
+    test_org || '/' || ordinary_contract_id || '/original.pdf', 'pending'
+  );
+
+  insert into public.contract_document_jobs(
+    id, org_id, contract_id, original_storage_path, output_storage_path,
+    status, priority, attempts, next_attempt_at, original_sha256
+  ) values (
+    ordinary_job_id, test_org, ordinary_contract_id,
+    test_org || '/' || ordinary_contract_id || '/original.pdf',
+    test_org || '/processed/' || ordinary_contract_id || '/ordinary-output.pdf',
+    'queued', 1000, 0, now(), original_hash
+  );
+
+  select * into replacement_job
+  from public.claim_next_direct_vision_replacement_job(30);
+  if replacement_job.id <> replacement.replacement_job_id
+    or replacement_job.replacement_of_job_id <> source_job_id
+    or replacement_job.lease_token is null
+    or (select status from public.contract_document_jobs where id = ordinary_job_id) <> 'queued' then
+    raise exception 'Direct Vision replacement regression: replacement-only claim crossed its cohort fence';
+  end if;
+  test_lease_token := replacement_job.lease_token;
+
   update public.contract_document_jobs
-  set status = 'processing', attempts = 1, lease_token = test_lease_token,
-      lease_expires_at = now() + interval '30 minutes',
-      output_storage_path = test_org || '/processed/' || test_contract_id || '/leases/' || test_lease_token || '/normalised.pdf',
+  set output_storage_path = test_org || '/processed/' || test_contract_id || '/leases/' || test_lease_token || '/normalised.pdf',
       spatial_data_path = test_org || '/processed/' || test_contract_id || '/leases/' || test_lease_token || '/vision-layout.json.gz'
   where id = replacement.replacement_job_id;
 

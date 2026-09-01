@@ -34,6 +34,8 @@ test("claim bruger kun den databasegodkendte karantæne-GC til storage-oprydning
   assert.equal(source.match(/\.storage\.from\(["']kontrakter["']\)\.remove\(/g)?.length, 1);
   assert.doesNotMatch(source, /remove\(\[outputUploadPath, spatialUploadPath\]\)/);
   assert.match(source, /queue_contract_document_job_automatic_recovery_batch/);
+  assert.match(source, /claim_next_direct_vision_replacement_job/);
+  assert.match(source, /&& !replacementOnly/);
   assert.match(source, /p_original_sha256:\s*expectedOriginalSha256/);
 });
 

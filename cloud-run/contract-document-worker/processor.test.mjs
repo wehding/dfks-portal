@@ -67,6 +67,19 @@ test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () 
     && error.code === "invalid_temporary_storage_configuration"
   ));
   assert.equal(readRuntimeConfig({ ...env, OCR_TMP_DIR: "/mnt/ramdisk" }).tempRoot, "/mnt/ramdisk");
+  assert.equal(readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_REPLACEMENT_ONLY: "true",
+  }).replacementOnly, true);
+  assert.throws(() => readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_REPLACEMENT_ONLY: "TRUE",
+  }), (error) => (
+    error instanceof FatalProcessingError
+    && error.code === "invalid_replacement_only_configuration"
+  ));
   assert.equal(parseProcessingDeadlineSeconds(undefined), 780);
   assert.equal(parseProcessingDeadlineSeconds("0"), 0);
   assert.equal(parseProcessingDeadlineSeconds("900"), 900);
@@ -75,6 +88,24 @@ test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () 
       error instanceof FatalProcessingError && error.code === "invalid_processing_deadline"
     ));
   }
+});
+
+test("replacement-only worker markerer kun claim-kaldet eksplicit", async () => {
+  let claimHeaders;
+  const processor = createProcessor({
+    config: { ...config, replacementOnly: true },
+    identityTokenProvider: async () => "identity-secret",
+    googleClient: {},
+    fetchImpl: async (url, init) => {
+      assert.ok(String(url).endsWith("/claim"));
+      claimHeaders = init.headers;
+      return response(null, { status: 204 });
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "empty" });
+  assert.equal(claimHeaders["X-DFKS-OCR-Replacement-Only"], "1");
+  assert.equal(claimHeaders.Authorization, "Bearer identity-secret");
 });
 
 test("HTTP-processoren stopper kontrolleret før Cloud Run-requestens hårde timeout", async () => {

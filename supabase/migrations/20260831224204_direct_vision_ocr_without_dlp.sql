@@ -67,6 +67,83 @@ comment on column public.contract_document_jobs.processing_profile is
 comment on column public.contract_document_jobs.replacement_of_job_id is
   'Historisk DLP-generation som denne immutable generation erstatter.';
 
+-- The production replacement run must be unable to consume ordinary upload or
+-- recovery work. This separate service-only claim is a database-level cohort
+-- fence, independent of worker task counts and Cloud Run environment values.
+create or replace function public.claim_next_direct_vision_replacement_job(
+  p_lease_minutes integer default 30
+)
+returns public.contract_document_jobs
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  claimed public.contract_document_jobs;
+begin
+  if (select auth.role()) <> 'service_role' then
+    raise exception 'forbidden' using errcode = '42501';
+  end if;
+
+  with exhausted as (
+    update public.contract_document_jobs
+    set status = 'failed',
+        lease_token = null,
+        lease_expires_at = null,
+        error_code = 'max_attempts_exceeded',
+        safe_error_message = 'Dokumentet kunne ikke færdigbehandles efter det maksimale antal forsøg.',
+        updated_at = now()
+    where replacement_of_job_id is not null
+      and status = 'processing'
+      and lease_expires_at < now()
+      and attempts >= 5
+    returning contract_id
+  )
+  update public.contracts as contract
+  set document_processing_status = 'failed',
+      document_processing_error_code = 'max_attempts_exceeded'
+  where contract.id in (select contract_id from exhausted);
+
+  with candidate as (
+    select id
+    from public.contract_document_jobs
+    where replacement_of_job_id is not null
+      and (
+        (status = 'queued' and next_attempt_at <= now())
+        or (status = 'failed' and next_attempt_at <= now())
+        or (status = 'processing' and lease_expires_at < now())
+      )
+      and attempts < 5
+    order by priority desc, created_at
+    for update skip locked
+    limit 1
+  )
+  update public.contract_document_jobs as job
+  set status = 'processing',
+      attempts = attempts + 1,
+      lease_token = gen_random_uuid(),
+      lease_expires_at = now() + make_interval(mins => greatest(5, least(p_lease_minutes, 60))),
+      error_code = null,
+      safe_error_message = null,
+      updated_at = now()
+  from candidate
+  where job.id = candidate.id
+  returning job.* into claimed;
+
+  if claimed.id is not null then
+    update public.contracts
+    set document_processing_status = 'processing', document_processing_error_code = null
+    where id = claimed.contract_id;
+  end if;
+  return claimed;
+end;
+$$;
+
+revoke all on function public.claim_next_direct_vision_replacement_job(integer)
+  from public, anon, authenticated;
+grant execute on function public.claim_next_direct_vision_replacement_job(integer)
+  to service_role;
+
 create table if not exists public.contract_document_artifact_deletions (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organisations(id) on delete restrict,

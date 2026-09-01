@@ -68,6 +68,13 @@ kun få de offentlige Supabase-oplysninger; service-role, AI-nøgler og permanen
 Google-nøgler må aldrig tilføjes. Produktionsprocessen afviser opstart, hvis
 `OCR_TMP_DIR` ikke peger på den monterede memory volume `/mnt/ramdisk`.
 
+Det midlertidige DLP-erstatningsjob skal have `OCR_REPLACEMENT_ONLY=true`. Det får
+workeren til at markere claim-kaldet, og portalen bruger derefter en separat
+service-only databaseclaim, som kun kan tage jobs med `replacement_of_job_id`.
+Tilstanden opretter aldrig automatiske recovery-generationer. Den almindelige
+Scheduler-service må ikke have variablen, så fremtidige uploads fortsat bruger den
+normale kø. Andre stavemåder end de eksakte værdier `true` og `false` afvises.
+
 Portalen accepterer kun output fra den konfigurerede Google-servicekonto og en aktiv
 joblease. Output- og geometristier er deterministisk bundet til kontrakt, job og det
 tilfældige lease-token. Workeren afleverer SHA-256 for begge artefakter; den særskilte

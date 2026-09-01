@@ -161,6 +161,12 @@ export function readRuntimeConfig(env = process.env) {
   if (env.NODE_ENV === "production" && tempRoot !== "/mnt/ramdisk") {
     throw new FatalProcessingError("invalid_temporary_storage_configuration");
   }
+  if (env.OCR_REPLACEMENT_ONLY != null
+    && env.OCR_REPLACEMENT_ONLY !== ""
+    && env.OCR_REPLACEMENT_ONLY !== "true"
+    && env.OCR_REPLACEMENT_ONLY !== "false") {
+    throw new FatalProcessingError("invalid_replacement_only_configuration");
+  }
   return {
     portalBaseUrl,
     audience: env.OCR_CLOUD_RUN_AUDIENCE,
@@ -171,6 +177,7 @@ export function readRuntimeConfig(env = process.env) {
     tempRoot,
     maxBytes: MAX_BYTES,
     processingDeadlineMs: parseProcessingDeadlineSeconds(env.OCR_PROCESSING_DEADLINE_SECONDS) * 1000,
+    replacementOnly: env.OCR_REPLACEMENT_ONLY === "true",
   };
 }
 
@@ -587,7 +594,10 @@ export function createProcessor(options = {}) {
       config,
       identityTokenProvider,
       "/api/internal/document-processing/claim",
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: config.replacementOnly ? { "X-DFKS-OCR-Replacement-Only": "1" } : undefined,
+      },
       fetchImpl,
     );
     if (claim.status === 204) return { outcome: "empty" };
