@@ -222,6 +222,10 @@ function includesAny(value: string, needles: string[]) {
   return needles.some(needle => value.includes(needle));
 }
 
+function pushUnique<T>(items: T[], item: T) {
+  if (!items.includes(item)) items.push(item);
+}
+
 /**
  * Sikker, deterministisk fortolkning af almindelige danske statistikspørgsmål.
  * Den gør kernefunktionerne uafhængige af AI-udbyderens tilgængelighed. Mere
@@ -233,10 +237,10 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
     throw new StatisticsQueryPlanError("person_query_not_allowed", "Statistikmotoren må ikke besvare spørgsmål om identificerbare personer.");
   }
   const metrics: StatisticsMetric[] = [];
-  const addMetric = (metric: StatisticsMetric) => { if (!metrics.includes(metric)) metrics.push(metric); };
+  const addMetric = (metric: StatisticsMetric) => pushUnique(metrics, metric);
 
   const withoutContractTypeNames = value.replace(/a[- ]?(?:løn|lon)\w*/g, "");
-  const salaryMentioned = includesAny(withoutContractTypeNames, ["lon", "løn", "ugeløn", "ugelon", "manedslon", "månedsløn"]);
+  const salaryMentioned = includesAny(withoutContractTypeNames, ["lon", "løn", "ugeløn", "ugelon", "manedslon", "månedsløn", "betaler bedst"]);
   const contractCountMentioned = includesAny(value, ["antal kontrakter", "hvor mange kontrakter", "kontraktantal", "kontrakter er der"])
     || /hvor mange.*kontrakt/.test(value);
   if (salaryMentioned) addMetric(includesAny(value, ["gennemsnit", "middelværdi", "middelvaerdi"]) ? "average_monthly_salary" : "median_monthly_salary");
@@ -245,7 +249,7 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   if (contractCountMentioned) addMetric("contract_count");
   if (includesAny(value, ["producentbidrag", "producentbidragene", "feriepenge", "beta-bidrag", "beta bidrag"])) addMetric("contributions");
   if (value.includes("copydan")) addMetric("copydan_share");
-  if (includesAny(value, ["streamingforbehold", "streaming-forbehold", "svod-forbehold", "svod forbehold"])) addMetric("streaming_share");
+  if (includesAny(value, ["streaming", "streamingforbehold", "streaming-forbehold", "svod-forbehold", "svod forbehold"])) addMetric("streaming_share");
   if (value.includes("royalty")) addMetric("royalty_share");
   if (includesAny(value, ["ai-forbehold", "ai forbehold", "data-mining", "datamining"])) addMetric("ai_clause_share");
   if (!metrics.length) return null;
@@ -263,6 +267,29 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   if (includesAny(value, ["leverandor", "leverandør", "faktura", "freelance"])) plan.filters.contractTypes.push("leverandør");
   if (includesAny(value, ["kvinder", "kvinde"])) plan.filters.genders.push("female");
   if (includesAny(value, ["mænd", "maend", "mand"])) plan.filters.genders.push("male");
+  if (/(?:0|nul)\s*[-–]\s*3\s*ar|(?:0|nul)\s*[-–]\s*3\s*år|nyuddannet|nyuddannede|nye klippere/.test(value)) pushUnique(plan.filters.experienceGroups, "new_graduate");
+  if (/4\s*[-–]\s*7\s*ar|4\s*[-–]\s*7\s*år|tidlig karriere/.test(value)) pushUnique(plan.filters.experienceGroups, "early_career");
+  if (/8\s*[-–]\s*17\s*ar|8\s*[-–]\s*17\s*år|erfarne/.test(value)) pushUnique(plan.filters.experienceGroups, "experienced");
+  if (/18\+|18\s*(?:eller flere|plus)|veteran|veteraner|meget erfarne/.test(value)) pushUnique(plan.filters.experienceGroups, "veteran");
+
+  const membershipProbe = value.replace(/ikke[- ]?medlemmer?|uorganiserede|uden medlemskab/g, "");
+  if (/\bmedlemmer?\b/.test(membershipProbe)) pushUnique(plan.filters.membershipTypes, "member");
+  if (/ikke[- ]?medlemmer?|uorganiserede|uden medlemskab/.test(value)) pushUnique(plan.filters.membershipTypes, "none");
+  if (/associerede|tilknyttede medlemmer?|associeret/.test(value)) pushUnique(plan.filters.membershipTypes, "associate");
+  if (/ukendt medlemsstatus/.test(value)) pushUnique(plan.filters.membershipTypes, "unknown");
+
+  if (/medklippere?|co[- ]?editors?/.test(value)) pushUnique(plan.filters.professionTypes, "Medklipper");
+  const professionProbe = value.replace(/medklippere?/g, "");
+  if (/klippere?\b/.test(professionProbe)) pushUnique(plan.filters.professionTypes, "Klipper");
+  if (/klippeassistenter?|assistenter?\b/.test(value)) pushUnique(plan.filters.professionTypes, "Klippeassistent");
+
+  if (/filmproducenter?|spillefilmproducenter?/.test(value)) pushUnique(plan.filters.producerTypeCodes, "feature_fiction");
+  if (/dokumentarproducenter?/.test(value)) pushUnique(plan.filters.producerTypeCodes, "documentary");
+  if (/tv-producenter?|tv producenter?/.test(value)) pushUnique(plan.filters.producerTypeCodes, "tv");
+  if (/streamere?|streamingtjenester?/.test(value)) pushUnique(plan.filters.producerTypeCodes, "streamer");
+  if (/broadcastere?|broadcast/.test(value)) pushUnique(plan.filters.producerTypeCodes, "broadcaster");
+  if (/animationsproducenter?|animation/.test(value)) pushUnique(plan.filters.producerTypeCodes, "animation");
+  if (/reklameproducenter?|reklame/.test(value)) pushUnique(plan.filters.producerTypeCodes, "advertising");
 
   const yearMatches = [...value.matchAll(/\b((?:19|20)\d{2})\b/g)].map(match => Number(match[1]));
   const uniqueYears = [...new Set(yearMatches)].sort((left, right) => left - right);
@@ -283,8 +310,10 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   if (plan.filters.contractTypes.length > 1 || includesAny(value, ["efter kontrakttype", "fordelt pa kontrakttype", "fordelt på kontrakttype"])) plan.compareBy.push("contract_type");
   if (salaryMentioned && includesAny(value, ["hvilke producenter", "bedste producenter", "producenter giver bedst", "producenter betaler bedst", "top producenter", "efter producent", "fordelt pa producent", "fordelt på producent"])) plan.compareBy.push("producer");
   if (plan.filters.genders.length > 1 || /\b(?:efter|fordelt (?:pa|på)) (?:kon|køn)\b/.test(value)) plan.compareBy.push("gender");
-  if (includesAny(value, ["efter erfaringsgruppe", "fordelt pa erfaring", "fordelt på erfaring"])) plan.compareBy.push("experience_group");
-  if (includesAny(value, ["efter faggruppe", "fordelt pa faggruppe", "fordelt på faggruppe"])) plan.compareBy.push("profession_type");
+  if (plan.filters.experienceGroups.length > 1 || includesAny(value, ["efter erfaringsgruppe", "fordelt pa erfaring", "fordelt på erfaring"])) plan.compareBy.push("experience_group");
+  if (plan.filters.professionTypes.length > 1 || includesAny(value, ["efter faggruppe", "fordelt pa faggruppe", "fordelt på faggruppe"])) plan.compareBy.push("profession_type");
+  if (plan.filters.membershipTypes.length > 1 || includesAny(value, ["efter medlemsstatus", "fordelt pa medlemsstatus", "fordelt på medlemsstatus"])) plan.compareBy.push("membership_type");
+  if (plan.filters.producerTypeCodes.length > 1 || includesAny(value, ["efter producenttype", "fordelt pa producenttype", "fordelt på producenttype"])) plan.compareBy.push("producer_type");
   if (includesAny(value, ["inflation", "reallon", "realløn", "købekraft", "kobekraft"])) plan.adjustForInflation = true;
   const requestedTable = includesAny(value, ["tabel", "oversigt"]);
   const requestedBar = includesAny(value, ["søjle", "sojle"]);
