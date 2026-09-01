@@ -17,6 +17,13 @@ import {
 
 const runtimeOnly = { skip: process.env.DFKS_CONTAINER_RUNTIME_TEST !== "1" };
 
+test("containerimaget indeholder den afgrænsede slutsiderecovery", runtimeOnly, async () => {
+  const recovery = await import("./tail-page-recovery.mjs");
+  assert.equal(typeof recovery.recoverSparseTailTextFromVariants, "function");
+  assert.equal(typeof recovery.recoverSparseTailOrientationFromVariants, "function");
+  assert.equal(typeof recovery.hasSparseTailBlankConsensus, "function");
+});
+
 function identityVisionPageTransforms(pages, width = 2550, height = 3300) {
   return pages.map((page) => ({
     pageNumber: page.pageNumber,

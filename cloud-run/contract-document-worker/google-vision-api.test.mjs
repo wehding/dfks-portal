@@ -129,20 +129,24 @@ test("for stor enkeltsiderespons genprøves én gang med en mindre transportkopi
   assert.equal(result.visionPageTransforms[0].visionWidth < 1200, true);
 });
 
-test("ulæselig side får præcis to deterministiske farve- og kontrastvarianter", async () => {
+test("ulæselig side får fire afgrænsede og deterministiske forbedringsvarianter", async () => {
   const page = await jpeg(180, 120, true);
   const first = await createUnreadablePageVisionVariants(page);
   const second = await createUnreadablePageVisionVariants(page);
-  assert.deepEqual(first.map((variant) => variant.kind), ["colour", "contrast_gray"]);
-  assert.equal(first.length, 2);
+  assert.deepEqual(first.map((variant) => variant.kind), [
+    "colour", "contrast_gray", "threshold_185", "threshold_215",
+  ]);
+  assert.equal(first.length, 4);
   assert.equal(first[0].width, 180);
   assert.equal(first[0].height, 120);
   assert.equal(first[0].imageBytes.equals(second[0].imageBytes), true);
   assert.equal(first[1].imageBytes.equals(second[1].imageBytes), true);
+  assert.equal(first[2].imageBytes.equals(second[2].imageBytes), true);
+  assert.equal(first[3].imageBytes.equals(second[3].imageBytes), true);
   assert.equal(first[0].imageBytes.equals(first[1].imageBytes), false);
 });
 
-test("ulæselig-side retry kalder Vision højst én gang med de to varianter", async () => {
+test("ulæselig-side retry kalder Vision højst én gang med de fire varianter", async () => {
   const page = await jpeg(180, 120, true);
   const calls = [];
   const client = createGoogleOcrClient({
@@ -157,8 +161,10 @@ test("ulæselig-side retry kalder Vision højst én gang med de to varianter", a
     pageNumber: 4,
     imageBytes: page,
   });
-  assert.deepEqual(calls, [2]);
-  assert.deepEqual(result.variants.map((variant) => variant.kind), ["colour", "contrast_gray"]);
+  assert.deepEqual(calls, [4]);
+  assert.deepEqual(result.variants.map((variant) => variant.kind), [
+    "colour", "contrast_gray", "threshold_185", "threshold_215",
+  ]);
   assert.equal(result.variants.every((variant) => variant.transform.pageNumber === 4), true);
   assert.equal(result.retainedRasterBytes > 0, true);
   assert.equal(result.retainedVisionResponseBytes > 0, true);
@@ -174,7 +180,7 @@ test("ulæselig-side retry splitter og nedskalerer adaptivt ved for stor Vision-
     jsonPost: async (url, token, payload) => {
       callNumber += 1;
       calls.push(payload.requests.length);
-      const large = callNumber <= 2;
+      const large = callNumber <= 3;
       return {
         responses: payload.requests.map(() => large
           ? { fullTextAnnotation: { text: "x".repeat(2_000) } }
@@ -189,8 +195,8 @@ test("ulæselig-side retry splitter og nedskalerer adaptivt ved for stor Vision-
     resourceLimits: { maxVisionResponseBytesPerBatch: 1_000 },
     maxAdditionalResponseBytes: 10_000,
   });
-  assert.deepEqual(calls, [2, 1, 1, 1]);
-  assert.equal(result.variants.length, 2);
+  assert.deepEqual(calls, [4, 2, 1, 1, 1, 2]);
+  assert.equal(result.variants.length, 4);
   assert.equal(result.variants[0].transform.visionWidth < 1200, true);
   assert.equal(result.variants[0].transform.recoveryAttempts, 1);
   assert.equal(result.variants[1].transform.recoveryAttempts, 0);
@@ -204,7 +210,7 @@ test("ulæselig-side retry respekterer dokumentets resterende rasterbudget", asy
     accessTokenProvider: async () => "token",
     jsonPost: async () => {
       calls += 1;
-      return { responses: [{}, {}] };
+      return { responses: [{}, {}, {}, {}] };
     },
   });
   await assert.rejects(() => client.annotateUnreadablePageVariants({
