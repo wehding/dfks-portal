@@ -9,6 +9,7 @@ import {
   classifyOcrDocument,
   classifyPageText,
   classifyRasterBlankness,
+  completionPageCounts,
   computeSpatialAccuracy,
   correctPageOrientation,
   detectPhysicalOrientation,
@@ -35,6 +36,28 @@ test("native tekst og billedside klassificeres forskelligt", () => {
   }).classification, "mixed");
   assert.equal(classifyPageText(nativeText, { rasterInspectionReliable: false }).classification, "mixed");
   assert.equal(classifyPageText("").classification, "image_only");
+});
+
+test("tvungen Vision rapporterer alle faktisk behandlede native sider som OCR-sider", () => {
+  const nativePages = [
+    { classification: "native_text" },
+    { classification: "native_text" },
+  ];
+  assert.deepEqual(completionPageCounts(nativePages, false), {
+    nativePageCount: 2,
+    ocrPageCount: 0,
+  });
+  assert.deepEqual(completionPageCounts(nativePages, true), {
+    nativePageCount: 0,
+    ocrPageCount: 2,
+  });
+  assert.deepEqual(completionPageCounts([
+    { classification: "native_text" },
+    { classification: "image_only" },
+  ], true), {
+    nativePageCount: 0,
+    ocrPageCount: 2,
+  });
 });
 
 test("kort men pålideligt digitalt tekstlag genkendes uden at stole på helsides raster", () => {

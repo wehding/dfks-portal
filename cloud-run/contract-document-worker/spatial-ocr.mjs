@@ -279,6 +279,21 @@ export function classifyOcrDocument(pageStates) {
     : "mixed";
 }
 
+export function completionPageCounts(pageStates, forceOcr = false) {
+  const sourceNativePageCount = pageStates
+    .filter((page) => page.classification === "native_text").length;
+  // Forced Vision rebuilds every source page from a Vision response. This is
+  // also true for mixed PDFs, so completion evidence must count every page as
+  // OCR-processed rather than retaining the source document's classification.
+  if (forceOcr) {
+    return { nativePageCount: 0, ocrPageCount: pageStates.length };
+  }
+  return {
+    nativePageCount: sourceNativePageCount,
+    ocrPageCount: pageStates.length - sourceNativePageCount,
+  };
+}
+
 export function parsePdfImagesList(value) {
   const images = [];
   for (const line of String(value ?? "").split(/\r?\n/)) {
@@ -968,7 +983,8 @@ export async function processPdfSpatially({
   // document is deliberately sent through Vision for every page before
   // rebuilding the safe derivative, but a native source page must not then
   // count as both native and OCR-required in completion evidence.
-  const sourceNativePageCount = pageStates.filter((page) => page.classification === "native_text").length;
+  const sourceNativePageCount = pageStates
+    .filter((page) => page.classification === "native_text").length;
   const pagesNeedingOcr = pageStates.filter((page) => page.classification !== "native_text");
   if (pagesNeedingOcr.length === 0 && !forceOcr) {
     return {
@@ -982,13 +998,7 @@ export async function processPdfSpatially({
       textCharCount: pageStates.reduce((total, page) => total + page.chars, 0),
     };
   }
-  // In the explicit geometry-backfill mode every source page is deliberately
-  // rebuilt from a Vision result, including pages whose original PDF already
-  // had a reliable native text layer. Completion evidence must therefore count
-  // every forced page as OCR-processed; otherwise the v3 integrity gate would
-  // reject an all-native document with ocrPageCount=0 after Vision did run.
-  const nativePageCount = forceOcr ? 0 : sourceNativePageCount;
-  const ocrPageCount = pageCount - nativePageCount;
+  const { nativePageCount, ocrPageCount } = completionPageCounts(pageStates, forceOcr);
   const ocrDocumentClassification = classifyOcrDocument(pageStates);
 
   // A document that needs OCR is rebuilt consistently from the raw page rasters.
