@@ -12,8 +12,10 @@ import {
 import { resolveDocumentResourceLimits } from "./resource-limits.mjs";
 import {
   hasSparseTailBlankConsensus,
-  recoverSparseTailOrientationFromVariants,
+  isSparseTailEdgeArtifactCandidate,
   recoverSparseTailTextFromVariants,
+  recoverTailOrientationFromVariants,
+  TAIL_RASTER_EDGE_MARGIN_RATIO,
 } from "./tail-page-recovery.mjs";
 
 const gzipAsync = promisify(gzip);
@@ -169,6 +171,17 @@ export function enforceVisionWordLimits(pages, resourceLimits) {
   return totalWords;
 }
 
+export function hasIndependentReadableOcrPage(pages, pageCount) {
+  return Array.isArray(pages) && pages.some((page) => (
+    Array.isArray(page?.words)
+      && page.words.length > 0
+      && !isSparseTailEdgeArtifactCandidate(page, {
+        pageNumber: page.pageNumber,
+        pageCount,
+      })
+  ));
+}
+
 function serializeSpatialGeometry(geometry, maxBytes) {
   const json = JSON.stringify(geometry);
   if (Buffer.byteLength(json) > maxBytes) {
@@ -286,7 +299,7 @@ export function classifyRasterBlankness({
   };
 }
 
-async function inspectRasterBlankness(imageBytes) {
+export async function inspectRasterBlankness(imageBytes) {
   try {
     const { data, info } = await sharp(imageBytes, {
       failOn: "warning",
@@ -298,20 +311,51 @@ async function inspectRasterBlankness(imageBytes) {
     const blockRows = Math.ceil(info.height / BLANK_INSPECTION_BLOCK_SIZE);
     const localNonWhite = new Uint32Array(blockColumns * blockRows);
     const localDark = new Uint32Array(blockColumns * blockRows);
+    const edgeMarginX = Math.max(1, Math.floor(info.width * TAIL_RASTER_EDGE_MARGIN_RATIO));
+    const edgeMarginY = Math.max(1, Math.floor(info.height * TAIL_RASTER_EDGE_MARGIN_RATIO));
+    const interiorWidth = info.width - edgeMarginX * 2;
+    const interiorHeight = info.height - edgeMarginY * 2;
+    if (!(interiorWidth > 0) || !(interiorHeight > 0)) throw new Error("invalid_interior");
+    const interiorBlockColumns = Math.ceil(interiorWidth / BLANK_INSPECTION_BLOCK_SIZE);
+    const interiorBlockRows = Math.ceil(interiorHeight / BLANK_INSPECTION_BLOCK_SIZE);
+    const interiorLocalNonWhite = new Uint32Array(interiorBlockColumns * interiorBlockRows);
+    const interiorLocalDark = new Uint32Array(interiorBlockColumns * interiorBlockRows);
     let sum = 0;
     let squaresSum = 0;
-    for (let offset = 0; offset < data.length; offset += 1) {
-      const value = data[offset];
-      histogram[value] += 1;
-      sum += value;
-      squaresSum += value * value;
-      if (value < 245) {
-        const x = offset % info.width;
-        const y = Math.floor(offset / info.width);
-        const block = Math.floor(y / BLANK_INSPECTION_BLOCK_SIZE) * blockColumns
-          + Math.floor(x / BLANK_INSPECTION_BLOCK_SIZE);
-        localNonWhite[block] += 1;
-        if (value < 200) localDark[block] += 1;
+    let interiorPixels = 0;
+    let interiorNonWhite = 0;
+    let interiorDark = 0;
+    let interiorSum = 0;
+    let interiorSquaresSum = 0;
+    for (let y = 0; y < info.height; y += 1) {
+      const rowOffset = y * info.width;
+      for (let x = 0; x < info.width; x += 1) {
+        const value = data[rowOffset + x];
+        histogram[value] += 1;
+        sum += value;
+        squaresSum += value * value;
+        const inInterior = x >= edgeMarginX && x < info.width - edgeMarginX
+          && y >= edgeMarginY && y < info.height - edgeMarginY;
+        if (inInterior) {
+          interiorPixels += 1;
+          interiorSum += value;
+          interiorSquaresSum += value * value;
+        }
+        if (value < 245) {
+          const block = Math.floor(y / BLANK_INSPECTION_BLOCK_SIZE) * blockColumns
+            + Math.floor(x / BLANK_INSPECTION_BLOCK_SIZE);
+          localNonWhite[block] += 1;
+          if (value < 200) localDark[block] += 1;
+          if (inInterior) {
+            interiorNonWhite += 1;
+            if (value < 200) interiorDark += 1;
+            const interiorBlock = Math.floor((y - edgeMarginY) / BLANK_INSPECTION_BLOCK_SIZE)
+              * interiorBlockColumns
+              + Math.floor((x - edgeMarginX) / BLANK_INSPECTION_BLOCK_SIZE);
+            interiorLocalNonWhite[interiorBlock] += 1;
+            if (value < 200) interiorLocalDark[interiorBlock] += 1;
+          }
+        }
       }
     }
     const mean = data.length ? sum / data.length : Number.NaN;
@@ -330,6 +374,31 @@ async function inspectRasterBlankness(imageBytes) {
         maxLocalDarkRatio = Math.max(maxLocalDarkRatio, localDark[block] / blockPixels);
       }
     }
+    let maxInteriorLocalNonWhiteRatio = 0;
+    let maxInteriorLocalDarkRatio = 0;
+    for (let blockY = 0; blockY < interiorBlockRows; blockY += 1) {
+      for (let blockX = 0; blockX < interiorBlockColumns; blockX += 1) {
+        const block = blockY * interiorBlockColumns + blockX;
+        const blockWidth = Math.min(BLANK_INSPECTION_BLOCK_SIZE,
+          interiorWidth - blockX * BLANK_INSPECTION_BLOCK_SIZE);
+        const blockHeight = Math.min(BLANK_INSPECTION_BLOCK_SIZE,
+          interiorHeight - blockY * BLANK_INSPECTION_BLOCK_SIZE);
+        const blockPixels = blockWidth * blockHeight;
+        maxInteriorLocalNonWhiteRatio = Math.max(
+          maxInteriorLocalNonWhiteRatio,
+          interiorLocalNonWhite[block] / blockPixels,
+        );
+        maxInteriorLocalDarkRatio = Math.max(
+          maxInteriorLocalDarkRatio,
+          interiorLocalDark[block] / blockPixels,
+        );
+      }
+    }
+    const interiorMean = interiorSum / interiorPixels;
+    const interiorVariance = Math.max(
+      0,
+      interiorSquaresSum / interiorPixels - interiorMean * interiorMean,
+    );
     const classification = classifyRasterBlankness({
       histogram,
       mean,
@@ -345,6 +414,15 @@ async function inspectRasterBlankness(imageBytes) {
       stdev: Math.sqrt(variance),
       maxLocalNonWhiteRatio,
       maxLocalDarkRatio,
+      edgeMarginXRatio: edgeMarginX / info.width,
+      edgeMarginYRatio: edgeMarginY / info.height,
+      interiorCoverageRatio: interiorPixels / data.length,
+      interiorNonWhiteRatio: interiorNonWhite / interiorPixels,
+      interiorDarkRatio: interiorDark / interiorPixels,
+      interiorMean,
+      interiorStdev: Math.sqrt(interiorVariance),
+      maxInteriorLocalNonWhiteRatio,
+      maxInteriorLocalDarkRatio,
     };
   } catch {
     // A decode/statistics error can never turn a page into a trusted blank.
@@ -358,6 +436,15 @@ async function inspectRasterBlankness(imageBytes) {
       stdev: Number.POSITIVE_INFINITY,
       maxLocalNonWhiteRatio: 1,
       maxLocalDarkRatio: 1,
+      edgeMarginXRatio: 1,
+      edgeMarginYRatio: 1,
+      interiorCoverageRatio: 0,
+      interiorNonWhiteRatio: 1,
+      interiorDarkRatio: 1,
+      interiorMean: 0,
+      interiorStdev: Number.POSITIVE_INFINITY,
+      maxInteriorLocalNonWhiteRatio: 1,
+      maxInteriorLocalDarkRatio: 1,
     };
   }
 }
@@ -1671,22 +1758,31 @@ export async function processPdfSpatially({
   // readable document, however, a verified blank page is preserved in its
   // original position without being mistaken for an OCR failure.
   for (const page of rawGeometryPages) {
-    if (page.words.length > 0) continue;
+    const edgeArtifactCandidate = isSparseTailEdgeArtifactCandidate(page, {
+      pageNumber: page.pageNumber,
+      pageCount,
+    });
+    if (page.words.length > 0 && !edgeArtifactCandidate) continue;
     const pageState = pageStates[page.pageNumber - 1];
     const sourcePage = sourcePageByNumber.get(page.pageNumber);
     if (!pageState || pageState.chars > 0 || !sourcePage?.imageBytes) continue;
     const inspection = await inspectRasterBlankness(sourcePage.imageBytes);
     assertProcessingHealthy();
     blankInspectionByPage.set(page.pageNumber, inspection);
-    if (!inspection.blank || !(inspection.width > 0) || !(inspection.height > 0)) continue;
+    if (page.words.length > 0
+      || !inspection.blank || !(inspection.width > 0) || !(inspection.height > 0)) continue;
     verifiedBlankCandidates.set(page.pageNumber, inspection);
   }
   const promoteVerifiedBlankCandidates = () => {
-    if (!rawGeometryPages.some((page) => page.words.length > 0)) return;
+    if (!hasIndependentReadableOcrPage(rawGeometryPages, pageCount)) return;
     for (const [pageNumber, inspection] of verifiedBlankCandidates) {
       const page = rawGeometryPages.find((candidate) => candidate.pageNumber === pageNumber);
-      if (!page || page.words.length > 0) continue;
+      if (!page || (page.words.length > 0 && !isSparseTailEdgeArtifactCandidate(page, {
+        pageNumber,
+        pageCount,
+      }))) continue;
       blankPageNumbers.add(pageNumber);
+      page.words = [];
       page.imageWidth = inspection.width;
       page.imageHeight = inspection.height;
     }
@@ -1694,8 +1790,11 @@ export async function processPdfSpatially({
   promoteVerifiedBlankCandidates();
 
   const recoveryCandidates = rawGeometryPages.filter((page) => (
-    page.words.length === 0
-      && !verifiedBlankCandidates.has(page.pageNumber)
+    (page.words.length === 0 && !verifiedBlankCandidates.has(page.pageNumber))
+      || isSparseTailEdgeArtifactCandidate(page, {
+        pageNumber: page.pageNumber,
+        pageCount,
+      })
   ));
   if (recoveryCandidates.length > 0
     && recoveryCandidates.length <= MAX_UNREADABLE_RECOVERY_PAGES
@@ -1841,9 +1940,10 @@ export async function processPdfSpatially({
         rawGeometryPages[page.pageNumber - 1] = recovered;
         continue;
       }
-      const sparseRecovery = recoverSparseTailOrientationFromVariants(recoveredVariants, {
+      const sparseRecovery = recoverTailOrientationFromVariants(recoveredVariants, {
         pageNumber: page.pageNumber,
         pageCount,
+        originalPage: page,
       });
       if (sparseRecovery) {
         rawGeometryPages[page.pageNumber - 1] = sparseRecovery.page;

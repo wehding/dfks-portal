@@ -23,6 +23,9 @@ test("containerimaget indeholder den afgrænsede slutsiderecovery", runtimeOnly,
   assert.equal(typeof recovery.recoverSparseTailTextFromVariants, "function");
   assert.equal(typeof recovery.recoverSparseTailOrientationFromVariants, "function");
   assert.equal(typeof recovery.hasSparseTailBlankConsensus, "function");
+  assert.equal(typeof recovery.recoverTailPageNumberOrientationFromVariants, "function");
+  assert.equal(typeof recovery.recoverTailOrientationFromVariants, "function");
+  assert.equal(typeof recovery.isSparseTailEdgeArtifactCandidate, "function");
 });
 
 test("containerens Poppler-generation matcher spatial-verifikationsprofilen", runtimeOnly, async () => {

@@ -7,20 +7,48 @@ const MIN_SPARSE_ORIENTATION_BASELINE_RATIO = 0.02;
 const MIN_WORD_IOU = 0.65;
 const MIN_MEDIAN_WORD_IOU = 0.85;
 const MAX_CENTER_DISTANCE_RATIO = 0.01;
+const MAX_EDGE_ARTIFACT_WORDS = 2;
+const MAX_EDGE_ARTIFACT_CHARS = 3;
+// Vision can assign moderate confidence to a one-character scanner-edge
+// hallucination. This ceiling is never sufficient by itself: all four OCR
+// variants and both strict raster inspections must independently pass below.
+const MAX_EDGE_ARTIFACT_CONFIDENCE = 0.8;
+const MAX_HORIZONTAL_OCR_EDGE_ARTIFACT_ZONE_RATIO = 0.125;
+const MAX_VERTICAL_OCR_EDGE_ARTIFACT_ZONE_RATIO = 0.0125;
+export const TAIL_RASTER_EDGE_MARGIN_RATIO = 0.0125;
+const MIN_PAGE_NUMBER_CONFIDENCE = 0.95;
+const MIN_PAGE_NUMBER_HORIZONTAL_POSITION = 0.35;
+const MAX_PAGE_NUMBER_HORIZONTAL_POSITION = 0.65;
+const MAX_PAGE_NUMBER_TOP_POSITION = 0.1;
+const MIN_PAGE_NUMBER_BOTTOM_POSITION = 0.9;
+const MAX_PAGE_NUMBER_WIDTH_RATIO = 0.08;
+const MAX_PAGE_NUMBER_HEIGHT_RATIO = 0.04;
+const MIN_PAGE_NUMBER_WORD_IOU = 0.8;
+const MAX_PAGE_NUMBER_CENTER_DISTANCE_RATIO = 0.001;
+const MAX_PAGE_NUMBER_DIMENSION_DELTA_RATIO = 0.002;
 
 // These limits are deliberately only a small extension of the ordinary blank
 // gate. Two separately rendered rasters and every Vision enhancement must
 // agree before a sparse final page can be classified as blank.
-const MAX_TAIL_BLANK_NON_WHITE_RATIO = 0.006;
-const MAX_TAIL_BLANK_DARK_RATIO = 0.002;
-const MIN_TAIL_BLANK_MEAN = 251;
-const MAX_TAIL_BLANK_STDEV = 14;
-const MAX_TAIL_BLANK_LOCAL_NON_WHITE_RATIO = 0.06;
-const MAX_TAIL_BLANK_LOCAL_DARK_RATIO = 0.015;
-const MAX_BLANK_NON_WHITE_DELTA = 0.0025;
-const MAX_BLANK_DARK_DELTA = 0.001;
-const MAX_BLANK_MEAN_DELTA = 2;
-const MAX_BLANK_STDEV_DELTA = 4;
+const MAX_TAIL_BLANK_NON_WHITE_RATIO = 0.002;
+const MAX_TAIL_BLANK_DARK_RATIO = 0.0001;
+const MIN_TAIL_BLANK_MEAN = 254.5;
+const MAX_TAIL_BLANK_STDEV = 3;
+const MAX_TAIL_BLANK_INTERIOR_NON_WHITE_RATIO = 0.00175;
+const MAX_TAIL_BLANK_INTERIOR_DARK_RATIO = 0.00005;
+const MIN_TAIL_BLANK_INTERIOR_MEAN = 254.7;
+const MAX_TAIL_BLANK_INTERIOR_STDEV = 2;
+const MAX_TAIL_BLANK_INTERIOR_LOCAL_NON_WHITE_RATIO = 0.255;
+const MAX_TAIL_BLANK_INTERIOR_LOCAL_DARK_RATIO = 0.02;
+const MIN_TAIL_BLANK_INTERIOR_COVERAGE = 0.9;
+const MAX_BLANK_NON_WHITE_DELTA = 0.00015;
+const MAX_BLANK_DARK_DELTA = 0.00005;
+const MAX_BLANK_MEAN_DELTA = 0.25;
+const MAX_BLANK_STDEV_DELTA = 0.5;
+const MAX_BLANK_INTERIOR_NON_WHITE_DELTA = 0.0001;
+const MAX_BLANK_INTERIOR_DARK_DELTA = 0.00005;
+const MAX_BLANK_INTERIOR_MEAN_DELTA = 0.25;
+const MAX_BLANK_INTERIOR_STDEV_DELTA = 0.5;
 
 function isTailContext(pageNumber, pageCount) {
   return Number.isSafeInteger(pageNumber)
@@ -200,14 +228,66 @@ function nearBlankEvidence(evidence) {
     && Number(evidence.darkRatio) <= MAX_TAIL_BLANK_DARK_RATIO
     && Number(evidence.mean) >= MIN_TAIL_BLANK_MEAN
     && Number(evidence.stdev) <= MAX_TAIL_BLANK_STDEV
-    && Number(evidence.maxLocalNonWhiteRatio) <= MAX_TAIL_BLANK_LOCAL_NON_WHITE_RATIO
-    && Number(evidence.maxLocalDarkRatio) <= MAX_TAIL_BLANK_LOCAL_DARK_RATIO;
+    && Number(evidence.edgeMarginXRatio) > 0
+    && Number(evidence.edgeMarginXRatio) <= TAIL_RASTER_EDGE_MARGIN_RATIO
+    && Number(evidence.edgeMarginYRatio) > 0
+    && Number(evidence.edgeMarginYRatio) <= TAIL_RASTER_EDGE_MARGIN_RATIO
+    && Number(evidence.interiorCoverageRatio) >= MIN_TAIL_BLANK_INTERIOR_COVERAGE
+    && Number(evidence.interiorNonWhiteRatio) <= MAX_TAIL_BLANK_INTERIOR_NON_WHITE_RATIO
+    && Number(evidence.interiorDarkRatio) <= MAX_TAIL_BLANK_INTERIOR_DARK_RATIO
+    && Number(evidence.interiorMean) >= MIN_TAIL_BLANK_INTERIOR_MEAN
+    && Number(evidence.interiorStdev) <= MAX_TAIL_BLANK_INTERIOR_STDEV
+    && Number(evidence.maxInteriorLocalNonWhiteRatio)
+      <= MAX_TAIL_BLANK_INTERIOR_LOCAL_NON_WHITE_RATIO
+    && Number(evidence.maxInteriorLocalDarkRatio)
+      <= MAX_TAIL_BLANK_INTERIOR_LOCAL_DARK_RATIO;
+}
+
+function wordIsIgnorableEdgeArtifact(word, page, pageNumber) {
+  const rawText = String(word?.text ?? "").normalize("NFKC").trim();
+  const token = normaliseWord(word?.text);
+  const confidence = Number(word?.confidence);
+  const box = boxFromVertices(word?.vertices);
+  const width = Number(page?.imageWidth);
+  const height = Number(page?.imageHeight);
+  const artifactLength = token.length || rawText.length;
+  if (!rawText || token === String(pageNumber) || artifactLength > MAX_EDGE_ARTIFACT_CHARS
+    || !Number.isFinite(confidence) || confidence < 0
+    || confidence > MAX_EDGE_ARTIFACT_CONFIDENCE
+    || !box || !(width > 0) || !(height > 0)
+    || box.xMin < -1 || box.yMin < -1 || box.xMax > width + 1 || box.yMax > height + 1) {
+    return false;
+  }
+  const horizontalMargin = width * MAX_HORIZONTAL_OCR_EDGE_ARTIFACT_ZONE_RATIO;
+  const verticalMargin = height * MAX_VERTICAL_OCR_EDGE_ARTIFACT_ZONE_RATIO;
+  return box.xMax <= horizontalMargin
+    || box.xMin >= width - horizontalMargin
+    || box.yMax <= verticalMargin
+    || box.yMin >= height - verticalMargin;
+}
+
+function hasOnlyIgnorableEdgeArtifacts(page, pageNumber) {
+  if (!Array.isArray(page?.words) || page.words.length > MAX_EDGE_ARTIFACT_WORDS) return false;
+  return page.words.every((word) => wordIsIgnorableEdgeArtifact(word, page, pageNumber));
+}
+
+/** A raw OCR word may trigger evidence collection, but never blank promotion. */
+export function isSparseTailEdgeArtifactCandidate(page, {
+  pageNumber,
+  pageCount,
+} = {}) {
+  return isTailContext(pageNumber, pageCount)
+    && page?.pageNumber === pageNumber
+    && Array.isArray(page.words)
+    && page.words.length >= 1
+    && hasOnlyIgnorableEdgeArtifacts(page, pageNumber);
 }
 
 /**
- * A final zero-word page is blank only when all enhancement OCR attempts are
- * empty and two independently rendered rasters both satisfy conservative,
- * mutually consistent image-statistics gates. Zero words alone never suffice.
+ * A final page is blank only when all enhancement OCR attempts are empty or
+ * contain at most two short, low-confidence artifacts wholly inside a narrow
+ * scanner edge. Two independently rendered rasters must also satisfy strict
+ * global and interior image-statistics gates. OCR silence alone never suffices.
  */
 export function hasSparseTailBlankConsensus({
   pageNumber,
@@ -220,8 +300,7 @@ export function hasSparseTailBlankConsensus({
     || !Array.isArray(variantPages)
     || variantPages.length !== 4
     || variantPages.some((page) => page?.pageNumber !== pageNumber
-      || !Array.isArray(page?.words)
-      || page.words.length !== 0)
+      || !hasOnlyIgnorableEdgeArtifacts(page, pageNumber))
     || !nearBlankEvidence(sourceEvidence)
     || !nearBlankEvidence(recoveryEvidence)) return false;
   const sourceAspect = Number(sourceEvidence.width) / Number(sourceEvidence.height);
@@ -233,7 +312,130 @@ export function hasSparseTailBlankConsensus({
       <= MAX_BLANK_NON_WHITE_DELTA
     && Math.abs(sourceEvidence.darkRatio - recoveryEvidence.darkRatio) <= MAX_BLANK_DARK_DELTA
     && Math.abs(sourceEvidence.mean - recoveryEvidence.mean) <= MAX_BLANK_MEAN_DELTA
-    && Math.abs(sourceEvidence.stdev - recoveryEvidence.stdev) <= MAX_BLANK_STDEV_DELTA;
+    && Math.abs(sourceEvidence.stdev - recoveryEvidence.stdev) <= MAX_BLANK_STDEV_DELTA
+    && Math.abs(sourceEvidence.interiorNonWhiteRatio - recoveryEvidence.interiorNonWhiteRatio)
+      <= MAX_BLANK_INTERIOR_NON_WHITE_DELTA
+    && Math.abs(sourceEvidence.interiorDarkRatio - recoveryEvidence.interiorDarkRatio)
+      <= MAX_BLANK_INTERIOR_DARK_DELTA
+    && Math.abs(sourceEvidence.interiorMean - recoveryEvidence.interiorMean)
+      <= MAX_BLANK_INTERIOR_MEAN_DELTA
+    && Math.abs(sourceEvidence.interiorStdev - recoveryEvidence.interiorStdev)
+      <= MAX_BLANK_INTERIOR_STDEV_DELTA;
+}
+
+function isExactPageNumberWord(word, pageNumber) {
+  const text = String(word?.text ?? "").normalize("NFKC").trim();
+  const confidence = Number(word?.confidence);
+  return text === String(pageNumber)
+    && Number.isFinite(confidence)
+    && confidence >= MIN_PAGE_NUMBER_CONFIDENCE
+    && confidence <= 1;
+}
+
+function isCenteredPageNumber(words, width, height) {
+  if (!Array.isArray(words) || words.length !== 1) return false;
+  const box = words[0].box;
+  const center = boxCenter(box);
+  const horizontalPosition = center.x / width;
+  const verticalPosition = center.y / height;
+  return horizontalPosition >= MIN_PAGE_NUMBER_HORIZONTAL_POSITION
+    && horizontalPosition <= MAX_PAGE_NUMBER_HORIZONTAL_POSITION
+    && (verticalPosition <= MAX_PAGE_NUMBER_TOP_POSITION
+      || verticalPosition >= MIN_PAGE_NUMBER_BOTTOM_POSITION)
+    && (box.xMax - box.xMin) / width <= MAX_PAGE_NUMBER_WIDTH_RATIO
+    && (box.yMax - box.yMin) / height <= MAX_PAGE_NUMBER_HEIGHT_RATIO;
+}
+
+function pageNumberGeometryAgrees(reference, candidate, width, height) {
+  if (reference.length !== 1 || candidate.length !== 1
+    || reference[0].token !== candidate[0].token) return false;
+  const referenceBox = reference[0].box;
+  const candidateBox = candidate[0].box;
+  const referenceCenter = boxCenter(referenceBox);
+  const candidateCenter = boxCenter(candidateBox);
+  const centerDistance = Math.hypot(
+    referenceCenter.x - candidateCenter.x,
+    referenceCenter.y - candidateCenter.y,
+  );
+  return intersectionOverUnion(referenceBox, candidateBox) >= MIN_PAGE_NUMBER_WORD_IOU
+    && centerDistance <= Math.hypot(width, height) * MAX_PAGE_NUMBER_CENTER_DISTANCE_RATIO
+    && Math.abs(
+      (referenceBox.xMax - referenceBox.xMin) / width
+        - (candidateBox.xMax - candidateBox.xMin) / width,
+    ) <= MAX_PAGE_NUMBER_DIMENSION_DELTA_RATIO
+    && Math.abs(
+      (referenceBox.yMax - referenceBox.yMin) / height
+        - (candidateBox.yMax - candidateBox.yMin) / height,
+    ) <= MAX_PAGE_NUMBER_DIMENSION_DELTA_RATIO;
+}
+
+/**
+ * A lone exact final-page number is directionally symmetric. It may therefore
+ * be declared upright only when every cardinal Vision transport independently
+ * returns that one high-confidence number at the same top/bottom-centred
+ * geometry. No other word, position or inferred rotation is accepted.
+ */
+export function recoverTailPageNumberOrientationFromVariants(variantPages, {
+  pageNumber,
+  pageCount,
+  originalPage,
+} = {}) {
+  if (!isTailContext(pageNumber, pageCount)
+    || !Array.isArray(variantPages)
+    || variantPages.length !== 4
+    || originalPage?.pageNumber !== pageNumber
+    || !Array.isArray(originalPage?.words)
+    || originalPage.words.length !== 1
+    || !isExactPageNumberWord(originalPage.words[0], pageNumber)) return null;
+  const dimensions = commonDimensions(variantPages);
+  if (!dimensions) return null;
+  const originalDimensions = commonDimensions([originalPage, variantPages[0]]);
+  const originalWords = canonicalWords(originalPage);
+  if (!originalDimensions
+    || !originalWords
+    || !isCenteredPageNumber(originalWords, dimensions.width, dimensions.height)) return null;
+  const seenRotations = new Set();
+  const candidates = [];
+  for (const page of variantPages) {
+    if (page?.pageNumber !== pageNumber
+      || !Array.isArray(page?.words)
+      || page.words.length !== 1
+      || !Number.isSafeInteger(page?.recoveryRotationDegrees)
+      || ![0, 90, 180, 270].includes(page.recoveryRotationDegrees)
+      || seenRotations.has(page.recoveryRotationDegrees)
+      || !isExactPageNumberWord(page.words[0], pageNumber)) return null;
+    seenRotations.add(page.recoveryRotationDegrees);
+    const words = canonicalWords(page);
+    if (!words || !isCenteredPageNumber(words, dimensions.width, dimensions.height)) return null;
+    candidates.push({ page, words });
+  }
+  const selected = candidates.find((candidate) => candidate.page.recoveryRotationDegrees === 0);
+  if (!selected
+    || !pageNumberGeometryAgrees(
+      selected.words,
+      originalWords,
+      dimensions.width,
+      dimensions.height,
+    )
+    || candidates.some((candidate) => !pageNumberGeometryAgrees(
+      selected.words,
+      candidate.words,
+      dimensions.width,
+      dimensions.height,
+    ))) return null;
+  return {
+    page: {
+      ...selected.page,
+      recoveryProfile: "vision-tail-page-number-consensus-v1",
+    },
+    orientation: {
+      reliable: true,
+      detectedDegrees: 0,
+      correctionDegrees: 0,
+      confidence: Math.min(...candidates.map((candidate) => candidate.words[0].confidence)),
+      acceptedWords: 1,
+    },
+  };
 }
 
 function nearestQuadrant(value) {
@@ -384,4 +586,10 @@ export function recoverSparseTailOrientationFromVariants(variantPages, {
       acceptedWords: Math.min(...upright.map((candidate) => candidate.orientation.acceptedWords)),
     },
   };
+}
+
+/** Resolve only the two explicitly bounded final-page orientation exceptions. */
+export function recoverTailOrientationFromVariants(variantPages, context = {}) {
+  return recoverSparseTailOrientationFromVariants(variantPages, context)
+    ?? recoverTailPageNumberOrientationFromVariants(variantPages, context);
 }

@@ -19,6 +19,8 @@ import {
   correctPageOrientation,
   detectPhysicalOrientation,
   enforceVisionWordLimits,
+  hasIndependentReadableOcrPage,
+  inspectRasterBlankness,
   isPdfImagesInventoryReliable,
   mapOrientationVariantToCanonical,
   mapVisionPageToCanonical,
@@ -32,6 +34,7 @@ import {
   resolvePhysicalOrientations,
 } from "./spatial-ocr.mjs";
 import { GoogleOcrOperationalError } from "./google-vision-api.mjs";
+import { hasSparseTailBlankConsensus } from "./tail-page-recovery.mjs";
 
 test("native tekst og billedside klassificeres forskelligt", () => {
   const nativeText = Array.from(
@@ -142,6 +145,80 @@ test("kun konservativt tomme rastere fritages fra ulæselig-kontrollen", () => {
   assert.equal(classifyRasterBlankness({ histogram: [], mean: 255, stdev: 0 }).blank, false);
 });
 
+test("to rastere med scanner-randstøj bevarer indholdsfeltets fail-closed kontrol", async () => {
+  const width = 1_000;
+  const height = 1_200;
+  const edgeStripe = await sharp({
+    create: { width: 4, height: 100, channels: 3, background: { r: 230, g: 230, b: 230 } },
+  }).png().toBuffer();
+  const base = sharp({
+    create: { width, height, channels: 3, background: "white" },
+  }).composite([{ input: edgeStripe, left: width - 4, top: 500 }]);
+  const source = await base.clone().jpeg({ quality: 95 }).toBuffer();
+  const recovery = await base.clone().jpeg({ quality: 96 }).toBuffer();
+  const [sourceEvidence, recoveryEvidence] = await Promise.all([
+    inspectRasterBlankness(source),
+    inspectRasterBlankness(recovery),
+  ]);
+  assert.equal(sourceEvidence.blank, false);
+  assert.ok(sourceEvidence.maxLocalNonWhiteRatio > 0.04);
+  assert.equal(sourceEvidence.interiorDarkRatio, 0);
+
+  const artifact = {
+    text: "x",
+    confidence: 0.2,
+    vertices: [
+      { x: 940, y: 500 }, { x: 950, y: 500 },
+      { x: 950, y: 506 }, { x: 940, y: 506 },
+    ],
+  };
+  const variants = [0, 1, 2, 3].map((index) => ({
+    pageNumber: 8,
+    imageWidth: width,
+    imageHeight: height,
+    words: index < 2 ? [artifact] : [],
+  }));
+  assert.equal(hasIndependentReadableOcrPage([
+    { pageNumber: 1, imageWidth: width, imageHeight: height, words: [] },
+    variants[0],
+  ], 8), false);
+  assert.equal(hasIndependentReadableOcrPage([
+    { pageNumber: 1, imageWidth: width, imageHeight: height, words: [{
+      text: "Kontrakt",
+      confidence: 0.99,
+      vertices: [
+        { x: 100, y: 100 }, { x: 200, y: 100 },
+        { x: 200, y: 120 }, { x: 100, y: 120 },
+      ],
+    }] },
+    variants[0],
+  ], 8), true);
+  assert.equal(hasSparseTailBlankConsensus({
+    pageNumber: 8,
+    pageCount: 8,
+    variantPages: variants,
+    sourceEvidence,
+    recoveryEvidence,
+  }), true);
+
+  const signature = await sharp({
+    create: { width: 80, height: 20, channels: 3, background: "black" },
+  }).png().toBuffer();
+  const signed = await base.clone()
+    .composite([{ input: signature, left: 460, top: 800 }])
+    .jpeg({ quality: 95 })
+    .toBuffer();
+  const signedEvidence = await inspectRasterBlankness(signed);
+  assert.ok(signedEvidence.maxInteriorLocalDarkRatio > 0.02);
+  assert.equal(hasSparseTailBlankConsensus({
+    pageNumber: 8,
+    pageCount: 8,
+    variantPages: variants,
+    sourceEvidence,
+    recoveryEvidence: signedEvidence,
+  }), false);
+});
+
 test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dfks-blank-page-"));
   try {
@@ -196,6 +273,15 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
       ] },
       symbols: text.split("").map((symbol) => ({ text: symbol })),
     });
+    const edgeArtifact = {
+      confidence: 0.7,
+      boundingBox: { vertices: [
+        { x: 94, y: 40 }, { x: 98, y: 40 },
+        { x: 98, y: 44 }, { x: 94, y: 44 },
+      ] },
+      symbols: [{ text: "x" }],
+    };
+    let recoveryCalls = 0;
     const result = await processPdfSpatially({
       inputPath: join(directory, "input.pdf"),
       outputPath: join(directory, "output.pdf"),
@@ -210,7 +296,10 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
                 width: 100, height: 100,
                 blocks: [{ paragraphs: [{ words: [word("Ord1", 10), word("Ord2", 30), word("Ord3", 50)] }] }],
               }] } },
-              { fullTextAnnotation: { pages: [] } },
+              { fullTextAnnotation: { pages: [{
+                width: 100, height: 100,
+                blocks: [{ paragraphs: [{ words: [edgeArtifact] }] }],
+              }] } },
             ],
             sourcePages: [
               { pageNumber: 1, imageBytes: whiteJpeg },
@@ -225,8 +314,29 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
             })),
           };
         },
+        async annotateUnreadablePageVariants(page) {
+          recoveryCalls += 1;
+          assert.equal(page.pageNumber, 2);
+          return {
+            variants: ["colour", "contrast_gray", "threshold_185", "threshold_215"]
+              .map((kind) => ({
+                kind,
+                response: { fullTextAnnotation: { pages: [] } },
+                transform: {
+                  pageNumber: 2,
+                  sourceWidth: 100,
+                  sourceHeight: 100,
+                  visionWidth: 100,
+                  visionHeight: 100,
+                },
+              })),
+            retainedRasterBytes: 0,
+            retainedVisionResponseBytes: 0,
+          };
+        },
       },
     });
+    assert.equal(recoveryCalls, 1);
     assert.equal(result.status, "completed", JSON.stringify(result));
     assert.equal(result.blankPageCount, 1);
     assert.equal(result.unreadablePageCount, 0);
@@ -1112,6 +1222,142 @@ test("en kort sidste side kan færdiggøres via kardinal konsensus", async () =>
     assert.equal(result.status, "completed", JSON.stringify(result));
     assert.equal(result.orientationUncertainPageCount, 0);
     assert.deepEqual(result.orientationCorrections, []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("sidenummer-retry kan ikke overskrive modstridende original OCR", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dfks-page-number-conflict-"));
+  try {
+    const sourceJpeg = await sharp({
+      create: { width: 100, height: 100, channels: 3, background: "white" },
+    }).jpeg({ quality: 95 }).toBuffer();
+    const visionResponse = (words) => ({ fullTextAnnotation: { pages: [{
+      width: 100,
+      height: 100,
+      blocks: [{ paragraphs: [{ words: words.map((word) => ({
+        confidence: word.confidence,
+        boundingBox: { vertices: word.vertices },
+        symbols: word.text.split("").map((symbol) => ({ text: symbol })),
+      })) }] }],
+    }] } });
+    const pageNumberWord = {
+      text: "2",
+      confidence: 0.99,
+      vertices: [
+        { x: 47, y: 92 }, { x: 53, y: 92 },
+        { x: 53, y: 96 }, { x: 47, y: 96 },
+      ],
+    };
+    const conflictingWord = {
+      text: "X",
+      confidence: 0.99,
+      vertices: [
+        { x: 20, y: 20 }, { x: 20, y: 26 },
+        { x: 16, y: 26 }, { x: 16, y: 20 },
+      ],
+    };
+    const readableWords = [10, 40, 70].map((top, index) => ({
+      text: `Ord${index + 1}`,
+      confidence: 0.99,
+      vertices: [
+        { x: 10, y: top }, { x: 30, y: top },
+        { x: 30, y: top + 8 }, { x: 10, y: top + 8 },
+      ],
+    }));
+    const rotateClockwise = (point, degrees) => {
+      if (degrees === 90) return { x: 100 - point.y, y: point.x };
+      if (degrees === 180) return { x: 100 - point.x, y: 100 - point.y };
+      if (degrees === 270) return { x: point.y, y: 100 - point.x };
+      return point;
+    };
+    const runner = async (command, args) => {
+      if (command === "pdfinfo") {
+        return { stdout: "Pages: 2\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+      }
+      if (command === "pdfimages") {
+        return {
+          stdout: "page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio\n",
+          stderr: "",
+        };
+      }
+      if (command === "pdftoppm") {
+        await writeFile(`${args.at(-1)}.jpg`, sourceJpeg);
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftotext") {
+        const target = args.at(-1);
+        if (args.includes("-bbox-layout")) {
+          await writeFile(target, "<page width=\"612\" height=\"792\"></page><page width=\"612\" height=\"792\"></page>");
+        } else if (args[0] === "-f") {
+          await writeFile(target, "");
+        } else {
+          await writeFile(target, "A".repeat(200));
+        }
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command ${command}`);
+    };
+    let retryCalls = 0;
+    const result = await processPdfSpatially({
+      inputPath: join(directory, "input.pdf"),
+      outputPath: join(directory, "output.pdf"),
+      geometryPath: join(directory, "geometry.json.gz"),
+      workDir: directory,
+      commandRunner: runner,
+      googleClient: {
+        async annotateDocument() {
+          return {
+            responses: [
+              visionResponse(readableWords),
+              visionResponse([pageNumberWord, conflictingWord]),
+            ],
+            sourcePages: [1, 2].map((pageNumber) => ({ pageNumber, imageBytes: sourceJpeg })),
+            visionPageTransforms: [1, 2].map((pageNumber) => ({
+              pageNumber,
+              sourceWidth: 100,
+              sourceHeight: 100,
+              visionWidth: 100,
+              visionHeight: 100,
+            })),
+            retainedRasterBytes: sourceJpeg.length * 2,
+            retainedVisionResponseBytes: 2_000,
+          };
+        },
+        async annotateOrientationPageVariants(page) {
+          retryCalls += 1;
+          assert.equal(page.pageNumber, 2);
+          return {
+            variants: [0, 90, 180, 270].map((rotationDegrees) => ({
+              kind: `rotate_${rotationDegrees}`,
+              response: visionResponse([{
+                ...pageNumberWord,
+                vertices: pageNumberWord.vertices.map((point) => (
+                  rotateClockwise(point, rotationDegrees)
+                )),
+              }]),
+              transform: {
+                pageNumber: 2,
+                rotationDegrees,
+                canonicalWidth: 100,
+                canonicalHeight: 100,
+                sourceWidth: 100,
+                sourceHeight: 100,
+                visionWidth: 100,
+                visionHeight: 100,
+              },
+            })),
+            retainedRasterBytes: sourceJpeg.length * 4,
+            retainedVisionResponseBytes: 2_000,
+          };
+        },
+      },
+    });
+    assert.equal(retryCalls, 1);
+    assert.equal(result.status, "needs_review");
+    assert.equal(result.orientationQualityFailed, true);
+    assert.deepEqual(result.affectedPageNumbers, [2]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
