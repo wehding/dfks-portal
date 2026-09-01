@@ -233,6 +233,7 @@ function pushUnique<T>(items: T[], item: T) {
  */
 export function predefinedStatisticsQueryPlan(question: string): StatisticsQueryPlan | null {
   const value = normalizedQuestion(question);
+  if (includesAny(value, ["produktionsland", "efter land", "fordelt pa land", "fordelt på land"])) return null;
   if (includesAny(value, ["hvad tjener", "hvem tjener", "højest lønnede", "hojest lonnede", "lavest lønnede", "lavest lonnede"])) {
     throw new StatisticsQueryPlanError("person_query_not_allowed", "Statistikmotoren må ikke besvare spørgsmål om identificerbare personer.");
   }
@@ -240,7 +241,7 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   const addMetric = (metric: StatisticsMetric) => pushUnique(metrics, metric);
 
   const withoutContractTypeNames = value.replace(/a[- ]?(?:løn|lon)\w*/g, "");
-  const salaryMentioned = includesAny(withoutContractTypeNames, ["lon", "løn", "ugeløn", "ugelon", "manedslon", "månedsløn", "betaler bedst"]);
+  const salaryMentioned = includesAny(withoutContractTypeNames, ["lon", "løn", "ugeløn", "ugelon", "manedslon", "månedsløn", "betaler bedst", "købekraft", "kobekraft"]);
   const contractCountMentioned = includesAny(value, ["antal kontrakter", "hvor mange kontrakter", "kontraktantal", "kontrakter er der"])
     || /hvor mange.*kontrakt/.test(value);
   if (salaryMentioned) addMetric(includesAny(value, ["gennemsnit", "middelværdi", "middelvaerdi"]) ? "average_monthly_salary" : "median_monthly_salary");
@@ -269,7 +270,7 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   if (includesAny(value, ["mænd", "maend", "mand"])) plan.filters.genders.push("male");
   if (/(?:0|nul)\s*[-–]\s*3\s*ar|(?:0|nul)\s*[-–]\s*3\s*år|nyuddannet|nyuddannede|nye klippere/.test(value)) pushUnique(plan.filters.experienceGroups, "new_graduate");
   if (/4\s*[-–]\s*7\s*ar|4\s*[-–]\s*7\s*år|tidlig karriere/.test(value)) pushUnique(plan.filters.experienceGroups, "early_career");
-  if (/8\s*[-–]\s*17\s*ar|8\s*[-–]\s*17\s*år|erfarne/.test(value)) pushUnique(plan.filters.experienceGroups, "experienced");
+  if (/8\s*[-–]\s*17\s*ar|8\s*[-–]\s*17\s*år|(?<!meget )erfarne/.test(value)) pushUnique(plan.filters.experienceGroups, "experienced");
   if (/18\+|18\s*(?:eller flere|plus)|veteran|veteraner|meget erfarne/.test(value)) pushUnique(plan.filters.experienceGroups, "veteran");
 
   const membershipProbe = value.replace(/ikke[- ]?medlemmer?|uorganiserede|uden medlemskab/g, "");
