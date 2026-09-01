@@ -6,6 +6,8 @@ import sharp from "sharp";
 
 import {
   createGoogleOcrClient,
+  createOrientationPageVisionVariants,
+  createUnreadablePageVisionVariants,
   GoogleOcrOperationalError,
   prepareImageForVision,
   readGoogleConfig,
@@ -125,6 +127,165 @@ test("for stor enkeltsiderespons genprøves én gang med en mindre transportkopi
   assert.equal(calls, 2);
   assert.equal(result.sourcePages[0].imageBytes.equals(page), true);
   assert.equal(result.visionPageTransforms[0].visionWidth < 1200, true);
+});
+
+test("ulæselig side får præcis to deterministiske farve- og kontrastvarianter", async () => {
+  const page = await jpeg(180, 120, true);
+  const first = await createUnreadablePageVisionVariants(page);
+  const second = await createUnreadablePageVisionVariants(page);
+  assert.deepEqual(first.map((variant) => variant.kind), ["colour", "contrast_gray"]);
+  assert.equal(first.length, 2);
+  assert.equal(first[0].width, 180);
+  assert.equal(first[0].height, 120);
+  assert.equal(first[0].imageBytes.equals(second[0].imageBytes), true);
+  assert.equal(first[1].imageBytes.equals(second[1].imageBytes), true);
+  assert.equal(first[0].imageBytes.equals(first[1].imageBytes), false);
+});
+
+test("ulæselig-side retry kalder Vision højst én gang med de to varianter", async () => {
+  const page = await jpeg(180, 120, true);
+  const calls = [];
+  const client = createGoogleOcrClient({
+    config: readGoogleConfig({ GOOGLE_CLOUD_PROJECT: "dfks-prod" }),
+    accessTokenProvider: async () => "token",
+    jsonPost: async (url, token, payload) => {
+      calls.push(payload.requests.length);
+      return { responses: payload.requests.map(() => ({ fullTextAnnotation: { pages: [] } })) };
+    },
+  });
+  const result = await client.annotateUnreadablePageVariants({
+    pageNumber: 4,
+    imageBytes: page,
+  });
+  assert.deepEqual(calls, [2]);
+  assert.deepEqual(result.variants.map((variant) => variant.kind), ["colour", "contrast_gray"]);
+  assert.equal(result.variants.every((variant) => variant.transform.pageNumber === 4), true);
+  assert.equal(result.retainedRasterBytes > 0, true);
+  assert.equal(result.retainedVisionResponseBytes > 0, true);
+});
+
+test("ulæselig-side retry splitter og nedskalerer adaptivt ved for stor Vision-respons", async () => {
+  const page = await jpeg(1200, 800, true);
+  const calls = [];
+  let callNumber = 0;
+  const client = createGoogleOcrClient({
+    config: readGoogleConfig({ GOOGLE_CLOUD_PROJECT: "dfks-prod" }),
+    accessTokenProvider: async () => "token",
+    jsonPost: async (url, token, payload) => {
+      callNumber += 1;
+      calls.push(payload.requests.length);
+      const large = callNumber <= 2;
+      return {
+        responses: payload.requests.map(() => large
+          ? { fullTextAnnotation: { text: "x".repeat(2_000) } }
+          : {}),
+      };
+    },
+  });
+  const result = await client.annotateUnreadablePageVariants({
+    pageNumber: 1,
+    imageBytes: page,
+  }, {
+    resourceLimits: { maxVisionResponseBytesPerBatch: 1_000 },
+    maxAdditionalResponseBytes: 10_000,
+  });
+  assert.deepEqual(calls, [2, 1, 1, 1]);
+  assert.equal(result.variants.length, 2);
+  assert.equal(result.variants[0].transform.visionWidth < 1200, true);
+  assert.equal(result.variants[0].transform.recoveryAttempts, 1);
+  assert.equal(result.variants[1].transform.recoveryAttempts, 0);
+});
+
+test("ulæselig-side retry respekterer dokumentets resterende rasterbudget", async () => {
+  const page = await jpeg(180, 120, true);
+  let calls = 0;
+  const client = createGoogleOcrClient({
+    config: readGoogleConfig({ GOOGLE_CLOUD_PROJECT: "dfks-prod" }),
+    accessTokenProvider: async () => "token",
+    jsonPost: async () => {
+      calls += 1;
+      return { responses: [{}, {}] };
+    },
+  });
+  await assert.rejects(() => client.annotateUnreadablePageVariants({
+    pageNumber: 1,
+    imageBytes: page,
+  }, { maxAdditionalRasterBytes: 1 }), /document_raster_budget_exceeded/);
+  assert.equal(calls, 0);
+});
+
+test("orienteringsretry opretter præcis fire deterministiske kardinalvarianter", async () => {
+  const page = await jpeg(180, 120, true);
+  const first = await createOrientationPageVisionVariants(page);
+  const second = await createOrientationPageVisionVariants(page);
+  assert.deepEqual(first.map((variant) => variant.rotationDegrees), [0, 90, 180, 270]);
+  assert.deepEqual(first.map((variant) => variant.kind), [
+    "rotate_0", "rotate_90", "rotate_180", "rotate_270",
+  ]);
+  assert.equal(first.every((variant) => (
+    variant.canonicalWidth === 180 && variant.canonicalHeight === 120
+  )), true);
+  assert.equal(first[0].imageBytes.equals(second[0].imageBytes), true);
+  assert.equal(first[1].imageBytes.equals(second[1].imageBytes), true);
+  const dimensions = await Promise.all(first.map((variant) => sharp(variant.imageBytes).metadata()));
+  assert.deepEqual(dimensions.map(({ width, height }) => [width, height]), [
+    [180, 120], [120, 180], [180, 120], [120, 180],
+  ]);
+});
+
+test("orienteringsretry bruger én afgrænset Vision-batch og bevarer canonical transform", async () => {
+  const page = await jpeg(180, 120, true);
+  const calls = [];
+  const client = createGoogleOcrClient({
+    config: readGoogleConfig({ GOOGLE_CLOUD_PROJECT: "dfks-prod" }),
+    accessTokenProvider: async () => "token",
+    jsonPost: async (url, token, payload) => {
+      calls.push(payload.requests.length);
+      return { responses: payload.requests.map(() => ({ fullTextAnnotation: { pages: [] } })) };
+    },
+  });
+  const result = await client.annotateOrientationPageVariants({
+    pageNumber: 7,
+    imageBytes: page,
+  });
+  assert.deepEqual(calls, [4]);
+  assert.deepEqual(result.variants.map((variant) => variant.transform.rotationDegrees), [
+    0, 90, 180, 270,
+  ]);
+  assert.equal(result.variants.every((variant) => (
+    variant.transform.pageNumber === 7
+      && variant.transform.canonicalWidth === 180
+      && variant.transform.canonicalHeight === 120
+  )), true);
+});
+
+test("orienteringsretry respekterer abort-, raster- og responsgrænser", async () => {
+  const page = await jpeg(180, 120, true);
+  let calls = 0;
+  const client = createGoogleOcrClient({
+    config: readGoogleConfig({ GOOGLE_CLOUD_PROJECT: "dfks-prod" }),
+    accessTokenProvider: async () => "token",
+    jsonPost: async (url, token, payload) => {
+      calls += 1;
+      return { responses: payload.requests.map(() => ({})) };
+    },
+  });
+  await assert.rejects(() => client.annotateOrientationPageVariants({
+    pageNumber: 1, imageBytes: page,
+  }, { maxAdditionalRasterBytes: 1 }), /document_raster_budget_exceeded/);
+  assert.equal(calls, 0);
+
+  await assert.rejects(() => client.annotateOrientationPageVariants({
+    pageNumber: 1, imageBytes: page,
+  }, { maxAdditionalResponseBytes: 1 }), /vision_response_too_large/);
+  assert.equal(calls, 1);
+
+  const controller = new AbortController();
+  controller.abort(new Error("lease_lost"));
+  await assert.rejects(() => client.annotateOrientationPageVariants({
+    pageNumber: 1, imageBytes: page,
+  }, { signal: controller.signal }), /lease_lost/);
+  assert.equal(calls, 1);
 });
 
 test("transport afviser alle andre Google-hosts", async () => {

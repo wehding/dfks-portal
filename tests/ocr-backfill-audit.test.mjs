@@ -15,12 +15,14 @@ import {
   captureBaseline,
   geometryBackfillBaselineCohort,
   geometryBackfillQualityReportDigest,
+  geometryBackfillSummaryReadyForApproval,
   isActiveDlpReplacementCandidate,
   createReadOnlyFetch,
   extractPdfBboxPages,
   extractLegacyPdfPageCount,
   extractPdfPageCount,
   readBaselineFile,
+  loadPostBaselineAiCounts,
   requireMatchingPdfPageCounts,
   safeSummaryJson,
   selectGeometryBackfillSources,
@@ -430,10 +432,14 @@ test("geometry-run-audit kræver eksakt lineage og bevarer original og kontrakts
     backfill_run_id: runId,
     backfill_source_job_id: source.id,
     replacement_of_job_id: null,
+    recovery_of_job_id: null,
+    recovery_reason_code: null,
+    backfill_recovery_audit_event_id: null,
   };
   const contract = {
     id: baselineTarget.contractId,
     org_id: orgId,
+    rights_holder_id: "77777777-7777-4777-8777-777777777777",
     status: "kladde",
     pdf_url: source.original_storage_path,
     processed_pdf_url: outputPath,
@@ -462,6 +468,7 @@ test("geometry-run-audit kræver eksakt lineage og bevarer original og kontrakts
     prior_processed_path_digest: null,
     prior_spatial_path_digest: null,
     outcome: "completed",
+    recovery_generation: 0,
   };
   const run = {
     id: runId,
@@ -482,6 +489,10 @@ test("geometry-run-audit kræver eksakt lineage og bevarer original og kontrakts
     baseline: captured.baseline,
   });
   assert.equal(summaryHasViolations(state), false);
+  assert.equal(geometryBackfillSummaryReadyForApproval({
+    ...state,
+    completedDocumentsPassingAllChecks: 1,
+  }), true);
   const firstDigest = geometryBackfillQualityReportDigest({
     ...state,
     completedDocumentsPassingAllChecks: 1,
@@ -506,6 +517,222 @@ test("geometry-run-audit kræver eksakt lineage og bevarer original og kontrakts
   });
   assert.equal(invalid.violations.geometrySourceLineageMismatch, 1);
   assert.equal(invalid.violations.geometryUnexpectedArtifactDeletion, 1);
+
+  const unresolvedJob = { ...job, status: "needs_review" };
+  const unresolvedContract = {
+    ...contract,
+    processed_pdf_url: null,
+    document_spatial_data_path: null,
+    document_processing_status: "not_required",
+    document_processing_profile: null,
+    document_spatial_schema_version: null,
+  };
+  const unresolved = auditGeometryBackfillRunRecords({
+    run,
+    targets: [{ ...target, outcome: "needs_review" }],
+    jobsById: new Map([[queuedJobId, unresolvedJob]]),
+    sourceJobsById: new Map([[source.id, { ...source, superseded_by_job_id: null }]]),
+    contractsById: new Map([[contract.id, unresolvedContract]]),
+    artifactDeletionRows: [],
+    baseline: captured.baseline,
+  });
+  assert.equal(unresolved.violations.geometryUnresolvedOutcome, 1);
+  assert.equal(geometryBackfillSummaryReadyForApproval({
+    ...unresolved,
+    completedDocumentsPassingAllChecks: 0,
+  }), false);
+});
+
+test("geometry-run-audit verificerer recovery-kæde og semantisk medlemsaudit", async () => {
+  const original = await pdf(1);
+  const captured = await captureBaseline({
+    ...baselineInput(original),
+    concurrency: 1,
+    capturedAt: "2026-09-01T00:00:00.000Z",
+  });
+  const cohort = geometryBackfillBaselineCohort(captured.baseline, { expectedCount: 1 });
+  const baselineTarget = cohort.targets[0];
+  const runId = "55555555-5555-4555-8555-555555555556";
+  const parentId = "66666666-6666-4666-8666-666666666661";
+  const childId = "66666666-6666-4666-8666-666666666662";
+  const auditId = "88888888-8888-4888-8888-888888888888";
+  const memberId = "77777777-7777-4777-8777-777777777778";
+  const orgId = "33333333-3333-4333-8333-333333333334";
+  const source = {
+    id: baselineTarget.sourceJobId,
+    org_id: orgId,
+    contract_id: baselineTarget.contractId,
+    original_storage_path: "private/original.pdf",
+    original_sha256: baselineTarget.originalSha256,
+    page_count: 1,
+    status: "not_required",
+    superseded_by_job_id: childId,
+  };
+  const common = {
+    org_id: orgId,
+    contract_id: baselineTarget.contractId,
+    original_storage_path: source.original_storage_path,
+    original_sha256: baselineTarget.originalSha256,
+    downstream_ai_policy: "preserve",
+    processing_profile: "google-vision-direct-v1",
+    processing_intent: "direct_vision_geometry_backfill_v1",
+    backfill_run_id: runId,
+    backfill_source_job_id: source.id,
+    replacement_of_job_id: null,
+  };
+  const parent = {
+    ...common,
+    id: parentId,
+    status: "needs_review",
+    attempts: 1,
+    recovery_of_job_id: null,
+    recovery_reason_code: null,
+    backfill_recovery_audit_event_id: null,
+  };
+  const outputPath = `${orgId}/processed/${baselineTarget.contractId}/leases/44444444-4444-4444-8444-444444444445/normalised.pdf`;
+  const spatialPath = `${orgId}/processed/${baselineTarget.contractId}/leases/44444444-4444-4444-8444-444444444445/vision-layout.json.gz`;
+  const child = {
+    ...common,
+    id: childId,
+    status: "completed",
+    attempts: 1,
+    output_storage_path: outputPath,
+    spatial_data_path: spatialPath,
+    recovery_of_job_id: parentId,
+    recovery_reason_code: "geometry_quality_recovery_v1",
+    backfill_recovery_audit_event_id: auditId,
+  };
+  const contract = {
+    id: baselineTarget.contractId,
+    org_id: orgId,
+    rights_holder_id: memberId,
+    status: "kladde",
+    pdf_url: source.original_storage_path,
+    processed_pdf_url: outputPath,
+    document_spatial_data_path: spatialPath,
+    document_processing_status: "ready",
+    document_processing_error_code: null,
+    document_processing_profile: "google-vision-direct-v1",
+    document_spatial_schema_version: "google-vision-spatial-v3",
+    document_spatial_accuracy: 0.99,
+  };
+  const target = {
+    run_id: runId,
+    contract_id: baselineTarget.contractId,
+    org_id: orgId,
+    source_job_id: source.id,
+    queued_job_id: childId,
+    original_sha256: baselineTarget.originalSha256,
+    original_page_count: 1,
+    original_path_digest: baselineTarget.originalPathDigest,
+    contract_status: "kladde",
+    prior_processing_status: "not_required",
+    prior_processing_error_code: null,
+    prior_processing_profile: null,
+    prior_spatial_schema_version: null,
+    prior_spatial_accuracy: null,
+    prior_processed_path_digest: null,
+    prior_spatial_path_digest: null,
+    outcome: "completed",
+    recovery_generation: 1,
+  };
+  const run = {
+    id: runId,
+    kind: "direct_vision_geometry_v3",
+    processing_profile: "google-vision-direct-v1",
+    spatial_schema_version: "google-vision-spatial-v3",
+    state: "quality_pending",
+    expected_count: 1,
+    cohort_digest: cohort.digest,
+  };
+  const event = {
+    id: auditId,
+    entity_type: "contract_document_backfill_recovery",
+    entity_id: runId,
+    correlation_id: runId,
+    metadata: {
+      event_code: "vision_v3_geometry_backfill_recovery_queued",
+      audit_subject_count: 1,
+      audit_subject_set_hash: sha256(Buffer.from(memberId, "utf8")),
+    },
+  };
+  const valid = auditGeometryBackfillRunRecords({
+    run,
+    targets: [target],
+    jobsById: new Map([[parentId, parent], [childId, child]]),
+    sourceJobsById: new Map([[source.id, source]]),
+    contractsById: new Map([[contract.id, contract]]),
+    artifactDeletionRows: [],
+    auditEventsById: new Map([[auditId, event]]),
+    auditSubjectsByEventId: new Map([[auditId, new Set([memberId])]]),
+    baseline: captured.baseline,
+  });
+  assert.equal(summaryHasViolations(valid), false);
+
+  child.backfill_recovery_audit_event_id = null;
+  const invalid = auditGeometryBackfillRunRecords({
+    run,
+    targets: [target],
+    jobsById: new Map([[parentId, parent], [childId, child]]),
+    sourceJobsById: new Map([[source.id, source]]),
+    contractsById: new Map([[contract.id, contract]]),
+    artifactDeletionRows: [],
+    auditEventsById: new Map([[auditId, event]]),
+    auditSubjectsByEventId: new Map([[auditId, new Set([memberId])]]),
+    baseline: captured.baseline,
+  });
+  assert.equal(invalid.violations.geometryRecoveryAuditMismatch, 1);
+
+  child.backfill_recovery_audit_event_id = auditId;
+  child.recovery_reason_code = "unexpected_recovery_reason";
+  const reasonTampered = auditGeometryBackfillRunRecords({
+    run,
+    targets: [target],
+    jobsById: new Map([[parentId, parent], [childId, child]]),
+    sourceJobsById: new Map([[source.id, source]]),
+    contractsById: new Map([[contract.id, contract]]),
+    artifactDeletionRows: [],
+    auditEventsById: new Map([[auditId, event]]),
+    auditSubjectsByEventId: new Map([[auditId, new Set([memberId])]]),
+    baseline: captured.baseline,
+  });
+  assert.ok(reasonTampered.violations.geometryRecoveryAuditMismatch > 0);
+});
+
+test("geometry-audit tæller alle AI-generationer efter baseline uanset terminal status", async () => {
+  const contractId = "11111111-1111-4111-8111-111111111111";
+  const calls = [];
+  const db = {
+    from(table) {
+      assert.equal(table, "contract_ai_jobs");
+      const builder = {
+        select(value) { calls.push(["select", value]); return builder; },
+        in(field, values) { calls.push(["in", field, values]); return builder; },
+        gte(field, value) { calls.push(["gte", field, value]); return builder; },
+        order() { return builder; },
+        async range() {
+          return {
+            data: [{
+              id: "22222222-2222-4222-8222-222222222222",
+              contract_id: contractId,
+              created_at: "2026-09-01T00:01:00.000Z",
+              status: "completed",
+            }],
+            error: null,
+          };
+        },
+      };
+      return builder;
+    },
+  };
+  const counts = await loadPostBaselineAiCounts(
+    db,
+    [contractId],
+    "2026-09-01T00:00:00.000Z",
+  );
+  assert.equal(counts.get(contractId), 1);
+  assert.ok(calls.some(([operation]) => operation === "gte"));
+  assert.ok(!calls.some(([, value]) => value === "status"));
 });
 
 function knownUnparseableBaseline(job, overrides = {}) {

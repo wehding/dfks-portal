@@ -37,6 +37,7 @@ test("tre geometry-workers claimer og afslutter samme run uden dubletter eller f
 }, async () => {
   const organisationId = randomUUID();
   const runId = randomUUID();
+  const contendingRunId = randomUUID();
   const contractIds = [randomUUID(), randomUUID(), randomUUID()];
   const sourceJobIds = [randomUUID(), randomUUID(), randomUUID()];
   const originalHashes = ["a".repeat(64), "b".repeat(64), "c".repeat(64)];
@@ -202,9 +203,119 @@ test("tre geometry-workers claimer og afslutter samme run uden dubletter eller f
       sources_unchanged: true,
       contracts_unchanged: true,
     });
+
+    const recoveries = claims.map(claim => ({
+      contractId: targets.find(target => target.originalSha256 === claim.original_sha256).contractId,
+      currentJobId: claim.id,
+      currentGeneration: 0,
+      status: "needs_review",
+      errorCode: "ocr_spatial_quality",
+      originalSha256: claim.original_sha256,
+    }));
+    const simultaneousTransactions = await Promise.allSettled([
+      ...workers.slice(0, 2).map(worker => worker.query(
+        `select * from public.queue_contract_document_geometry_backfill_recovery(
+           $1, $2, $3::jsonb, 1250, null
+         )`,
+        [runId, digest, JSON.stringify(recoveries)],
+      )),
+      workers[2].query(
+        `select * from public.prepare_contract_document_geometry_backfill_run(
+           $1, 3, $2, $3::jsonb, 1200, null
+         )`,
+        [contendingRunId, digest, JSON.stringify(targets)],
+      ),
+    ]);
+    const simultaneousRecovery = simultaneousTransactions.slice(0, 2)
+      .map(result => {
+        assert.equal(result.status, "fulfilled", "identisk recovery fejlede under contention");
+        return result.value;
+      });
+    const contendingPrepare = simultaneousTransactions[2];
+    assert.equal(contendingPrepare.status, "rejected");
+    assert.equal(contendingPrepare.reason?.code, "55000");
+    assert.deepEqual(
+      simultaneousRecovery.map(result => result.rows[0].outcome).toSorted(),
+      ["already_queued", "queued"],
+      "samtidige identiske recovery-kald var ikke atomisk idempotente",
+    );
+    assert.ok(simultaneousRecovery.every(result => (
+      result.rows[0].run_id === runId
+      && result.rows[0].queued_count === 3
+      && result.rows[0].minimum_generation === 1
+      && result.rows[0].maximum_generation === 1
+    )));
+    await assert.rejects(
+      workers[0].query(
+        `select * from public.queue_contract_document_geometry_backfill_recovery(
+           $1, $2, $3::jsonb, 1250, null
+         )`,
+        [runId, digest, JSON.stringify(recoveries.slice(0, 1))],
+      ),
+      error => error?.code === "55000",
+      "et andet recovery-subset blev fejlagtigt accepteret som idempotent retry",
+    );
+
+    const recoveredTargets = await admin.query(
+      `select target.contract_id, target.queued_job_id, target.recovery_generation,
+              child.recovery_of_job_id, child.status,
+              child.backfill_recovery_audit_event_id
+       from public.contract_document_backfill_targets as target
+       join public.contract_document_jobs as child on child.id = target.queued_job_id
+       where target.run_id = $1
+       order by target.contract_id`,
+      [runId],
+    );
+    assert.equal(recoveredTargets.rows.length, 3);
+    assert.ok(recoveredTargets.rows.every(row => (
+      row.recovery_generation === 1
+      && row.status === "queued"
+      && typeof row.backfill_recovery_audit_event_id === "string"
+      && claimedJobIds.includes(row.recovery_of_job_id)
+    )));
+    assert.equal(new Set(
+      recoveredTargets.rows.map(row => row.backfill_recovery_audit_event_id),
+    ).size, 1, "recovery-kohorten fik mere end ét semantisk audit-event");
+
+    const recoveryClaimResults = await Promise.all(workers.map(worker => worker.query(
+      `select (claimed).id, (claimed).recovery_of_job_id, (claimed).status,
+              (claimed).attempts
+       from (
+         select public.claim_next_contract_document_geometry_backfill_job($1, 30) as claimed
+       ) result`,
+      [runId],
+    )));
+    const recoveryClaims = recoveryClaimResults.map(result => result.rows[0]);
+    const recoveryJobIds = recoveryClaims.map(claim => claim.id);
+    assert.ok(recoveryClaims.every(claim => (
+      claim.status === "processing"
+      && claim.attempts === 1
+      && claimedJobIds.includes(claim.recovery_of_job_id)
+    )));
+    assert.equal(
+      new Set(recoveryJobIds).size,
+      3,
+      "samme recovery-generation blev claimet af flere workers",
+    );
+    assert.deepEqual(
+      new Set(recoveryJobIds),
+      new Set(recoveredTargets.rows.map(row => row.queued_job_id)),
+    );
   } finally {
     await Promise.all(workers.map(worker => worker.end().catch(() => undefined)));
     if (adminConnected) {
+      await admin.query(
+        "delete from public.contract_document_backfill_targets where run_id = $1",
+        [contendingRunId],
+      ).catch(() => undefined);
+      await admin.query(
+        "delete from public.contract_document_jobs where backfill_run_id = $1",
+        [contendingRunId],
+      ).catch(() => undefined);
+      await admin.query(
+        "delete from public.contract_document_backfill_runs where id = $1",
+        [contendingRunId],
+      ).catch(() => undefined);
       await admin.query(
         "delete from public.contract_document_backfill_targets where run_id = $1",
         [runId],

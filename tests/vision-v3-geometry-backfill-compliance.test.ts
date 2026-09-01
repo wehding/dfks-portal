@@ -7,7 +7,9 @@ const root = process.cwd();
 const read = (relativePath: string) => fs.readFileSync(path.join(root, relativePath), "utf8");
 const registry = JSON.parse(read("config/audit-coverage.json"));
 const migration = read("supabase/migrations/20260901081533_vision_v3_geometry_backfill.sql");
+const recoveryMigration = read("supabase/migrations/20260901103554_vision_v3_geometry_quality_recovery.sql");
 const oneOffScript = read("scripts/one-off/vision-v3-geometry-backfill.ts");
+const auditScript = read("scripts/audit-ocr-backfill.mjs");
 const packageJson = JSON.parse(read("package.json"));
 
 test("Vision v3-geometri-backfill er registreret som et implementeret, men ikke aktiveret Class D-dataflow", () => {
@@ -37,7 +39,7 @@ test("engangskørslen har en registry-post med databaseaudit som autoritativ sem
   assert.equal(entry.failClosed, true);
   assert.equal(
     entry.auditImplementation,
-    "supabase/migrations/20260901081533_vision_v3_geometry_backfill.sql",
+    "supabase/migrations/20260901103554_vision_v3_geometry_quality_recovery.sql",
   );
   assert.match(entry.targetResolution, /contracts\.rights_holder_id/);
   assert.deepEqual(entry.categories, ["contract_data", "document_data", "ai_analysis"]);
@@ -81,6 +83,64 @@ test("backfilltabeller og styringsfunktioner er service-only og kohorten fejler 
   assert.match(migration, /geometry backfill accounting mismatch/);
 });
 
+test("recovery opretter immutable generationer og flytter kun target-pointeren", () => {
+  assert.match(recoveryMigration, /add column if not exists recovery_generation/);
+  assert.match(recoveryMigration, /recovery_of_job_id, downstream_ai_policy/);
+  assert.match(recoveryMigration, /terminal_job\.backfill_source_job_id/);
+  assert.match(recoveryMigration, /terminal_job\.downstream_ai_policy/);
+  assert.match(recoveryMigration, /set queued_job_id = recovery_job_id/);
+  assert.match(recoveryMigration, /set state = 'queued'/);
+  assert.doesNotMatch(
+    recoveryMigration.match(/create or replace function public\.queue_contract_document_geometry_backfill_recovery\([\s\S]*?revoke all on function public\.queue_contract_document_geometry_backfill_recovery/)?.[0] ?? "",
+    /update public\.contracts/,
+  );
+});
+
+test("recovery er service-only, auditbundet og medlemssubjekter følger transaktionen", () => {
+  assert.match(
+    recoveryMigration,
+    /revoke all on function public\.queue_contract_document_geometry_backfill_recovery\([\s\S]*?from public, anon, authenticated/,
+  );
+  assert.match(
+    recoveryMigration,
+    /grant execute on function public\.queue_contract_document_geometry_backfill_recovery\([\s\S]*?to service_role/,
+  );
+  assert.match(recoveryMigration, /vision_v3_geometry_backfill_recovery_queued/);
+  assert.match(recoveryMigration, /p_target_member_uuids => member_uuids/);
+  assert.match(recoveryMigration, /backfill_recovery_audit_event_id = recovery_audit_event_id/);
+  assert.doesNotMatch(
+    recoveryMigration.match(/p_metadata => jsonb_build_object\([\s\S]*?p_target_member_uuids => member_uuids/)?.[0] ?? "",
+    /storage_path|signed|token|file_name|contract_text|ocr_text|salary/i,
+  );
+});
+
+test("claim, completion og kvalitetsport følger kun den aktuelle recovery-kæde", () => {
+  assert.match(recoveryMigration, /contract_document_geometry_recovery_chain_valid/);
+  assert.match(recoveryMigration, /current_target\.queued_job_id = job\.id/);
+  assert.match(recoveryMigration, /join public\.contract_document_jobs as job on job\.id = current_target\.queued_job_id/);
+  assert.match(recoveryMigration, /and current_target\.outcome = job\.status/);
+  assert.match(recoveryMigration, /guard_geometry_backfill_recovery_completion/);
+  assert.match(recoveryMigration, /contract_document_jobs_one_active_geometry_source_idx/);
+  assert.match(recoveryMigration, /contract_document_jobs_one_active_geometry_contract_idx/);
+  assert.match(recoveryMigration, /geometry backfill exact completion required/);
+  assert.match(recoveryMigration, /target\.outcome <> 'completed'/);
+  assert.match(recoveryMigration, /recovery_reason_code[\s\S]*?geometry_quality_recovery_v1/);
+  assert.match(recoveryMigration, /canonical row-lock order/i);
+  assert.match(recoveryMigration, /contract -> source -> target -> active job/);
+});
+
+test("auditporten kræver eksakt færdiggørelse og tæller alle AI-generationer", () => {
+  assert.match(auditScript, /geometryBackfillSummaryReadyForApproval/);
+  assert.match(auditScript, /outcomes\.completed === expected/);
+  assert.match(auditScript, /outcomes\.needs_review === 0/);
+  assert.match(auditScript, /geometryUnexpectedAiGeneration/);
+  const postBaselineLoader = auditScript.match(
+    /export async function loadPostBaselineAiCounts[\s\S]*?async function loadRelevantAiJobs/,
+  )?.[0] ?? "";
+  assert.match(postBaselineLoader, /\.gte\("created_at", cutoff\)/);
+  assert.doesNotMatch(postBaselineLoader, /ACTIVE_AI_JOB_STATUSES|\.in\("status"/);
+});
+
 test("engangskørsel og samlet regressionspakke har navngivne npm-scripts", () => {
   assert.equal(
     packageJson.scripts["one-off:vision-v3-geometry-backfill"],
@@ -88,9 +148,15 @@ test("engangskørsel og samlet regressionspakke har navngivne npm-scripts", () =
   );
   assert.match(packageJson.scripts["test:vision-v3-geometry-backfill"], /vision-v3-geometry-backfill-compliance\.test\.ts/);
   assert.match(packageJson.scripts["test:vision-v3-geometry-backfill"], /contract-document-worker\/\*\.test\.mjs/);
+  assert.match(packageJson.scripts["test:vision-v3-geometry-backfill"], /ocr-backfill-audit\.test\.mjs/);
+  assert.match(packageJson.scripts["test:vision-v3-geometry-backfill"], /contract-document-geometry-backfill-concurrency\.test\.mjs/);
 });
 
 test("engangskørslen indlæser lokal serverkonfiguration uden at udskrive hemmeligheder", () => {
   assert.match(oneOffScript, /loadEnv\(\{ path: "\.env\.local", quiet: true \}\)/);
   assert.doesNotMatch(oneOffScript, /console\.(?:log|error)\(process\.env/);
+  assert.match(oneOffScript, /recover-preview/);
+  assert.match(oneOffScript, /QUEUE_VISION_V3_GEOMETRY_RECOVERY/);
+  assert.match(oneOffScript, /queue_contract_document_geometry_backfill_recovery/);
+  assert.doesNotMatch(oneOffScript, /original_storage_path|pdf_url|processed_pdf_url/);
 });

@@ -401,6 +401,49 @@ test("OCR-kvalitetsfejl propagerer en sikker diagnose til backfill-stopreglen", 
   assert.equal("affectedPageNumbers" in completions[0], false);
 });
 
+test("spatial needs_review sender kun sikre måltal, schema og kanoniske sidenumre", async () => {
+  const completions = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    spatialProcessor: async () => ({
+      status: "needs_review",
+      classification: "mixed",
+      pageCount: 2,
+      nativePageCount: 0,
+      ocrPageCount: 2,
+      unreadablePageCount: 0,
+      textCharCount: 4704,
+      spatialSchemaVersion: "google-vision-spatial-v3",
+      spatial: { score: 0.94, medianIou: 0.88, centerInsideRatio: 0.97 },
+      affectedPageNumbers: [2, 1, 2],
+    }),
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  assert.equal((await processor()).diagnosticCode, "ocr_spatial_quality");
+  assert.equal(completions[0].spatialAccuracyScore, 0.94);
+  assert.equal(completions[0].spatialMedianIou, 0.88);
+  assert.equal(completions[0].spatialCenterInsideRatio, 0.97);
+  assert.equal(completions[0].spatialSchemaVersion, "google-vision-spatial-v3");
+  assert.deepEqual(completions[0].reviewDetails, {
+    schemaVersion: 1,
+    reasons: [{ code: "ocr_spatial_quality", pageNumbers: [1, 2] }],
+  });
+  for (const forbidden of ["geometry", "vertices", "storagePath", "spatialPath", "ocrText"]) {
+    assert.equal(forbidden in completions[0], false);
+  }
+});
+
 test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
   const completions = [];
   const processor = createProcessor({
