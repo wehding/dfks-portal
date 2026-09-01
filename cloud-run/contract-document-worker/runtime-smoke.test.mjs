@@ -7,6 +7,7 @@ import test from "node:test";
 import { gunzipSync } from "node:zlib";
 
 import {
+  SPATIAL_VERIFICATION_PROFILE,
   computeSpatialAccuracy,
   parsePdfPageSize,
   parsePdftotextBbox,
@@ -22,6 +23,22 @@ test("containerimaget indeholder den afgrænsede slutsiderecovery", runtimeOnly,
   assert.equal(typeof recovery.recoverSparseTailTextFromVariants, "function");
   assert.equal(typeof recovery.recoverSparseTailOrientationFromVariants, "function");
   assert.equal(typeof recovery.hasSparseTailBlankConsensus, "function");
+});
+
+test("containerens Poppler-generation matcher spatial-verifikationsprofilen", runtimeOnly, async () => {
+  const versionOutput = await new Promise((resolve, reject) => {
+    const child = spawn("pdftotext", ["-v"], { stdio: ["ignore", "pipe", "pipe"] });
+    const chunks = [];
+    child.stdout.on("data", (chunk) => chunks.push(chunk));
+    child.stderr.on("data", (chunk) => chunks.push(chunk));
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code !== 0) reject(new Error("pdftotext_version_failed"));
+      else resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+  });
+  assert.match(versionOutput, /pdftotext version 22[.]12[.]0(?:\n|$)/);
+  assert.match(SPATIAL_VERIFICATION_PROFILE, /-poppler22[.]12$/);
 });
 
 function identityVisionPageTransforms(pages, width = 2550, height = 3300) {
@@ -510,6 +527,10 @@ c.save()
     assert.equal(result.nativePageCount + result.ocrPageCount, result.pageCount);
     assert.equal(result.processingProfile, "google-vision-direct-v1");
     const persistedGeometry = JSON.parse(gunzipSync(await readFile(geometryPath)).toString("utf8"));
+    assert.equal(
+      persistedGeometry.spatialVerificationProfile,
+      SPATIAL_VERIFICATION_PROFILE,
+    );
     assert.deepEqual(persistedGeometry.spatialVerification, result.spatial);
     assert.equal(persistedGeometry.spatialVerification.matchCoverage, 1);
     assert.equal(persistedGeometry.spatialVerification.passed, true);

@@ -2,11 +2,40 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CURRENT_SPATIAL_VERIFICATION_PROFILE,
   classifyDocumentCompletionFailure,
   isContractDocumentClassification,
   isIdempotentDocumentCompletionReplay,
+  isSpatialVerificationCompletionValid,
   normaliseDocumentReviewDetails,
 } from "../lib/contract-document-completion";
+import { SPATIAL_VERIFICATION_PROFILE } from "../cloud-run/contract-document-worker/spatial-ocr.mjs";
+
+test("worker og portal bruger samme faste spatial-verifikationsprofil", () => {
+  assert.equal(CURRENT_SPATIAL_VERIFICATION_PROFILE, SPATIAL_VERIFICATION_PROFILE);
+  assert.equal(isSpatialVerificationCompletionValid({
+    processingProfile: "google-vision-direct-v1",
+    spatialSchemaVersion: "google-vision-spatial-v3",
+    spatialVerificationProfile: CURRENT_SPATIAL_VERIFICATION_PROFILE,
+  }), true);
+  for (const spatialVerificationProfile of [undefined, null, "dfks-spatial-verification-legacy-v1", "ukendt"] as const) {
+    assert.equal(isSpatialVerificationCompletionValid({
+      processingProfile: "google-vision-direct-v1",
+      spatialSchemaVersion: "google-vision-spatial-v3",
+      spatialVerificationProfile,
+    }), false);
+  }
+  assert.equal(isSpatialVerificationCompletionValid({
+    processingProfile: null,
+    spatialSchemaVersion: null,
+    spatialVerificationProfile: null,
+  }), true);
+  assert.equal(isSpatialVerificationCompletionValid({
+    processingProfile: null,
+    spatialSchemaVersion: null,
+    spatialVerificationProfile: CURRENT_SPATIAL_VERIFICATION_PROFILE,
+  }), false);
+});
 
 test("completion accepterer kun databasegodkendte dokumentklasser", () => {
   for (const value of ["native_text", "image_only", "mixed", "unreadable"]) {

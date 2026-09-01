@@ -7,6 +7,9 @@ import { test } from "node:test";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 import { PDFDocument, StandardFonts } from "pdf-lib";
+import {
+  SPATIAL_VERIFICATION_PROFILE,
+} from "../cloud-run/contract-document-worker/spatial-ocr.mjs";
 
 import {
   auditCompletedJobs,
@@ -21,9 +24,11 @@ import {
   extractPdfBboxPages,
   extractLegacyPdfPageCount,
   extractPdfPageCount,
+  GEOMETRY_AUDIT_PDFTOTEXT_VERSION,
   readBaselineFile,
   loadPostBaselineAiCounts,
   requireMatchingPdfPageCounts,
+  requireGeometryAuditPdftotextVersion,
   safeSummaryJson,
   selectGeometryBackfillSources,
   sha256,
@@ -32,6 +37,25 @@ import {
   verifyBaseline,
   writeBaselineFile,
 } from "../scripts/audit-ocr-backfill.mjs";
+
+test("geometry-audit bindes til workerens Poppler-generation", () => {
+  assert.equal(GEOMETRY_AUDIT_PDFTOTEXT_VERSION, "22.12.0");
+  assert.equal(
+    requireGeometryAuditPdftotextVersion("pdftotext version 22.12.0\n"),
+    "22.12.0",
+  );
+  for (const output of [
+    "pdftotext version 26.05.0\n",
+    "pdftotext version 22.11.0\n",
+    "22.12.0",
+    "",
+  ]) {
+    assert.throws(
+      () => requireGeometryAuditPdftotextVersion(output),
+      (error) => error?.code === "geometry_audit_runtime_mismatch",
+    );
+  }
+});
 
 test("direct Vision-kohorten accepterer kun den aktive DLP-generation", () => {
   const job = {
@@ -95,6 +119,8 @@ function fixture({
   processedHash = sha256(output),
   direct = false,
   directOverlayProfile = "primary-v1",
+  directSpatialVerificationProfile = SPATIAL_VERIFICATION_PROFILE,
+  completedAt = "2026-09-01T13:00:00.000Z",
   downstreamAiPolicy = null,
 } = {}) {
   const contractId = "11111111-1111-4111-8111-111111111111";
@@ -109,6 +135,9 @@ function fixture({
     ...(direct ? {
       processingProfile: "google-vision-direct-v1",
       overlayProfile: directOverlayProfile,
+      ...(directSpatialVerificationProfile === null ? {} : {
+        spatialVerificationProfile: directSpatialVerificationProfile,
+      }),
     } : {
       redactionEngine: "google-sensitive-data-protection-image-redact",
       redactionProfile: "dfks-contract-redaction-v1",
@@ -155,6 +184,7 @@ function fixture({
       spatial_schema_version: direct ? "google-vision-spatial-v3" : "google-vision-spatial-v2",
       redaction_profile: direct ? null : "dfks-contract-redaction-v1",
       processing_profile: direct ? "google-vision-direct-v1" : null,
+      completed_at: completedAt,
       downstream_ai_policy: downstreamAiPolicy,
     }],
     contractsById: new Map([[
@@ -768,6 +798,115 @@ test("direkte Vision v3 består metadata- og geometriporten uden DLP-felter", as
   assert.equal(summary.violations.missingJobMetadata, 0);
   assert.equal(summary.violations.invalidSpatialArtifact, 0);
   assert.equal(summary.documentsPassingAllChecks, 1);
+});
+
+test("direkte Vision v3 kræver en allowlistet spatial-verifikationsprofil når feltet findes", async () => {
+  const original = await pdf(2);
+  const output = await pdf(2);
+  const accepted = await auditCompletedJobs(fixture({ original, output, direct: true }));
+  assert.equal(accepted.violations.invalidSpatialArtifact, 0);
+
+  const rejected = await auditCompletedJobs(fixture({
+    original,
+    output,
+    direct: true,
+    directSpatialVerificationProfile: "ukendt-spatial-profil",
+  }));
+  assert.equal(rejected.violations.invalidSpatialArtifact, 1);
+  assert.equal(rejected.documentsPassingAllChecks, 0);
+
+  for (const completedAt of [
+    "2026-09-01T12:00:00.000Z",
+    "2026-09-01T13:00:00.000Z",
+  ]) {
+    const explicitLegacy = await auditCompletedJobs(fixture({
+      original,
+      output,
+      direct: true,
+      completedAt,
+      directSpatialVerificationProfile: "dfks-spatial-verification-legacy-v1",
+    }));
+    assert.equal(explicitLegacy.violations.invalidSpatialArtifact, 1);
+  }
+
+  const currentBeforeCutover = await auditCompletedJobs(fixture({
+    original,
+    output,
+    direct: true,
+    completedAt: "2026-09-01T12:00:00.000Z",
+  }));
+  assert.equal(currentBeforeCutover.violations.invalidSpatialArtifact, 0);
+});
+
+test("v3 uden profil genberegnes med præcis legacy-matcher uden nye geometrigates", async () => {
+  const original = await pdf(1);
+  const output = await pdf(1);
+  const input = fixture({
+    original,
+    output,
+    expectedPages: 1,
+    direct: true,
+    directSpatialVerificationProfile: null,
+    completedAt: "2026-09-01T12:00:00.000Z",
+  });
+  const spatialPath = input.jobs[0].spatial_data_path;
+  const originalReader = input.readStorage;
+  const geometry = JSON.parse(gunzipSync(await originalReader(spatialPath)).toString("utf8"));
+  geometry.pages[0].words = [{
+    text: "førsteanden",
+    confidence: 0.99,
+    vertices: [{ x: 10, y: 10 }, { x: 40, y: 10 }, { x: 40, y: 40 }, { x: 10, y: 40 }],
+  }];
+  geometry.spatialVerification = {
+    expectedWords: 1,
+    matchedWords: 1,
+    measurableWords: 1,
+    matchCoverage: 1,
+    score: 1,
+    medianIou: 1,
+    centerInsideRatio: 1,
+    passed: true,
+  };
+  const legacyArtifact = gzipSync(Buffer.from(JSON.stringify(geometry)));
+  input.jobs[0].spatial_sha256 = sha256(legacyArtifact);
+  input.readStorage = async (path) => path === spatialPath
+    ? legacyArtifact
+    : originalReader(path);
+  input.extractBboxPages = async () => [{
+    width: 100,
+    height: 100,
+    words: [
+      { text: "første", xMin: 10, yMin: 10, xMax: 40, yMax: 20 },
+      { text: "anden", xMin: 10, yMin: 30, xMax: 40, yMax: 40 },
+    ],
+  }];
+
+  const summary = await auditCompletedJobs(input);
+  assert.equal(summary.violations.invalidSpatialArtifact, 0);
+  assert.equal(summary.violations.spatialMetricMismatch, 0);
+  assert.equal(summary.violations.spatialIndependentVerificationFailure, 0);
+  assert.equal(summary.documentsPassingAllChecks, 1);
+
+  for (const completedAt of [
+    "2026-09-01T12:51:39.000Z",
+    "2026-09-01T12:51:39.001Z",
+    "ikke-et-tidspunkt",
+    null,
+  ]) {
+    const afterCutover = await auditCompletedJobs({
+      ...input,
+      jobs: [{ ...input.jobs[0], completed_at: completedAt }],
+    });
+    assert.equal(afterCutover.violations.invalidSpatialArtifact, 1);
+    assert.equal(afterCutover.documentsPassingAllChecks, 0);
+  }
+
+  const immediatelyBeforeCutover = await auditCompletedJobs({
+    ...input,
+    jobs: [{ ...input.jobs[0], completed_at: "2026-09-01T12:51:38.999Z" }],
+  });
+  assert.equal(immediatelyBeforeCutover.violations.invalidSpatialArtifact, 0);
+  assert.equal(immediatelyBeforeCutover.documentsPassingAllChecks, 1);
 });
 
 test("direkte Vision-audit accepterer kun workerens allowlistede overlay-profiler", async () => {

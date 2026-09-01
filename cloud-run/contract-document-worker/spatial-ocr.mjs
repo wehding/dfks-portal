@@ -45,12 +45,26 @@ const MAX_EXACT_ASSIGNMENT_WORDS_PER_GROUP = 128;
 // many repeated tokens cannot monopolise the worker. The deterministic
 // reading-order fallback preserves fail-closed spatial verification.
 const MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE = 2_000_000;
-// Poppler may emit a compound word as several short PDF tokens (and Vision can
-// do the inverse). Keep the reconciliation bounded, require exact normalised
-// text and only combine geometrically adjacent tokens on the same line. The
-// unchanged centre/IoU gates below still decide whether the union is valid.
-const MAX_JOINED_TOKENS = 8;
-const MAX_JOINED_TOKEN_CHARS = 96;
+// Existing v3 artefacts were verified with the original three-token matcher.
+// They have no persisted profile and must remain reproducible at audit time.
+// New artefacts explicitly opt into the stricter, bounded matcher.
+export const LEGACY_SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-legacy-v1";
+export const SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v2-poppler22.12";
+export const ALLOWED_SPATIAL_VERIFICATION_PROFILES = Object.freeze([
+  SPATIAL_VERIFICATION_PROFILE,
+]);
+const SPATIAL_MATCHER_CONFIG = Object.freeze({
+  [LEGACY_SPATIAL_VERIFICATION_PROFILE]: Object.freeze({
+    maxJoinedTokens: 3,
+    maxJoinedTokenChars: null,
+    requireJoinedTokenGeometry: false,
+  }),
+  [SPATIAL_VERIFICATION_PROFILE]: Object.freeze({
+    maxJoinedTokens: 8,
+    maxJoinedTokenChars: 96,
+    requireJoinedTokenGeometry: true,
+  }),
+});
 const MIN_JOINED_TOKEN_VERTICAL_OVERLAP_RATIO = 0.5;
 const MAX_JOINED_TOKEN_GAP_HEIGHT_RATIO = 1.5;
 const MAX_UNREADABLE_RECOVERY_PAGES = 4;
@@ -889,18 +903,21 @@ function geometricallyAdjacent(previous, next) {
   return next.xMin - previous.xMax <= maximumGap;
 }
 
-function adjacentTokenWindows(items, used, boxKey) {
+function adjacentTokenWindows(items, used, boxKey, matcherConfig) {
   const windowsByText = new Map();
   for (let start = 0; start < items.length; start += 1) {
     if (used.has(items[start])) continue;
     let text = items[start].normalized;
-    for (let length = 2; length <= MAX_JOINED_TOKENS; length += 1) {
+    for (let length = 2; length <= matcherConfig.maxJoinedTokens; length += 1) {
       const end = start + length;
       const part = items[end - 1];
       if (!part || used.has(part)) break;
-      if (!geometricallyAdjacent(items[end - 2][boxKey], part[boxKey])) break;
+      if (matcherConfig.requireJoinedTokenGeometry
+        && !geometricallyAdjacent(items[end - 2][boxKey], part[boxKey])) break;
       text += part.normalized;
-      if (!text || text.length > MAX_JOINED_TOKEN_CHARS) break;
+      if (!text) continue;
+      if (matcherConfig.maxJoinedTokenChars != null
+        && text.length > matcherConfig.maxJoinedTokenChars) break;
       const parts = items.slice(start, end);
       const window = { parts, box: unionAxisBoxes(parts.map((item) => item[boxKey])) };
       const candidates = windowsByText.get(text) ?? [];
@@ -1020,7 +1037,13 @@ function sanitisePageNumbers(values, pageCount) {
   )))].sort((left, right) => left - right);
 }
 
-export function computeSpatialAccuracy(geometryPages, extractedPages) {
+export function computeSpatialAccuracy(
+  geometryPages,
+  extractedPages,
+  verificationProfile = SPATIAL_VERIFICATION_PROFILE,
+) {
+  const matcherConfig = SPATIAL_MATCHER_CONFIG[verificationProfile];
+  if (!matcherConfig) throw new Error("invalid_spatial_verification_profile");
   let expectedWords = 0;
   let matchedWords = 0;
   let passed = 0;
@@ -1103,11 +1126,15 @@ export function computeSpatialAccuracy(geometryPages, extractedPages) {
     }
 
     // PDF text extractors may split a Vision token at a hyphen/ligature or join
-    // two adjacent Vision tokens. Reconcile only 1:n or n:1 adjacent sequences,
-    // bounded to eight tokens and 96 normalised characters. Text still has to
-    // match exactly after the same normalisation, and the unchanged centre/IoU
-    // gates verify the union box.
-    const actualWindows = adjacentTokenWindows(actualEntries, usedActual, "box");
+    // adjacent Vision tokens. Reconcile only bounded 1:n or n:1 sequences under
+    // the artefact's fixed matcher profile. Text must still match exactly, and
+    // the unchanged centre/IoU gates verify the union box.
+    const actualWindows = adjacentTokenWindows(
+      actualEntries,
+      usedActual,
+      "box",
+      matcherConfig,
+    );
     for (const expected of expectedEntries) {
       if (usedExpected.has(expected)) continue;
       const window = closestUnusedWindow(
@@ -1124,7 +1151,12 @@ export function computeSpatialAccuracy(geometryPages, extractedPages) {
         polygon: expected.polygon,
       });
     }
-    const expectedWindows = adjacentTokenWindows(expectedEntries, usedExpected, "target");
+    const expectedWindows = adjacentTokenWindows(
+      expectedEntries,
+      usedExpected,
+      "target",
+      matcherConfig,
+    );
     for (const actual of actualEntries) {
       if (usedActual.has(actual)) continue;
       const window = closestUnusedWindow(
@@ -1594,6 +1626,7 @@ export async function processPdfSpatially({
       blankPageCount,
       processingProfile: "google-vision-direct-v1",
       spatialSchemaVersion: "google-vision-spatial-v3",
+      spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
     };
   }
   if (orientationUncertainPageCount > 0) {
@@ -1609,6 +1642,7 @@ export async function processPdfSpatially({
       orientationQualityFailed: true,
       processingProfile: "google-vision-direct-v1",
       spatialSchemaVersion: "google-vision-spatial-v3",
+      spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
     };
   }
 
@@ -1620,6 +1654,7 @@ export async function processPdfSpatially({
     schemaVersion: "google-vision-spatial-v3",
     engine: "google-vision-document-text-detection",
     processingProfile: "google-vision-direct-v1",
+    spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
     pages: geometryPages,
   };
   const plainGeometryPath = join(workDir, "vision-geometry.json");
@@ -1753,6 +1788,7 @@ export async function processPdfSpatially({
     orientationUncertainPageCount,
     processingProfile: "google-vision-direct-v1",
     spatialSchemaVersion: "google-vision-spatial-v3",
+    spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
     spatial,
     textCharCount,
     affectedPageNumbers: spatialPassed ? [] : spatialPageNumbers,

@@ -5,6 +5,7 @@ import {
   isContractDocumentReviewCode,
   isContractDocumentClassification,
   isIdempotentDocumentCompletionReplay,
+  isSpatialVerificationCompletionValid,
   normaliseDocumentReviewDetails,
   type StoredDocumentCompletion,
 } from "@/lib/contract-document-completion";
@@ -32,6 +33,7 @@ type Completion = {
   unreadablePageCount?: number;
   processingProfile?: string | null;
   spatialSchemaVersion?: string | null;
+  spatialVerificationProfile?: string | null;
   spatialAccuracyScore?: number | null;
   spatialMedianIou?: number | null;
   spatialCenterInsideRatio?: number | null;
@@ -76,8 +78,17 @@ export async function POST(request: Request) {
   const safeProfile = (value: unknown) => typeof value === "string"
     && /^[a-z0-9][a-z0-9._-]{2,79}$/.test(value) ? value : null;
   const safeErrorCode = safeProfile(body.errorCode);
+  const safeSpatialVerificationProfile = safeProfile(body.spatialVerificationProfile);
   if (body.errorCode != null && !safeErrorCode) {
     return NextResponse.json({ error: "Ugyldig fejlkode" }, { status: 400 });
+  }
+  if ((body.spatialVerificationProfile != null && !safeSpatialVerificationProfile)
+    || !isSpatialVerificationCompletionValid({
+      processingProfile: safeProfile(body.processingProfile),
+      spatialSchemaVersion: safeProfile(body.spatialSchemaVersion),
+      spatialVerificationProfile: safeSpatialVerificationProfile,
+    })) {
+    return NextResponse.json({ error: "Ugyldig geometriprofil" }, { status: 400 });
   }
   if (body.status === "needs_review" && !isContractDocumentReviewCode(safeErrorCode)) {
     return NextResponse.json({ error: "Ugyldig kontrolårsag" }, { status: 400 });

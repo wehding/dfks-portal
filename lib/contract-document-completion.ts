@@ -2,11 +2,30 @@ export type DocumentCompletion = {
   status?: "completed" | "failed" | "needs_review" | "not_required";
   documentClassification?: "native_text" | "image_only" | "mixed" | "unreadable";
   ocrApplied?: boolean;
+  processingProfile?: string | null;
+  spatialSchemaVersion?: string | null;
+  spatialVerificationProfile?: string | null;
   processedSha256?: string | null;
   spatialSha256?: string | null;
   errorCode?: string | null;
   reviewDetails?: unknown;
 };
+
+export const CURRENT_SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v2-poppler22.12";
+
+/**
+ * A direct Vision v3 completion is promotable only when the worker explicitly
+ * proves which deterministic geometry matcher produced the stored metrics.
+ * Non-spatial callbacks must not smuggle an unrelated matcher claim.
+ */
+export function isSpatialVerificationCompletionValid(body: DocumentCompletion) {
+  const directVisionV3 = body.processingProfile === "google-vision-direct-v1"
+    && body.spatialSchemaVersion === "google-vision-spatial-v3";
+  if (directVisionV3) {
+    return body.spatialVerificationProfile === CURRENT_SPATIAL_VERIFICATION_PROFILE;
+  }
+  return body.spatialVerificationProfile == null;
+}
 
 export type ContractDocumentReviewDetails = {
   schemaVersion: 1;

@@ -718,6 +718,9 @@ export function createProcessor(options = {}) {
         unreadablePageCount: result.unreadablePageCount,
         processingProfile: result.processingProfile ?? null,
         spatialSchemaVersion: result.spatialSchemaVersion ?? null,
+        ...(result.spatialVerificationProfile ? {
+          spatialVerificationProfile: result.spatialVerificationProfile,
+        } : {}),
         spatialAccuracyScore: result.spatial?.score ?? null,
         spatialMedianIou: result.spatial?.medianIou ?? null,
         spatialCenterInsideRatio: result.spatial?.centerInsideRatio ?? null,
