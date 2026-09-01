@@ -1379,6 +1379,26 @@ test("legacy-sideantal kræver enighed mellem qpdf og Poppler", {
   );
 });
 
+test("legacy-sideantal stopper hvis originalens midlertidige fil ikke kan slettes", async () => {
+  let retainedDirectory;
+  try {
+    await assert.rejects(extractLegacyPdfPageCount(
+      Buffer.from("%PDF-1.7\nsynthetic-invalid"),
+      {
+        removeDirectory: async (directory) => {
+          retainedDirectory = directory;
+          throw new Error("synthetic_cleanup_failure");
+        },
+      },
+    ), (error) => error?.code === "pdf_page_count_cleanup_failed"
+      && !String(error?.message).includes("synthetic_cleanup_failure"));
+  } finally {
+    if (retainedDirectory) {
+      await rm(retainedDirectory, { recursive: true, force: true });
+    }
+  }
+});
+
 test("legacy-sideantal afviser parseruenighed fail-closed", () => {
   assert.equal(requireMatchingPdfPageCounts(3, 3), 3);
   assert.throws(

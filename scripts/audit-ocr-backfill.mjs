@@ -976,7 +976,9 @@ export function requireMatchingPdfPageCounts(qpdfPageCount, popplerPageCount) {
  * independent parsers from the same runtime family as the Cloud Run worker.
  * No command output, path or document content is ever returned or logged.
  */
-export async function extractLegacyPdfPageCount(pdfBytes) {
+export async function extractLegacyPdfPageCount(pdfBytes, {
+  removeDirectory = rm,
+} = {}) {
   if (!(pdfBytes instanceof Uint8Array) || pdfBytes.byteLength === 0
     || pdfBytes.byteLength > MAX_PDF_BYTES
     || pdfBytes.byteLength < 5
@@ -1002,7 +1004,11 @@ export async function extractLegacyPdfPageCount(pdfBytes) {
     ]);
     return requireMatchingPdfPageCounts(qpdfPageCount, popplerPageCount);
   } finally {
-    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    try {
+      await removeDirectory(directory, { recursive: true, force: true });
+    } catch (error) {
+      throw new AuditOperationalError("pdf_page_count_cleanup_failed", { cause: error });
+    }
   }
 }
 
