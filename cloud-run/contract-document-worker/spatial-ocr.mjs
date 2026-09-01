@@ -896,6 +896,7 @@ export async function processPdfSpatially({
   commandRunner,
   googleClient,
   assertLeaseHealthy = () => {},
+  forceOcr = false,
   resourceLimits,
   signal,
 }) {
@@ -969,7 +970,7 @@ export async function processPdfSpatially({
   // count as both native and OCR-required in completion evidence.
   const nativePageCount = pageStates.filter((page) => page.classification === "native_text").length;
   const pagesNeedingOcr = pageStates.filter((page) => page.classification !== "native_text");
-  if (pagesNeedingOcr.length === 0) {
+  if (pagesNeedingOcr.length === 0 && !forceOcr) {
     return {
       status: "not_required",
       classification: "native_text",

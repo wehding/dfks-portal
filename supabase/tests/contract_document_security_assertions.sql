@@ -103,6 +103,7 @@ begin
     or has_table_privilege('authenticated', 'public.contract_document_jobs', 'SELECT')
     or has_function_privilege('authenticated', 'public.claim_next_contract_document_job(integer)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.claim_next_direct_vision_replacement_job(integer)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.requeue_direct_vision_not_required_replacements()', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.finish_contract_document_job(uuid,text,jsonb,boolean,integer,integer,text,text)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.finish_contract_document_job_v2(uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.finish_contract_document_job_v3(uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text,text,text)', 'EXECUTE')
@@ -137,6 +138,7 @@ begin
     or not has_function_privilege('service_role', 'public.finish_contract_document_job_v6(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.finish_contract_document_job_v7(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.claim_next_direct_vision_replacement_job(integer)', 'EXECUTE')
+    or not has_function_privilege('service_role', 'public.requeue_direct_vision_not_required_replacements()', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.queue_contract_document_job_automatic_recovery(uuid)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.queue_contract_document_job_automatic_recovery_batch(integer)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.admin_contract_document_review_action(uuid,uuid,text,uuid)', 'EXECUTE') then

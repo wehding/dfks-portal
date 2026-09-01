@@ -684,6 +684,7 @@ export function createProcessor(options = {}) {
       const result = await spatialProcessor({
         inputPath, outputPath, geometryPath, workDir, commandRunner, googleClient,
         assertLeaseHealthy: assertProcessingHealthy,
+        forceOcr: config.replacementOnly === true,
         signal: processingSignal,
       });
       assertProcessingHealthy();

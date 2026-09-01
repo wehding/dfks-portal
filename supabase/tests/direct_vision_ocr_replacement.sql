@@ -17,15 +17,18 @@ declare
   processed_hash text := repeat('b', 64);
   spatial_hash text := repeat('c', 64);
   claimed_deletion public.contract_document_artifact_deletions;
+  requeued_count integer;
 begin
   if has_table_privilege('anon', 'public.contract_document_artifact_deletions', 'SELECT')
     or has_table_privilege('authenticated', 'public.contract_document_artifact_deletions', 'SELECT')
     or has_function_privilege('authenticated', 'public.queue_direct_vision_replacement_generation(uuid,text,integer)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.claim_next_direct_vision_replacement_job(integer)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.requeue_direct_vision_not_required_replacements()', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.finish_contract_document_job_v7(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.claim_contract_document_artifact_deletions(integer,uuid)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.queue_direct_vision_replacement_generation(uuid,text,integer)', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.claim_next_direct_vision_replacement_job(integer)', 'EXECUTE')
+    or not has_function_privilege('service_role', 'public.requeue_direct_vision_not_required_replacements()', 'EXECUTE')
     or not has_function_privilege('service_role', 'public.finish_contract_document_job_v7(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,numeric,numeric,numeric,text,text,text,text,text,text,text,jsonb)', 'EXECUTE') then
     raise exception 'Direct Vision replacement regression: privileged API exposure';
   end if;
@@ -57,7 +60,7 @@ begin
     test_org || '/processed/' || test_contract_id || '/leases/00000000-0000-4000-8000-000000000001/normalised.pdf',
     test_org || '/processed/' || test_contract_id || '/leases/00000000-0000-4000-8000-000000000001/vision-layout.json.gz',
     'completed', 100, 1, now(), true, 1, 500, 'google-vision-eu-v1',
-    'image_only', 0, 1, 0, '{"DENMARK_CPR_NUMBER":1}'::jsonb,
+    'mixed', 0, 1, 0, '{"DENMARK_CPR_NUMBER":1}'::jsonb,
     0.99, 0.90, 1.0, original_hash, processed_hash,
     'dfks-contract-redaction-v1', 'google-vision-spatial-v2', spatial_hash
   );
@@ -67,6 +70,15 @@ begin
   from public.queue_direct_vision_replacement_generation(source_job_id, original_hash, 100);
   if replacement.outcome <> 'queued' or replacement.downstream_ai_policy <> 'reanalyze' then
     raise exception 'Direct Vision replacement regression: unvalidated contract was not queued for reanalysis';
+  end if;
+
+  update public.contract_document_jobs
+  set status = 'not_required', processing_profile = 'google-vision-direct-v1'
+  where id = replacement.replacement_job_id;
+  requeued_count := public.requeue_direct_vision_not_required_replacements();
+  if requeued_count <> 1 or (select status from public.contract_document_jobs
+    where id = replacement.replacement_job_id) <> 'queued' then
+    raise exception 'Direct Vision replacement regression: native replacement was not safely requeued';
   end if;
 
   insert into public.contracts(
