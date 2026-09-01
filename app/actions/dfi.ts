@@ -303,7 +303,9 @@ export async function ensureOnboardingEpisodes(params: {
   return episodeRows ?? [];
 }
 
-async function fetchDFI(endpoint: string) {
+type DfiRequestOptions = { timeoutMs?: number };
+
+async function fetchDFI(endpoint: string, options: DfiRequestOptions = {}) {
   const username = process.env.DFI_API_USERNAME;
   const password = process.env.DFI_API_PASSWORD;
   if (!username || !password) {
@@ -313,7 +315,8 @@ async function fetchDFI(endpoint: string) {
   const url = `https://data.dfi.dk${endpoint}`;
   const authHeader = "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(url, {
@@ -335,7 +338,7 @@ async function fetchDFI(endpoint: string) {
   } catch (error: unknown) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === "AbortError") {
-      return { success: false, error: "Tidsafbrydelse: DFI API svarede ikke inden for 15 sekunder." };
+      return { success: false, timeout: true, error: `Tidsafbrydelse: DFI API svarede ikke inden for ${timeoutMs} ms.` };
     }
     return { success: false, error: error instanceof Error ? error.message : "Netværksfejl ved DFI API-kald" };
   }
@@ -426,7 +429,7 @@ export async function getDFIPersonCredits(personId: number) {
   };
 }
 
-export async function searchDFIFilms(title: string) {
+export async function searchDFIFilms(title: string, options: DfiRequestOptions = {}) {
   if (!title?.trim()) return { success: false, error: "Angiv en søgetitel." };
 
   const cleanedTitle = title.trim().replace(/^["'»«'"'""]/, "").replace(/["'»«'"'""]$/, "").trim();
@@ -441,7 +444,7 @@ export async function searchDFIFilms(title: string) {
 
   const results = await Promise.all(
     Array.from(new Set(searchQueries.filter(Boolean))).map(searchQuery =>
-      fetchDFI(`/v1/film?Title=${encodeURIComponent(searchQuery)}`)
+      fetchDFI(`/v1/film?Title=${encodeURIComponent(searchQuery)}`, options)
     )
   );
 
@@ -484,8 +487,8 @@ export async function searchDFIFilms(title: string) {
   return { success: true, results: filmList };
 }
 
-export async function getDFIFilmDetails(filmId: number) {
-  const result = await fetchDFI(`/v1/film/${filmId}`);
+export async function getDFIFilmDetails(filmId: number, options: DfiRequestOptions = {}) {
+  const result = await fetchDFI(`/v1/film/${filmId}`, options);
   if (!result.success || !result.data) {
     return { success: false, error: result.error || "Kunne ikke hente filmdetaljer." };
   }
@@ -882,7 +885,7 @@ function isDfiSeriesParent(c: any): boolean {
   return !hasParent && !hasEpisodeInfo;
 }
 
-export async function normalizeDfiSeriesResults(credits: DfiCredit[]) {
+export async function normalizeDfiSeriesResults(credits: DfiCredit[], options: DfiRequestOptions = {}) {
   const parents = new Map<string, DfiCredit>();
   const parentRequests = new Map<string, Promise<DfiCredit | null>>();
   const seriesTitle = (title: string | null | undefined) => cleanDfiTitle(title)
@@ -903,7 +906,7 @@ export async function normalizeDfiSeriesResults(credits: DfiCredit[]) {
   const fetchParent = (id: string) => {
     const existing = parentRequests.get(id);
     if (existing) return existing;
-    const request = fetchDFI(`/v1/film/${id}`).then(result => result.success && result.data ? result.data as DfiCredit : null);
+    const request = fetchDFI(`/v1/film/${id}`, options).then(result => result.success && result.data ? result.data as DfiCredit : null);
     parentRequests.set(id, request);
     return request;
   };

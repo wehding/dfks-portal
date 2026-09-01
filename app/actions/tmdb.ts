@@ -35,8 +35,9 @@ export type TMDBSeasonEpisode = {
 };
 
 const TMDB_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+type TmdbRequestOptions = { timeoutMs?: number; retry?: boolean };
 
-async function tmdbFetch(endpointPath: string) {
+async function tmdbFetch(endpointPath: string, options: TmdbRequestOptions = {}) {
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey) throw new Error("TMDB_API_KEY mangler");
 
@@ -48,17 +49,18 @@ async function tmdbFetch(endpointPath: string) {
   const headers: Record<string, string> = { accept: "application/json" };
   if (!isV3) headers.Authorization = `Bearer ${apiKey}`;
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const attempts = options.retry === false ? 1 : 2;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
     try {
       const response = await fetch(url, { headers, signal: controller.signal });
       if ((response.status === 401 || response.status === 403) && attempt === 0) {
         console.error(`TMDB configuration error: API returned ${response.status}. Check TMDB_API_KEY.`);
       }
-      if (!TMDB_RETRYABLE_STATUSES.has(response.status) || attempt === 1) return response;
+      if (!TMDB_RETRYABLE_STATUSES.has(response.status) || attempt === attempts - 1) return response;
     } catch (error) {
-      if (attempt === 1) throw error;
+      if (attempt === attempts - 1) throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -67,12 +69,12 @@ async function tmdbFetch(endpointPath: string) {
   throw new Error("TMDB kunne ikke kontaktes");
 }
 
-export async function searchTMDBWithStatus(query: string) {
+export async function searchTMDBWithStatus(query: string, options: TmdbRequestOptions = {}) {
   if (!process.env.TMDB_API_KEY) {
     return { success: false as const, error: "TMDB_API_KEY mangler", results: [] as TMDBSearchItem[] };
   }
   try {
-    const res = await tmdbFetch(`/search/multi?query=${encodeURIComponent(query)}&language=da-DK`);
+    const res = await tmdbFetch(`/search/multi?query=${encodeURIComponent(query)}&language=da-DK`, options);
     if (!res.ok) throw new Error(`TMDB API status ${res.status}`);
     const data = await res.json() as TMDBSearchResponse;
     const results = (data.results || [])
@@ -81,12 +83,13 @@ export async function searchTMDBWithStatus(query: string) {
     return { success: true as const, results };
   } catch (err) {
     console.error("TMDB search error:", err);
-    return { success: false as const, error: "Kunne ikke søge i TMDB", results: [] as TMDBSearchItem[] };
+    const timeout = err instanceof Error && (err.name === "AbortError" || /timeout|abort/i.test(err.message));
+    return { success: false as const, timeout, error: timeout ? "TMDB-opslaget fik timeout" : "Kunne ikke søge i TMDB", results: [] as TMDBSearchItem[] };
   }
 }
 
-export async function searchTMDB(query: string) {
-  const result = await searchTMDBWithStatus(query);
+export async function searchTMDB(query: string, options: TmdbRequestOptions = {}) {
+  const result = await searchTMDBWithStatus(query, options);
   return result.results;
 }
 
@@ -138,12 +141,12 @@ export async function getTMDBPersonExternalIds(personId: number) {
   }
 }
 
-export async function getTMDBWorkDetails(tmdbId: number, mediaType: string) {
+export async function getTMDBWorkDetails(tmdbId: number, mediaType: string, options: TmdbRequestOptions = {}) {
   const type = mediaType === "tv" ? "tv" : "movie";
   try {
     const [detailRes, creditsRes] = await Promise.all([
-      tmdbFetch(`/${type}/${tmdbId}?language=da-DK`),
-      tmdbFetch(`/${type}/${tmdbId}/credits?language=da-DK`),
+      tmdbFetch(`/${type}/${tmdbId}?language=da-DK`, options),
+      tmdbFetch(`/${type}/${tmdbId}/credits?language=da-DK`, options),
     ]);
 
     if (!detailRes.ok) {
@@ -171,10 +174,10 @@ export async function getTMDBWorkDetails(tmdbId: number, mediaType: string) {
   }
 }
 
-export async function getTMDBExternalIds(tmdbId: number, mediaType: string) {
+export async function getTMDBExternalIds(tmdbId: number, mediaType: string, options: TmdbRequestOptions = {}) {
   const type = mediaType === "tv" ? "tv" : "movie";
   try {
-    const res = await tmdbFetch(`/${type}/${tmdbId}/external_ids`);
+    const res = await tmdbFetch(`/${type}/${tmdbId}/external_ids`, options);
     if (!res.ok) return { success: false, imdb_id: null, wikidata_id: null };
     const data = await res.json();
     return {
@@ -245,7 +248,8 @@ export async function findTMDBPoster(title: string, year?: number | null) {
 export async function findTMDBMatch(
   title: string,
   year?: number | null,
-  preferredMediaType?: "tv" | "movie"
+  preferredMediaType?: "tv" | "movie",
+  options: TmdbRequestOptions = {},
 ) {
   if (!process.env.TMDB_API_KEY || !title.trim()) return { poster_url: null, tmdb_id: null };
 
@@ -255,8 +259,8 @@ export async function findTMDBMatch(
 
   try {
     const [movieRes, tvRes] = await Promise.all([
-      tmdbFetch(`/search/movie?query=${encodedTitle}${movieYear}&language=da-DK`).catch(() => null),
-      tmdbFetch(`/search/tv?query=${encodedTitle}${tvYear}&language=da-DK`).catch(() => null),
+      tmdbFetch(`/search/movie?query=${encodedTitle}${movieYear}&language=da-DK`, options).catch(() => null),
+      tmdbFetch(`/search/tv?query=${encodedTitle}${tvYear}&language=da-DK`, options).catch(() => null),
     ]);
 
     const results: TMDBSearchItem[] = [];
@@ -272,7 +276,7 @@ export async function findTMDBMatch(
     const mediaTypeFor = (item: TMDBSearchItem) => item.first_air_date ? "tv" : "movie";
     const hasPreferredResult = !preferredMediaType || results.some(item => mediaTypeFor(item) === preferredMediaType);
     if (year && preferredMediaType && !hasPreferredResult) {
-      const fallbackRes = await tmdbFetch(`/search/${preferredMediaType}?query=${encodedTitle}&language=da-DK`).catch(() => null);
+      const fallbackRes = await tmdbFetch(`/search/${preferredMediaType}?query=${encodedTitle}&language=da-DK`, options).catch(() => null);
       if (fallbackRes?.ok) {
         const fallbackData = await fallbackRes.json() as TMDBSearchResponse;
         for (const item of fallbackData.results ?? []) {
@@ -314,11 +318,11 @@ export async function findTMDBMatch(
   }
 }
 
-export async function getTMDBSeasonEpisodes(tmdbId: number, seasonNumber: number) {
+export async function getTMDBSeasonEpisodes(tmdbId: number, seasonNumber: number, options: TmdbRequestOptions = {}) {
   try {
-    const res = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}?language=da-DK`);
+    const res = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}?language=da-DK`, options);
     if (!res.ok) {
-      const resEn = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}?language=en-US`);
+      const resEn = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}?language=en-US`, options);
       if (!resEn.ok) {
         if (res.status === 404 && resEn.status === 404) {
           return { success: false, notFound: true, error: null, episodes: [] as TMDBSeasonEpisode[] };

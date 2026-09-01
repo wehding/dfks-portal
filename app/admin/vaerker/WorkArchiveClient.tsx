@@ -76,6 +76,7 @@ import { normalizeWorkEditorRole, resolveWorkEditorRelation } from "@/lib/work-e
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 import { useI18n } from "@/lib/i18n";
 import { SourcePictogram } from "@/components/source-pictogram";
+import { externalLookupWarning, runWithLookupDeadline } from "@/lib/external-lookup";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -750,7 +751,7 @@ export default function WorkArchiveClient({ initialResult, initialQuery, initial
 }
 
 function VaerksadministrationContent({ initialResult, initialQuery, initialShareQueue, initialTab }: { initialResult?: Awaited<ReturnType<typeof fetchAdminWorksPage>>; initialQuery?: AdminWorksPageParams; initialShareQueue?: InitialShareQueue; initialTab: WorkArchiveTab }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [works, setWorks] = useState<WorkRow[]>(initialResult?.success ? initialResult.works as unknown as WorkRow[] : []);
@@ -1745,6 +1746,14 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
       const unified = await searchWorksUnified(addQuery, { preferLocalOnly: !addForceExternalSearch });
       const results = (unified.success ? unified.results ?? [] : []).slice(0, 12);
       setUnifiedAddResults(results);
+      const warning = externalLookupWarning(unified.externalLookup, locale);
+      if (warning) {
+        setNotice(warning);
+        if (!results.length) {
+          setAddManualMode(true);
+          setAddForm(form => ({ ...form, title: addQuery }));
+        }
+      }
       if (results[0]) await pickUnifiedAddResult(results[0]);
     } finally {
       setIsSearchingAdd(false);
@@ -1847,7 +1856,20 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
           : null
     );
 
-    const details = await resolveUnifiedSearchResultDetails(result);
+    const lookup = await runWithLookupDeadline(() => resolveUnifiedSearchResultDetails(result));
+    if (lookup.status !== "success") {
+      setAddManualMode(true);
+      setAddForm(form => ({
+        ...form,
+        title: result.title,
+        type: result.type ?? form.type,
+        year: result.year ? String(result.year) : form.year,
+        director: result.director ?? form.director,
+      }));
+      setNotice("Eksterne kilder svarede ikke. Kontrollér de manuelle værksdata og gem igen.");
+      return;
+    }
+    const details = lookup.value;
     const d = details.success ? details.details : null;
     const episodeOptions = (d?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
     const episodeCount = Math.max(d?.episode_count ?? 0, episodeOptions.length);
@@ -1891,8 +1913,15 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
         setAddEpisodesLoading(true);
         setAddEpisodesError(null);
         try {
-          const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedAddResult, sNum);
+          const lookup = await runWithLookupDeadline(() => resolveUnifiedSearchResultDetails(pickedUnifiedAddResult, sNum));
           if (cancelled) return;
+          if (lookup.status !== "success") {
+            setAddEpisodeOptions([]);
+            setAddSelectedEpisodes([]);
+            setAddEpisodesError(`Eksterne kilder svarede ikke. Indtast sæson ${sNum} og afsnit manuelt.`);
+            return;
+          }
+          const detailsRes = lookup.value;
           const d = detailsRes.success ? detailsRes.details : null;
           const episodeOptions = (d?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
           const episodeCount = Math.max(d?.episode_count ?? 0, episodeOptions.length);
