@@ -18,8 +18,10 @@ import {
   isActiveDlpReplacementCandidate,
   createReadOnlyFetch,
   extractPdfBboxPages,
+  extractLegacyPdfPageCount,
   extractPdfPageCount,
   readBaselineFile,
+  requireMatchingPdfPageCounts,
   safeSummaryJson,
   selectGeometryBackfillSources,
   sha256,
@@ -62,6 +64,10 @@ const pdftotextUnavailable = spawnSync("pdftotext", ["-v"], { stdio: "ignore" })
 const pikepdfUnavailable = spawnSync(
   "python3", ["-c", "import pikepdf"], { stdio: "ignore" },
 ).status !== 0;
+const legacyPageCountToolsUnavailable = [
+  ["qpdf", ["--version"]],
+  ["pdfinfo", ["-v"]],
+].some(([command, args]) => spawnSync(command, args, { stdio: "ignore" }).error?.code === "ENOENT");
 
 async function pdf(pages) {
   const document = await PDFDocument.create();
@@ -209,6 +215,87 @@ test("geometry-kohorten bindes til latest terminal source og alle syv digestfelt
   altered.integritySha256 = sha256(Buffer.from(JSON.stringify(payload), "utf8"));
   const changed = geometryBackfillBaselineCohort(altered, { expectedCount: 1 });
   assert.notEqual(changed.digest, cohort.digest);
+});
+
+test("geometry-kohorten accepterer kun legacy-PDF med dobbeltverificeret sideantal", async () => {
+  const legacyPdf = new Uint8Array(Buffer.from("%PDF-legacy-parser-format"));
+  const input = baselineInput(await pdf(2));
+  input.readStorage = async () => legacyPdf;
+  let extractionCalls = 0;
+  const captured = await captureBaseline({
+    ...input,
+    capturedAt: "2026-09-01T00:00:00.000Z",
+    extractLegacyPageCount: async (bytes) => {
+      extractionCalls += 1;
+      assert.strictEqual(bytes, legacyPdf);
+      return 2;
+    },
+  });
+
+  assert.equal(extractionCalls, 1);
+  assert.equal(captured.baseline.records[0].originalPdfReadable, false);
+  assert.equal(captured.baseline.records[0].originalPageCount, 2);
+  assert.equal(captured.baseline.records[0].originalPageCountSource, "qpdf-poppler");
+  assert.equal(
+    geometryBackfillBaselineCohort(captured.baseline, { expectedCount: 1 }).targets.length,
+    1,
+  );
+
+  const job = input.jobs[0];
+  const valid = await verifyBaseline({
+    baseline: captured.baseline,
+    jobsById: new Map([[job.id, job]]),
+    contractsById: input.contractsById,
+    readStorage: async () => legacyPdf,
+    extractLegacyPageCount: async () => 2,
+  });
+  assert.equal(summaryHasViolations(valid), false);
+
+  const changed = await verifyBaseline({
+    baseline: captured.baseline,
+    jobsById: new Map([[job.id, job]]),
+    contractsById: input.contractsById,
+    readStorage: async () => legacyPdf,
+    extractLegacyPageCount: async () => 1,
+  });
+  assert.equal(changed.violations.baselineOriginalPageCountMismatch, 1);
+});
+
+test("geometry-kohorten afviser legacy-PDF uden uafhængigt sideantal", async () => {
+  const input = baselineInput(await pdf(2));
+  input.readStorage = async () => new Uint8Array(Buffer.from("%PDF-unavailable"));
+  const captured = await captureBaseline({
+    ...input,
+    capturedAt: "2026-09-01T00:00:00.000Z",
+    extractLegacyPageCount: async () => {
+      throw new Error("unavailable");
+    },
+  });
+  assert.equal(captured.baseline.records[0].originalPageCount, null);
+  assert.equal(captured.baseline.records[0].originalPageCountSource, "unavailable");
+  assert.throws(
+    () => geometryBackfillBaselineCohort(captured.baseline, { expectedCount: 1 }),
+    (error) => error?.code === "geometry_backfill_baseline_ineligible",
+  );
+});
+
+test("v3-baselines for læsbare PDF'er forbliver kompatible", async () => {
+  const captured = await captureBaseline({
+    ...baselineInput(await pdf(1)),
+    capturedAt: "2026-09-01T00:00:00.000Z",
+  });
+  const legacy = structuredClone(captured.baseline);
+  legacy.schemaVersion = "dfks-ocr-backfill-baseline-v3";
+  delete legacy.records[0].originalPageCountSource;
+  legacy.integritySha256 = sha256(Buffer.from(JSON.stringify({
+    schemaVersion: legacy.schemaVersion,
+    capturedAt: legacy.capturedAt,
+    records: legacy.records,
+  }), "utf8"));
+  assert.equal(
+    geometryBackfillBaselineCohort(legacy, { expectedCount: 1 }).targets.length,
+    1,
+  );
 });
 
 test("geometry-selektoren vælger aldrig en ældre, aktiv eller allerede kvalificeret generation", () => {
@@ -549,6 +636,33 @@ test("produktionsaudit tæller PDF-sider med et uafhængigt værktøj", {
   );
 });
 
+test("legacy-sideantal kræver enighed mellem qpdf og Poppler", {
+  skip: legacyPageCountToolsUnavailable,
+}, async () => {
+  assert.equal(await extractLegacyPdfPageCount(await pdf(3)), 3);
+  await assert.rejects(
+    extractLegacyPdfPageCount(Buffer.from("ikke en pdf token=abc")),
+    (error) => error?.code === "pdf_page_count_failed"
+      && !String(error?.message).includes("token=abc"),
+  );
+  await assert.rejects(
+    extractLegacyPdfPageCount(Buffer.from("junk%PDF-1.7\n")),
+    (error) => error?.code === "pdf_page_count_failed",
+  );
+});
+
+test("legacy-sideantal afviser parseruenighed fail-closed", () => {
+  assert.equal(requireMatchingPdfPageCounts(3, 3), 3);
+  assert.throws(
+    () => requireMatchingPdfPageCounts(3, 2),
+    (error) => error?.code === "pdf_page_count_failed",
+  );
+  assert.throws(
+    () => requireMatchingPdfPageCounts(0, 0),
+    (error) => error?.code === "pdf_page_count_failed",
+  );
+});
+
 test("kendt uparsebar original kræver samme hash og uafhængigt sideantal", async () => {
   const original = Buffer.from("%PDF-kendt-uparsebar");
   const output = await pdf(2);
@@ -556,7 +670,10 @@ test("kendt uparsebar original kræver samme hash og uafhængigt sideantal", asy
   const job = input.jobs[0];
   input.baselineOriginalByJob = new Map([[
     job.id,
-    knownUnparseableBaseline(job),
+    knownUnparseableBaseline(job, {
+      originalPageCount: 2,
+      originalPageCountSource: "qpdf-poppler",
+    }),
   ]]);
   let extractorCalls = 0;
   input.extractOriginalPageCount = async (bytes) => {
@@ -1028,6 +1145,7 @@ test("baseline registrerer en allerede uparsebar original som kendt hashbundet k
   assert.ok(captured.baseline);
   assert.equal(captured.baseline.records[0].originalPdfReadable, false);
   assert.equal(captured.baseline.records[0].originalPageCount, null);
+  assert.equal(captured.baseline.records[0].originalPageCountSource, "unavailable");
   assert.equal(captured.summary.baselineSourceState.readablePdf, 0);
   assert.equal(captured.summary.baselineSourceState.unparseablePdf, 1);
   assert.equal(summaryHasViolations(captured.summary), false);

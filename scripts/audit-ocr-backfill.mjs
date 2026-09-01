@@ -31,7 +31,8 @@ const MAX_PAGE_COUNT_OUTPUT_BYTES = 64;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
 const PDFTOTEXT_TIMEOUT_MS = 120_000;
 const PDF_PAGE_COUNT_TIMEOUT_MS = 60_000;
-const BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v3";
+const BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v4";
+const LEGACY_BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v3";
 const GEOMETRY_BACKFILL_QUALITY_SCHEMA_VERSION = "dfks-vision-v3-geometry-quality-v1";
 const MAX_BASELINE_BYTES = 64 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -87,18 +88,33 @@ export function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+let pdfPageCountQueue = Promise.resolve();
+
 export async function pdfPageCount(bytes) {
-  try {
-    const document = await PDFDocument.load(bytes, {
-      capNumbers: true,
-      ignoreEncryption: false,
-      updateMetadata: false,
-      throwOnInvalidObject: true,
-    });
-    return document.getPageCount();
-  } catch (error) {
-    throw new AuditOperationalError("invalid_pdf", { cause: error });
-  }
+  const parse = async () => {
+    const warn = console.warn;
+    console.warn = (message, ...args) => {
+      if (typeof message === "string"
+        && message.startsWith("Parsed number that is too large for some PDF readers:")) return;
+      warn(message, ...args);
+    };
+    try {
+      const document = await PDFDocument.load(bytes, {
+        capNumbers: true,
+        ignoreEncryption: false,
+        updateMetadata: false,
+        throwOnInvalidObject: true,
+      });
+      return document.getPageCount();
+    } catch (error) {
+      throw new AuditOperationalError("invalid_pdf", { cause: error });
+    } finally {
+      console.warn = warn;
+    }
+  };
+  const result = pdfPageCountQueue.then(parse, parse);
+  pdfPageCountQueue = result.then(() => undefined, () => undefined);
+  return result;
 }
 
 function emptyViolations() {
@@ -502,6 +518,150 @@ export async function extractPdfPageCount(pdfBytes) {
   });
 }
 
+async function runPdfPageCountCommand(command, args, parseOutput) {
+  const output = await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore"],
+      env: {
+        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        LANG: "C",
+        LC_ALL: "C",
+      },
+    });
+    const chunks = [];
+    let length = 0;
+    let terminalError = null;
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const failAfterTermination = () => {
+      if (settled) return;
+      terminalError ??= new AuditOperationalError("pdf_page_count_failed");
+      if (child.pid == null) {
+        finish(terminalError);
+        return;
+      }
+      child.kill("SIGKILL");
+    };
+    const timer = setTimeout(failAfterTermination, PDF_PAGE_COUNT_TIMEOUT_MS);
+    child.stdout.on("data", (chunk) => {
+      length += chunk.length;
+      if (length > 64 * 1024) {
+        failAfterTermination();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.stdout.once("error", failAfterTermination);
+    child.once("error", failAfterTermination);
+    child.once("close", (code) => {
+      if (terminalError || code !== 0) {
+        finish(terminalError ?? new AuditOperationalError("pdf_page_count_failed"));
+        return;
+      }
+      try {
+        const pageCount = parseOutput(Buffer.concat(chunks).toString("utf8"));
+        if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 10_000) {
+          throw new AuditOperationalError("pdf_page_count_failed");
+        }
+        finish(null, pageCount);
+      } catch {
+        finish(new AuditOperationalError("pdf_page_count_failed"));
+      }
+    });
+  });
+  return output;
+}
+
+async function runPdfStructureCheck(pdfPath) {
+  await new Promise((resolve, reject) => {
+    const child = spawn("qpdf", ["--warning-exit-0", "--check", pdfPath], {
+      shell: false,
+      stdio: ["ignore", "ignore", "ignore"],
+      env: {
+        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        LANG: "C",
+        LC_ALL: "C",
+      },
+    });
+    let settled = false;
+    let terminalError = null;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const failAfterTermination = () => {
+      if (settled) return;
+      terminalError ??= new AuditOperationalError("pdf_page_count_failed");
+      if (child.pid == null) {
+        finish(terminalError);
+        return;
+      }
+      child.kill("SIGKILL");
+    };
+    const timer = setTimeout(failAfterTermination, PDF_PAGE_COUNT_TIMEOUT_MS);
+    child.once("error", failAfterTermination);
+    child.once("close", (code) => {
+      if (terminalError || code !== 0) {
+        finish(terminalError ?? new AuditOperationalError("pdf_page_count_failed"));
+      } else finish(null);
+    });
+  });
+}
+
+export function requireMatchingPdfPageCounts(qpdfPageCount, popplerPageCount) {
+  if (!Number.isInteger(qpdfPageCount) || qpdfPageCount < 1 || qpdfPageCount > 10_000
+    || !Number.isInteger(popplerPageCount) || popplerPageCount < 1
+    || popplerPageCount > 10_000 || qpdfPageCount !== popplerPageCount) {
+    throw new AuditOperationalError("pdf_page_count_failed");
+  }
+  return qpdfPageCount;
+}
+
+/**
+ * Recovers a page count for strict-parser-incompatible legacy PDFs using two
+ * independent parsers from the same runtime family as the Cloud Run worker.
+ * No command output, path or document content is ever returned or logged.
+ */
+export async function extractLegacyPdfPageCount(pdfBytes) {
+  if (!(pdfBytes instanceof Uint8Array) || pdfBytes.byteLength === 0
+    || pdfBytes.byteLength > MAX_PDF_BYTES
+    || pdfBytes.byteLength < 5
+    || Buffer.from(pdfBytes.subarray(0, 5)).toString("ascii") !== "%PDF-") {
+    throw new AuditOperationalError("pdf_page_count_failed");
+  }
+  const directory = await mkdtemp(join(tmpdir(), "dfks-ocr-page-count-"));
+  const pdfPath = join(directory, "source.pdf");
+  try {
+    await writeFile(pdfPath, pdfBytes, { mode: 0o600 });
+    await runPdfStructureCheck(pdfPath);
+    const [qpdfPageCount, popplerPageCount] = await Promise.all([
+      runPdfPageCountCommand(
+        "qpdf",
+        ["--warning-exit-0", "--show-npages", pdfPath],
+        (output) => Number(output.trim()),
+      ),
+      runPdfPageCountCommand(
+        "pdfinfo",
+        [pdfPath],
+        (output) => Number(output.match(/Pages:\s+(\d+)/i)?.[1] ?? 0),
+      ),
+    ]);
+    return requireMatchingPdfPageCounts(qpdfPageCount, popplerPageCount);
+  } finally {
+    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 function spatialMetricsEqual(stored, recomputed) {
   if (!stored || !recomputed) return false;
   if (stored.expectedWords !== recomputed.expectedWords
@@ -652,7 +812,9 @@ async function inspectCompletedJob({
           && baselineOriginal.originalSha256 === job.original_sha256
           && baselineOriginal?.originalStoragePathDigest === originalStoragePathDigest
           && baselineOriginal?.originalPdfReadable === false
-          && baselineOriginal?.originalPageCount === null;
+          && (baselineOriginal?.originalPageCount === null
+            || (baselineOriginal?.originalPageCountSource === "qpdf-poppler"
+              && Number.isInteger(baselineOriginal.originalPageCount)));
         if (matchesKnownUnparseableBaseline) {
           try {
             independentlyVerifiedPageCount = await extractOriginalPageCount(original.bytes);
@@ -661,7 +823,9 @@ async function inspectCompletedJob({
             // independent PDF tool verifies the exact expected page count.
           }
         }
-        if (independentlyVerifiedPageCount !== job.page_count) {
+        const baselinePageCountMatches = baselineOriginal?.originalPageCount == null
+          || independentlyVerifiedPageCount === baselineOriginal.originalPageCount;
+        if (!baselinePageCountMatches || independentlyVerifiedPageCount !== job.page_count) {
           violations.invalidOriginalPdf += 1;
         } else {
           original.pageCount = independentlyVerifiedPageCount;
@@ -733,7 +897,7 @@ export async function auditCompletedJobs({
   readStorage,
   concurrency = 1,
   extractBboxPages = extractPdfBboxPages,
-  extractOriginalPageCount = extractPdfPageCount,
+  extractOriginalPageCount = extractLegacyPdfPageCount,
 }) {
   const summary = createAuditSummary(jobs.length);
   const completedByContract = new Map();
@@ -809,7 +973,8 @@ function baselineDigest({ schemaVersion, capturedAt, records }) {
 
 function assertValidBaseline(baseline) {
   if (!baseline || typeof baseline !== "object"
-    || baseline.schemaVersion !== BASELINE_SCHEMA_VERSION
+    || ![BASELINE_SCHEMA_VERSION, LEGACY_BASELINE_SCHEMA_VERSION]
+      .includes(baseline.schemaVersion)
     || typeof baseline.capturedAt !== "string"
     || !Number.isFinite(Date.parse(baseline.capturedAt))
     || !Array.isArray(baseline.records)
@@ -822,6 +987,26 @@ function assertValidBaseline(baseline) {
 
   const jobIds = new Set();
   for (const record of baseline.records) {
+    const validLegacyPdfState = baseline.schemaVersion === LEGACY_BASELINE_SCHEMA_VERSION
+      && ((record?.originalPdfReadable === true
+        && Number.isInteger(record?.originalPageCount)
+        && record.originalPageCount >= 1
+        && record.originalPageCount <= 10_000)
+        || (record?.originalPdfReadable === false && record.originalPageCount === null));
+    const validCurrentPdfState = baseline.schemaVersion === BASELINE_SCHEMA_VERSION
+      && ((record?.originalPdfReadable === true
+        && record?.originalPageCountSource === "pdf-lib"
+        && Number.isInteger(record?.originalPageCount)
+        && record.originalPageCount >= 1
+        && record.originalPageCount <= 10_000)
+        || (record?.originalPdfReadable === false
+          && record?.originalPageCountSource === "qpdf-poppler"
+          && Number.isInteger(record?.originalPageCount)
+          && record.originalPageCount >= 1
+          && record.originalPageCount <= 10_000)
+        || (record?.originalPdfReadable === false
+          && record?.originalPageCountSource === "unavailable"
+          && record.originalPageCount === null));
     if (!record || typeof record !== "object"
       || !UUID_PATTERN.test(record.jobId ?? "")
       || !UUID_PATTERN.test(record.contractId ?? "")
@@ -830,12 +1015,7 @@ function assertValidBaseline(baseline) {
       || typeof record.originalStoragePathSha256 !== "string"
       || !/^[0-9a-f]{64}$/.test(record.originalStoragePathSha256)
       || typeof record.originalPdfReadable !== "boolean"
-      || (record.originalPdfReadable && (
-        !Number.isInteger(record.originalPageCount)
-        || record.originalPageCount < 1
-        || record.originalPageCount > 10_000
-      ))
-      || (!record.originalPdfReadable && record.originalPageCount !== null)
+      || (!validLegacyPdfState && !validCurrentPdfState)
       || typeof record.contractStatus !== "string"
       || record.contractStatus.length < 1
       || record.contractStatus.length > 80
@@ -873,6 +1053,7 @@ export async function captureBaseline({
   readStorage,
   concurrency = 1,
   capturedAt = new Date().toISOString(),
+  extractLegacyPageCount = extractLegacyPdfPageCount,
 }) {
   if (!Array.isArray(jobs) || jobs.length === 0) {
     throw new AuditOperationalError("baseline_empty");
@@ -902,6 +1083,17 @@ export async function captureBaseline({
       return { violations, record: null };
     }
     const originalPdfReadable = !fingerprint.invalidPdf;
+    let originalPageCount = originalPdfReadable ? fingerprint.pageCount : null;
+    let originalPageCountSource = originalPdfReadable ? "pdf-lib" : "unavailable";
+    if (!originalPdfReadable) {
+      try {
+        originalPageCount = await extractLegacyPageCount(fingerprint.bytes);
+        originalPageCountSource = "qpdf-poppler";
+      } catch {
+        // A legacy parser failure is recorded explicitly. Geometry backfills
+        // reject it, while general audits can still bind the exact source hash.
+      }
+    }
     return {
       violations,
       record: {
@@ -910,7 +1102,8 @@ export async function captureBaseline({
         originalSha256: fingerprint.sha256,
         originalStoragePathSha256: sha256(Buffer.from(job.original_storage_path, "utf8")),
         originalPdfReadable,
-        originalPageCount: originalPdfReadable ? fingerprint.pageCount : null,
+        originalPageCount,
+        originalPageCountSource,
         contractStatus: contract.status,
         priorProcessingStatus: typeof job.status === "string" ? job.status : "unknown",
       },
@@ -947,6 +1140,7 @@ export async function verifyBaseline({
   contractsById,
   readStorage,
   concurrency = 1,
+  extractLegacyPageCount = extractLegacyPdfPageCount,
 }) {
   assertValidBaseline(baseline);
   const summary = createBaselineSummary(baseline.records.length);
@@ -989,6 +1183,17 @@ export async function verifyBaseline({
         && fingerprint.pageCount !== record.originalPageCount) {
         violations.baselineOriginalPageCountMismatch += 1;
       }
+      if (!originalPdfReadable && !record.originalPdfReadable
+        && record.originalPageCountSource === "qpdf-poppler") {
+        try {
+          const recoveredPageCount = await extractLegacyPageCount(fingerprint.bytes);
+          if (recoveredPageCount !== record.originalPageCount) {
+            violations.baselineOriginalPageCountMismatch += 1;
+          }
+        } catch {
+          violations.baselineOriginalPageCountMismatch += 1;
+        }
+      }
     }
     return violations;
   });
@@ -1019,7 +1224,16 @@ export function geometryBackfillBaselineCohort(baseline, { expectedCount = null 
     throw new AuditOperationalError("geometry_backfill_expected_count_invalid");
   }
   const targets = baseline.records.map((record) => {
-    if (record.originalPdfReadable !== true
+    const pageCountWasVerified = (
+      record.originalPdfReadable === true
+      && (baseline.schemaVersion === LEGACY_BASELINE_SCHEMA_VERSION
+        || record.originalPageCountSource === "pdf-lib")
+    ) || (
+      baseline.schemaVersion === BASELINE_SCHEMA_VERSION
+      && record.originalPdfReadable === false
+      && record.originalPageCountSource === "qpdf-poppler"
+    );
+    if (!pageCountWasVerified
       || !Number.isInteger(record.originalPageCount)
       || record.originalPageCount < 1
       || record.originalPageCount > 200
@@ -2003,6 +2217,7 @@ export async function runGeometryBackfillAudit({
       originalStoragePathDigest: record.originalStoragePathSha256,
       originalPdfReadable: record.originalPdfReadable,
       originalPageCount: record.originalPageCount,
+      originalPageCountSource: record.originalPageCountSource,
     },
   ]));
   const completedSummary = await auditCompletedJobs({
@@ -2077,6 +2292,7 @@ export async function runAudit({ db, concurrency = DEFAULT_CONCURRENCY, baseline
       originalStoragePathDigest: record.originalStoragePathSha256,
       originalPdfReadable: record.originalPdfReadable,
       originalPageCount: record.originalPageCount,
+      originalPageCountSource: record.originalPageCountSource,
     };
     baselineOriginalByJob.set(record.jobId, entry);
     baselineOriginalByJob.set(record.contractId, entry);
