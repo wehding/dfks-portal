@@ -1042,3 +1042,27 @@ test("native tekst ændrer ikke originalen og uploader intet derivat", async () 
   assert.equal(completions[0].status, "not_required");
   assert.equal(completions[0].ocrApplied, false);
 });
+
+test("replacement-only sender native kilder gennem den tvungne OCR-port", async () => {
+  let forceOcr;
+  const processor = createProcessor({
+    config: { ...config, replacementOnly: true },
+    identityTokenProvider: async () => "identity-secret",
+    googleClient: {},
+    spatialProcessor: async (options) => {
+      forceOcr = options.forceOcr;
+      return {
+        status: "not_required", classification: "native_text", pageCount: 1,
+        nativePageCount: 1, ocrPageCount: 0, unreadablePageCount: 0, textCharCount: 500,
+      };
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) return response("{}", { status: 200 });
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+  assert.deepEqual(await processor(), { outcome: "completed" });
+  assert.equal(forceOcr, true);
+});
