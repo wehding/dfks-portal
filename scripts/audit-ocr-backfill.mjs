@@ -14,7 +14,9 @@ import { config as loadEnv } from "dotenv";
 import { PDFDocument } from "pdf-lib";
 
 import {
+  ALLOWED_SPATIAL_VERIFICATION_PROFILES,
   computeSpatialAccuracy,
+  LEGACY_SPATIAL_VERIFICATION_PROFILE,
   parsePdftotextBbox,
 } from "../cloud-run/contract-document-worker/spatial-ocr.mjs";
 
@@ -51,6 +53,17 @@ const DIRECT_VISION_OVERLAY_PROFILES = new Set([
   "font-metrics-v1",
   "axis-aligned-font-metrics-v1",
 ]);
+const DIRECT_VISION_SPATIAL_VERIFICATION_PROFILES = new Set(
+  ALLOWED_SPATIAL_VERIFICATION_PROFILES,
+);
+// PR #239 was merged before the worker could persist an explicit matcher
+// profile. No post-cutover v3 artefact may silently inherit legacy semantics.
+const SPATIAL_VERIFICATION_PROFILE_CUTOVER_MS = Date.parse(
+  "2026-09-01T12:51:39.000Z",
+);
+export const GEOMETRY_AUDIT_PDFTOTEXT_VERSION = "22.12.0";
+const PDFTOTEXT_VERSION_TIMEOUT_MS = 5_000;
+const MAX_PDFTOTEXT_VERSION_BYTES = 1_024;
 
 // The OCR callback atomically creates one replacement AI job. It may already
 // be `done` by the time the audit runs, so both active states and `done` count
@@ -87,6 +100,71 @@ export class AuditOperationalError extends Error {
     this.name = "AuditOperationalError";
     this.code = code;
   }
+}
+
+export function requireGeometryAuditPdftotextVersion(output) {
+  const match = String(output ?? "").match(/(?:^|\n)pdftotext version ([0-9]+[.][0-9]+[.][0-9]+)(?:\n|$)/);
+  if (match?.[1] !== GEOMETRY_AUDIT_PDFTOTEXT_VERSION) {
+    throw new AuditOperationalError("geometry_audit_runtime_mismatch");
+  }
+  return match[1];
+}
+
+async function assertGeometryAuditRuntime() {
+  const output = await new Promise((resolve, reject) => {
+    const child = spawn("pdftotext", ["-v"], {
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        LANG: "C",
+        LC_ALL: "C",
+      },
+    });
+    const chunks = [];
+    let length = 0;
+    let settled = false;
+    let timer;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const collect = (chunk) => {
+      length += chunk.length;
+      if (length > MAX_PDFTOTEXT_VERSION_BYTES) {
+        child.kill("SIGKILL");
+        finish(new AuditOperationalError("geometry_audit_runtime_mismatch"));
+        return;
+      }
+      chunks.push(chunk);
+    };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+    child.once("error", () => finish(
+      new AuditOperationalError("geometry_audit_runtime_mismatch"),
+    ));
+    child.once("close", (code) => {
+      if (code !== 0) {
+        finish(new AuditOperationalError("geometry_audit_runtime_mismatch"));
+        return;
+      }
+      try {
+        finish(null, requireGeometryAuditPdftotextVersion(
+          Buffer.concat(chunks).toString("utf8"),
+        ));
+      } catch (error) {
+        finish(error);
+      }
+    });
+    timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(new AuditOperationalError("geometry_audit_runtime_mismatch"));
+    }, PDFTOTEXT_VERSION_TIMEOUT_MS);
+  });
+  return output;
 }
 
 export function sha256(bytes) {
@@ -378,6 +456,11 @@ function validSpatialVerification(value) {
     && value.measurableWords === value.matchedWords
     && ratios.every((ratio) => Number.isFinite(ratio) && ratio >= 0 && ratio <= 1)
     && typeof value.passed === "boolean";
+}
+
+function completedBeforeSpatialProfileCutover(job) {
+  const completedAt = Date.parse(job?.completed_at ?? "");
+  return Number.isFinite(completedAt) && completedAt < SPATIAL_VERIFICATION_PROFILE_CUTOVER_MS;
 }
 
 function parseDerivativePath(storagePath, expectedFilename) {
@@ -727,15 +810,20 @@ async function inspectSpatialArtifact(readStorage, job) {
       && Array.isArray(geometry.redactions) && geometry.redactions.length <= 200_000
       && geometry.redactions.every((redaction) => validRedaction(redaction, job.page_count));
     const directVision = hasExactKeys(geometry, [
-      "schemaVersion", "engine", "processingProfile", "overlayProfile", "pages",
-      "spatialVerification",
+      "schemaVersion", "engine", "processingProfile", "overlayProfile",
+      "spatialVerificationProfile", "pages", "spatialVerification",
     ], [
       "schemaVersion", "engine", "processingProfile", "pages", "spatialVerification",
     ])
       && geometry.schemaVersion === "google-vision-spatial-v3"
       && geometry.processingProfile === "google-vision-direct-v1"
       && (!Object.hasOwn(geometry, "overlayProfile")
-        || DIRECT_VISION_OVERLAY_PROFILES.has(geometry.overlayProfile));
+        || DIRECT_VISION_OVERLAY_PROFILES.has(geometry.overlayProfile))
+      && (Object.hasOwn(geometry, "spatialVerificationProfile")
+        ? DIRECT_VISION_SPATIAL_VERIFICATION_PROFILES.has(
+          geometry.spatialVerificationProfile,
+        )
+        : completedBeforeSpatialProfileCutover(job));
     const valid = (legacyRedacted || directVision)
       && geometry.engine === "google-vision-document-text-detection"
       && job.spatial_schema_version === geometry.schemaVersion
@@ -896,7 +984,18 @@ async function inspectCompletedJob({
       if (!output.readFailed && !output.invalidPdf && spatial.geometry) {
         try {
           const extractedPages = await extractBboxPages(output.bytes);
-          const recomputed = computeSpatialAccuracy(spatial.geometry.pages, extractedPages);
+          // Profiles are part of the immutable verification claim. Historical
+          // v3 artefacts predate this field and are deliberately replayed with
+          // the exact max-three matcher that produced their stored metrics.
+          const verificationProfile = spatial.geometry.schemaVersion === "google-vision-spatial-v3"
+            ? (spatial.geometry.spatialVerificationProfile
+              ?? LEGACY_SPATIAL_VERIFICATION_PROFILE)
+            : LEGACY_SPATIAL_VERIFICATION_PROFILE;
+          const recomputed = computeSpatialAccuracy(
+            spatial.geometry.pages,
+            extractedPages,
+            verificationProfile,
+          );
           if (!recomputed.passed || recomputed.matchCoverage < 0.95
             || recomputed.score < 0.95) {
             violations.spatialIndependentVerificationFailure += 1;
@@ -2600,6 +2699,10 @@ async function main() {
     MAX_CONCURRENCY,
   );
   const db = createReadOnlySupabaseClient(url, serviceRoleKey);
+
+  if (mode === "audit-geometry-backfill" || mode === "approve-geometry-backfill") {
+    await assertGeometryAuditRuntime();
+  }
 
   if ([
     "capture-baseline",

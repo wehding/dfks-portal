@@ -11,6 +11,8 @@ test("completion promoverer før den service-role-afgrænsede artefaktsletning",
   assert.match(source, /finish_contract_document_job_v8/);
   assert.match(source, /p_review_details:\s*reviewDetails/);
   assert.match(source, /p_spatial_sha256:\s*safeHash\(body\.spatialSha256\)/);
+  assert.match(source, /isSpatialVerificationCompletionValid/);
+  assert.match(source, /safeSpatialVerificationProfile/);
   assert.doesNotMatch(source, /\.storage\.from\(["']kontrakter["']\)\.remove\(/);
   assert.ok(source.indexOf("finish_contract_document_job_v8")
     < source.lastIndexOf("processContractDocumentArtifactDeletions"));

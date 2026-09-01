@@ -15,7 +15,10 @@ import {
   sanitiseAffectedPageNumbers,
   startLeaseHeartbeat,
 } from "./processor.mjs";
-import { processPdfSpatially } from "./spatial-ocr.mjs";
+import {
+  processPdfSpatially,
+  SPATIAL_VERIFICATION_PROFILE,
+} from "./spatial-ocr.mjs";
 
 const config = {
   portalBaseUrl: "https://portal.example",
@@ -414,7 +417,9 @@ test("spatial needs_review sender kun sikre måltal, schema og kanoniske sidenum
       ocrPageCount: 2,
       unreadablePageCount: 0,
       textCharCount: 4704,
+      processingProfile: "google-vision-direct-v1",
       spatialSchemaVersion: "google-vision-spatial-v3",
+      spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
       spatial: { score: 0.94, medianIou: 0.88, centerInsideRatio: 0.97 },
       affectedPageNumbers: [2, 1, 2],
     }),
@@ -435,6 +440,7 @@ test("spatial needs_review sender kun sikre måltal, schema og kanoniske sidenum
   assert.equal(completions[0].spatialMedianIou, 0.88);
   assert.equal(completions[0].spatialCenterInsideRatio, 0.97);
   assert.equal(completions[0].spatialSchemaVersion, "google-vision-spatial-v3");
+  assert.equal(completions[0].spatialVerificationProfile, SPATIAL_VERIFICATION_PROFILE);
   assert.deepEqual(completions[0].reviewDetails, {
     schemaVersion: 1,
     reasons: [{ code: "ocr_spatial_quality", pageNumbers: [1, 2] }],
@@ -894,6 +900,7 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
         spatial: { score: 0.99, medianIou: 0.9, centerInsideRatio: 1 },
         processingProfile: "google-vision-direct-v1",
         spatialSchemaVersion: "google-vision-spatial-v3",
+        spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
       };
     },
     fetchImpl: async (url, init) => {
@@ -938,6 +945,7 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
   assert.equal(completions[0].pageCount, 2);
   assert.equal(completions[0].processingProfile, "google-vision-direct-v1");
   assert.equal(completions[0].spatialSchemaVersion, "google-vision-spatial-v3");
+  assert.equal(completions[0].spatialVerificationProfile, SPATIAL_VERIFICATION_PROFILE);
   assert.match(completions[0].originalSha256, /^[0-9a-f]{64}$/);
   assert.match(completions[0].processedSha256, /^[0-9a-f]{64}$/);
   assert.match(completions[0].spatialSha256, /^[0-9a-f]{64}$/);

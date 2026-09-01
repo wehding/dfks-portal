@@ -7,6 +7,8 @@ import { gunzipSync } from "node:zlib";
 import sharp from "sharp";
 
 import {
+  LEGACY_SPATIAL_VERIFICATION_PROFILE,
+  SPATIAL_VERIFICATION_PROFILE,
   canonicaliseSpatialGeometryPage,
   classifyOcrDocument,
   classifyPageText,
@@ -650,6 +652,7 @@ test("første alternative overlay der består hele auditen erstatter den fejlede
     assert.equal(await readFile(fixture.outputPath, "utf8"), "%PDF-font-metrics-v1");
     const geometry = JSON.parse(gunzipSync(await readFile(fixture.geometryPath)).toString("utf8"));
     assert.equal(geometry.overlayProfile, "font-metrics-v1");
+    assert.equal(geometry.spatialVerificationProfile, SPATIAL_VERIFICATION_PROFILE);
     assert.equal(geometry.spatialVerification.passed, true);
     await assert.rejects(readFile(join(
       fixture.directory,
@@ -1336,6 +1339,125 @@ test("fem tilstødende Vision-ord kan matches sikkert mod ét samlet PDF-token",
   assert.equal(result.matchCoverage, 1);
   assert.equal(result.score, 1);
   assert.equal(result.passed, true);
+});
+
+test("legacy-profilen bevarer max tre tokens uden de nye geometri- og tegnporte", () => {
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 100,
+    imageHeight: 100,
+    words: [{
+      text: `${"a".repeat(50)}${"b".repeat(50)}`,
+      vertices: [{ x: 10, y: 10 }, { x: 40, y: 10 }, { x: 40, y: 40 }, { x: 10, y: 40 }],
+    }],
+  }];
+  const extracted = [{
+    width: 100,
+    height: 100,
+    words: [
+      { text: "a".repeat(50), xMin: 10, yMin: 10, xMax: 40, yMax: 20 },
+      { text: "b".repeat(50), xMin: 10, yMin: 30, xMax: 40, yMax: 40 },
+    ],
+  }];
+
+  const legacy = computeSpatialAccuracy(
+    geometry,
+    extracted,
+    LEGACY_SPATIAL_VERIFICATION_PROFILE,
+  );
+  const current = computeSpatialAccuracy(geometry, extracted, SPATIAL_VERIFICATION_PROFILE);
+  assert.deepEqual(legacy, {
+    expectedWords: 1,
+    matchedWords: 1,
+    measurableWords: 1,
+    matchCoverage: 1,
+    score: 1,
+    medianIou: 1,
+    centerInsideRatio: 1,
+    passed: true,
+  });
+  assert.equal(current.passed, false);
+  assert.equal(current.matchCoverage, 0);
+});
+
+test("legacy-golden matcher tre tokens over stor afstand uden ny geometrygate", () => {
+  const parts = ["arbejds", "markeds", "aftale"];
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 120,
+    imageHeight: 40,
+    words: parts.map((text, index) => ({
+      text,
+      vertices: [
+        { x: 10 + index * 40, y: 10 }, { x: 20 + index * 40, y: 10 },
+        { x: 20 + index * 40, y: 20 }, { x: 10 + index * 40, y: 20 },
+      ],
+    })),
+  }];
+  const extracted = [{
+    width: 120,
+    height: 40,
+    words: [{ text: parts.join(""), xMin: 10, yMin: 10, xMax: 100, yMax: 20 }],
+  }];
+
+  assert.deepEqual(computeSpatialAccuracy(
+    geometry,
+    extracted,
+    LEGACY_SPATIAL_VERIFICATION_PROFILE,
+  ), {
+    expectedWords: 3,
+    matchedWords: 3,
+    measurableWords: 3,
+    matchCoverage: 1,
+    score: 1,
+    medianIou: 1,
+    centerInsideRatio: 1,
+    passed: true,
+  });
+  assert.equal(computeSpatialAccuracy(
+    geometry,
+    extracted,
+    SPATIAL_VERIFICATION_PROFILE,
+  ).matchedWords, 0);
+});
+
+test("legacy-profilen kan ikke bruge den nye otte-token-sammenføjning", () => {
+  const parts = ["en", "to", "tre", "fire", "fem", "seks", "syv", "otte"];
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 220,
+    imageHeight: 40,
+    words: parts.map((text, index) => ({
+      text,
+      vertices: [
+        { x: 10 + index * 24, y: 10 }, { x: 32 + index * 24, y: 10 },
+        { x: 32 + index * 24, y: 20 }, { x: 10 + index * 24, y: 20 },
+      ],
+    })),
+  }];
+  const extracted = [{
+    width: 220,
+    height: 40,
+    words: [{ text: parts.join(""), xMin: 10, yMin: 10, xMax: 200, yMax: 20 }],
+  }];
+
+  assert.equal(computeSpatialAccuracy(
+    geometry,
+    extracted,
+    LEGACY_SPATIAL_VERIFICATION_PROFILE,
+  ).matchedWords, 0);
+  assert.equal(computeSpatialAccuracy(
+    geometry,
+    extracted,
+    SPATIAL_VERIFICATION_PROFILE,
+  ).matchedWords, 8);
+});
+
+test("ukendt spatial-verifikationsprofil afvises fail-closed", () => {
+  assert.throws(
+    () => computeSpatialAccuracy([], [], "ukendt-profil"),
+    /invalid_spatial_verification_profile/,
+  );
 });
 
 test("matcherfix løfter 92,667 procent til over 95 uden at sænke kvalitetsporten", () => {
