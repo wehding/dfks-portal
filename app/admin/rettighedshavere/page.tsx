@@ -38,6 +38,7 @@ import { archiveRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHold
 import { ListSkeleton, TableSkeleton } from "@/components/ui/data-skeletons"
 import { RightsHolderRelations } from "@/components/admin/rights-holder-relations"
 import { ListResultSummary } from "@/components/list-result-summary"
+import { rightsHolderInvitationState, rightsHolderPortalAction } from "@/lib/admin-rights-holder-invitation"
 
 type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "inviteret" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
 type SortKey = "name" | "email" | "member_no" | "contracts" | "works" | "status" | "portal" | "validated"
@@ -142,6 +143,13 @@ function findDfksMemberNo(name: string, members: DfksMemberOption[]) {
 
 function hasPortalAccess(rh: RettighedshaverWithAffiliation) {
     return Boolean(rh.user_id || rh.onboarding_completed_at)
+}
+
+function invitationStatus(rh: RettighedshaverWithAffiliation) {
+    const state = rightsHolderInvitationState(rh)
+    if (state === "active") return { state, label: "Aktiv" }
+    if (state === "invited") return { state, label: `Inviteret ${formatInvitationDate(rh.invite_sent_at)}` }
+    return { state: "not_invited" as const, label: "Ikke inviteret" }
 }
 
 const EMPTY_FORM = {
@@ -983,7 +991,6 @@ export default function RettighedshavereAdminPage() {
                     </MobileDataCard>
                 ) : visible.map(rh => {
                     const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
-                    const hasLogin = !!rh.user_id
                     const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
                     const relationsExpanded = expandedRightsHolderId === rh.id
                     return (
@@ -1018,6 +1025,16 @@ export default function RettighedshavereAdminPage() {
                                                 ? <><UserX className="h-3.5 w-3.5 mr-2 text-amber-500" />Udmeld</>
                                                 : <><UserCheck className="h-3.5 w-3.5 mr-2 text-green-600" />Indmeld</>}
                                         </DropdownMenuItem>
+                                        {rh.email && !rh.onboarding_completed_at && (
+                                            <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: rh.invite_sent_at ? "reminder" : "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
+                                                <Mail className="mr-2 h-3.5 w-3.5" />{rh.invite_sent_at ? "Gensend velkomstmail" : "Send invitation"}
+                                            </DropdownMenuItem>
+                                        )}
+                                        {rh.email && rh.onboarding_completed_at && (
+                                            <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "login" }); setPortalLink(null); setPortalEmailStatus(null) }}>
+                                                <KeyRound className="mr-2 h-3.5 w-3.5" />Send loginlink
+                                            </DropdownMenuItem>
+                                        )}
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </div>
@@ -1037,9 +1054,14 @@ export default function RettighedshavereAdminPage() {
                                     </div>
                                 </MobileMetaRow>
                                 <MobileMetaRow label="Portaladgang">
-                                    {hasLogin
-                                        ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Aktiv</Badge>
-                                        : <span className="text-muted-foreground">Ingen adgang</span>}
+                                    {(() => {
+                                        const status = invitationStatus(rh)
+                                        return status.state === "active"
+                                            ? <Badge className="gap-1 bg-emerald-600 text-xs text-white"><LogIn className="h-3 w-3" />{status.label}</Badge>
+                                            : status.state === "invited"
+                                                ? <Badge variant="outline" className="border-amber-300 text-xs text-amber-700">{status.label}</Badge>
+                                                : <Badge variant="outline" className="text-xs text-muted-foreground">{status.label}</Badge>
+                                    })()}
                                 </MobileMetaRow>
                             </div>
                             {relationsExpanded && <div className="mt-4 border-t pt-3"><RightsHolderRelations rightsHolderId={rh.id} workCount={counts.works} contractCount={counts.contracts} /></div>}
@@ -1112,11 +1134,14 @@ export default function RettighedshavereAdminPage() {
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        {rh.onboarding_completed_at
-                                            ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Registreret</Badge>
-                                            : rh.invite_sent_at
-                                                ? <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Afventer</Badge>
-                                                : <span className="text-xs text-muted-foreground">Ikke inviteret</span>}
+                                            {(() => {
+                                                const status = invitationStatus(rh)
+                                                return status.state === "active"
+                                                    ? <Badge className="gap-1 bg-emerald-600 text-xs text-white"><LogIn className="h-3 w-3" />{status.label}</Badge>
+                                                    : status.state === "invited"
+                                                        ? <Badge variant="outline" className="border-amber-300 text-xs text-amber-700">{status.label}</Badge>
+                                                        : <Badge variant="outline" className="text-xs text-muted-foreground">{status.label}</Badge>
+                                            })()}
                                     </TableCell>
                                     <TableCell>
                                         {!hasLogin
@@ -1157,12 +1182,12 @@ export default function RettighedshavereAdminPage() {
                                                     </DropdownMenuItem>
                                                 )}
                                                 <DropdownMenuSeparator />
-                                                {rh.email && !hasPortalAccess(rh) && (
-                                                    <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
-                                                        <Mail className="h-3.5 w-3.5 mr-2" />Send invitation
+                                                {rh.email && !rh.onboarding_completed_at && (
+                                                    <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: rh.invite_sent_at ? "reminder" : "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
+                                                        <Mail className="h-3.5 w-3.5 mr-2" />{rh.invite_sent_at ? "Gensend velkomstmail" : "Send invitation"}
                                                     </DropdownMenuItem>
                                                 )}
-                                                {rh.email && hasPortalAccess(rh) && (
+                                                {rh.email && rh.onboarding_completed_at && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "login" }); setPortalLink(null); setPortalEmailStatus(null) }}>
                                                         <KeyRound className="h-3.5 w-3.5 mr-2" />Send loginlink
                                                     </DropdownMenuItem>
@@ -1268,9 +1293,11 @@ export default function RettighedshavereAdminPage() {
                                 <div>
                                     <h3 className="font-semibold">Portaladgang</h3>
                                     <p className="text-xs text-muted-foreground">
-                                        {hasPortalAccess(editTarget)
+                                        {editTarget.onboarding_completed_at
                                             ? "Send et nyt loginlink uden at oprette en ekstra bruger."
-                                            : "Send en invitation, så rettighedshaveren kan oprette sin adgang."}
+                                            : editTarget.invite_sent_at
+                                                ? `Invitation sendt ${formatInvitationDate(editTarget.invite_sent_at)}. Du kan gensende velkomstmailen med et nyt sikkert link.`
+                                                : "Send en invitation, så rettighedshaveren kan oprette sin adgang."}
                                     </p>
                                 </div>
                                 {(!editForm.email.trim() || editForm.email.trim() !== (editTarget.email ?? "").trim() || editForm.full_name.trim() !== editTarget.full_name.trim()) && (
@@ -1292,14 +1319,14 @@ export default function RettighedshavereAdminPage() {
                                         setPortalEmailStatus(null)
                                         setPortalAction({
                                             rh: editTarget,
-                                            type: hasPortalAccess(editTarget) ? "login" : "invite",
+                                            type: rightsHolderPortalAction(editTarget),
                                         })
                                     }}
                                 >
-                                    {hasPortalAccess(editTarget) ? <KeyRound className="mr-2 h-4 w-4" /> : <Mail className="mr-2 h-4 w-4" />}
-                                    {hasPortalAccess(editTarget)
+                                    {editTarget.onboarding_completed_at ? <KeyRound className="mr-2 h-4 w-4" /> : <Mail className="mr-2 h-4 w-4" />}
+                                    {editTarget.onboarding_completed_at
                                         ? "Send nyt loginlink"
-                                        : editTarget.invite_sent_at ? "Send ny invitation" : "Send invitation"}
+                                        : editTarget.invite_sent_at ? "Gensend velkomstmail" : "Send invitation"}
                                 </Button>
                                 {portalAction?.rh.id === editTarget.id && portalLink && (
                                     <p className="break-all rounded-md bg-muted px-3 py-2 text-xs">{portalLink}</p>
@@ -1730,13 +1757,13 @@ export default function RettighedshavereAdminPage() {
                         <DialogTitle>
                             {portalAction?.type === "login"
                                 ? "Send loginlink"
-                                : portalAction?.type === "invite" || portalAction?.type === "reminder" ? "Inviter til portal" : "Nulstil password"}
+                                : portalAction?.type === "reminder" ? "Gensend velkomstmail" : portalAction?.type === "invite" ? "Inviter til portal" : "Nulstil password"}
                         </DialogTitle>
                         <DialogDescription>
                             {portalAction?.type === "login"
                                 ? `Send et nyt loginlink til ${portalAction.rh.full_name} (${portalAction.rh.email}). Personen kan vælge et nyt password og logge ind igen.`
                                 : portalAction?.type === "invite" || portalAction?.type === "reminder"
-                                ? `Send en invitation til ${portalAction.rh.full_name} (${portalAction.rh.email}). Hvis mailen ikke kan sendes, vises linket til manuel deling.`
+                                ? `${portalAction.type === "reminder" ? "Gensend velkomstmailen" : "Send en invitation"} til ${portalAction.rh.full_name} (${portalAction.rh.email}). Hvis mailen ikke kan sendes, vises linket til manuel deling.`
                                 : `Generér et nulstillingslink til ${portalAction?.rh.full_name}. Del linket med dem direkte.`}
                         </DialogDescription>
                         {(portalAction?.type === "invite" || portalAction?.type === "reminder") && portalAction.rh.invite_sent_at && !portalLink && (
@@ -1802,7 +1829,7 @@ export default function RettighedshavereAdminPage() {
                                 {portalLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                                 {portalAction?.type === "login"
                                     ? "Send loginlink"
-                                    : portalAction?.type === "invite" || portalAction?.type === "reminder" ? "Send invitation" : "Generér nulstillingslink"}
+                                    : portalAction?.type === "reminder" ? "Gensend velkomstmail" : portalAction?.type === "invite" ? "Send invitation" : "Generér nulstillingslink"}
                             </Button>
                         )}
                     </DialogFooter>
