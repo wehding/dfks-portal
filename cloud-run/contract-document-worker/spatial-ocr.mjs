@@ -279,6 +279,18 @@ export function classifyOcrDocument(pageStates) {
     : "mixed";
 }
 
+export function completionPageCounts(pageStates, forceOcr = false) {
+  const sourceNativePageCount = pageStates
+    .filter((page) => page.classification === "native_text").length;
+  if (forceOcr && sourceNativePageCount === pageStates.length) {
+    return { nativePageCount: 0, ocrPageCount: pageStates.length };
+  }
+  return {
+    nativePageCount: sourceNativePageCount,
+    ocrPageCount: pageStates.length - sourceNativePageCount,
+  };
+}
+
 export function parsePdfImagesList(value) {
   const images = [];
   for (const line of String(value ?? "").split(/\r?\n/)) {
@@ -968,20 +980,22 @@ export async function processPdfSpatially({
   // document is deliberately sent through Vision for every page before
   // rebuilding the safe derivative, but a native source page must not then
   // count as both native and OCR-required in completion evidence.
-  const nativePageCount = pageStates.filter((page) => page.classification === "native_text").length;
+  const sourceNativePageCount = pageStates
+    .filter((page) => page.classification === "native_text").length;
   const pagesNeedingOcr = pageStates.filter((page) => page.classification !== "native_text");
   if (pagesNeedingOcr.length === 0 && !forceOcr) {
     return {
       status: "not_required",
       classification: "native_text",
       pageCount,
-      nativePageCount,
+      nativePageCount: sourceNativePageCount,
       ocrPageCount: 0,
       unreadablePageCount: 0,
       orientationCorrections: [],
       textCharCount: pageStates.reduce((total, page) => total + page.chars, 0),
     };
   }
+  const { nativePageCount, ocrPageCount } = completionPageCounts(pageStates, forceOcr);
   const ocrDocumentClassification = classifyOcrDocument(pageStates);
 
   // A document that needs OCR is rebuilt consistently from the raw page rasters.
@@ -1085,7 +1099,7 @@ export async function processPdfSpatially({
     return {
       status: "needs_review", classification: "unreadable", pageCount,
       nativePageCount,
-      ocrPageCount: pageCount - nativePageCount,
+      ocrPageCount,
       unreadablePageCount,
       orientationCorrections,
       orientationUncertainPageCount,
@@ -1099,7 +1113,7 @@ export async function processPdfSpatially({
     return {
       status: "needs_review", classification: ocrDocumentClassification, pageCount,
       nativePageCount,
-      ocrPageCount: pageCount - nativePageCount,
+      ocrPageCount,
       unreadablePageCount,
       orientationCorrections,
       orientationUncertainPageCount,
@@ -1197,7 +1211,7 @@ export async function processPdfSpatially({
     classification: ocrDocumentClassification,
     pageCount,
     nativePageCount,
-    ocrPageCount: pageCount - nativePageCount,
+    ocrPageCount,
     unreadablePageCount,
     blankPageCount,
     orientationCorrections,
