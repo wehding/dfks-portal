@@ -123,6 +123,9 @@ function emptyViolations() {
     baselineOriginalPageCountMismatch: 0,
     baselineOriginalPdfReadabilityMismatch: 0,
     baselineContractStatusMismatch: 0,
+    replacementLineageMismatch: 0,
+    supersededArtifactDeletionMismatch: 0,
+    originalDeletionCandidate: 0,
   };
 }
 
@@ -584,12 +587,21 @@ async function inspectCompletedJob({
     }
   }
 
+  const validProcessingProfile = (
+    job.spatial_schema_version === "google-vision-spatial-v2"
+      && job.redaction_profile === "dfks-contract-redaction-v1"
+      && job.processing_profile == null
+  ) || (
+    job.spatial_schema_version === "google-vision-spatial-v3"
+      && job.redaction_profile == null
+      && job.processing_profile === "google-vision-direct-v1"
+  );
   const hasMetadata = job.ocr_applied === true
     && Number.isInteger(job.page_count) && job.page_count > 0
     && typeof job.original_sha256 === "string" && /^[0-9a-f]{64}$/.test(job.original_sha256)
     && typeof job.processed_sha256 === "string" && /^[0-9a-f]{64}$/.test(job.processed_sha256)
     && typeof job.spatial_sha256 === "string" && /^[0-9a-f]{64}$/.test(job.spatial_sha256)
-    && job.spatial_schema_version === "google-vision-spatial-v2"
+    && validProcessingProfile
     && UUID_PATTERN.test(job.org_id ?? "")
     && typeof job.original_storage_path === "string" && job.original_storage_path.length > 0
     && typeof job.output_storage_path === "string" && job.output_storage_path.length > 0
@@ -613,8 +625,9 @@ async function inspectCompletedJob({
         let independentlyVerifiedPageCount = null;
         const originalStoragePathDigest = sha256(Buffer.from(job.original_storage_path, "utf8"));
         const matchesKnownUnparseableBaseline = original.hashMatches
-          && baselineOriginal?.jobId === job.id
-          && baselineOriginal.contractId === job.contract_id
+          && baselineOriginal?.contractId === job.contract_id
+          && (baselineOriginal.jobId === job.id
+            || baselineOriginal.jobId === job.replacement_of_job_id)
           && baselineOriginal?.originalSha256 === original.sha256
           && baselineOriginal.originalSha256 === job.original_sha256
           && baselineOriginal?.originalStoragePathDigest === originalStoragePathDigest
@@ -683,7 +696,8 @@ async function inspectCompletedJob({
     }
   }
 
-  if (activeAiCount !== 1) {
+  const expectedActiveAiCount = job.downstream_ai_policy === "preserve" ? 0 : 1;
+  if (activeAiCount !== expectedActiveAiCount) {
     violations.activeAiJobCountMismatch += 1;
   }
 
@@ -714,7 +728,8 @@ export async function auditCompletedJobs({
     completedContractCount: completedByContract.get(job.contract_id) ?? 0,
     activeAiCount: activeAiCounts.get(job.contract_id) ?? 0,
     baselineContractStatus: baselineStatusByContract.get(job.contract_id),
-    baselineOriginal: baselineOriginalByJob.get(job.id),
+    baselineOriginal: baselineOriginalByJob.get(job.id)
+      ?? baselineOriginalByJob.get(job.contract_id),
     readStorage,
     extractBboxPages,
     extractOriginalPageCount,
@@ -729,6 +744,43 @@ export async function auditCompletedJobs({
   }
 
   return summary;
+}
+
+export function auditReplacementDeletionLifecycle({
+  replacementJobs,
+  sourceJobsById,
+  deletionRows,
+}) {
+  const violations = emptyViolations();
+  const deletionsByReplacement = new Map();
+  for (const deletion of deletionRows) {
+    const rows = deletionsByReplacement.get(deletion.replacement_job_id) ?? [];
+    rows.push(deletion);
+    deletionsByReplacement.set(deletion.replacement_job_id, rows);
+  }
+  for (const replacement of replacementJobs.filter((job) => job.status === "completed")) {
+    const source = sourceJobsById.get(replacement.replacement_of_job_id);
+    if (!source || source.superseded_by_job_id !== replacement.id) {
+      violations.replacementLineageMismatch += 1;
+      continue;
+    }
+    const deletions = deletionsByReplacement.get(replacement.id) ?? [];
+    const expected = new Map([
+      ["masked_pdf", source.output_storage_path],
+      ["masked_spatial", source.spatial_data_path],
+    ]);
+    if (deletions.some((row) => row.storage_path === source.original_storage_path)) {
+      violations.originalDeletionCandidate += 1;
+    }
+    const valid = deletions.length === 2
+      && new Set(deletions.map((row) => row.artifact_kind)).size === 2
+      && deletions.every((row) => row.source_job_id === source.id
+        && row.status === "deleted"
+        && expected.get(row.artifact_kind) === row.storage_path
+        && row.storage_path !== source.original_storage_path);
+    if (!valid) violations.supersededArtifactDeletionMismatch += 1;
+  }
+  return violations;
 }
 
 function baselineDigest({ schemaVersion, capturedAt, records }) {
@@ -1025,7 +1077,7 @@ async function selectAllCompletedJobs(db) {
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await db
       .from("contract_document_jobs")
-      .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,ocr_applied,page_count,original_sha256,processed_sha256,spatial_sha256,spatial_schema_version,completed_at")
+      .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,ocr_applied,page_count,original_sha256,processed_sha256,spatial_sha256,spatial_schema_version,redaction_profile,processing_profile,downstream_ai_policy,replacement_of_job_id,completed_at")
       .eq("status", "completed")
       // Superseded DLP generations retain immutable hashes and lineage in the
       // database, but their masked Storage artifacts are intentionally deleted.
@@ -1057,6 +1109,47 @@ async function selectAllDocumentJobs(db) {
     if (page.length < PAGE_SIZE) break;
   }
   return rows;
+}
+
+async function loadReplacementDeletionState(db) {
+  const replacementJobs = [];
+  const deletionRows = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await db.from("contract_document_jobs")
+      .select("id,status,replacement_of_job_id")
+      .not("replacement_of_job_id", "is", null)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new AuditOperationalError("database_query_failed");
+    const page = data ?? [];
+    replacementJobs.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  const sourceJobsById = new Map();
+  for (const ids of chunks(
+    [...new Set(replacementJobs.map((job) => job.replacement_of_job_id))],
+    QUERY_CHUNK_SIZE,
+  )) {
+    if (!ids.length) continue;
+    const { data, error } = await db.from("contract_document_jobs")
+      .select("id,original_storage_path,output_storage_path,spatial_data_path,superseded_by_job_id")
+      .in("id", ids);
+    if (error) throw new AuditOperationalError("database_query_failed");
+    for (const job of data ?? []) sourceJobsById.set(job.id, job);
+  }
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await db.from("contract_document_artifact_deletions")
+      .select("source_job_id,replacement_job_id,artifact_kind,storage_path,status")
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new AuditOperationalError("database_query_failed");
+    const page = data ?? [];
+    deletionRows.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  return { replacementJobs, sourceJobsById, deletionRows };
 }
 
 export function isActiveDlpReplacementCandidate(job, contract) {
@@ -1289,27 +1382,37 @@ export async function runAudit({ db, concurrency = DEFAULT_CONCURRENCY, baseline
     ...baselineContractIds,
   ])];
   const allDocumentContractIds = [...new Set(allDocumentJobs.map((job) => job.contract_id))];
-  const [contractsById, activeAiCounts, baselineJobsById, relevantAiJobs] = await Promise.all([
+  const [
+    contractsById,
+    activeAiCounts,
+    baselineJobsById,
+    relevantAiJobs,
+    replacementDeletionState,
+  ] = await Promise.all([
     loadContracts(db, contractIds),
     loadActiveAiCounts(db, jobs),
     baseline
       ? loadDocumentJobsById(db, baseline.records.map((record) => record.jobId))
       : Promise.resolve(new Map()),
     loadRelevantAiJobs(db, allDocumentContractIds, baseline?.capturedAt ?? null),
+    loadReplacementDeletionState(db),
   ]);
   const baselineStatusByContract = new Map(
     baseline?.records.map((record) => [record.contractId, record.contractStatus]) ?? [],
   );
-  const baselineOriginalByJob = new Map(
-    baseline?.records.map((record) => [record.jobId, {
+  const baselineOriginalByJob = new Map();
+  for (const record of baseline?.records ?? []) {
+    const entry = {
       jobId: record.jobId,
       contractId: record.contractId,
       originalSha256: record.originalSha256,
       originalStoragePathDigest: record.originalStoragePathSha256,
       originalPdfReadable: record.originalPdfReadable,
       originalPageCount: record.originalPageCount,
-    }]) ?? [],
-  );
+    };
+    baselineOriginalByJob.set(record.jobId, entry);
+    baselineOriginalByJob.set(record.contractId, entry);
+  }
 
   const summary = await auditCompletedJobs({
     jobs,
@@ -1324,6 +1427,10 @@ export async function runAudit({ db, concurrency = DEFAULT_CONCURRENCY, baseline
     documentJobs: allDocumentJobs,
     aiJobs: relevantAiJobs,
   });
+  const replacementViolations = auditReplacementDeletionLifecycle(replacementDeletionState);
+  for (const [key, value] of Object.entries(replacementViolations)) {
+    summary.violations[key] += value;
+  }
   if (baseline) {
     const baselineSummary = await verifyBaseline({
       baseline,
