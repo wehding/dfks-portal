@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { gunzipSync } from "node:zlib";
 import sharp from "sharp";
 
 import {
@@ -15,12 +16,16 @@ import {
   detectPhysicalOrientation,
   enforceVisionWordLimits,
   isPdfImagesInventoryReliable,
+  mapOrientationVariantToCanonical,
   mapVisionPageToCanonical,
   pageRasterEvidence,
   parsePdfImagesList,
   parsePdftotextBbox,
   processPdfSpatially,
   readTextArtifactWithinLimit,
+  recoverOrientationPageFromVariants,
+  recoverUnreadablePageFromVariants,
+  resolvePhysicalOrientations,
 } from "./spatial-ocr.mjs";
 import { GoogleOcrOperationalError } from "./google-vision-api.mjs";
 
@@ -190,6 +195,204 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
   }
 });
 
+test("recovery af eneste læsbare side aktiverer en separat verificeret blank side", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dfks-unreadable-recovery-"));
+  try {
+    const blackPatch = await sharp({
+      create: { width: 40, height: 30, channels: 3, background: "black" },
+    }).png().toBuffer();
+    const sourceJpeg = await sharp({
+      create: { width: 100, height: 100, channels: 3, background: "white" },
+    }).composite([{ input: blackPatch, left: 10, top: 10 }]).jpeg({ quality: 95 }).toBuffer();
+    const whiteJpeg = await sharp({
+      create: { width: 100, height: 100, channels: 3, background: "white" },
+    }).jpeg({ quality: 95 }).toBuffer();
+    const visionWord = (text, top, shift = 0) => ({
+      confidence: 0.99,
+      boundingBox: { vertices: [
+        { x: 10 + shift, y: top }, { x: 30 + shift, y: top },
+        { x: 30 + shift, y: top + 10 }, { x: 10 + shift, y: top + 10 },
+      ] },
+      symbols: text.split("").map((symbol) => ({ text: symbol })),
+    });
+    const words = (shift = 0) => [
+      visionWord("Ord1", 10, shift),
+      visionWord("Ord2", 30, shift),
+      visionWord("Ord3", 50, shift),
+    ];
+    const response = (pageWords) => ({ fullTextAnnotation: { pages: [{
+      width: 100,
+      height: 100,
+      blocks: [{ paragraphs: [{ words: pageWords }] }],
+    }] } });
+    const runner = async (command, args) => {
+      if (command === "pdfinfo") {
+        return { stdout: "Pages: 2\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+      }
+      if (command === "pdfimages") {
+        return {
+          stdout: "page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio\n",
+          stderr: "",
+        };
+      }
+      if (command === "pdftoppm") {
+        const pageNumber = Number(args[args.indexOf("-f") + 1]);
+        await writeFile(`${args.at(-1)}.jpg`, pageNumber === 2 ? whiteJpeg : sourceJpeg);
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftotext") {
+        const target = args.at(-1);
+        if (args.includes("-bbox-layout")) {
+          const page = `<page width="612" height="792">
+            <word xMin="61.2" yMin="79.2" xMax="183.6" yMax="158.4">Ord1</word>
+            <word xMin="61.2" yMin="237.6" xMax="183.6" yMax="316.8">Ord2</word>
+            <word xMin="61.2" yMin="396" xMax="183.6" yMax="475.2">Ord3</word>
+          </page>`;
+          await writeFile(target, `${page}<page width="612" height="792"></page>`);
+        } else if (args[0] === "-f") {
+          await writeFile(target, "");
+        } else {
+          await writeFile(target, "A".repeat(200));
+        }
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "python3" && args[0].endsWith("normalise_orientation.py")) {
+        await writeFile(args[2], sourceJpeg);
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "python3" && args[0].endsWith("vision_overlay.py")) {
+        await writeFile(args[4], "%PDF-unreadable-recovery-test");
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command ${command}`);
+    };
+    let retryCalls = 0;
+    const result = await processPdfSpatially({
+      inputPath: join(directory, "input.pdf"),
+      outputPath: join(directory, "output.pdf"),
+      geometryPath: join(directory, "geometry.json.gz"),
+      workDir: directory,
+      commandRunner: runner,
+      googleClient: {
+        async annotateDocument() {
+          return {
+            responses: [
+              { fullTextAnnotation: { pages: [] } },
+              { fullTextAnnotation: { pages: [] } },
+            ],
+            sourcePages: [
+              { pageNumber: 1, imageBytes: sourceJpeg },
+              { pageNumber: 2, imageBytes: whiteJpeg },
+            ],
+            visionPageTransforms: [1, 2].map((pageNumber) => ({
+              pageNumber,
+              sourceWidth: 100,
+              sourceHeight: 100,
+              visionWidth: 100,
+              visionHeight: 100,
+            })),
+            retainedRasterBytes: sourceJpeg.length + whiteJpeg.length,
+            retainedVisionResponseBytes: 1_000,
+          };
+        },
+        async annotateUnreadablePageVariants(page) {
+          retryCalls += 1;
+          assert.equal(page.pageNumber, 1);
+          return {
+            variants: [
+              { kind: "colour", response: response(words()), transform: {
+                pageNumber: 1, sourceWidth: 100, sourceHeight: 100,
+                visionWidth: 100, visionHeight: 100,
+              } },
+              { kind: "contrast_gray", response: response(words(0.5)), transform: {
+                pageNumber: 1, sourceWidth: 100, sourceHeight: 100,
+                visionWidth: 100, visionHeight: 100,
+              } },
+            ],
+            retainedRasterBytes: sourceJpeg.length * 2,
+            retainedVisionResponseBytes: 1_000,
+          };
+        },
+      },
+    });
+    assert.equal(retryCalls, 1);
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(result.unreadablePageCount, 0);
+    assert.equal(result.blankPageCount, 1);
+
+    const runWithRetryWords = (colourWords, grayWords, resourceLimits) => processPdfSpatially({
+      inputPath: join(directory, "input.pdf"),
+      outputPath: join(directory, "limited-output.pdf"),
+      geometryPath: join(directory, "limited-geometry.json.gz"),
+      workDir: directory,
+      commandRunner: runner,
+      resourceLimits,
+      googleClient: {
+        async annotateDocument() {
+          return {
+            responses: [
+              { fullTextAnnotation: { pages: [] } },
+              { fullTextAnnotation: { pages: [] } },
+            ],
+            sourcePages: [
+              { pageNumber: 1, imageBytes: sourceJpeg },
+              { pageNumber: 2, imageBytes: whiteJpeg },
+            ],
+            visionPageTransforms: [1, 2].map((pageNumber) => ({
+              pageNumber, sourceWidth: 100, sourceHeight: 100,
+              visionWidth: 100, visionHeight: 100,
+            })),
+            retainedRasterBytes: sourceJpeg.length + whiteJpeg.length,
+            retainedVisionResponseBytes: 1_000,
+          };
+        },
+        async annotateUnreadablePageVariants() {
+          return {
+            variants: [
+              { kind: "colour", response: response(colourWords), transform: {
+                pageNumber: 1, sourceWidth: 100, sourceHeight: 100,
+                visionWidth: 100, visionHeight: 100,
+              } },
+              { kind: "contrast_gray", response: response(grayWords), transform: {
+                pageNumber: 1, sourceWidth: 100, sourceHeight: 100,
+                visionWidth: 100, visionHeight: 100,
+              } },
+            ],
+            retainedRasterBytes: sourceJpeg.length * 2,
+            retainedVisionResponseBytes: 1_000,
+          };
+        },
+      },
+    });
+    const fiveWords = Array.from({ length: 5 }, (_, index) => (
+      visionWord(`Farve${index}`, 5 + index * 15)
+    ));
+    const fiveDisagreeingWords = Array.from({ length: 5 }, (_, index) => (
+      visionWord(`Grå${index}`, 5 + index * 15)
+    ));
+    await assert.rejects(
+      runWithRetryWords(fiveWords, fiveDisagreeingWords, {
+        maxVisionWordsPerPage: 4,
+        maxVisionWordsTotal: 100,
+      }),
+      (error) => error instanceof GoogleOcrOperationalError
+        && error.code === "vision_word_limit_exceeded",
+    );
+    await assert.rejects(
+      runWithRetryWords(words(), [
+        visionWord("Andet1", 10), visionWord("Andet2", 30), visionWord("Andet3", 50),
+      ], {
+        maxVisionWordsPerPage: 4,
+        maxVisionWordsTotal: 5,
+      }),
+      (error) => error instanceof GoogleOcrOperationalError
+        && error.code === "vision_word_limit_exceeded",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("forced Vision behandler alle native sider, mens normal behandling fortsat er not_required", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dfks-force-native-"));
   try {
@@ -300,6 +503,143 @@ test("forced Vision behandler alle native sider, mens normal behandling fortsat 
     assert.equal(visionCalls, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+async function runOverlayFallbackFixture({ passingProfile = null, failingBuildProfile = null } = {}) {
+  const directory = await mkdtemp(join(tmpdir(), "dfks-overlay-fallback-"));
+  const sourceJpeg = await sharp({
+    create: { width: 100, height: 100, channels: 3, background: "white" },
+  }).jpeg({ quality: 95 }).toBuffer();
+  const overlayCalls = [];
+  const exactBbox = `<page width="612" height="792">
+    <word xMin="61.2" yMin="79.2" xMax="183.6" yMax="158.4">Ord1</word>
+    <word xMin="61.2" yMin="237.6" xMax="183.6" yMax="316.8">Ord2</word>
+    <word xMin="61.2" yMin="396" xMax="183.6" yMax="475.2">Ord3</word>
+    <word xMin="61.2" yMin="554.4" xMax="183.6" yMax="633.6">Ord4</word>
+  </page>`;
+  const failingBbox = `<page width="612" height="792">
+    <word xMin="300" yMin="300" xMax="360" yMax="330">Ord1</word>
+  </page>`;
+  const runner = async (command, args) => {
+    if (command === "pdfinfo") {
+      return { stdout: "Pages: 1\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+    }
+    if (command === "pdfimages") {
+      return {
+        stdout: "page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio\n",
+        stderr: "",
+      };
+    }
+    if (command === "pdftoppm") {
+      await writeFile(`${args.at(-1)}.jpg`, sourceJpeg);
+      return { stdout: "", stderr: "" };
+    }
+    if (command === "pdftotext") {
+      const target = args.at(-1);
+      if (args.includes("-bbox-layout")) {
+        const candidateInput = args.at(-2);
+        const passes = passingProfile != null && candidateInput.includes(passingProfile);
+        await writeFile(target, passes ? exactBbox : failingBbox);
+      } else if (args[0] === "-f") {
+        await writeFile(target, "");
+      } else {
+        await writeFile(target, "A".repeat(200));
+      }
+      return { stdout: "", stderr: "" };
+    }
+    if (command === "python3" && args[0].endsWith("normalise_orientation.py")) {
+      await writeFile(args[2], sourceJpeg);
+      return { stdout: "", stderr: "" };
+    }
+    if (command === "python3" && args[0].endsWith("vision_overlay.py")) {
+      const profile = args[6] ?? "primary-v1";
+      overlayCalls.push(profile);
+      if (profile === failingBuildProfile) throw new Error("bounded candidate failed");
+      await writeFile(args[4], `%PDF-${profile}`);
+      return { stdout: "", stderr: "" };
+    }
+    throw new Error(`unexpected command ${command}`);
+  };
+  const visionWord = (text, top) => ({
+    confidence: 0.99,
+    boundingBox: { vertices: [
+      { x: 10, y: top }, { x: 30, y: top },
+      { x: 30, y: top + 10 }, { x: 10, y: top + 10 },
+    ] },
+    symbols: text.split("").map((symbol) => ({ text: symbol })),
+  });
+  const outputPath = join(directory, "output.pdf");
+  const geometryPath = join(directory, "geometry.json.gz");
+  const result = await processPdfSpatially({
+    inputPath: join(directory, "input.pdf"),
+    outputPath,
+    geometryPath,
+    workDir: directory,
+    commandRunner: runner,
+    googleClient: {
+      async annotateDocument() {
+        return {
+          responses: [{ fullTextAnnotation: { pages: [{
+            width: 100,
+            height: 100,
+            blocks: [{ paragraphs: [{ words: [
+              visionWord("Ord1", 10),
+              visionWord("Ord2", 30),
+              visionWord("Ord3", 50),
+              visionWord("Ord4", 70),
+            ] }] }],
+          }] } }],
+          sourcePages: [{ pageNumber: 1, imageBytes: sourceJpeg }],
+          visionPageTransforms: [{
+            pageNumber: 1,
+            sourceWidth: 100,
+            sourceHeight: 100,
+            visionWidth: 100,
+            visionHeight: 100,
+          }],
+        };
+      },
+    },
+  });
+  return { directory, geometryPath, outputPath, overlayCalls, result };
+}
+
+test("første alternative overlay der består hele auditen erstatter den fejlede primære kandidat", async () => {
+  const fixture = await runOverlayFallbackFixture({ passingProfile: "font-metrics-v1" });
+  try {
+    assert.equal(fixture.result.status, "completed", JSON.stringify(fixture.result));
+    assert.deepEqual(fixture.overlayCalls, ["primary-v1", "font-metrics-v1"]);
+    assert.equal(await readFile(fixture.outputPath, "utf8"), "%PDF-font-metrics-v1");
+    const geometry = JSON.parse(gunzipSync(await readFile(fixture.geometryPath)).toString("utf8"));
+    assert.equal(geometry.overlayProfile, "font-metrics-v1");
+    assert.equal(geometry.spatialVerification.passed, true);
+    await assert.rejects(readFile(join(
+      fixture.directory,
+      "output-axis-aligned-font-metrics-v1.pdf",
+    )));
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("alle fejlede overlay-kandidater slettes og resultatet forbliver needs_review", async () => {
+  const fixture = await runOverlayFallbackFixture({ failingBuildProfile: "font-metrics-v1" });
+  try {
+    assert.equal(fixture.result.status, "needs_review");
+    assert.deepEqual(fixture.overlayCalls, [
+      "primary-v1",
+      "font-metrics-v1",
+      "axis-aligned-font-metrics-v1",
+    ]);
+    assert.equal(await readFile(fixture.outputPath, "utf8"), "%PDF-primary-v1");
+    assert.equal(fixture.result.spatial.passed, false);
+    assert.deepEqual(fixture.result.affectedPageNumbers, [1]);
+    for (const profile of ["font-metrics-v1", "axis-aligned-font-metrics-v1"]) {
+      await assert.rejects(readFile(join(fixture.directory, `output-${profile}.pdf`)));
+    }
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
   }
 });
 
@@ -424,6 +764,354 @@ test("modstridende fysiske tekstretninger afvises fail-closed", () => {
   const page = orientedPage(90);
   page.words.push(...orientedPage(270).words);
   assert.equal(detectPhysicalOrientation(page).reliable, false);
+});
+
+test("naboer kan ikke sænke sidens eksisterende orienteringsgrænse", () => {
+  const left = { ...orientedPage(90), pageNumber: 1 };
+  const middle = {
+    ...orientedPage(90),
+    pageNumber: 2,
+    words: [
+      ...orientedPage(90).words.slice(0, 2),
+      orientedPage(0).words[0],
+    ],
+  };
+  const right = { ...orientedPage(90), pageNumber: 3 };
+  assert.equal(detectPhysicalOrientation(middle).reliable, false);
+  const resolved = resolvePhysicalOrientations([left, middle, right]);
+  assert.equal(resolved.get(1).reliable, true);
+  assert.equal(resolved.get(2).reliable, false);
+  assert.equal(resolved.get(2).correctionDegrees, 0);
+  assert.equal(resolved.get(3).reliable, true);
+
+  const weak = {
+    ...middle,
+    words: [{
+      text: "x",
+      confidence: 0.99,
+      vertices: [
+        { x: 40, y: 80 }, { x: 40, y: 84 },
+        { x: 38, y: 84 }, { x: 38, y: 80 },
+      ],
+    }],
+  };
+  assert.equal(resolvePhysicalOrientations([left, weak, right]).get(2).reliable, false);
+
+  const loweredGateRegression = {
+    ...middle,
+    words: [
+      {
+        text: "retning",
+        confidence: 1,
+        vertices: [
+          { x: 40, y: 80 }, { x: 40, y: 93 },
+          { x: 35, y: 93 }, { x: 35, y: 80 },
+        ],
+      },
+      {
+        text: "støj",
+        confidence: 1,
+        vertices: [
+          { x: 40, y: 80 }, { x: 47, y: 80 },
+          { x: 47, y: 85 }, { x: 40, y: 85 },
+        ],
+      },
+    ],
+  };
+  const loweredGateOrientation = detectPhysicalOrientation(loweredGateRegression);
+  assert.equal(loweredGateOrientation.acceptedWords, 2);
+  assert.equal(loweredGateOrientation.confidence, 0.65);
+  assert.equal(resolvePhysicalOrientations([
+    left, loweredGateRegression, right,
+  ]).get(2).reliable, false);
+
+  const conflictingRight = { ...orientedPage(0), pageNumber: 3 };
+  assert.equal(resolvePhysicalOrientations([left, middle, conflictingRight]).get(2).reliable, false);
+
+  const noLeftNeighbor = { ...middle, pageNumber: 1 };
+  assert.equal(resolvePhysicalOrientations([noLeftNeighbor, right]).get(1).reliable, false);
+
+  const ownDirectionDisagrees = {
+    ...middle,
+    words: [
+      ...orientedPage(0).words.slice(0, 2),
+      orientedPage(90).words[0],
+    ],
+  };
+  assert.equal(resolvePhysicalOrientations([left, ownDirectionDisagrees, right]).get(2).reliable, false);
+});
+
+test("kardinalvariantens geometri mappes præcist tilbage til canonical raster", () => {
+  const mapped = mapOrientationVariantToCanonical({
+    pageNumber: 2,
+    imageWidth: 200,
+    imageHeight: 100,
+    words: [{
+      text: "Kort",
+      confidence: 0.99,
+      vertices: [
+        { x: 180, y: 10 }, { x: 180, y: 30 },
+        { x: 170, y: 30 }, { x: 170, y: 10 },
+      ],
+    }],
+  }, {
+    pageNumber: 2,
+    rotationDegrees: 90,
+    canonicalWidth: 100,
+    canonicalHeight: 200,
+  });
+  assert.equal(mapped.imageWidth, 100);
+  assert.equal(mapped.imageHeight, 200);
+  assert.deepEqual(mapped.words[0].vertices, [
+    { x: 10, y: 20 }, { x: 30, y: 20 },
+    { x: 30, y: 30 }, { x: 10, y: 30 },
+  ]);
+  assert.equal(mapped.recoveryRotationDegrees, 90);
+});
+
+test("kort side genvindes kun ved to strengt enige, lokalt pålidelige orienteringer", () => {
+  const variants = [0, 90, 180, 270].map((rotationDegrees) => ({
+    ...orientedPage(90),
+    words: orientedPage(90).words.slice(0, 3),
+    recoveryRotationDegrees: rotationDegrees,
+  }));
+  const recovered = recoverOrientationPageFromVariants(variants);
+  assert.equal(recovered?.recoveryProfile, "vision-cardinal-orientation-consensus-v1");
+  assert.equal(detectPhysicalOrientation(recovered).reliable, true);
+  assert.equal(detectPhysicalOrientation(recovered).correctionDegrees, 90);
+
+  const tied = [0, 90, 180, 270].map((rotationDegrees) => {
+    const page = orientedPage(90);
+    page.words.push(...orientedPage(270).words);
+    return { ...page, recoveryRotationDegrees: rotationDegrees };
+  });
+  assert.equal(recoverOrientationPageFromVariants(tied), null);
+
+  const conflicting = variants.map((page, index) => (
+    index === 3
+      ? { ...orientedPage(270), recoveryRotationDegrees: page.recoveryRotationDegrees }
+      : page
+  ));
+  assert.equal(recoverOrientationPageFromVariants(conflicting), null);
+
+  const geometryConflict = variants.map((page, index) => (
+    index === 3
+      ? {
+        ...page,
+        words: page.words.map((word) => ({
+          ...word,
+          vertices: word.vertices.map((point) => ({ x: point.x + 30, y: point.y })),
+        })),
+      }
+      : page
+  ));
+  assert.equal(recoverOrientationPageFromVariants(geometryConflict), null);
+});
+
+test("orienteringsretry sænker ikke 0,70- eller lokale evidenskrav", () => {
+  const weak = [0, 90, 180, 270].map((rotationDegrees) => ({
+    pageNumber: 1,
+    imageWidth: 100,
+    imageHeight: 200,
+    recoveryRotationDegrees: rotationDegrees,
+    words: [
+      {
+        text: "retning",
+        confidence: 1,
+        vertices: [
+          { x: 40, y: 80 }, { x: 40, y: 93 },
+          { x: 35, y: 93 }, { x: 35, y: 80 },
+        ],
+      },
+      {
+        text: "støj",
+        confidence: 1,
+        vertices: [
+          { x: 40, y: 80 }, { x: 47, y: 80 },
+          { x: 47, y: 85 }, { x: 40, y: 85 },
+        ],
+      },
+    ],
+  }));
+  assert.equal(detectPhysicalOrientation(weak[0]).confidence, 0.65);
+  assert.equal(recoverOrientationPageFromVariants(weak), null);
+});
+
+test("en kort sidste side kan færdiggøres via kardinal konsensus", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dfks-orientation-recovery-"));
+  try {
+    const sourceJpeg = await sharp({
+      create: { width: 100, height: 100, channels: 3, background: "white" },
+    }).jpeg({ quality: 95 }).toBuffer();
+    const canonicalWords = [
+      ["Ord1", 10], ["Ord2", 40], ["Ord3", 70],
+    ].map(([text, top]) => ({
+      text,
+      confidence: 0.99,
+      vertices: [
+        { x: 10, y: top }, { x: 30, y: top },
+        { x: 30, y: top + 10 }, { x: 10, y: top + 10 },
+      ],
+    }));
+    const rotateClockwise = (point, degrees) => {
+      if (degrees === 90) return { x: 100 - point.y, y: point.x };
+      if (degrees === 180) return { x: 100 - point.x, y: 100 - point.y };
+      if (degrees === 270) return { x: point.y, y: 100 - point.x };
+      return point;
+    };
+    const response = (words) => ({ fullTextAnnotation: { pages: [{
+      width: 100,
+      height: 100,
+      blocks: [{ paragraphs: [{ words: words.map((word) => ({
+        confidence: word.confidence,
+        boundingBox: { vertices: word.vertices },
+        symbols: word.text.split("").map((symbol) => ({ text: symbol })),
+      })) }] }],
+    }] } });
+    const runner = async (command, args) => {
+      if (command === "pdfinfo") {
+        return { stdout: "Pages: 1\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+      }
+      if (command === "pdfimages") {
+        return {
+          stdout: "page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio\n",
+          stderr: "",
+        };
+      }
+      if (command === "pdftoppm") {
+        await writeFile(`${args.at(-1)}.jpg`, sourceJpeg);
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftotext") {
+        const target = args.at(-1);
+        if (args.includes("-bbox-layout")) {
+          await writeFile(target, `<page width="612" height="792">
+            <word xMin="61.2" yMin="79.2" xMax="183.6" yMax="158.4">Ord1</word>
+            <word xMin="61.2" yMin="316.8" xMax="183.6" yMax="396">Ord2</word>
+            <word xMin="61.2" yMin="554.4" xMax="183.6" yMax="633.6">Ord3</word>
+          </page>`);
+        } else if (args[0] === "-f") {
+          await writeFile(target, "");
+        } else {
+          await writeFile(target, "A".repeat(200));
+        }
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "python3" && args[0].endsWith("normalise_orientation.py")) {
+        await writeFile(args[2], sourceJpeg);
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "python3" && args[0].endsWith("vision_overlay.py")) {
+        await writeFile(args[4], "%PDF-orientation-recovery-test");
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command ${command}`);
+    };
+    let retryCalls = 0;
+    const result = await processPdfSpatially({
+      inputPath: join(directory, "input.pdf"),
+      outputPath: join(directory, "output.pdf"),
+      geometryPath: join(directory, "geometry.json.gz"),
+      workDir: directory,
+      commandRunner: runner,
+      googleClient: {
+        async annotateDocument() {
+          const weakWords = canonicalWords.slice(0, 2).map((word) => ({
+            ...word,
+            vertices: [
+              word.vertices[0],
+              { x: word.vertices[0].x + 3, y: word.vertices[0].y },
+              { x: word.vertices[0].x + 3, y: word.vertices[0].y + 3 },
+              { x: word.vertices[0].x, y: word.vertices[0].y + 3 },
+            ],
+          }));
+          return {
+            responses: [response(weakWords)],
+            sourcePages: [{ pageNumber: 1, imageBytes: sourceJpeg }],
+            visionPageTransforms: [{
+              pageNumber: 1,
+              sourceWidth: 100,
+              sourceHeight: 100,
+              visionWidth: 100,
+              visionHeight: 100,
+            }],
+            retainedRasterBytes: sourceJpeg.length,
+            retainedVisionResponseBytes: 1_000,
+          };
+        },
+        async annotateOrientationPageVariants(page, options) {
+          retryCalls += 1;
+          assert.equal(page.pageNumber, 1);
+          assert.equal(options.signal, undefined);
+          return {
+            variants: [0, 90, 180, 270].map((rotationDegrees) => ({
+              kind: `rotate_${rotationDegrees}`,
+              response: response(canonicalWords.map((word) => ({
+                ...word,
+                vertices: word.vertices.map((point) => rotateClockwise(point, rotationDegrees)),
+              }))),
+              transform: {
+                pageNumber: 1,
+                rotationDegrees,
+                canonicalWidth: 100,
+                canonicalHeight: 100,
+                sourceWidth: 100,
+                sourceHeight: 100,
+                visionWidth: 100,
+                visionHeight: 100,
+              },
+            })),
+            retainedRasterBytes: sourceJpeg.length * 4,
+            retainedVisionResponseBytes: 2_000,
+          };
+        },
+      },
+    });
+    assert.equal(retryCalls, 1);
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(result.orientationUncertainPageCount, 0);
+    assert.deepEqual(result.orientationCorrections, []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+function recoveryVariantPage({ shift = 0, token = "Kontrakt", confidence = 0.95 } = {}) {
+  return {
+    pageNumber: 2,
+    imageWidth: 200,
+    imageHeight: 300,
+    words: ["Aftale", "Producent", token].map((text, index) => ({
+      text,
+      confidence,
+      vertices: [
+        { x: 20 + shift, y: 20 + index * 30 },
+        { x: 80 + shift, y: 20 + index * 30 },
+        { x: 80 + shift, y: 35 + index * 30 },
+        { x: 20 + shift, y: 35 + index * 30 },
+      ],
+    })),
+  };
+}
+
+test("ulæselig side accepteres kun ved streng token- og geometrienighed", () => {
+  const colour = recoveryVariantPage();
+  const agreeingGray = recoveryVariantPage({ shift: 1 });
+  const recovered = recoverUnreadablePageFromVariants([colour, agreeingGray]);
+  assert.equal(recovered?.recoveryProfile, "vision-colour-contrast-consensus-v1");
+  assert.deepEqual(recovered?.words, colour.words);
+  assert.equal(recoverUnreadablePageFromVariants([
+    colour,
+    recoveryVariantPage({ token: "Honorar" }),
+  ]), null);
+  assert.equal(recoverUnreadablePageFromVariants([
+    colour,
+    recoveryVariantPage({ shift: 30 }),
+  ]), null);
+  assert.equal(recoverUnreadablePageFromVariants([
+    colour,
+    recoveryVariantPage({ confidence: 0.5 }),
+  ]), null);
 });
 
 test("geometrisk præcision måles mod PDF-tekstlaget", () => {

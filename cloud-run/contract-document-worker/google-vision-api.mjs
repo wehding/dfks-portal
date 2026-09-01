@@ -17,6 +17,9 @@ const MAX_VISION_RESPONSE_RECOVERY_ATTEMPTS = 1;
 export const MAX_VISION_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_VISION_IMAGE_PIXELS = 75_000_000;
 const VISION_RESPONSE_FIELDS = "responses(error,fullTextAnnotation/pages)";
+const UNREADABLE_PAGE_VARIANT_QUALITY = 96;
+const ORIENTATION_PAGE_VARIANT_QUALITY = 96;
+const ORIENTATION_ROTATIONS = Object.freeze([0, 90, 180, 270]);
 
 export class GoogleOcrOperationalError extends Error {
   constructor(code, options) {
@@ -218,6 +221,97 @@ async function readImageMetadata(imageBytes) {
   }
 }
 
+/**
+ * Build exactly two deterministic, metadata-free retry images for a page that
+ * produced no Vision words. The colour variant preserves tonal information;
+ * the grayscale variant applies bounded contrast normalisation and sharpening.
+ * Neither variant is accepted on its own: spatial-ocr.mjs requires strict text
+ * and geometry agreement before either response can replace an empty page.
+ */
+export async function createUnreadablePageVisionVariants(imageBytes) {
+  if (!Buffer.isBuffer(imageBytes) || imageBytes.length < 1
+    || imageBytes.length > MAX_VISION_IMAGE_BYTES) {
+    throw new GoogleOcrOperationalError("vision_page_too_large");
+  }
+  const source = await readImageMetadata(imageBytes);
+  try {
+    const baseOptions = {
+      failOn: "warning",
+      limitInputPixels: MAX_VISION_IMAGE_PIXELS,
+      sequentialRead: true,
+    };
+    const colour = await sharp(imageBytes, baseOptions)
+      .removeAlpha()
+      .toColourspace("srgb")
+      .jpeg({ quality: UNREADABLE_PAGE_VARIANT_QUALITY, chromaSubsampling: "4:4:4" })
+      .toBuffer();
+    const contrastGray = await sharp(imageBytes, baseOptions)
+      .greyscale()
+      .normalise({ lower: 1, upper: 99 })
+      .sharpen({ sigma: 1 })
+      .jpeg({ quality: UNREADABLE_PAGE_VARIANT_QUALITY, chromaSubsampling: "4:4:4" })
+      .toBuffer();
+    for (const bytes of [colour, contrastGray]) {
+      if (bytes.length < 1 || bytes.length > MAX_VISION_IMAGE_BYTES) {
+        throw new GoogleOcrOperationalError("vision_page_too_large");
+      }
+    }
+    return [
+      { kind: "colour", imageBytes: colour, ...source },
+      { kind: "contrast_gray", imageBytes: contrastGray, ...source },
+    ];
+  } catch (error) {
+    if (error instanceof GoogleOcrOperationalError) throw error;
+    throw new GoogleOcrOperationalError("vision_page_invalid", { cause: error });
+  }
+}
+
+/**
+ * Re-encode one page at the four cardinal rotations. These are bounded,
+ * metadata-free transport derivatives used only to obtain independent local
+ * orientation evidence. The caller must map every response back to the
+ * canonical raster and must never treat a rotation as evidence by itself.
+ */
+export async function createOrientationPageVisionVariants(imageBytes) {
+  if (!Buffer.isBuffer(imageBytes) || imageBytes.length < 1
+    || imageBytes.length > MAX_VISION_IMAGE_BYTES) {
+    throw new GoogleOcrOperationalError("vision_page_too_large");
+  }
+  const canonical = await readImageMetadata(imageBytes);
+  try {
+    const variants = [];
+    for (const rotationDegrees of ORIENTATION_ROTATIONS) {
+      const image = sharp(imageBytes, {
+        failOn: "warning",
+        limitInputPixels: MAX_VISION_IMAGE_PIXELS,
+        sequentialRead: true,
+      })
+        .removeAlpha()
+        .toColourspace("srgb")
+        .rotate(rotationDegrees, { background: "white" });
+      const rotated = await image
+        .jpeg({ quality: ORIENTATION_PAGE_VARIANT_QUALITY, chromaSubsampling: "4:4:4" })
+        .toBuffer({ resolveWithObject: true });
+      if (rotated.data.length < 1 || rotated.data.length > MAX_VISION_IMAGE_BYTES
+        || !Number.isSafeInteger(rotated.info.width) || !Number.isSafeInteger(rotated.info.height)
+        || rotated.info.width < 1 || rotated.info.height < 1) {
+        throw new GoogleOcrOperationalError("vision_page_too_large");
+      }
+      variants.push({
+        kind: `rotate_${rotationDegrees}`,
+        rotationDegrees,
+        canonicalWidth: canonical.width,
+        canonicalHeight: canonical.height,
+        imageBytes: rotated.data,
+      });
+    }
+    return variants;
+  } catch (error) {
+    if (error instanceof GoogleOcrOperationalError) throw error;
+    throw new GoogleOcrOperationalError("vision_page_invalid", { cause: error });
+  }
+}
+
 export async function prepareImageForVision(imageBytes, {
   maxRequestBodyBytes = MAX_VISION_REQUEST_BODY_BYTES,
 } = {}) {
@@ -359,6 +453,40 @@ export function createGoogleOcrClient({
     return result.responses;
   }
 
+  async function annotateAdaptivePages(batch, {
+    signal,
+    limits,
+    checkHealthy,
+    transformByTransportPage,
+    appendResponses,
+    adjustRetainedRasterBytes,
+  }) {
+    checkHealthy();
+    try {
+      appendResponses(await annotateBatch(batch, { signal, resourceLimits: limits }));
+    } catch (error) {
+      if (!(error instanceof GoogleOcrOperationalError)
+        || error.code !== "vision_response_too_large"
+        || error.documentBudgetExceeded === true) throw error;
+      if (batch.length === 1) {
+        const page = batch[0];
+        const transform = transformByTransportPage.get(page);
+        adjustRetainedRasterBytes(await recoverVisionTransportPage(page, transform));
+        appendResponses(await annotateBatch([page], { signal, resourceLimits: limits }));
+        return;
+      }
+      const middle = Math.ceil(batch.length / 2);
+      await annotateAdaptivePages(batch.slice(0, middle), {
+        signal, limits, checkHealthy, transformByTransportPage,
+        appendResponses, adjustRetainedRasterBytes,
+      });
+      await annotateAdaptivePages(batch.slice(middle), {
+        signal, limits, checkHealthy, transformByTransportPage,
+        appendResponses, adjustRetainedRasterBytes,
+      });
+    }
+  }
+
   async function annotateDocument(pages, {
     assertHealthy = () => {}, resourceLimits, signal,
   } = {}) {
@@ -411,29 +539,14 @@ export function createGoogleOcrClient({
       retainedVisionResponseBytes = nextRetainedBytes;
       responses.push(...batchResponses);
     };
-    const annotateAdaptive = async (batch) => {
-      checkHealthy();
-      try {
-        appendResponses(await annotateBatch(batch, { signal, resourceLimits: limits }));
-      } catch (error) {
-        if (!(error instanceof GoogleOcrOperationalError)
-          || error.code !== "vision_response_too_large"
-          || error.documentBudgetExceeded === true) throw error;
-        if (batch.length === 1) {
-          const page = batch[0];
-          const transform = visionPageTransforms.find(
-            (candidate) => candidate.pageNumber === page.pageNumber,
-          );
-          retainedRasterBytes += await recoverVisionTransportPage(page, transform);
-          if (retainedRasterBytes > limits.maxDocumentTotalRasterBytes) {
-            throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
-          }
-          appendResponses(await annotateBatch([page], { signal, resourceLimits: limits }));
-          return;
-        }
-        const middle = Math.ceil(batch.length / 2);
-        await annotateAdaptive(batch.slice(0, middle));
-        await annotateAdaptive(batch.slice(middle));
+    const transformByTransportPage = new Map(visionPages.map((page, index) => [
+      page,
+      visionPageTransforms[index],
+    ]));
+    const adjustRetainedRasterBytes = (delta) => {
+      retainedRasterBytes += delta;
+      if (retainedRasterBytes > limits.maxDocumentTotalRasterBytes) {
+        throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
       }
     };
     let batch = [];
@@ -445,17 +558,163 @@ export function createGoogleOcrClient({
       }
       if (batch.length && (batch.length >= MAX_VISION_IMAGES
         || estimatedBytes + pageBytes > limits.maxVisionRequestBodyBytes - VISION_BODY_MARGIN_BYTES)) {
-        await annotateAdaptive(batch);
+        await annotateAdaptivePages(batch, {
+          signal, limits, checkHealthy, transformByTransportPage,
+          appendResponses, adjustRetainedRasterBytes,
+        });
         batch = [];
         estimatedBytes = 0;
       }
       batch.push(page);
       estimatedBytes += pageBytes;
     }
-    if (batch.length) await annotateAdaptive(batch);
+    if (batch.length) {
+      await annotateAdaptivePages(batch, {
+        signal, limits, checkHealthy, transformByTransportPage,
+        appendResponses, adjustRetainedRasterBytes,
+      });
+    }
     checkHealthy();
-    return { responses, sourcePages, visionPageTransforms };
+    return {
+      responses,
+      sourcePages,
+      visionPageTransforms,
+      retainedRasterBytes,
+      retainedVisionResponseBytes,
+    };
   }
 
-  return { annotateBatch, annotateDocument };
+  async function annotatePageVariants(page, {
+    assertHealthy = () => {},
+    resourceLimits,
+    signal,
+    maxAdditionalRasterBytes,
+    maxAdditionalResponseBytes,
+  } = {}, createVariants) {
+    const checkHealthy = () => {
+      throwIfAborted(signal);
+      assertHealthy();
+      throwIfAborted(signal);
+    };
+    const limits = resolveDocumentResourceLimits(resourceLimits);
+    if (!Number.isSafeInteger(page?.pageNumber) || page.pageNumber < 1) {
+      throw new GoogleOcrOperationalError("vision_page_invalid");
+    }
+    const rasterBudget = maxAdditionalRasterBytes == null
+      ? limits.maxDocumentTotalRasterBytes
+      : Math.min(limits.maxDocumentTotalRasterBytes, Number(maxAdditionalRasterBytes));
+    const responseBudget = maxAdditionalResponseBytes == null
+      ? limits.maxVisionResponseBytesTotal
+      : Math.min(limits.maxVisionResponseBytesTotal, Number(maxAdditionalResponseBytes));
+    if (!Number.isSafeInteger(rasterBudget) || rasterBudget < 1
+      || !Number.isSafeInteger(responseBudget) || responseBudget < 1) {
+      throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
+    }
+
+    checkHealthy();
+    const variants = await createVariants(page.imageBytes);
+    let retainedRasterBytes = 0;
+    const preparedPages = [];
+    const transforms = [];
+    for (const variant of variants) {
+      checkHealthy();
+      retainedRasterBytes += variant.imageBytes.length;
+      const prepared = await prepareImageForVision(variant.imageBytes, {
+        maxRequestBodyBytes: limits.maxVisionRequestBodyBytes,
+      });
+      if (prepared.downscaled) retainedRasterBytes += prepared.imageBytes.length;
+      if (retainedRasterBytes > rasterBudget) {
+        throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
+      }
+      preparedPages.push({ imageBytes: prepared.imageBytes });
+      transforms.push({
+        kind: variant.kind,
+        ...(Number.isSafeInteger(variant.rotationDegrees) ? {
+          rotationDegrees: variant.rotationDegrees,
+          canonicalWidth: variant.canonicalWidth,
+          canonicalHeight: variant.canonicalHeight,
+        } : {}),
+        pageNumber: page.pageNumber,
+        sourceWidth: prepared.sourceWidth,
+        sourceHeight: prepared.sourceHeight,
+        visionWidth: prepared.visionWidth,
+        visionHeight: prepared.visionHeight,
+        recoveryAttempts: 0,
+        retainedTransportBytes: prepared.downscaled ? prepared.imageBytes.length : 0,
+      });
+    }
+
+    const responses = [];
+    let retainedVisionResponseBytes = 0;
+    const appendResponses = (batchResponses) => {
+      const nextRetainedBytes = retainedVisionResponseBytes + visionResponseByteSize(batchResponses);
+      if (nextRetainedBytes > responseBudget) {
+        const error = new GoogleOcrOperationalError("vision_response_too_large");
+        error.documentBudgetExceeded = true;
+        throw error;
+      }
+      retainedVisionResponseBytes = nextRetainedBytes;
+      responses.push(...batchResponses);
+    };
+    const transformByTransportPage = new Map(preparedPages.map((preparedPage, index) => [
+      preparedPage,
+      transforms[index],
+    ]));
+    const adjustRetainedRasterBytes = (delta) => {
+      retainedRasterBytes += delta;
+      if (retainedRasterBytes > rasterBudget) {
+        throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
+      }
+    };
+    let batch = [];
+    let estimatedBytes = 0;
+    for (const preparedPage of preparedPages) {
+      const pageBytes = visionRequestBodySize([preparedPage]);
+      if (pageBytes > limits.maxVisionRequestBodyBytes) {
+        throw new GoogleOcrOperationalError("vision_page_too_large");
+      }
+      if (batch.length && (batch.length >= MAX_VISION_IMAGES
+        || estimatedBytes + pageBytes > limits.maxVisionRequestBodyBytes - VISION_BODY_MARGIN_BYTES)) {
+        await annotateAdaptivePages(batch, {
+          signal, limits, checkHealthy, transformByTransportPage,
+          appendResponses, adjustRetainedRasterBytes,
+        });
+        batch = [];
+        estimatedBytes = 0;
+      }
+      batch.push(preparedPage);
+      estimatedBytes += pageBytes;
+    }
+    if (batch.length) {
+      await annotateAdaptivePages(batch, {
+        signal, limits, checkHealthy, transformByTransportPage,
+        appendResponses, adjustRetainedRasterBytes,
+      });
+    }
+    checkHealthy();
+    return {
+      variants: responses.map((response, index) => ({
+        kind: transforms[index].kind,
+        response,
+        transform: transforms[index],
+      })),
+      retainedRasterBytes,
+      retainedVisionResponseBytes,
+    };
+  }
+
+  async function annotateUnreadablePageVariants(page, options = {}) {
+    return annotatePageVariants(page, options, createUnreadablePageVisionVariants);
+  }
+
+  async function annotateOrientationPageVariants(page, options = {}) {
+    return annotatePageVariants(page, options, createOrientationPageVisionVariants);
+  }
+
+  return {
+    annotateBatch,
+    annotateDocument,
+    annotateUnreadablePageVariants,
+    annotateOrientationPageVariants,
+  };
 }

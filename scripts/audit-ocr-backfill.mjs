@@ -33,7 +33,7 @@ const PDFTOTEXT_TIMEOUT_MS = 120_000;
 const PDF_PAGE_COUNT_TIMEOUT_MS = 60_000;
 const BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v4";
 const LEGACY_BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v3";
-const GEOMETRY_BACKFILL_QUALITY_SCHEMA_VERSION = "dfks-vision-v3-geometry-quality-v1";
+const GEOMETRY_BACKFILL_QUALITY_SCHEMA_VERSION = "dfks-vision-v3-geometry-quality-v2";
 const MAX_BASELINE_BYTES = 64 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const GEOMETRY_BACKFILL_TERMINAL_STATUSES = Object.freeze([
@@ -162,6 +162,10 @@ function emptyViolations() {
     geometrySourceLineageMismatch: 0,
     geometryUnexpectedArtifactDeletion: 0,
     geometryNonTerminalJob: 0,
+    geometryUnresolvedOutcome: 0,
+    geometryUnexpectedAiGeneration: 0,
+    geometryRecoveryChainMismatch: 0,
+    geometryRecoveryAuditMismatch: 0,
   };
 }
 
@@ -182,6 +186,22 @@ export function createAuditSummary(jobCount) {
 
 export function summaryHasViolations(summary) {
   return Object.values(summary.violations).some((count) => count > 0);
+}
+
+export function geometryBackfillSummaryReadyForApproval(summary) {
+  const expected = Number(summary?.expectedDocuments);
+  const outcomes = summary?.outcomes ?? {};
+  return Number.isInteger(expected)
+    && expected > 0
+    && summary?.targetsExamined === expected
+    && outcomes.completed === expected
+    && outcomes.needs_review === 0
+    && outcomes.failed === 0
+    && outcomes.queued === 0
+    && outcomes.processing === 0
+    && outcomes.unknown === 0
+    && summary?.completedDocumentsPassingAllChecks === expected
+    && !summaryHasViolations(summary);
 }
 
 function normalizeContract(value) {
@@ -1737,6 +1757,35 @@ async function loadActiveAiCounts(db, jobs) {
   return result;
 }
 
+export async function loadPostBaselineAiCounts(db, contractIds, capturedAt) {
+  const uniqueContractIds = [...new Set(contractIds)];
+  const capturedAtTimestamp = Date.parse(capturedAt);
+  if (!Number.isFinite(capturedAtTimestamp)) {
+    throw new AuditOperationalError("baseline_invalid");
+  }
+  const cutoff = new Date(capturedAtTimestamp).toISOString();
+  const result = new Map(uniqueContractIds.map((id) => [id, 0]));
+  for (const ids of chunks(uniqueContractIds, QUERY_CHUNK_SIZE)) {
+    if (!ids.length) continue;
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await db
+        .from("contract_ai_jobs")
+        .select("id,contract_id,created_at")
+        .in("contract_id", ids)
+        .gte("created_at", cutoff)
+        .order("id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) throw new AuditOperationalError("database_query_failed");
+      const page = data ?? [];
+      for (const row of page) {
+        result.set(row.contract_id, (result.get(row.contract_id) ?? 0) + 1);
+      }
+      if (page.length < PAGE_SIZE) break;
+    }
+  }
+  return result;
+}
+
 async function loadRelevantAiJobs(db, contractIds, createdAtOrAfter = null) {
   const rows = [];
   for (const ids of chunks(contractIds, QUERY_CHUNK_SIZE)) {
@@ -1959,6 +2008,8 @@ export function auditGeometryBackfillRunRecords({
   sourceJobsById,
   contractsById,
   artifactDeletionRows,
+  auditEventsById = new Map(),
+  auditSubjectsByEventId = new Map(),
   baseline,
 }) {
   const cohort = geometryBackfillBaselineCohort(baseline, {
@@ -1972,6 +2023,13 @@ export function auditGeometryBackfillRunRecords({
   const baselineByContract = new Map(
     cohort.targets.map((target) => [target.contractId, target]),
   );
+  const runJobsByContract = new Map();
+  for (const candidate of jobsById?.values?.() ?? []) {
+    if (candidate?.backfill_run_id !== run?.id) continue;
+    const rows = runJobsByContract.get(candidate.contract_id) ?? [];
+    rows.push(candidate);
+    runJobsByContract.set(candidate.contract_id, rows);
+  }
 
   if (!run || !UUID_PATTERN.test(run.id ?? "")
     || run.kind !== "direct_vision_geometry_v3"
@@ -2000,6 +2058,9 @@ export function auditGeometryBackfillRunRecords({
       || target.original_path_digest !== baselineTarget.originalPathDigest
       || target.contract_status !== baselineTarget.contractStatus
       || target.prior_processing_status !== baselineTarget.priorProcessingStatus
+      || !Number.isInteger(target.recovery_generation)
+      || target.recovery_generation < 0
+      || target.recovery_generation > 20
       || !UUID_PATTERN.test(target.queued_job_id ?? "")) {
       violations.geometryTargetBaselineMismatch += 1;
       continue;
@@ -2008,6 +2069,7 @@ export function auditGeometryBackfillRunRecords({
     const job = jobsById.get(target.queued_job_id);
     const source = sourceJobsById.get(target.source_job_id);
     const contract = normalizeContract(contractsById.get(target.contract_id));
+    const contractRunJobs = runJobsByContract.get(target.contract_id) ?? [];
     const jobStatus = DOCUMENT_JOB_STATUSES.includes(job?.status) ? job.status : "unknown";
     jobsByStatus[jobStatus] = (jobsByStatus[jobStatus] ?? 0) + 1;
     if (!job || job.contract_id !== target.contract_id || job.org_id !== target.org_id
@@ -2050,6 +2112,69 @@ export function auditGeometryBackfillRunRecords({
       continue;
     }
 
+    const chain = [];
+    const seen = new Set();
+    let cursor = job;
+    while (cursor && !seen.has(cursor.id) && chain.length <= 21) {
+      seen.add(cursor.id);
+      chain.push(cursor);
+      cursor = cursor.recovery_of_job_id == null
+        ? null : jobsById.get(cursor.recovery_of_job_id);
+    }
+    const ascendingChain = [...chain].reverse();
+    let chainMismatch = cursor != null
+      || chain.length !== target.recovery_generation + 1
+      || contractRunJobs.length !== chain.length
+      || ascendingChain[0]?.recovery_of_job_id != null
+      || ascendingChain.at(-1)?.id !== target.queued_job_id;
+    for (let generation = 0; generation < ascendingChain.length; generation += 1) {
+      const generationJob = ascendingChain[generation];
+      const parent = generation === 0 ? null : ascendingChain[generation - 1];
+      if (generationJob.backfill_run_id !== run?.id
+        || generationJob.contract_id !== target.contract_id
+        || generationJob.org_id !== target.org_id
+        || generationJob.backfill_source_job_id !== target.source_job_id
+        || generationJob.original_sha256 !== target.original_sha256
+        || generationJob.original_storage_path !== job?.original_storage_path
+        || generationJob.processing_intent !== "direct_vision_geometry_backfill_v1"
+        || generationJob.downstream_ai_policy !== "preserve"
+        || generationJob.processing_profile !== "google-vision-direct-v1"
+        || generationJob.replacement_of_job_id != null
+        || (generationJob.recovery_of_job_id ?? null) !== (parent?.id ?? null)
+        || (generationJob.id !== target.queued_job_id && (
+          !["needs_review", "failed"].includes(generationJob.status)
+          || (generationJob.status === "failed" && Number(generationJob.attempts) < 5)
+        ))) {
+        chainMismatch = true;
+      }
+      if (generation === 0) {
+        if (generationJob.backfill_recovery_audit_event_id != null) {
+          violations.geometryRecoveryAuditMismatch += 1;
+        }
+        continue;
+      }
+      const event = auditEventsById.get(generationJob.backfill_recovery_audit_event_id);
+      const subjectIds = auditSubjectsByEventId.get(
+        generationJob.backfill_recovery_audit_event_id,
+      ) ?? new Set();
+      const sortedSubjectIds = [...subjectIds].sort();
+      const expectedSubjectHash = sortedSubjectIds.length
+        ? sha256(Buffer.from(sortedSubjectIds.join(","), "utf8")) : null;
+      if (!UUID_PATTERN.test(generationJob.backfill_recovery_audit_event_id ?? "")
+        || generationJob.recovery_reason_code !== "geometry_quality_recovery_v1"
+        || !event
+        || event.entity_type !== "contract_document_backfill_recovery"
+        || event.entity_id !== run?.id
+        || event.correlation_id !== run?.id
+        || event.metadata?.event_code !== "vision_v3_geometry_backfill_recovery_queued"
+        || Number(event.metadata?.audit_subject_count) !== sortedSubjectIds.length
+        || (event.metadata?.audit_subject_set_hash ?? null) !== expectedSubjectHash
+        || (contract.rights_holder_id != null && !subjectIds.has(contract.rights_holder_id))) {
+        violations.geometryRecoveryAuditMismatch += 1;
+      }
+    }
+    if (chainMismatch) violations.geometryRecoveryChainMismatch += 1;
+
     if (job?.status === "completed") {
       if (source?.superseded_by_job_id !== job.id
         || contract.document_processing_status !== "ready"
@@ -2084,6 +2209,18 @@ export function auditGeometryBackfillRunRecords({
       violations.geometryPriorStateMismatch += 1;
     }
   }
+  const unresolvedOutcomes = (outcomes.queued ?? 0)
+    + (outcomes.processing ?? 0)
+    + (outcomes.needs_review ?? 0)
+    + (outcomes.failed ?? 0)
+    + (outcomes.unknown ?? 0);
+  if ((outcomes.completed ?? 0) !== cohort.targets.length || unresolvedOutcomes > 0) {
+    violations.geometryUnresolvedOutcome += Math.max(
+      1,
+      unresolvedOutcomes,
+      cohort.targets.length - (outcomes.completed ?? 0),
+    );
+  }
   if ((artifactDeletionRows ?? []).length > 0) {
     violations.geometryUnexpectedArtifactDeletion += artifactDeletionRows.length;
   }
@@ -2109,7 +2246,7 @@ async function loadGeometryBackfillRunSnapshot(db, runId) {
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await db
       .from("contract_document_backfill_targets")
-      .select("run_id,contract_id,org_id,source_job_id,queued_job_id,original_sha256,original_page_count,original_path_digest,contract_status,prior_processing_status,prior_processing_error_code,prior_processing_profile,prior_spatial_schema_version,prior_spatial_accuracy,prior_processed_path_digest,prior_spatial_path_digest,outcome")
+      .select("run_id,contract_id,org_id,source_job_id,queued_job_id,original_sha256,original_page_count,original_path_digest,contract_status,prior_processing_status,prior_processing_error_code,prior_processing_profile,prior_spatial_schema_version,prior_spatial_accuracy,prior_processed_path_digest,prior_spatial_path_digest,outcome,recovery_generation")
       .eq("run_id", runId)
       .order("contract_id", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
@@ -2118,15 +2255,26 @@ async function loadGeometryBackfillRunSnapshot(db, runId) {
     targets.push(...page);
     if (page.length < PAGE_SIZE) break;
   }
-  const allJobIds = [...new Set(targets.flatMap((target) => (
-    [target.source_job_id, target.queued_job_id].filter(Boolean)
-  )))];
   const jobsById = new Map();
-  for (const ids of chunks(allJobIds, QUERY_CHUNK_SIZE)) {
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await db
+      .from("contract_document_jobs")
+      .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,status,ocr_applied,ocr_engine,page_count,text_char_count,native_page_count,ocr_page_count,unreadable_page_count,attempts,original_sha256,processed_sha256,spatial_sha256,redaction_profile,processing_profile,spatial_schema_version,spatial_accuracy_score,spatial_median_iou,spatial_center_inside_ratio,downstream_ai_policy,replacement_of_job_id,recovery_of_job_id,recovery_reason_code,backfill_recovery_audit_event_id,superseded_by_job_id,backfill_run_id,backfill_source_job_id,processing_intent,completed_at,created_at")
+      .eq("backfill_run_id", runId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new AuditOperationalError("database_query_failed");
+    const page = data ?? [];
+    for (const job of page) jobsById.set(job.id, job);
+    if (page.length < PAGE_SIZE) break;
+  }
+  const sourceJobIds = [...new Set(targets.map((target) => target.source_job_id))];
+  for (const ids of chunks(sourceJobIds, QUERY_CHUNK_SIZE)) {
     if (!ids.length) continue;
     const { data, error } = await db
       .from("contract_document_jobs")
-      .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,status,ocr_applied,ocr_engine,page_count,text_char_count,native_page_count,ocr_page_count,unreadable_page_count,attempts,original_sha256,processed_sha256,spatial_sha256,redaction_profile,processing_profile,spatial_schema_version,spatial_accuracy_score,spatial_median_iou,spatial_center_inside_ratio,downstream_ai_policy,replacement_of_job_id,superseded_by_job_id,backfill_run_id,backfill_source_job_id,processing_intent,completed_at,created_at")
+      .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,status,ocr_applied,ocr_engine,page_count,text_char_count,native_page_count,ocr_page_count,unreadable_page_count,attempts,original_sha256,processed_sha256,spatial_sha256,redaction_profile,processing_profile,spatial_schema_version,spatial_accuracy_score,spatial_median_iou,spatial_center_inside_ratio,downstream_ai_policy,replacement_of_job_id,recovery_of_job_id,recovery_reason_code,backfill_recovery_audit_event_id,superseded_by_job_id,backfill_run_id,backfill_source_job_id,processing_intent,completed_at,created_at")
       .in("id", ids);
     if (error) throw new AuditOperationalError("database_query_failed");
     for (const job of data ?? []) jobsById.set(job.id, job);
@@ -2136,13 +2284,40 @@ async function loadGeometryBackfillRunSnapshot(db, runId) {
     if (!ids.length) continue;
     const { data, error } = await db
       .from("contracts")
-      .select("id,org_id,status,pdf_url,processed_pdf_url,document_spatial_data_path,document_processing_status,document_processing_error_code,document_processing_profile,document_spatial_schema_version,document_spatial_accuracy")
+      .select("id,org_id,rights_holder_id,status,pdf_url,processed_pdf_url,document_spatial_data_path,document_processing_status,document_processing_error_code,document_processing_profile,document_spatial_schema_version,document_spatial_accuracy")
       .in("id", ids);
     if (error) throw new AuditOperationalError("database_query_failed");
     for (const contract of data ?? []) contractsById.set(contract.id, contract);
   }
+  const recoveryAuditIds = [...new Set([...jobsById.values()]
+    .map((job) => job.backfill_recovery_audit_event_id)
+    .filter(Boolean))];
+  const auditEventsById = new Map();
+  const auditSubjectsByEventId = new Map();
+  for (const ids of chunks(recoveryAuditIds, QUERY_CHUNK_SIZE)) {
+    if (!ids.length) continue;
+    const [{ data: eventData, error: eventError }, { data: subjectData, error: subjectError }] =
+      await Promise.all([
+        db.from("audit_events")
+          .select("id,entity_type,entity_id,correlation_id,metadata")
+          .in("id", ids),
+        db.from("audit_event_subjects")
+          .select("event_id,target_member_uuid")
+          .in("event_id", ids),
+      ]);
+    if (eventError || subjectError) throw new AuditOperationalError("database_query_failed");
+    for (const event of eventData ?? []) auditEventsById.set(event.id, event);
+    for (const subject of subjectData ?? []) {
+      const subjects = auditSubjectsByEventId.get(subject.event_id) ?? new Set();
+      subjects.add(subject.target_member_uuid);
+      auditSubjectsByEventId.set(subject.event_id, subjects);
+    }
+  }
   const artifactDeletionRows = [];
-  for (const ids of chunks(targets.map((target) => target.queued_job_id), QUERY_CHUNK_SIZE)) {
+  const runJobIds = [...jobsById.values()]
+    .filter((job) => job.backfill_run_id === runId)
+    .map((job) => job.id);
+  for (const ids of chunks(runJobIds, QUERY_CHUNK_SIZE)) {
     if (!ids.length) continue;
     const { data, error } = await db
       .from("contract_document_artifact_deletions")
@@ -2151,7 +2326,15 @@ async function loadGeometryBackfillRunSnapshot(db, runId) {
     if (error) throw new AuditOperationalError("database_query_failed");
     artifactDeletionRows.push(...(data ?? []));
   }
-  return { run, targets, jobsById, contractsById, artifactDeletionRows };
+  return {
+    run,
+    targets,
+    jobsById,
+    contractsById,
+    artifactDeletionRows,
+    auditEventsById,
+    auditSubjectsByEventId,
+  };
 }
 
 export function geometryBackfillQualityReportDigest(summary) {
@@ -2204,7 +2387,12 @@ export async function runGeometryBackfillAudit({
   const completedJobs = snapshot.targets
     .map((target) => snapshot.jobsById.get(target.queued_job_id))
     .filter((job) => job?.status === "completed");
-  const activeAiCounts = await loadActiveAiCounts(db, completedJobs);
+  const postBaselineAiCounts = await loadPostBaselineAiCounts(
+    db,
+    snapshot.targets.map((target) => target.contract_id),
+    baseline.capturedAt,
+  );
+  const zeroAiCounts = new Map(completedJobs.map((job) => [job.contract_id, 0]));
   const baselineStatusByContract = new Map(
     baseline.records.map((record) => [record.contractId, record.contractStatus]),
   );
@@ -2223,7 +2411,7 @@ export async function runGeometryBackfillAudit({
   const completedSummary = await auditCompletedJobs({
     jobs: completedJobs,
     contractsById: snapshot.contractsById,
-    activeAiCounts,
+    activeAiCounts: zeroAiCounts,
     baselineStatusByContract,
     baselineOriginalByJob,
     readStorage: createStorageReader(db),
@@ -2233,6 +2421,8 @@ export async function runGeometryBackfillAudit({
   addViolations(violations, stateSummary.violations);
   addViolations(violations, baselineSummary.violations);
   addViolations(violations, completedSummary.violations);
+  violations.geometryUnexpectedAiGeneration += [...postBaselineAiCounts.values()]
+    .reduce((sum, count) => sum + count, 0);
   const summary = {
     expectedDocuments: stateSummary.expectedDocuments,
     targetsExamined: stateSummary.targetsExamined,
@@ -2346,7 +2536,7 @@ function geometryBackfillExpectedCount() {
 }
 
 async function approveGeometryBackfillQualityGate({ db, runId, audit }) {
-  if (summaryHasViolations(audit.summary)) {
+  if (!geometryBackfillSummaryReadyForApproval(audit.summary)) {
     throw new AuditOperationalError("geometry_backfill_quality_failed");
   }
   if (audit.run.state === "completed") {

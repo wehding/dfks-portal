@@ -21,7 +21,7 @@
     "one-off:replace-dlp-ocr": "NODE_OPTIONS=--conditions=react-server tsx scripts/one-off/replace-dlp-ocr-with-direct-vision.ts",
     "audit:vision-v3-geometry-backfill": "node scripts/audit-ocr-backfill.mjs audit-geometry-backfill",
     "one-off:vision-v3-geometry-backfill": "NODE_OPTIONS=--conditions=react-server tsx scripts/one-off/vision-v3-geometry-backfill.ts",
-    "test:vision-v3-geometry-backfill": "NODE_OPTIONS=--conditions=react-server tsx --test tests/vision-v3-geometry-backfill-compliance.test.ts tests/contract-document-lease-cleanup-routes.test.ts tests/contract-ai-generation-fence.test.ts && node --test cloud-run/contract-document-worker/*.test.mjs",
+    "test:vision-v3-geometry-backfill": "NODE_OPTIONS=--conditions=react-server tsx --test tests/vision-v3-geometry-backfill-compliance.test.ts tests/contract-document-lease-cleanup-routes.test.ts tests/contract-ai-generation-fence.test.ts && node --test tests/ocr-backfill-audit.test.mjs tests/contract-document-geometry-backfill-concurrency.test.mjs cloud-run/contract-document-worker/*.test.mjs",
     "seed:broadcaster-logos": "tsx scripts/seed-broadcaster-logos.ts",
     "lint": "eslint",
     "db:link": "set -a && . ./.env.local && set +a && supabase link --project-ref icxywdymyaxluaxxcpye",

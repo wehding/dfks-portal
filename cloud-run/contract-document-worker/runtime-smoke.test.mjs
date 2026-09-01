@@ -139,6 +139,59 @@ print(json.dumps(image.getpixel((image.width // 2, image.height // 2))))
   }
 });
 
+test("alternative overlay-profiler bruger samme Vision-geometri og afviser ukendt profil", runtimeOnly, async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-overlay-profiles-"));
+  try {
+    const inputPath = join(workDir, "input.pdf");
+    const geometryPath = join(workDir, "geometry.json");
+    await run("python3", ["-c", `
+from PIL import Image
+from reportlab.pdfgen import canvas
+import sys
+input_path, image_dir = sys.argv[1:]
+c = canvas.Canvas(input_path, pagesize=(612, 792))
+c.showPage()
+c.save()
+Image.new("RGB", (612, 792), "white").save(f"{image_dir}/ocr-page-1.png", "PNG")
+`, inputPath, workDir]);
+    const geometry = {
+      pages: [{
+        pageNumber: 1,
+        imageWidth: 612,
+        imageHeight: 792,
+        words: ["Aftale", "Producent", "Honorar", "Rettighed"].map((text, index) => ({
+          text,
+          vertices: [
+            { x: 40, y: 80 + index * 50 },
+            { x: 180, y: 80 + index * 50 },
+            { x: 180, y: 105 + index * 50 },
+            { x: 40, y: 105 + index * 50 },
+          ],
+        })),
+      }],
+    };
+    await writeFile(geometryPath, JSON.stringify(geometry));
+    for (const profile of ["font-metrics-v1", "axis-aligned-font-metrics-v1"]) {
+      const outputPath = join(workDir, `${profile}.pdf`);
+      await run("python3", [
+        "vision_overlay.py", inputPath, geometryPath, workDir, outputPath,
+        String(25 * 1024 * 1024), profile,
+      ]);
+      const bboxPath = join(workDir, `${profile}.html`);
+      await run("pdftotext", ["-cropbox", "-bbox-layout", outputPath, bboxPath]);
+      const extracted = parsePdftotextBbox(await readFile(bboxPath, "utf8"));
+      const spatial = computeSpatialAccuracy(geometry.pages, extracted);
+      assert.equal(spatial.passed, true, JSON.stringify({ profile, spatial }));
+    }
+    await assert.rejects(run("python3", [
+      "vision_overlay.py", inputPath, geometryPath, workDir,
+      join(workDir, "unknown.pdf"), String(25 * 1024 * 1024), "unknown-profile",
+    ]));
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
 test("stor verificeret PNG bliver en afledt PDF under bytegrænsen uden at ændre originalen", runtimeOnly, async () => {
   const workDir = await mkdtemp(join(tmpdir(), "dfks-derived-compression-"));
   try {
@@ -153,16 +206,16 @@ input_path, image_dir = sys.argv[1:]
 c = canvas.Canvas(input_path, pagesize=(612, 792))
 c.showPage()
 c.save()
-# Deterministic high-entropy raster: lossless PNG is large, while the bounded
-# derivative JPEG remains readable and substantially smaller.
-image = Image.effect_noise((1400, 1800), 70).convert("RGB")
+# Deterministic high-entropy 300-DPI raster: lossless PNG is large, while a
+# bounded derivative profile remains readable and substantially smaller.
+image = Image.effect_noise((2550, 3300), 70).convert("RGB")
 image.save(f"{image_dir}/ocr-page-1.png", "PNG")
 `, inputPath, workDir]);
     await writeFile(geometryPath, JSON.stringify({
       pages: [{
         pageNumber: 1,
-        imageWidth: 1400,
-        imageHeight: 1800,
+        imageWidth: 2550,
+        imageHeight: 3300,
         words: [{
           text: "SikkerKontrakt",
           vertices: [
@@ -173,7 +226,7 @@ image.save(f"{image_dir}/ocr-page-1.png", "PNG")
       }],
     }));
     const originalHash = sha256(await readFile(inputPath));
-    const byteLimit = 2_000_000;
+    const byteLimit = 2_500_000;
     await run("python3", [
       "vision_overlay.py", inputPath, geometryPath, workDir, outputPath, String(byteLimit),
     ]);
@@ -181,16 +234,102 @@ image.save(f"{image_dir}/ocr-page-1.png", "PNG")
     assert.ok(output.length <= byteLimit, `afledt PDF er ${output.length} bytes`);
     assert.equal(sha256(await readFile(inputPath)), originalHash);
     assert.match((await run("pdftotext", [outputPath, "-"])).toString("utf8"), /SikkerKontrakt/);
-    const usesBoundedDerivative = (await run("python3", ["-c", `
-import pikepdf, sys
+    const derivative = JSON.parse((await run("python3", ["-c", `
+import json, pikepdf, sys
 with pikepdf.open(sys.argv[1]) as pdf:
-    filters = []
+    images = []
     for _, value in pdf.pages[0].Resources.XObject.items():
-        current = value.get('/Filter')
-        filters.extend(str(item) for item in current) if isinstance(current, pikepdf.Array) else filters.append(str(current))
-    print('/DCTDecode' in filters)
-`, outputPath])).toString("utf8").trim();
-    assert.equal(usesBoundedDerivative, "True");
+        if str(value.get('/Subtype')) == '/Image':
+            current = value.get('/Filter')
+            filters = [str(item) for item in current] if isinstance(current, pikepdf.Array) else [str(current)]
+            images.append({"width": int(value.Width), "height": int(value.Height), "filters": filters})
+    page = pdf.pages[0]
+    print(json.dumps({
+        "pages": len(pdf.pages),
+        "media": [float(item) for item in page.MediaBox],
+        "images": images,
+    }))
+`, outputPath])).toString("utf8"));
+    assert.equal(derivative.pages, 1);
+    assert.deepEqual(derivative.media, [0, 0, 612, 792]);
+    assert.equal(derivative.images.length, 1);
+    assert.ok(derivative.images[0].filters.includes("/DCTDecode"));
+    const allowedDimensions = new Set([
+      "1912x2475", // højst 225 DPI med bevaret billedformat
+      "1700x2200", // 200 DPI
+      "1488x1925", // 175 DPI
+      "1275x1650", // 150 DPI
+    ]);
+    assert.ok(
+      allowedDimensions.has(`${derivative.images[0].width}x${derivative.images[0].height}`),
+      JSON.stringify(derivative.images[0]),
+    );
+
+    const bboxPath = join(workDir, "derived-bbox.html");
+    await run("pdftotext", ["-cropbox", "-bbox-layout", outputPath, bboxPath]);
+    const extracted = parsePdftotextBbox(await readFile(bboxPath, "utf8"));
+    const spatial = computeSpatialAccuracy(JSON.parse(await readFile(geometryPath, "utf8")).pages, extracted);
+    assert.equal(spatial.passed, true, JSON.stringify(spatial));
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+});
+
+test("fallback prøver lossless og full-res JPEG før 225, 200, 175 og 150 DPI", runtimeOnly, async () => {
+  const workDir = await mkdtemp(join(tmpdir(), "dfks-derived-profiles-"));
+  try {
+    const inspection = await run("python3", ["-c", `
+import json
+import os
+import sys
+import vision_overlay
+
+work_dir = sys.argv[1]
+geometry_path = os.path.join(work_dir, "geometry.json")
+output_path = os.path.join(work_dir, "output.pdf")
+with open(geometry_path, "w", encoding="utf-8") as target:
+    json.dump({"pages": []}, target)
+
+def execute(limit, sizes):
+    calls = []
+    def fake_build(input_path, page_geometry, image_dir, destination, target_dpi, jpeg_quality, overlay_profile):
+        calls.append([target_dpi, jpeg_quality, overlay_profile])
+        with open(destination, "wb") as output:
+            output.truncate(sizes[f"{target_dpi}:{jpeg_quality}"])
+    vision_overlay.build_pdf = fake_build
+    sys.argv = ["vision_overlay.py", "input.pdf", geometry_path, work_dir, output_path, str(limit)]
+    vision_overlay.main()
+    return {"calls": calls, "size": os.path.getsize(output_path)}
+
+sizes = {"None:None": 500, "None:92": 350, "None:84": 200, "225:90": 180, "200:90": 160, "175:90": 140, "150:90": 120}
+full_res = execute(250, sizes)
+sizes["None:84"] = 300
+sizes["225:90"] = 290
+sizes["200:90"] = 270
+sizes["175:90"] = 200
+downscaled = execute(250, sizes)
+failed_closed = execute(50, sizes)
+print(json.dumps({"fullRes": full_res, "downscaled": downscaled, "failedClosed": failed_closed}))
+`, workDir]);
+    const result = JSON.parse(inspection.toString("utf8"));
+    assert.deepEqual(result.fullRes.calls, [
+      [null, null, "primary-v1"],
+      [null, 92, "primary-v1"],
+      [null, 84, "primary-v1"],
+    ]);
+    assert.equal(result.fullRes.size, 200);
+    assert.deepEqual(result.downscaled.calls, [
+      [null, null, "primary-v1"],
+      [null, 92, "primary-v1"],
+      [null, 84, "primary-v1"],
+      [225, 90, "primary-v1"],
+      [200, 90, "primary-v1"],
+      [175, 90, "primary-v1"],
+    ]);
+    assert.equal(result.downscaled.size, 200);
+    assert.deepEqual(result.failedClosed.calls.at(-1), [150, 90, "primary-v1"]);
+    assert.equal(result.failedClosed.calls.length, 7);
+    assert.equal(result.failedClosed.size, 120);
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
