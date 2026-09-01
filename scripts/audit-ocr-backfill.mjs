@@ -12,13 +12,28 @@ import { gunzipSync } from "node:zlib";
 import { createClient } from "@supabase/supabase-js";
 import { config as loadEnv } from "dotenv";
 import { PDFDocument } from "pdf-lib";
+import sharp from "sharp";
 
 import {
   ALLOWED_SPATIAL_VERIFICATION_PROFILES,
   computeSpatialAccuracy,
   LEGACY_SPATIAL_VERIFICATION_PROFILE,
+  MAX_RENDERED_PAGE_PIXELS,
+  parsePdfPageSize,
   parsePdftotextBbox,
+  renderTailRecoveryRaster,
+  renderVisionSourceRaster,
 } from "../cloud-run/contract-document-worker/spatial-ocr.mjs";
+import {
+  authoriseTailBlankProof,
+  EXPECTED_TAIL_BLANK_PROOF_ENTRIES,
+  MAX_TAIL_BLANK_PROOF_BYTES,
+  parseTailBlankProofManifest,
+  TAIL_BLANK_RECOVERY_PROFILE,
+  tailBlankRecoveryMarker,
+  TailBlankProofError,
+  timingSafeSha256Equal,
+} from "../cloud-run/contract-document-worker/tail-blank-proof.mjs";
 
 const CONTRACT_BUCKET = "kontrakter";
 const PAGE_SIZE = 500;
@@ -33,6 +48,8 @@ const MAX_PAGE_COUNT_OUTPUT_BYTES = 64;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
 const PDFTOTEXT_TIMEOUT_MS = 120_000;
 const PDF_PAGE_COUNT_TIMEOUT_MS = 60_000;
+const TAIL_BLANK_RENDER_TIMEOUT_MS = 120_000;
+const MAX_TAIL_BLANK_RENDER_OUTPUT_BYTES = 256 * 1024;
 const BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v4";
 const LEGACY_BASELINE_SCHEMA_VERSION = "dfks-ocr-backfill-baseline-v3";
 const GEOMETRY_BACKFILL_QUALITY_SCHEMA_VERSION = "dfks-vision-v3-geometry-quality-v2";
@@ -62,6 +79,7 @@ const SPATIAL_VERIFICATION_PROFILE_CUTOVER_MS = Date.parse(
   "2026-09-01T12:51:39.000Z",
 );
 export const GEOMETRY_AUDIT_PDFTOTEXT_VERSION = "22.12.0";
+export const GEOMETRY_AUDIT_PDFTOPPM_VERSION = "22.12.0";
 const PDFTOTEXT_VERSION_TIMEOUT_MS = 5_000;
 const MAX_PDFTOTEXT_VERSION_BYTES = 1_024;
 
@@ -110,9 +128,17 @@ export function requireGeometryAuditPdftotextVersion(output) {
   return match[1];
 }
 
-async function assertGeometryAuditRuntime() {
+export function requireGeometryAuditPdftoppmVersion(output) {
+  const match = String(output ?? "").match(/(?:^|\n)pdftoppm version ([0-9]+[.][0-9]+[.][0-9]+)(?:\n|$)/);
+  if (match?.[1] !== GEOMETRY_AUDIT_PDFTOPPM_VERSION) {
+    throw new AuditOperationalError("geometry_audit_runtime_mismatch");
+  }
+  return match[1];
+}
+
+async function readGeometryAuditToolVersion(command, requireVersion) {
   const output = await new Promise((resolve, reject) => {
-    const child = spawn("pdftotext", ["-v"], {
+    const child = spawn(command, ["-v"], {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
@@ -152,7 +178,7 @@ async function assertGeometryAuditRuntime() {
         return;
       }
       try {
-        finish(null, requireGeometryAuditPdftotextVersion(
+        finish(null, requireVersion(
           Buffer.concat(chunks).toString("utf8"),
         ));
       } catch (error) {
@@ -167,8 +193,202 @@ async function assertGeometryAuditRuntime() {
   return output;
 }
 
+async function assertGeometryAuditRuntime() {
+  return Promise.all([
+    readGeometryAuditToolVersion("pdftotext", requireGeometryAuditPdftotextVersion),
+    readGeometryAuditToolVersion("pdftoppm", requireGeometryAuditPdftoppmVersion),
+  ]);
+}
+
 export function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function runTailBlankRenderCommand(command, args, timeoutMs = TAIL_BLANK_RENDER_TIMEOUT_MS) {
+  if (!new Set(["pdfinfo", "pdftoppm"]).has(command)
+    || !Array.isArray(args)
+    || !Number.isSafeInteger(timeoutMs)
+    || timeoutMs < 1
+    || timeoutMs > TAIL_BLANK_RENDER_TIMEOUT_MS) {
+    throw new AuditOperationalError("geometry_tail_blank_render_failed");
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        LANG: "C",
+        LC_ALL: "C",
+      },
+    });
+    const stdout = [];
+    const stderr = [];
+    let outputBytes = 0;
+    let settled = false;
+    let terminalError = null;
+    let timer;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const fail = () => {
+      if (settled) return;
+      terminalError ??= new AuditOperationalError("geometry_tail_blank_render_failed");
+      if (child.pid == null) finish(terminalError);
+      else child.kill("SIGKILL");
+    };
+    const collect = (target) => (chunk) => {
+      outputBytes += chunk.length;
+      if (outputBytes > MAX_TAIL_BLANK_RENDER_OUTPUT_BYTES) {
+        fail();
+        return;
+      }
+      target.push(chunk);
+    };
+    child.stdout.on("data", collect(stdout));
+    child.stderr.on("data", collect(stderr));
+    child.once("error", fail);
+    child.once("close", (code) => {
+      if (terminalError || code !== 0) {
+        finish(terminalError ?? new AuditOperationalError("geometry_tail_blank_render_failed"));
+        return;
+      }
+      finish(null, {
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      });
+    });
+    timer = setTimeout(fail, timeoutMs);
+  });
+}
+
+export async function renderTailBlankProofRasters(pdfBytes, pageNumber, {
+  removeDirectory = rm,
+} = {}) {
+  if (!(pdfBytes instanceof Uint8Array)
+    || pdfBytes.byteLength < 5
+    || pdfBytes.byteLength > MAX_PDF_BYTES
+    || !Number.isSafeInteger(pageNumber)
+    || pageNumber < 2
+    || pageNumber > 200) {
+    throw new AuditOperationalError("geometry_tail_blank_render_failed");
+  }
+  const directory = await mkdtemp(join(tmpdir(), "dfks-tail-blank-audit-"));
+  const inputPath = join(directory, "source.pdf");
+  try {
+    await writeFile(inputPath, pdfBytes, { mode: 0o600 });
+    const pageInfo = await runTailBlankRenderCommand("pdfinfo", [
+      "-f", String(pageNumber), "-l", String(pageNumber), "-box", inputPath,
+    ], 30_000);
+    const pageSize = parsePdfPageSize(pageInfo.stdout);
+    if (!pageSize) throw new AuditOperationalError("geometry_tail_blank_render_failed");
+    const sourceRasterBytes = await renderVisionSourceRaster({
+      inputPath,
+      pageNumber,
+      pageSize,
+      outputPrefix: join(directory, "source-raster"),
+      runCommand: runTailBlankRenderCommand,
+    });
+    const metadata = await sharp(sourceRasterBytes, {
+      failOn: "warning",
+      limitInputPixels: MAX_RENDERED_PAGE_PIXELS,
+    }).metadata();
+    if (!Number.isSafeInteger(metadata.width) || !Number.isSafeInteger(metadata.height)
+      || metadata.width < 1 || metadata.height < 1) {
+      throw new AuditOperationalError("geometry_tail_blank_render_failed");
+    }
+    const recoveryRasterBytes = await renderTailRecoveryRaster({
+      inputPath,
+      pageNumber,
+      sourceWidth: metadata.width,
+      sourceHeight: metadata.height,
+      outputPrefix: join(directory, "recovery-raster"),
+      runCommand: runTailBlankRenderCommand,
+    });
+    if (!recoveryRasterBytes) {
+      throw new AuditOperationalError("geometry_tail_blank_render_failed");
+    }
+    return { sourceRasterBytes, recoveryRasterBytes };
+  } finally {
+    try {
+      await removeDirectory(directory, { recursive: true, force: true });
+    } catch (error) {
+      throw new AuditOperationalError("geometry_tail_blank_cleanup_failed", { cause: error });
+    }
+  }
+}
+
+function tailBlankProofUseKey(originalSha256, pageNumber, pageCount) {
+  return sha256(Buffer.from(`${originalSha256}:${pageNumber}:${pageCount}`, "utf8"));
+}
+
+export function tailBlankProofUseCountViolation({ manifest, markerCount, usedKeys }) {
+  if (!manifest) return markerCount > 0 ? 1 : 0;
+  const expectedKeys = new Set(manifest.entries.map((entry) => (
+    tailBlankProofUseKey(entry.originalSha256, entry.pageNumber, entry.pageCount)
+  )));
+  return manifest.entries.length === EXPECTED_TAIL_BLANK_PROOF_ENTRIES
+    && markerCount === EXPECTED_TAIL_BLANK_PROOF_ENTRIES
+    && usedKeys instanceof Set
+    && usedKeys.size === EXPECTED_TAIL_BLANK_PROOF_ENTRIES
+    && [...expectedKeys].every((key) => usedKeys.has(key))
+    ? 0
+    : 1;
+}
+
+export async function verifyTailBlankProofUse({
+  manifest,
+  job,
+  geometry,
+  originalBytes,
+  renderRasters = renderTailBlankProofRasters,
+}) {
+  const marker = geometry?.tailBlankRecovery;
+  if (!marker) return { status: "absent" };
+  if (!manifest) return { status: "manifest_missing" };
+  if (!validTailBlankRecoveryMarker(marker, job?.page_count)
+    || !timingSafeSha256Equal(marker.manifestDigest, manifest.manifestDigest)
+    || job?.backfill_run_id !== manifest.runId
+    || !(originalBytes instanceof Uint8Array)
+    || !timingSafeSha256Equal(sha256(originalBytes), job?.original_sha256)) {
+    return { status: "invalid" };
+  }
+  const pageNumber = marker.pageNumbers[0];
+  const page = geometry.pages?.find((candidate) => candidate?.pageNumber === pageNumber);
+  if (!page || !Array.isArray(page.words) || page.words.length !== 0) {
+    return { status: "invalid" };
+  }
+  let rasters;
+  try {
+    rasters = await renderRasters(originalBytes, pageNumber);
+  } catch (error) {
+    if (error instanceof AuditOperationalError
+      && error.code === "geometry_tail_blank_cleanup_failed") throw error;
+    return { status: "raster_mismatch" };
+  }
+  const token = authoriseTailBlankProof(manifest, {
+    runId: job.backfill_run_id,
+    originalSha256: job.original_sha256,
+    pageNumber,
+    pageCount: job.page_count,
+    sourceRasterBytes: rasters?.sourceRasterBytes,
+    recoveryRasterBytes: rasters?.recoveryRasterBytes,
+  });
+  const expectedMarker = tailBlankRecoveryMarker(token);
+  if (!expectedMarker
+    || expectedMarker.profile !== marker.profile
+    || !timingSafeSha256Equal(expectedMarker.manifestDigest, marker.manifestDigest)
+    || expectedMarker.pageNumber !== pageNumber) {
+    return { status: "raster_mismatch" };
+  }
+  return {
+    status: "ok",
+    useKey: tailBlankProofUseKey(job.original_sha256, pageNumber, job.page_count),
+  };
 }
 
 let pdfPageCountQueue = Promise.resolve();
@@ -249,6 +469,10 @@ function emptyViolations() {
     geometryUnexpectedAiGeneration: 0,
     geometryRecoveryChainMismatch: 0,
     geometryRecoveryAuditMismatch: 0,
+    geometryTailBlankProofMissingOrInvalid: 0,
+    geometryTailBlankProofRasterMismatch: 0,
+    geometryTailBlankProofDuplicateUse: 0,
+    geometryTailBlankProofUseCountMismatch: 0,
   };
 }
 
@@ -434,6 +658,18 @@ function validSpatialPage(page, pageCount) {
       < Math.max(...word.vertices.map((vertex) => vertex.x))
     && Math.min(...word.vertices.map((vertex) => vertex.y))
       < Math.max(...word.vertices.map((vertex) => vertex.y)));
+}
+
+export function validTailBlankRecoveryMarker(marker, pageCount) {
+  return hasExactKeys(marker, ["profile", "manifestDigest", "pageNumbers"])
+    && marker.profile === TAIL_BLANK_RECOVERY_PROFILE
+    && /^[0-9a-f]{64}$/.test(marker.manifestDigest ?? "")
+    && Array.isArray(marker.pageNumbers)
+    && marker.pageNumbers.length === 1
+    && marker.pageNumbers[0] === pageCount
+    && Number.isSafeInteger(pageCount)
+    && pageCount >= 2
+    && pageCount <= 200;
 }
 
 function validRedaction(redaction, pageCount) {
@@ -740,7 +976,9 @@ export function requireMatchingPdfPageCounts(qpdfPageCount, popplerPageCount) {
  * independent parsers from the same runtime family as the Cloud Run worker.
  * No command output, path or document content is ever returned or logged.
  */
-export async function extractLegacyPdfPageCount(pdfBytes) {
+export async function extractLegacyPdfPageCount(pdfBytes, {
+  removeDirectory = rm,
+} = {}) {
   if (!(pdfBytes instanceof Uint8Array) || pdfBytes.byteLength === 0
     || pdfBytes.byteLength > MAX_PDF_BYTES
     || pdfBytes.byteLength < 5
@@ -766,7 +1004,11 @@ export async function extractLegacyPdfPageCount(pdfBytes) {
     ]);
     return requireMatchingPdfPageCounts(qpdfPageCount, popplerPageCount);
   } finally {
-    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    try {
+      await removeDirectory(directory, { recursive: true, force: true });
+    } catch (error) {
+      throw new AuditOperationalError("pdf_page_count_cleanup_failed", { cause: error });
+    }
   }
 }
 
@@ -811,7 +1053,7 @@ async function inspectSpatialArtifact(readStorage, job) {
       && geometry.redactions.every((redaction) => validRedaction(redaction, job.page_count));
     const directVision = hasExactKeys(geometry, [
       "schemaVersion", "engine", "processingProfile", "overlayProfile",
-      "spatialVerificationProfile", "pages", "spatialVerification",
+      "spatialVerificationProfile", "pages", "spatialVerification", "tailBlankRecovery",
     ], [
       "schemaVersion", "engine", "processingProfile", "pages", "spatialVerification",
     ])
@@ -823,7 +1065,9 @@ async function inspectSpatialArtifact(readStorage, job) {
         ? DIRECT_VISION_SPATIAL_VERIFICATION_PROFILES.has(
           geometry.spatialVerificationProfile,
         )
-        : completedBeforeSpatialProfileCutover(job));
+          : completedBeforeSpatialProfileCutover(job))
+      && (!Object.hasOwn(geometry, "tailBlankRecovery")
+        || validTailBlankRecoveryMarker(geometry.tailBlankRecovery, job.page_count));
     const valid = (legacyRedacted || directVision)
       && geometry.engine === "google-vision-document-text-detection"
       && job.spatial_schema_version === geometry.schemaVersion
@@ -862,6 +1106,8 @@ async function inspectCompletedJob({
   readStorage,
   extractBboxPages,
   extractOriginalPageCount,
+  tailBlankProofAudit,
+  renderTailBlankRasters,
 }) {
   const violations = emptyViolations();
 
@@ -981,6 +1227,26 @@ async function inspectCompletedJob({
         if (spatial.pageCountMatches === false) violations.spatialPageCountMismatch += 1;
       }
 
+      if (spatial.geometry?.tailBlankRecovery) {
+        tailBlankProofAudit.markerCount += 1;
+        const proofResult = await verifyTailBlankProofUse({
+          manifest: tailBlankProofAudit.manifest,
+          job,
+          geometry: spatial.geometry,
+          originalBytes: original.bytes,
+          renderRasters: renderTailBlankRasters,
+        });
+        if (proofResult.status === "ok") {
+          if (tailBlankProofAudit.usedKeys.has(proofResult.useKey)) {
+            violations.geometryTailBlankProofDuplicateUse += 1;
+          } else tailBlankProofAudit.usedKeys.add(proofResult.useKey);
+        } else if (proofResult.status === "raster_mismatch") {
+          violations.geometryTailBlankProofRasterMismatch += 1;
+        } else {
+          violations.geometryTailBlankProofMissingOrInvalid += 1;
+        }
+      }
+
       if (!output.readFailed && !output.invalidPdf && spatial.geometry) {
         try {
           const extractedPages = await extractBboxPages(output.bytes);
@@ -1028,9 +1294,16 @@ export async function auditCompletedJobs({
   concurrency = 1,
   extractBboxPages = extractPdfBboxPages,
   extractOriginalPageCount = extractLegacyPdfPageCount,
+  tailBlankProofManifest = null,
+  renderTailBlankRasters = renderTailBlankProofRasters,
 }) {
   const summary = createAuditSummary(jobs.length);
   const completedByContract = new Map();
+  const tailBlankProofAudit = {
+    manifest: tailBlankProofManifest,
+    markerCount: 0,
+    usedKeys: new Set(),
+  };
 
   for (const job of jobs) {
     completedByContract.set(job.contract_id, (completedByContract.get(job.contract_id) ?? 0) + 1);
@@ -1047,6 +1320,8 @@ export async function auditCompletedJobs({
     readStorage,
     extractBboxPages,
     extractOriginalPageCount,
+    tailBlankProofAudit,
+    renderTailBlankRasters,
   }));
 
   for (const violations of results) {
@@ -1056,6 +1331,12 @@ export async function auditCompletedJobs({
       summary.violations[key] += value;
     }
   }
+
+  summary.violations.geometryTailBlankProofUseCountMismatch += tailBlankProofUseCountViolation({
+    manifest: tailBlankProofManifest,
+    markerCount: tailBlankProofAudit.markerCount,
+    usedKeys: tailBlankProofAudit.usedKeys,
+  });
 
   return summary;
 }
@@ -1462,6 +1743,38 @@ export async function readBaselineFile(filePath) {
   } catch (error) {
     if (error instanceof AuditOperationalError) throw error;
     throw new AuditOperationalError("baseline_read_failed", { cause: error });
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+export async function readTailBlankProofAuditFile(filePath, runId) {
+  if (filePath == null || filePath === "") return null;
+  if (typeof filePath !== "string" || !isAbsolute(filePath)) {
+    throw new AuditOperationalError("geometry_tail_blank_proof_path_invalid");
+  }
+  let handle;
+  try {
+    handle = await open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const fileInfo = await handle.stat();
+    const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
+    if (!fileInfo.isFile() || fileInfo.size < 1 || fileInfo.size > MAX_TAIL_BLANK_PROOF_BYTES
+      || (fileInfo.mode & 0o077) !== 0
+      || (currentUid !== null && fileInfo.uid !== currentUid)) {
+      throw new AuditOperationalError("geometry_tail_blank_proof_permissions_invalid");
+    }
+    const raw = await handle.readFile("utf8");
+    return parseTailBlankProofManifest(raw, {
+      executionMode: "audit",
+      expectedRunId: runId,
+      requireUnexpired: false,
+    });
+  } catch (error) {
+    if (error instanceof AuditOperationalError) throw error;
+    if (error instanceof TailBlankProofError) {
+      throw new AuditOperationalError("geometry_tail_blank_proof_invalid", { cause: error });
+    }
+    throw new AuditOperationalError("geometry_tail_blank_proof_read_failed", { cause: error });
   } finally {
     await handle?.close().catch(() => undefined);
   }
@@ -2469,6 +2782,8 @@ export async function runGeometryBackfillAudit({
   runId,
   baseline,
   concurrency = DEFAULT_CONCURRENCY,
+  tailBlankProofManifest = null,
+  renderTailBlankRasters = renderTailBlankProofRasters,
 }) {
   if (!UUID_PATTERN.test(runId ?? "")) {
     throw new AuditOperationalError("geometry_backfill_run_id_invalid");
@@ -2526,6 +2841,8 @@ export async function runGeometryBackfillAudit({
     baselineOriginalByJob,
     readStorage: createStorageReader(db),
     concurrency,
+    tailBlankProofManifest,
+    renderTailBlankRasters,
   });
   const violations = emptyViolations();
   addViolations(violations, stateSummary.violations);
@@ -2765,11 +3082,16 @@ async function main() {
     geometryBackfillBaselineCohort(baseline, {
       expectedCount: geometryBackfillExpectedCount(),
     });
+    const tailBlankProofManifest = await readTailBlankProofAuditFile(
+      process.env.OCR_TAIL_BLANK_PROOF_FILE,
+      runId,
+    );
     const audit = await runGeometryBackfillAudit({
       db,
       runId,
       baseline,
       concurrency,
+      tailBlankProofManifest,
     });
     if (mode === "audit-geometry-backfill") {
       process.stdout.write(`${safeSummaryJson({ mode, ...audit.summary })}\n`);

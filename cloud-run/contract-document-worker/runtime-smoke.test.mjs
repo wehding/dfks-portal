@@ -20,9 +20,15 @@ const runtimeOnly = { skip: process.env.DFKS_CONTAINER_RUNTIME_TEST !== "1" };
 
 test("containerimaget indeholder den afgrænsede slutsiderecovery", runtimeOnly, async () => {
   const recovery = await import("./tail-page-recovery.mjs");
+  const proof = await import("./tail-blank-proof.mjs");
   assert.equal(typeof recovery.recoverSparseTailTextFromVariants, "function");
   assert.equal(typeof recovery.recoverSparseTailOrientationFromVariants, "function");
   assert.equal(typeof recovery.hasSparseTailBlankConsensus, "function");
+  assert.equal(typeof recovery.recoverTailPageNumberOrientationFromVariants, "function");
+  assert.equal(typeof recovery.recoverTailOrientationFromVariants, "function");
+  assert.equal(typeof recovery.isSparseTailEdgeArtifactCandidate, "function");
+  assert.equal(typeof proof.parseTailBlankProofManifest, "function");
+  assert.equal(typeof proof.authoriseTailBlankProof, "function");
 });
 
 test("containerens Poppler-generation matcher spatial-verifikationsprofilen", runtimeOnly, async () => {

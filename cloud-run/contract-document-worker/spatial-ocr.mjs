@@ -12,9 +12,16 @@ import {
 import { resolveDocumentResourceLimits } from "./resource-limits.mjs";
 import {
   hasSparseTailBlankConsensus,
-  recoverSparseTailOrientationFromVariants,
+  isSparseTailEdgeArtifactCandidate,
   recoverSparseTailTextFromVariants,
+  recoverTailOrientationFromVariants,
+  TAIL_RASTER_EDGE_MARGIN_RATIO,
 } from "./tail-page-recovery.mjs";
+import {
+  authoriseTailBlankProof,
+  hasTailBlankProofCandidate,
+  tailBlankRecoveryMarker,
+} from "./tail-blank-proof.mjs";
 
 const gzipAsync = promisify(gzip);
 const MIN_NATIVE_CHARS = 160;
@@ -47,10 +54,14 @@ const MAX_EXACT_ASSIGNMENT_WORDS_PER_GROUP = 128;
 const MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE = 2_000_000;
 // Existing v3 artefacts were verified with the original three-token matcher.
 // They have no persisted profile and must remain reproducible at audit time.
-// New artefacts explicitly opt into the stricter, bounded matcher.
+// Every later profile is immutable: v2 remains the exact bounded matcher that
+// produced historical artefacts, while v3 adds one narrowly-scoped Poppler
+// 22.12 horizontal-scaling tolerance for short, high-confidence tokens.
 export const LEGACY_SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-legacy-v1";
-export const SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v2-poppler22.12";
+export const V2_SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v2-poppler22.12";
+export const SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v3-short-token-width-poppler22.12";
 export const ALLOWED_SPATIAL_VERIFICATION_PROFILES = Object.freeze([
+  V2_SPATIAL_VERIFICATION_PROFILE,
   SPATIAL_VERIFICATION_PROFILE,
 ]);
 const SPATIAL_MATCHER_CONFIG = Object.freeze({
@@ -58,15 +69,46 @@ const SPATIAL_MATCHER_CONFIG = Object.freeze({
     maxJoinedTokens: 3,
     maxJoinedTokenChars: null,
     requireJoinedTokenGeometry: false,
+    allowShortTokenHorizontalScaling: false,
+  }),
+  [V2_SPATIAL_VERIFICATION_PROFILE]: Object.freeze({
+    maxJoinedTokens: 8,
+    maxJoinedTokenChars: 96,
+    requireJoinedTokenGeometry: true,
+    allowShortTokenHorizontalScaling: false,
   }),
   [SPATIAL_VERIFICATION_PROFILE]: Object.freeze({
     maxJoinedTokens: 8,
     maxJoinedTokenChars: 96,
     requireJoinedTokenGeometry: true,
+    allowShortTokenHorizontalScaling: true,
   }),
 });
 const MIN_JOINED_TOKEN_VERTICAL_OVERLAP_RATIO = 0.5;
 const MAX_JOINED_TOKEN_GAP_HEIGHT_RATIO = 1.5;
+// A hash-bound 150-token artefact showed eleven one-to-four-character tokens
+// with exact text, confidence 0.948-0.979 and correct centres/heights, while
+// Poppler 22.12 widened only their horizontal bbox (IoU 0.46-0.71). These
+// limits recognise only that representation artefact; the ordinary 0.75 IoU
+// gate and every text-matching rule remain unchanged.
+const MAX_HORIZONTAL_SCALE_TOKEN_LENGTH = 4;
+const MIN_HORIZONTAL_SCALE_VISION_CONFIDENCE = 0.9;
+const MIN_HORIZONTAL_SCALE_IOU = 0.45;
+const MIN_HORIZONTAL_SCALE_VERTICAL_OVERLAP_RATIO = 0.9;
+const MIN_HORIZONTAL_SCALE_HEIGHT_RATIO = 0.9;
+const MAX_HORIZONTAL_SCALE_VERTICAL_CENTER_DELTA_RATIO = 0.05;
+const MAX_HORIZONTAL_SCALE_HORIZONTAL_CENTER_DELTA_RATIO = 0.3;
+const MAX_HORIZONTAL_SCALE_WIDTH_RATIO = 2.2;
+const MIN_HORIZONTAL_SCALE_NEIGHBOUR_IOU = 0.75;
+const MIN_HORIZONTAL_SCALE_NEIGHBOUR_LINE_OVERLAP_RATIO = 0.8;
+const MAX_HORIZONTAL_SCALE_NEIGHBOUR_GAP_HEIGHT_RATIO = 4;
+const MAX_HORIZONTAL_SCALE_NEIGHBOUR_CANDIDATES = 16;
+const MAX_HORIZONTAL_SCALE_ASSIGNMENT_GROUP_SIZE = MAX_EXACT_ASSIGNMENT_WORDS_PER_GROUP;
+const MIN_HORIZONTAL_SCALE_PAGE_WORDS = 50;
+const MAX_HORIZONTAL_SCALE_TOKENS_PER_PAGE = 12;
+const MAX_HORIZONTAL_SCALE_TOKEN_RATIO_PER_PAGE = 0.08;
+const MIN_HORIZONTAL_SCALE_ORDINARY_PLACEMENT_RATIO = 0.9;
+const MIN_HORIZONTAL_SCALE_PAGE_MEDIAN_IOU = 0.95;
 const MAX_UNREADABLE_RECOVERY_PAGES = 4;
 const MAX_ORIENTATION_RECOVERY_PAGES = 4;
 const MIN_ORIENTATION_RECOVERY_VARIANTS = 2;
@@ -76,14 +118,14 @@ const MIN_UNREADABLE_RECOVERY_CONFIDENCE = 0.75;
 const MIN_UNREADABLE_RECOVERY_WORD_IOU = 0.65;
 const MIN_UNREADABLE_RECOVERY_MEDIAN_IOU = 0.85;
 const MAX_UNREADABLE_RECOVERY_CENTER_DISTANCE_RATIO = 0.01;
-const VISION_RENDER_PROFILES = Object.freeze([
+export const VISION_RENDER_PROFILES = Object.freeze([
   { dpi: 300, quality: 95 },
   { dpi: 275, quality: 90 },
   { dpi: 250, quality: 88 },
   { dpi: 225, quality: 86 },
   { dpi: 200, quality: 85 },
 ]);
-const MAX_RENDERED_PAGE_PIXELS = 40_000_000;
+export const MAX_RENDERED_PAGE_PIXELS = 40_000_000;
 const MIN_SPATIAL_TEXT_CHARS = 120;
 const SPATIAL_OVERLAY_FALLBACK_PROFILES = Object.freeze([
   "font-metrics-v1",
@@ -134,6 +176,17 @@ export function enforceVisionWordLimits(pages, resourceLimits) {
   return totalWords;
 }
 
+export function hasIndependentReadableOcrPage(pages, pageCount) {
+  return Array.isArray(pages) && pages.some((page) => (
+    Array.isArray(page?.words)
+      && page.words.length > 0
+      && !isSparseTailEdgeArtifactCandidate(page, {
+        pageNumber: page.pageNumber,
+        pageCount,
+      })
+  ));
+}
+
 function serializeSpatialGeometry(geometry, maxBytes) {
   const json = JSON.stringify(geometry);
   if (Buffer.byteLength(json) > maxBytes) {
@@ -156,6 +209,49 @@ export function renderedPixelCount(pageSize, dpi) {
   if (!pageSize) return Number.POSITIVE_INFINITY;
   return Math.ceil(pageSize.widthPoints * dpi / 72)
     * Math.ceil(pageSize.heightPoints * dpi / 72);
+}
+
+export async function renderVisionSourceRaster({
+  inputPath,
+  pageNumber,
+  pageSize,
+  outputPrefix,
+  runCommand,
+}) {
+  for (const profile of VISION_RENDER_PROFILES) {
+    if (renderedPixelCount(pageSize, profile.dpi) > MAX_RENDERED_PAGE_PIXELS) continue;
+    await runCommand("pdftoppm", [
+      "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
+      "-jpeg", "-jpegopt", `quality=${profile.quality}`, "-r", String(profile.dpi),
+      "-gray", inputPath, outputPrefix,
+    ], 120_000);
+    const candidatePath = `${outputPrefix}.jpg`;
+    const candidateInfo = await stat(candidatePath);
+    if (candidateInfo.size > MAX_VISION_IMAGE_BYTES) continue;
+    return readFile(candidatePath);
+  }
+  throw new GoogleOcrOperationalError("vision_page_too_large");
+}
+
+export async function renderTailRecoveryRaster({
+  inputPath,
+  pageNumber,
+  sourceWidth,
+  sourceHeight,
+  outputPrefix,
+  runCommand,
+}) {
+  await runCommand("pdftoppm", [
+    "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
+    "-jpeg", "-jpegopt", "quality=96",
+    "-scale-to-x", String(sourceWidth),
+    "-scale-to-y", String(sourceHeight),
+    inputPath, outputPrefix,
+  ], 120_000);
+  const recoveryPath = `${outputPrefix}.jpg`;
+  const recoveryInfo = await stat(recoveryPath);
+  if (recoveryInfo.size < 1 || recoveryInfo.size > MAX_VISION_IMAGE_BYTES) return null;
+  return readFile(recoveryPath);
 }
 
 export function sha256(bytes) {
@@ -251,7 +347,7 @@ export function classifyRasterBlankness({
   };
 }
 
-async function inspectRasterBlankness(imageBytes) {
+export async function inspectRasterBlankness(imageBytes) {
   try {
     const { data, info } = await sharp(imageBytes, {
       failOn: "warning",
@@ -263,20 +359,51 @@ async function inspectRasterBlankness(imageBytes) {
     const blockRows = Math.ceil(info.height / BLANK_INSPECTION_BLOCK_SIZE);
     const localNonWhite = new Uint32Array(blockColumns * blockRows);
     const localDark = new Uint32Array(blockColumns * blockRows);
+    const edgeMarginX = Math.max(1, Math.floor(info.width * TAIL_RASTER_EDGE_MARGIN_RATIO));
+    const edgeMarginY = Math.max(1, Math.floor(info.height * TAIL_RASTER_EDGE_MARGIN_RATIO));
+    const interiorWidth = info.width - edgeMarginX * 2;
+    const interiorHeight = info.height - edgeMarginY * 2;
+    if (!(interiorWidth > 0) || !(interiorHeight > 0)) throw new Error("invalid_interior");
+    const interiorBlockColumns = Math.ceil(interiorWidth / BLANK_INSPECTION_BLOCK_SIZE);
+    const interiorBlockRows = Math.ceil(interiorHeight / BLANK_INSPECTION_BLOCK_SIZE);
+    const interiorLocalNonWhite = new Uint32Array(interiorBlockColumns * interiorBlockRows);
+    const interiorLocalDark = new Uint32Array(interiorBlockColumns * interiorBlockRows);
     let sum = 0;
     let squaresSum = 0;
-    for (let offset = 0; offset < data.length; offset += 1) {
-      const value = data[offset];
-      histogram[value] += 1;
-      sum += value;
-      squaresSum += value * value;
-      if (value < 245) {
-        const x = offset % info.width;
-        const y = Math.floor(offset / info.width);
-        const block = Math.floor(y / BLANK_INSPECTION_BLOCK_SIZE) * blockColumns
-          + Math.floor(x / BLANK_INSPECTION_BLOCK_SIZE);
-        localNonWhite[block] += 1;
-        if (value < 200) localDark[block] += 1;
+    let interiorPixels = 0;
+    let interiorNonWhite = 0;
+    let interiorDark = 0;
+    let interiorSum = 0;
+    let interiorSquaresSum = 0;
+    for (let y = 0; y < info.height; y += 1) {
+      const rowOffset = y * info.width;
+      for (let x = 0; x < info.width; x += 1) {
+        const value = data[rowOffset + x];
+        histogram[value] += 1;
+        sum += value;
+        squaresSum += value * value;
+        const inInterior = x >= edgeMarginX && x < info.width - edgeMarginX
+          && y >= edgeMarginY && y < info.height - edgeMarginY;
+        if (inInterior) {
+          interiorPixels += 1;
+          interiorSum += value;
+          interiorSquaresSum += value * value;
+        }
+        if (value < 245) {
+          const block = Math.floor(y / BLANK_INSPECTION_BLOCK_SIZE) * blockColumns
+            + Math.floor(x / BLANK_INSPECTION_BLOCK_SIZE);
+          localNonWhite[block] += 1;
+          if (value < 200) localDark[block] += 1;
+          if (inInterior) {
+            interiorNonWhite += 1;
+            if (value < 200) interiorDark += 1;
+            const interiorBlock = Math.floor((y - edgeMarginY) / BLANK_INSPECTION_BLOCK_SIZE)
+              * interiorBlockColumns
+              + Math.floor((x - edgeMarginX) / BLANK_INSPECTION_BLOCK_SIZE);
+            interiorLocalNonWhite[interiorBlock] += 1;
+            if (value < 200) interiorLocalDark[interiorBlock] += 1;
+          }
+        }
       }
     }
     const mean = data.length ? sum / data.length : Number.NaN;
@@ -295,6 +422,31 @@ async function inspectRasterBlankness(imageBytes) {
         maxLocalDarkRatio = Math.max(maxLocalDarkRatio, localDark[block] / blockPixels);
       }
     }
+    let maxInteriorLocalNonWhiteRatio = 0;
+    let maxInteriorLocalDarkRatio = 0;
+    for (let blockY = 0; blockY < interiorBlockRows; blockY += 1) {
+      for (let blockX = 0; blockX < interiorBlockColumns; blockX += 1) {
+        const block = blockY * interiorBlockColumns + blockX;
+        const blockWidth = Math.min(BLANK_INSPECTION_BLOCK_SIZE,
+          interiorWidth - blockX * BLANK_INSPECTION_BLOCK_SIZE);
+        const blockHeight = Math.min(BLANK_INSPECTION_BLOCK_SIZE,
+          interiorHeight - blockY * BLANK_INSPECTION_BLOCK_SIZE);
+        const blockPixels = blockWidth * blockHeight;
+        maxInteriorLocalNonWhiteRatio = Math.max(
+          maxInteriorLocalNonWhiteRatio,
+          interiorLocalNonWhite[block] / blockPixels,
+        );
+        maxInteriorLocalDarkRatio = Math.max(
+          maxInteriorLocalDarkRatio,
+          interiorLocalDark[block] / blockPixels,
+        );
+      }
+    }
+    const interiorMean = interiorSum / interiorPixels;
+    const interiorVariance = Math.max(
+      0,
+      interiorSquaresSum / interiorPixels - interiorMean * interiorMean,
+    );
     const classification = classifyRasterBlankness({
       histogram,
       mean,
@@ -310,6 +462,15 @@ async function inspectRasterBlankness(imageBytes) {
       stdev: Math.sqrt(variance),
       maxLocalNonWhiteRatio,
       maxLocalDarkRatio,
+      edgeMarginXRatio: edgeMarginX / info.width,
+      edgeMarginYRatio: edgeMarginY / info.height,
+      interiorCoverageRatio: interiorPixels / data.length,
+      interiorNonWhiteRatio: interiorNonWhite / interiorPixels,
+      interiorDarkRatio: interiorDark / interiorPixels,
+      interiorMean,
+      interiorStdev: Math.sqrt(interiorVariance),
+      maxInteriorLocalNonWhiteRatio,
+      maxInteriorLocalDarkRatio,
     };
   } catch {
     // A decode/statistics error can never turn a page into a trusted blank.
@@ -323,6 +484,15 @@ async function inspectRasterBlankness(imageBytes) {
       stdev: Number.POSITIVE_INFINITY,
       maxLocalNonWhiteRatio: 1,
       maxLocalDarkRatio: 1,
+      edgeMarginXRatio: 1,
+      edgeMarginYRatio: 1,
+      interiorCoverageRatio: 0,
+      interiorNonWhiteRatio: 1,
+      interiorDarkRatio: 1,
+      interiorMean: 0,
+      interiorStdev: Number.POSITIVE_INFINITY,
+      maxInteriorLocalNonWhiteRatio: 1,
+      maxInteriorLocalDarkRatio: 1,
     };
   }
 }
@@ -903,6 +1073,169 @@ function geometricallyAdjacent(previous, next) {
   return next.xMin - previous.xMax <= maximumGap;
 }
 
+function centersAlignedForGeometry(target, actualBox, polygon = null) {
+  const actualCenter = boxCenter(actualBox);
+  const expectedCenter = polygon ? polygonCenter(polygon) : boxCenter(target);
+  return polygon
+    ? pointInPolygonInclusive(actualCenter, polygon)
+      || pointInAxisBoxInclusive(expectedCenter, actualBox)
+    : pointInAxisBoxInclusive(actualCenter, target)
+      || pointInAxisBoxInclusive(expectedCenter, actualBox);
+}
+
+function boxCenterDistance(first, second) {
+  const firstCenter = boxCenter(first);
+  const secondCenter = boxCenter(second);
+  return Math.hypot(firstCenter.x - secondCenter.x, firstCenter.y - secondCenter.y);
+}
+
+function isStrictlyClosest(selectedDistance, alternatives) {
+  if (!alternatives.length) return true;
+  const closestAlternative = Math.min(...alternatives);
+  // A half-pixel margin rejects geometrically indistinguishable duplicate
+  // assignments while tolerating only the deterministic sub-pixel rounding
+  // already present in the PDF/Vision coordinate conversion.
+  return selectedDistance + 0.5 <= closestAlternative;
+}
+
+function assignmentIsMutuallyUnique(match, expectedGroup, actualGroup) {
+  if (expectedGroup.length !== actualGroup.length) return false;
+  const selectedDistance = boxCenterDistance(match.expected.target, match.actual.box);
+  const competingActualDistances = actualGroup
+    .filter((entry) => entry !== match.actual)
+    .map((entry) => boxCenterDistance(match.expected.target, entry.box));
+  const competingExpectedDistances = expectedGroup
+    .filter((entry) => entry !== match.expected)
+    .map((entry) => boxCenterDistance(entry.target, match.actual.box));
+  return isStrictlyClosest(selectedDistance, competingActualDistances)
+    && isStrictlyClosest(selectedDistance, competingExpectedDistances);
+}
+
+function sameLineNeighbour(first, second) {
+  const firstHeight = first.yMax - first.yMin;
+  const secondHeight = second.yMax - second.yMin;
+  if (!(firstHeight > 0) || !(secondHeight > 0)) return false;
+  const overlap = Math.max(0,
+    Math.min(first.yMax, second.yMax) - Math.max(first.yMin, second.yMin));
+  const minimumHeight = Math.min(firstHeight, secondHeight);
+  if (overlap / minimumHeight < MIN_HORIZONTAL_SCALE_NEIGHBOUR_LINE_OVERLAP_RATIO) {
+    return false;
+  }
+  const gap = Math.max(0,
+    Math.max(first.xMin, second.xMin) - Math.min(first.xMax, second.xMax));
+  return gap <= Math.max(firstHeight, secondHeight)
+    * MAX_HORIZONTAL_SCALE_NEIGHBOUR_GAP_HEIGHT_RATIO;
+}
+
+function reliableDirectAnchor(match) {
+  return match.assignmentUnique === true
+    && match.expected.normalized === match.actual.normalized
+    && intersectionOverUnion(match.expected.target, match.actual.box)
+      >= MIN_HORIZONTAL_SCALE_NEIGHBOUR_IOU
+    && centersAlignedForGeometry(
+      match.expected.target,
+      match.actual.box,
+      match.expected.polygon,
+    );
+}
+
+function directMatchesAreNeighbours(first, second) {
+  if (!sameLineNeighbour(first.expected.target, second.expected.target)
+    || !sameLineNeighbour(first.actual.box, second.actual.box)) return false;
+  const expectedDirection = Math.sign(
+    boxCenter(second.expected.target).x - boxCenter(first.expected.target).x,
+  );
+  const actualDirection = Math.sign(
+    boxCenter(second.actual.box).x - boxCenter(first.actual.box).x,
+  );
+  return expectedDirection !== 0 && expectedDirection === actualDirection;
+}
+
+function horizontalScaleNeighbourMatches(directMatches) {
+  const matchesWithAnchor = new Set();
+  const ordered = [...directMatches].sort((left, right) => {
+    const leftCenter = boxCenter(left.expected.target);
+    const rightCenter = boxCenter(right.expected.target);
+    return leftCenter.y - rightCenter.y || leftCenter.x - rightCenter.x;
+  });
+  for (let index = 0; index < ordered.length; index += 1) {
+    const match = ordered[index];
+    for (let distance = 1;
+      distance <= MAX_HORIZONTAL_SCALE_NEIGHBOUR_CANDIDATES;
+      distance += 1) {
+      for (const candidateIndex of [index - distance, index + distance]) {
+        const candidate = ordered[candidateIndex];
+        if (!candidate || !directMatchesAreNeighbours(match, candidate)) continue;
+        if (reliableDirectAnchor(candidate)) matchesWithAnchor.add(match);
+        if (reliableDirectAnchor(match)) matchesWithAnchor.add(candidate);
+      }
+    }
+  }
+  return matchesWithAnchor;
+}
+
+function shortTokenHorizontalScalePlacement({
+  expectedParts,
+  actualParts,
+  target,
+  actualBox,
+  centersAligned,
+  hasReliableNeighbour,
+  assignmentUnique,
+  iou,
+  matcherConfig,
+}) {
+  if (!matcherConfig.allowShortTokenHorizontalScaling
+    || !centersAligned
+    || !hasReliableNeighbour
+    || !assignmentUnique
+    || iou < MIN_HORIZONTAL_SCALE_IOU
+    || iou >= 0.75
+    || expectedParts.length !== 1
+    || actualParts.length !== 1) return false;
+
+  const [expected] = expectedParts;
+  const [actual] = actualParts;
+  // The existing matcher has already required exact normalised text. Keep the
+  // equality explicit here so the spatial exception can never become a second
+  // or fuzzier text-matching path.
+  if (!expected.normalized
+    || expected.normalized !== actual.normalized
+    || expected.normalized.length > MAX_HORIZONTAL_SCALE_TOKEN_LENGTH) return false;
+
+  const confidence = Number(expected.expected?.confidence);
+  if (!Number.isFinite(confidence)
+    || confidence < MIN_HORIZONTAL_SCALE_VISION_CONFIDENCE
+    || confidence > 1) return false;
+
+  const targetWidth = target.xMax - target.xMin;
+  const actualWidth = actualBox.xMax - actualBox.xMin;
+  const targetHeight = target.yMax - target.yMin;
+  const actualHeight = actualBox.yMax - actualBox.yMin;
+  if (!(targetWidth > 0) || !(actualWidth > 0)
+    || !(targetHeight > 0) || !(actualHeight > 0)) return false;
+
+  const verticalOverlap = Math.max(0,
+    Math.min(target.yMax, actualBox.yMax) - Math.max(target.yMin, actualBox.yMin));
+  const maximumHeight = Math.max(targetHeight, actualHeight);
+  const minimumHeight = Math.min(targetHeight, actualHeight);
+  const heightRatio = minimumHeight / maximumHeight;
+  const verticalOverlapRatio = verticalOverlap / maximumHeight;
+  const verticalCenterDelta = Math.abs(
+    boxCenter(target).y - boxCenter(actualBox).y,
+  ) / maximumHeight;
+  const widthRatio = Math.max(targetWidth, actualWidth) / Math.min(targetWidth, actualWidth);
+  const horizontalCenterDelta = Math.abs(
+    boxCenter(target).x - boxCenter(actualBox).x,
+  ) / Math.max(targetWidth, actualWidth);
+
+  return verticalOverlapRatio >= MIN_HORIZONTAL_SCALE_VERTICAL_OVERLAP_RATIO
+    && heightRatio >= MIN_HORIZONTAL_SCALE_HEIGHT_RATIO
+    && verticalCenterDelta <= MAX_HORIZONTAL_SCALE_VERTICAL_CENTER_DELTA_RATIO
+    && horizontalCenterDelta <= MAX_HORIZONTAL_SCALE_HORIZONTAL_CENTER_DELTA_RATIO
+    && widthRatio <= MAX_HORIZONTAL_SCALE_WIDTH_RATIO;
+}
+
 function adjacentTokenWindows(items, used, boxKey, matcherConfig) {
   const windowsByText = new Map();
   for (let start = 0; start < items.length; start += 1) {
@@ -1056,10 +1389,11 @@ export function computeSpatialAccuracy(
     const scaleY = canMeasurePage ? actualPage.height / geometry.imageHeight : 0;
     const expectedGroups = new Map();
     const expectedEntries = [];
+    let pageExpectedWords = 0;
     for (const expected of geometry.words) {
       const normalized = normaliseWord(expected.text);
       if (!normalized) continue;
-      expectedWords += 1;
+      pageExpectedWords += 1;
       if (!canMeasurePage) continue;
       const target = axisBox(expected.vertices, scaleX, scaleY);
       const polygon = expected.vertices.map((vertex) => ({
@@ -1071,6 +1405,7 @@ export function computeSpatialAccuracy(
       group.push(entry);
       expectedGroups.set(normalized, group);
     }
+    expectedWords += pageExpectedWords;
     if (!canMeasurePage) continue;
     const actualGroups = new Map();
     const actualEntries = [];
@@ -1087,23 +1422,35 @@ export function computeSpatialAccuracy(
     const exactAssignmentBudget = { remaining: MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE };
     const usedExpected = new Set();
     const usedActual = new Set();
-    const recordMatch = ({ expectedParts, actualParts, target, actualBox, polygon = null }) => {
+    const pageMatches = [];
+    const recordMatch = ({
+      expectedParts,
+      actualParts,
+      target,
+      actualBox,
+      polygon = null,
+      hasReliableNeighbour = false,
+      assignmentUnique = false,
+    }) => {
       const weight = expectedParts.length;
       const iou = intersectionOverUnion(target, actualBox);
-      matchedWords += weight;
-      for (let count = 0; count < weight; count += 1) ious.push(iou);
-      const actualCenter = boxCenter(actualBox);
-      const expectedCenter = polygon ? polygonCenter(polygon) : boxCenter(target);
-      const centersAligned = polygon
-        ? pointInPolygonInclusive(actualCenter, polygon)
-          || pointInAxisBoxInclusive(expectedCenter, actualBox)
-        : pointInAxisBoxInclusive(actualCenter, target)
-          || pointInAxisBoxInclusive(expectedCenter, actualBox);
-      if (centersAligned) centerInside += weight;
-      if (centersAligned && iou >= 0.75) passed += weight;
+      const centersAligned = centersAlignedForGeometry(target, actualBox, polygon);
+      const acceptedShortTokenHorizontalScale = shortTokenHorizontalScalePlacement({
+        expectedParts,
+        actualParts,
+        target,
+        actualBox,
+        centersAligned,
+        hasReliableNeighbour,
+        assignmentUnique,
+        iou,
+        matcherConfig,
+      });
+      pageMatches.push({ weight, iou, centersAligned, acceptedShortTokenHorizontalScale });
       for (const part of expectedParts) usedExpected.add(part);
       for (const part of actualParts) usedActual.add(part);
     };
+    const directMatches = [];
     for (const [normalized, expectedGroup] of expectedGroups) {
       const actualGroup = actualGroups.get(normalized) ?? [];
       for (const match of assignEqualWords(
@@ -1112,17 +1459,33 @@ export function computeSpatialAccuracy(
         pageDiagonal,
         exactAssignmentBudget,
       )) {
-        // Poppler and Vision may round opposite sides of a slanted word box.
-        // Requiring either box's centre to be contained in the other is robust
-        // to that representation difference without relaxing the 0.75 IoU gate.
-        recordMatch({
-          expectedParts: [match.expected],
-          actualParts: [match.actual],
-          target: match.expected.target,
-          actualBox: match.actual.box,
-          polygon: match.expected.polygon,
+        directMatches.push({
+          ...match,
+          assignmentUnique: matcherConfig.allowShortTokenHorizontalScaling
+            && expectedGroup.length <= MAX_HORIZONTAL_SCALE_ASSIGNMENT_GROUP_SIZE
+            && actualGroup.length <= MAX_HORIZONTAL_SCALE_ASSIGNMENT_GROUP_SIZE
+            && assignmentIsMutuallyUnique(match, expectedGroup, actualGroup),
         });
       }
+    }
+    const directMatchesWithReliableNeighbour = matcherConfig.allowShortTokenHorizontalScaling
+      ? horizontalScaleNeighbourMatches(directMatches)
+      : new Set();
+    for (const match of directMatches) {
+      // Poppler and Vision may round opposite sides of a slanted word box.
+      // Requiring either box's centre to be contained in the other is robust
+      // to that representation difference. Profile v3 additionally recognises
+      // a bounded horizontal scaling artefact, but only beside a reliable word
+      // on the same line; v2 keeps the exact original 0.75 IoU behaviour.
+      recordMatch({
+        expectedParts: [match.expected],
+        actualParts: [match.actual],
+        target: match.expected.target,
+        actualBox: match.actual.box,
+        polygon: match.expected.polygon,
+        assignmentUnique: match.assignmentUnique,
+        hasReliableNeighbour: directMatchesWithReliableNeighbour.has(match),
+      });
     }
 
     // PDF text extractors may split a Vision token at a hyphen/ligature or join
@@ -1171,6 +1534,38 @@ export function computeSpatialAccuracy(
         target: window.box,
         actualBox: actual.box,
       });
+    }
+    const pageMatchedWords = pageMatches.reduce((sum, match) => sum + match.weight, 0);
+    const pageCenterInside = pageMatches.reduce((sum, match) => (
+      sum + (match.centersAligned ? match.weight : 0)
+    ), 0);
+    const pageOrdinaryPlacedWords = pageMatches.reduce((sum, match) => (
+      sum + (match.centersAligned && match.iou >= 0.75 ? match.weight : 0)
+    ), 0);
+    const pageHorizontalScaleTokens = pageMatches.reduce((sum, match) => (
+      sum + (match.acceptedShortTokenHorizontalScale ? match.weight : 0)
+    ), 0);
+    const pageIous = pageMatches.flatMap((match) => Array(match.weight).fill(match.iou));
+    const pageAllowsHorizontalScale = matcherConfig.allowShortTokenHorizontalScaling
+      && pageExpectedWords >= MIN_HORIZONTAL_SCALE_PAGE_WORDS
+      && pageMatchedWords === pageExpectedWords
+      && pageCenterInside === pageMatchedWords
+      && median(pageIous) >= MIN_HORIZONTAL_SCALE_PAGE_MEDIAN_IOU
+      && pageOrdinaryPlacedWords / Math.max(pageMatchedWords, 1)
+        >= MIN_HORIZONTAL_SCALE_ORDINARY_PLACEMENT_RATIO
+      && pageHorizontalScaleTokens > 0
+      && pageHorizontalScaleTokens <= MAX_HORIZONTAL_SCALE_TOKENS_PER_PAGE
+      && pageHorizontalScaleTokens / Math.max(pageMatchedWords, 1)
+        <= MAX_HORIZONTAL_SCALE_TOKEN_RATIO_PER_PAGE;
+    matchedWords += pageMatchedWords;
+    centerInside += pageCenterInside;
+    ious.push(...pageIous);
+    for (const match of pageMatches) {
+      if (match.centersAligned
+        && (match.iou >= 0.75
+          || (pageAllowsHorizontalScale && match.acceptedShortTokenHorizontalScale))) {
+        passed += match.weight;
+      }
     }
   }
   const matchCoverage = expectedWords ? matchedWords / expectedWords : 0;
@@ -1249,6 +1644,9 @@ export async function processPdfSpatially({
   googleClient,
   assertLeaseHealthy = () => {},
   forceOcr = false,
+  geometryBackfillRunId = null,
+  originalSha256 = null,
+  tailBlankProofManifest = null,
   resourceLimits,
   signal,
 }) {
@@ -1348,23 +1746,13 @@ export async function processPdfSpatially({
     const prefix = join(workDir, `page-${pageNumber}`);
     const pageSize = pageStates[pageNumber - 1]?.pageSize;
     if (!pageSize) throw new GoogleOcrOperationalError("page_geometry_unavailable");
-    let imageBytes = null;
-    for (const profile of VISION_RENDER_PROFILES) {
-      assertProcessingHealthy();
-      if (renderedPixelCount(pageSize, profile.dpi) > MAX_RENDERED_PAGE_PIXELS) continue;
-      await runCommand("pdftoppm", [
-        "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
-        "-jpeg", "-jpegopt", `quality=${profile.quality}`, "-r", String(profile.dpi),
-        "-gray", inputPath, prefix,
-      ], 120_000);
-      const candidatePath = `${prefix}.jpg`;
-      const candidateInfo = await stat(candidatePath);
-      if (candidateInfo.size > MAX_VISION_IMAGE_BYTES) continue;
-      const candidate = await readFile(candidatePath);
-      imageBytes = candidate;
-      break;
-    }
-    if (!imageBytes) throw new GoogleOcrOperationalError("vision_page_too_large");
+    const imageBytes = await renderVisionSourceRaster({
+      inputPath,
+      pageNumber,
+      pageSize,
+      outputPrefix: prefix,
+      runCommand,
+    });
     retainedRasterBytes += imageBytes.length;
     if (retainedRasterBytes > limits.maxDocumentRasterBytes) {
       throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
@@ -1407,26 +1795,46 @@ export async function processPdfSpatially({
   const blankPageNumbers = new Set();
   const verifiedBlankCandidates = new Map();
   const blankInspectionByPage = new Map();
+  const tailBlankRecoveryMarkers = new Map();
+  const hasProofCandidate = (pageNumber) => hasTailBlankProofCandidate(
+    tailBlankProofManifest,
+    {
+      runId: geometryBackfillRunId,
+      originalSha256,
+      pageNumber,
+      pageCount,
+    },
+  );
   // A completely blank document is still rejected. Within an otherwise
   // readable document, however, a verified blank page is preserved in its
   // original position without being mistaken for an OCR failure.
   for (const page of rawGeometryPages) {
-    if (page.words.length > 0) continue;
+    const edgeArtifactCandidate = hasProofCandidate(page.pageNumber)
+      && isSparseTailEdgeArtifactCandidate(page, {
+        pageNumber: page.pageNumber,
+        pageCount,
+      });
+    if (page.words.length > 0 && !edgeArtifactCandidate) continue;
     const pageState = pageStates[page.pageNumber - 1];
     const sourcePage = sourcePageByNumber.get(page.pageNumber);
     if (!pageState || pageState.chars > 0 || !sourcePage?.imageBytes) continue;
     const inspection = await inspectRasterBlankness(sourcePage.imageBytes);
     assertProcessingHealthy();
     blankInspectionByPage.set(page.pageNumber, inspection);
-    if (!inspection.blank || !(inspection.width > 0) || !(inspection.height > 0)) continue;
+    if (page.words.length > 0
+      || !inspection.blank || !(inspection.width > 0) || !(inspection.height > 0)) continue;
     verifiedBlankCandidates.set(page.pageNumber, inspection);
   }
   const promoteVerifiedBlankCandidates = () => {
-    if (!rawGeometryPages.some((page) => page.words.length > 0)) return;
+    if (!hasIndependentReadableOcrPage(rawGeometryPages, pageCount)) return;
     for (const [pageNumber, inspection] of verifiedBlankCandidates) {
       const page = rawGeometryPages.find((candidate) => candidate.pageNumber === pageNumber);
-      if (!page || page.words.length > 0) continue;
+      if (!page || (page.words.length > 0 && !isSparseTailEdgeArtifactCandidate(page, {
+        pageNumber,
+        pageCount,
+      })) || (page.words.length > 0 && !hasProofCandidate(pageNumber))) continue;
       blankPageNumbers.add(pageNumber);
+      page.words = [];
       page.imageWidth = inspection.width;
       page.imageHeight = inspection.height;
     }
@@ -1434,8 +1842,12 @@ export async function processPdfSpatially({
   promoteVerifiedBlankCandidates();
 
   const recoveryCandidates = rawGeometryPages.filter((page) => (
-    page.words.length === 0
-      && !verifiedBlankCandidates.has(page.pageNumber)
+    (page.words.length === 0 && !verifiedBlankCandidates.has(page.pageNumber))
+      || (hasProofCandidate(page.pageNumber)
+        && isSparseTailEdgeArtifactCandidate(page, {
+          pageNumber: page.pageNumber,
+          pageCount,
+        }))
   ));
   if (recoveryCandidates.length > 0
     && recoveryCandidates.length <= MAX_UNREADABLE_RECOVERY_PAGES
@@ -1445,21 +1857,19 @@ export async function processPdfSpatially({
       const sourceTransform = transformByPage.get(page.pageNumber);
       if (!(sourceTransform?.sourceWidth > 0) || !(sourceTransform?.sourceHeight > 0)) continue;
       const recoveryPrefix = join(workDir, `recovery-colour-${page.pageNumber}`);
-      await runCommand("pdftoppm", [
-        "-f", String(page.pageNumber), "-l", String(page.pageNumber), "-singlefile", "-cropbox",
-        "-jpeg", "-jpegopt", "quality=96",
-        "-scale-to-x", String(sourceTransform.sourceWidth),
-        "-scale-to-y", String(sourceTransform.sourceHeight),
-        inputPath, recoveryPrefix,
-      ], 120_000);
-      const recoveryPath = `${recoveryPrefix}.jpg`;
-      const recoveryInfo = await stat(recoveryPath);
+      const recoveryImageBytes = await renderTailRecoveryRaster({
+        inputPath,
+        pageNumber: page.pageNumber,
+        sourceWidth: sourceTransform.sourceWidth,
+        sourceHeight: sourceTransform.sourceHeight,
+        outputPrefix: recoveryPrefix,
+        runCommand,
+      });
       const remainingRasterBytes = limits.maxDocumentTotalRasterBytes - retainedRecoveryRasterBytes;
       const remainingResponseBytes = limits.maxVisionResponseBytesTotal
         - retainedRecoveryResponseBytes;
-      if (recoveryInfo.size < 1 || recoveryInfo.size > MAX_VISION_IMAGE_BYTES
-        || recoveryInfo.size >= remainingRasterBytes || remainingResponseBytes < 1) continue;
-      const recoveryImageBytes = await readFile(recoveryPath);
+      if (!recoveryImageBytes
+        || recoveryImageBytes.length >= remainingRasterBytes || remainingResponseBytes < 1) continue;
       const retry = await googleClient.annotateUnreadablePageVariants({
         pageNumber: page.pageNumber,
         imageBytes: recoveryImageBytes,
@@ -1509,13 +1919,24 @@ export async function processPdfSpatially({
       const sourceEvidence = blankInspectionByPage.get(page.pageNumber);
       const recoveryEvidence = await inspectRasterBlankness(recoveryImageBytes);
       assertProcessingHealthy();
-      if (hasSparseTailBlankConsensus({
+      const proofToken = authoriseTailBlankProof(tailBlankProofManifest, {
+        runId: geometryBackfillRunId,
+        originalSha256,
+        pageNumber: page.pageNumber,
+        pageCount,
+        sourceRasterBytes: sourcePageByNumber.get(page.pageNumber)?.imageBytes,
+        recoveryRasterBytes: recoveryImageBytes,
+      });
+      const recoveryMarker = tailBlankRecoveryMarker(proofToken);
+      if (recoveryMarker && hasSparseTailBlankConsensus({
         pageNumber: page.pageNumber,
         pageCount,
         variantPages: recoveredVariants,
         sourceEvidence,
         recoveryEvidence,
+        proofToken,
       })) {
+        tailBlankRecoveryMarkers.set(page.pageNumber, recoveryMarker);
         verifiedBlankCandidates.set(page.pageNumber, {
           ...sourceEvidence,
           width: page.imageWidth,
@@ -1581,9 +2002,10 @@ export async function processPdfSpatially({
         rawGeometryPages[page.pageNumber - 1] = recovered;
         continue;
       }
-      const sparseRecovery = recoverSparseTailOrientationFromVariants(recoveredVariants, {
+      const sparseRecovery = recoverTailOrientationFromVariants(recoveredVariants, {
         pageNumber: page.pageNumber,
         pageCount,
+        originalPage: page,
       });
       if (sparseRecovery) {
         rawGeometryPages[page.pageNumber - 1] = sparseRecovery.page;
@@ -1739,6 +2161,12 @@ export async function processPdfSpatially({
   }
 
   const { extractedPages, spatial, textCharCount } = overlayAudit;
+  const usedTailBlankRecoveryPages = [...tailBlankRecoveryMarkers.keys()]
+    .filter((pageNumber) => blankPageNumbers.has(pageNumber))
+    .sort((left, right) => left - right);
+  const firstTailBlankRecoveryMarker = usedTailBlankRecoveryPages.length > 0
+    ? tailBlankRecoveryMarkers.get(usedTailBlankRecoveryPages[0])
+    : null;
   // Persist the independently measured metrics only after the derivative has
   // been rebuilt and verified. The uploaded artefact therefore cannot claim
   // spatial success based solely on Vision's source geometry.
@@ -1746,6 +2174,13 @@ export async function processPdfSpatially({
     ...geometry,
     overlayProfile: selectedOverlayProfile,
     spatialVerification: spatial,
+    ...(firstTailBlankRecoveryMarker ? {
+      tailBlankRecovery: {
+        profile: firstTailBlankRecoveryMarker.profile,
+        manifestDigest: firstTailBlankRecoveryMarker.manifestDigest,
+        pageNumbers: usedTailBlankRecoveryPages,
+      },
+    } : {}),
   };
   const verifiedGeometryJson = serializeSpatialGeometry(
     verifiedGeometry,

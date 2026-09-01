@@ -9,9 +9,16 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import {
   SPATIAL_VERIFICATION_PROFILE,
+  V2_SPATIAL_VERIFICATION_PROFILE,
+  computeSpatialAccuracy,
 } from "../cloud-run/contract-document-worker/spatial-ocr.mjs";
+import {
+  createTailBlankProofManifest,
+  parseTailBlankProofManifest,
+} from "../cloud-run/contract-document-worker/tail-blank-proof.mjs";
 
 import {
+  AuditOperationalError,
   auditCompletedJobs,
   auditGeometryBackfillRunRecords,
   auditReplacementDeletionLifecycle,
@@ -25,15 +32,22 @@ import {
   extractLegacyPdfPageCount,
   extractPdfPageCount,
   GEOMETRY_AUDIT_PDFTOTEXT_VERSION,
+  GEOMETRY_AUDIT_PDFTOPPM_VERSION,
   readBaselineFile,
+  readTailBlankProofAuditFile,
   loadPostBaselineAiCounts,
   requireMatchingPdfPageCounts,
   requireGeometryAuditPdftotextVersion,
+  requireGeometryAuditPdftoppmVersion,
+  renderTailBlankProofRasters,
   safeSummaryJson,
   selectGeometryBackfillSources,
   sha256,
   summarizeOperationalState,
   summaryHasViolations,
+  tailBlankProofUseCountViolation,
+  validTailBlankRecoveryMarker,
+  verifyTailBlankProofUse,
   verifyBaseline,
   writeBaselineFile,
 } from "../scripts/audit-ocr-backfill.mjs";
@@ -42,6 +56,11 @@ test("geometry-audit bindes til workerens Poppler-generation", () => {
   assert.equal(GEOMETRY_AUDIT_PDFTOTEXT_VERSION, "22.12.0");
   assert.equal(
     requireGeometryAuditPdftotextVersion("pdftotext version 22.12.0\n"),
+    "22.12.0",
+  );
+  assert.equal(GEOMETRY_AUDIT_PDFTOPPM_VERSION, "22.12.0");
+  assert.equal(
+    requireGeometryAuditPdftoppmVersion("pdftoppm version 22.12.0\n"),
     "22.12.0",
   );
   for (const output of [
@@ -55,6 +74,244 @@ test("geometry-audit bindes til workerens Poppler-generation", () => {
       (error) => error?.code === "geometry_audit_runtime_mismatch",
     );
   }
+  assert.throws(
+    () => requireGeometryAuditPdftoppmVersion("pdftoppm version 26.05.0\n"),
+    (error) => error?.code === "geometry_audit_runtime_mismatch",
+  );
+});
+
+test("blank-side-audit kræver præcis fem unikke manifestanvendelser", () => {
+  const runId = "33333333-3333-4333-8333-333333333333";
+  const originals = Array.from({ length: 5 }, (_, index) => Buffer.from(`original-${index}`));
+  const manifestValue = createTailBlankProofManifest({
+    runId,
+    expiresAt: "2026-09-02T12:00:00.000Z",
+    entries: originals.map((original, index) => ({
+      originalSha256: sha256(original),
+      pageNumber: index + 2,
+      pageCount: index + 2,
+      sourceRasterSha256: sha256(Buffer.from(`source-${index}`)),
+      recoveryRasterSha256: sha256(Buffer.from(`recovery-${index}`)),
+    })),
+  });
+  const manifest = parseTailBlankProofManifest(JSON.stringify(manifestValue), {
+    executionMode: "audit",
+    expectedRunId: runId,
+    requireUnexpired: false,
+  });
+  const usedKeys = new Set(manifest.entries.map((entry) => sha256(Buffer.from(
+    `${entry.originalSha256}:${entry.pageNumber}:${entry.pageCount}`,
+    "utf8",
+  ))));
+  assert.equal(tailBlankProofUseCountViolation({
+    manifest,
+    markerCount: 5,
+    usedKeys,
+  }), 0);
+  assert.equal(tailBlankProofUseCountViolation({
+    manifest,
+    markerCount: 4,
+    usedKeys: new Set([...usedKeys].slice(0, 4)),
+  }), 1);
+  assert.equal(tailBlankProofUseCountViolation({
+    manifest,
+    markerCount: 6,
+    usedKeys,
+  }), 1);
+  assert.equal(tailBlankProofUseCountViolation({
+    manifest: null,
+    markerCount: 1,
+    usedKeys: new Set(),
+  }), 1);
+});
+
+test("blank-side-audit læser kun en absolut ejerbeskyttet manifestfil", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dfks-tail-proof-audit-"));
+  const proofPath = join(directory, "proof.json");
+  const runId = "33333333-3333-4333-8333-333333333333";
+  const value = createTailBlankProofManifest({
+    runId,
+    expiresAt: "2026-09-02T12:00:00.000Z",
+    entries: [{
+      originalSha256: "1".repeat(64),
+      pageNumber: 2,
+      pageCount: 2,
+      sourceRasterSha256: "2".repeat(64),
+      recoveryRasterSha256: "3".repeat(64),
+    }],
+  });
+  try {
+    await writeFile(proofPath, JSON.stringify(value), { mode: 0o600 });
+    const parsed = await readTailBlankProofAuditFile(proofPath, runId);
+    assert.equal(parsed.manifestDigest, value.manifestDigest);
+    await chmod(proofPath, 0o640);
+    await assert.rejects(
+      readTailBlankProofAuditFile(proofPath, runId),
+      (error) => error?.code === "geometry_tail_blank_proof_permissions_invalid",
+    );
+    await assert.rejects(
+      readTailBlankProofAuditFile("relative-proof.json", runId),
+      (error) => error?.code === "geometry_tail_blank_proof_path_invalid",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("blank-side-audit stopper hvis følsomme midlertidige filer ikke kan slettes", async () => {
+  let retainedDirectory;
+  try {
+    await assert.rejects(renderTailBlankProofRasters(
+      Buffer.from("%PDF-1.7\nsynthetic-invalid"),
+      2,
+      {
+        removeDirectory: async (directory) => {
+          retainedDirectory = directory;
+          throw new Error("synthetic_cleanup_failure");
+        },
+      },
+    ), (error) => error?.code === "geometry_tail_blank_cleanup_failed");
+  } finally {
+    if (retainedDirectory) {
+      await rm(retainedDirectory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("blank-side-audit genbinder marker, original og begge uafhængige rastere", async () => {
+  const runId = "33333333-3333-4333-8333-333333333333";
+  const original = Buffer.from("%PDF-1.7\nsynthetic-audit-original");
+  const sourceRasterBytes = Buffer.from("synthetic-source-raster");
+  const recoveryRasterBytes = Buffer.from("synthetic-recovery-raster");
+  const manifestValue = createTailBlankProofManifest({
+    runId,
+    expiresAt: "2026-09-02T12:00:00.000Z",
+    entries: [{
+      originalSha256: sha256(original),
+      pageNumber: 2,
+      pageCount: 2,
+      sourceRasterSha256: sha256(sourceRasterBytes),
+      recoveryRasterSha256: sha256(recoveryRasterBytes),
+    }],
+  });
+  const manifest = parseTailBlankProofManifest(JSON.stringify(manifestValue), {
+    executionMode: "audit",
+    expectedRunId: runId,
+    requireUnexpired: false,
+  });
+  const geometry = {
+    tailBlankRecovery: {
+      profile: "dfks-run-bound-tail-blank-v1",
+      manifestDigest: manifest.manifestDigest,
+      pageNumbers: [2],
+    },
+    pages: [
+      { pageNumber: 1, words: [{ text: "aftale" }] },
+      { pageNumber: 2, words: [] },
+    ],
+  };
+  const job = {
+    backfill_run_id: runId,
+    original_sha256: sha256(original),
+    page_count: 2,
+  };
+  assert.equal(validTailBlankRecoveryMarker(geometry.tailBlankRecovery, 2), true);
+  const accepted = await verifyTailBlankProofUse({
+    manifest,
+    job,
+    geometry,
+    originalBytes: original,
+    renderRasters: async () => ({ sourceRasterBytes, recoveryRasterBytes }),
+  });
+  assert.equal(accepted.status, "ok");
+  assert.match(accepted.useKey, /^[0-9a-f]{64}$/);
+  const rejected = await verifyTailBlankProofUse({
+    manifest,
+    job,
+    geometry,
+    originalBytes: original,
+    renderRasters: async () => ({
+      sourceRasterBytes: Buffer.from("different"),
+      recoveryRasterBytes,
+    }),
+  });
+  assert.equal(rejected.status, "raster_mismatch");
+  await assert.rejects(verifyTailBlankProofUse({
+    manifest,
+    job,
+    geometry,
+    originalBytes: original,
+    renderRasters: async () => {
+      throw new AuditOperationalError("geometry_tail_blank_cleanup_failed");
+    },
+  }), (error) => error?.code === "geometry_tail_blank_cleanup_failed");
+  assert.equal((await verifyTailBlankProofUse({
+    manifest: null,
+    job,
+    geometry,
+    originalBytes: original,
+  })).status, "manifest_missing");
+});
+
+test("spatial audit kræver det private manifest når en recovery-marker findes", async () => {
+  const original = await pdf(2);
+  const output = await pdf(2);
+  const input = fixture({ original, output, expectedPages: 2, direct: true });
+  const runId = "33333333-3333-4333-8333-333333333333";
+  const sourceRasterBytes = Buffer.from("synthetic-source-raster");
+  const recoveryRasterBytes = Buffer.from("synthetic-recovery-raster");
+  const manifestValue = createTailBlankProofManifest({
+    runId,
+    expiresAt: "2026-09-02T12:00:00.000Z",
+    entries: [{
+      originalSha256: sha256(original),
+      pageNumber: 2,
+      pageCount: 2,
+      sourceRasterSha256: sha256(sourceRasterBytes),
+      recoveryRasterSha256: sha256(recoveryRasterBytes),
+    }],
+  });
+  const manifest = parseTailBlankProofManifest(JSON.stringify(manifestValue), {
+    executionMode: "audit",
+    expectedRunId: runId,
+    requireUnexpired: false,
+  });
+  const spatialPath = input.jobs[0].spatial_data_path;
+  const originalReader = input.readStorage;
+  const geometry = JSON.parse(gunzipSync(await originalReader(spatialPath)).toString("utf8"));
+  geometry.pages[1].words = [];
+  Object.assign(geometry.spatialVerification, {
+    expectedWords: 1,
+    matchedWords: 1,
+    measurableWords: 1,
+  });
+  geometry.tailBlankRecovery = {
+    profile: "dfks-run-bound-tail-blank-v1",
+    manifestDigest: manifest.manifestDigest,
+    pageNumbers: [2],
+  };
+  const markedSpatial = gzipSync(Buffer.from(JSON.stringify(geometry)));
+  input.jobs[0].spatial_sha256 = sha256(markedSpatial);
+  input.jobs[0].backfill_run_id = runId;
+  input.readStorage = async (path) => path === spatialPath ? markedSpatial : originalReader(path);
+  input.extractBboxPages = async () => [{
+    width: 100,
+    height: 100,
+    words: [{ xMin: 1, yMin: 1, xMax: 20, yMax: 10, text: "tekst" }],
+  }, { width: 100, height: 100, words: [] }];
+
+  const missing = await auditCompletedJobs(input);
+  assert.equal(missing.violations.geometryTailBlankProofMissingOrInvalid, 1);
+  assert.equal(missing.violations.geometryTailBlankProofUseCountMismatch, 1);
+
+  const verified = await auditCompletedJobs({
+    ...input,
+    tailBlankProofManifest: manifest,
+    renderTailBlankRasters: async () => ({ sourceRasterBytes, recoveryRasterBytes }),
+  });
+  assert.equal(verified.violations.geometryTailBlankProofMissingOrInvalid, 0);
+  assert.equal(verified.violations.geometryTailBlankProofRasterMismatch, 0);
+  assert.equal(verified.violations.geometryTailBlankProofUseCountMismatch, 1);
 });
 
 test("direct Vision-kohorten accepterer kun den aktive DLP-generation", () => {
@@ -838,6 +1095,86 @@ test("direkte Vision v3 kræver en allowlistet spatial-verifikationsprofil når 
   assert.equal(currentBeforeCutover.violations.invalidSpatialArtifact, 0);
 });
 
+test("audit accepterer historisk v2 og genberegner med artefaktets eksakte profil", async () => {
+  const original = await pdf(1);
+  const output = await pdf(1);
+  const input = fixture({
+    original,
+    output,
+    expectedPages: 1,
+    direct: true,
+    directSpatialVerificationProfile: V2_SPATIAL_VERIFICATION_PROFILE,
+  });
+  const geometryWords = [];
+  const extractedWords = [];
+  for (let index = 0; index < 100; index += 1) {
+    const isScaled = index < 5;
+    const isAnchor = index >= 5 && index < 10;
+    const pairIndex = isAnchor ? index - 5 : index;
+    const text = isScaled ? `x${index}` : isAnchor ? `Nabo${pairIndex}` : `Ord${index}`;
+    const yMin = index < 10 ? 10 + pairIndex * 15 : 100 + index * 10;
+    const xMin = isAnchor ? 40 : 20;
+    const xMax = isAnchor ? 70 : 30;
+    geometryWords.push({
+      text,
+      confidence: 0.96,
+      vertices: [
+        { x: xMin, y: yMin }, { x: xMax, y: yMin },
+        { x: xMax, y: yMin + 8 }, { x: xMin, y: yMin + 8 },
+      ],
+    });
+    extractedWords.push(isScaled
+      ? { text, xMin: 14.25, yMin, xMax: 35.75, yMax: yMin + 8 }
+      : { text, xMin, yMin, xMax, yMax: yMin + 8 });
+  }
+  const geometryPages = [{
+    pageNumber: 1,
+    sourceImageWidth: 100,
+    sourceImageHeight: 1200,
+    imageWidth: 100,
+    imageHeight: 1200,
+    orientationCorrection: 0,
+    words: geometryWords,
+  }];
+  const extractedPages = [{ width: 100, height: 1200, words: extractedWords }];
+  const storedV2Metrics = computeSpatialAccuracy(
+    geometryPages,
+    extractedPages,
+    V2_SPATIAL_VERIFICATION_PROFILE,
+  );
+  assert.equal(storedV2Metrics.passed, true);
+  assert.equal(storedV2Metrics.score, 0.95);
+
+  const spatialPath = input.jobs[0].spatial_data_path;
+  const originalReader = input.readStorage;
+  const geometry = JSON.parse(gunzipSync(await originalReader(spatialPath)).toString("utf8"));
+  geometry.pages = geometryPages;
+  geometry.spatialVerification = storedV2Metrics;
+  const v2Artifact = gzipSync(Buffer.from(JSON.stringify(geometry)));
+  input.jobs[0].spatial_sha256 = sha256(v2Artifact);
+  input.readStorage = async (path) => path === spatialPath ? v2Artifact : originalReader(path);
+  input.extractBboxPages = async () => extractedPages;
+
+  const historical = await auditCompletedJobs(input);
+  assert.equal(historical.violations.invalidSpatialArtifact, 0);
+  assert.equal(historical.violations.spatialMetricMismatch, 0);
+  assert.equal(historical.violations.spatialIndependentVerificationFailure, 0);
+  assert.equal(historical.documentsPassingAllChecks, 1);
+
+  geometry.spatialVerificationProfile = SPATIAL_VERIFICATION_PROFILE;
+  const falselyRelabelledArtifact = gzipSync(Buffer.from(JSON.stringify(geometry)));
+  const relabelled = await auditCompletedJobs({
+    ...input,
+    jobs: [{ ...input.jobs[0], spatial_sha256: sha256(falselyRelabelledArtifact) }],
+    readStorage: async (path) => path === spatialPath
+      ? falselyRelabelledArtifact
+      : originalReader(path),
+  });
+  assert.equal(relabelled.violations.invalidSpatialArtifact, 0);
+  assert.equal(relabelled.violations.spatialMetricMismatch, 1);
+  assert.equal(relabelled.documentsPassingAllChecks, 0);
+});
+
 test("v3 uden profil genberegnes med præcis legacy-matcher uden nye geometrigates", async () => {
   const original = await pdf(1);
   const output = await pdf(1);
@@ -1040,6 +1377,26 @@ test("legacy-sideantal kræver enighed mellem qpdf og Poppler", {
     extractLegacyPdfPageCount(Buffer.from("junk%PDF-1.7\n")),
     (error) => error?.code === "pdf_page_count_failed",
   );
+});
+
+test("legacy-sideantal stopper hvis originalens midlertidige fil ikke kan slettes", async () => {
+  let retainedDirectory;
+  try {
+    await assert.rejects(extractLegacyPdfPageCount(
+      Buffer.from("%PDF-1.7\nsynthetic-invalid"),
+      {
+        removeDirectory: async (directory) => {
+          retainedDirectory = directory;
+          throw new Error("synthetic_cleanup_failure");
+        },
+      },
+    ), (error) => error?.code === "pdf_page_count_cleanup_failed"
+      && !String(error?.message).includes("synthetic_cleanup_failure"));
+  } finally {
+    if (retainedDirectory) {
+      await rm(retainedDirectory, { recursive: true, force: true });
+    }
+  }
 });
 
 test("legacy-sideantal afviser parseruenighed fail-closed", () => {

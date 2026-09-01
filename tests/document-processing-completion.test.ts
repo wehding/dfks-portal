@@ -9,7 +9,10 @@ import {
   isSpatialVerificationCompletionValid,
   normaliseDocumentReviewDetails,
 } from "../lib/contract-document-completion";
-import { SPATIAL_VERIFICATION_PROFILE } from "../cloud-run/contract-document-worker/spatial-ocr.mjs";
+import {
+  SPATIAL_VERIFICATION_PROFILE,
+  V2_SPATIAL_VERIFICATION_PROFILE,
+} from "../cloud-run/contract-document-worker/spatial-ocr.mjs";
 
 test("worker og portal bruger samme faste spatial-verifikationsprofil", () => {
   assert.equal(CURRENT_SPATIAL_VERIFICATION_PROFILE, SPATIAL_VERIFICATION_PROFILE);
@@ -18,7 +21,13 @@ test("worker og portal bruger samme faste spatial-verifikationsprofil", () => {
     spatialSchemaVersion: "google-vision-spatial-v3",
     spatialVerificationProfile: CURRENT_SPATIAL_VERIFICATION_PROFILE,
   }), true);
-  for (const spatialVerificationProfile of [undefined, null, "dfks-spatial-verification-legacy-v1", "ukendt"] as const) {
+  for (const spatialVerificationProfile of [
+    undefined,
+    null,
+    "dfks-spatial-verification-legacy-v1",
+    V2_SPATIAL_VERIFICATION_PROFILE,
+    "ukendt",
+  ] as const) {
     assert.equal(isSpatialVerificationCompletionValid({
       processingProfile: "google-vision-direct-v1",
       spatialSchemaVersion: "google-vision-spatial-v3",

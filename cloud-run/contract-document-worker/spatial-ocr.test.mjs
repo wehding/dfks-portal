@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import sharp from "sharp";
 import {
   LEGACY_SPATIAL_VERIFICATION_PROFILE,
   SPATIAL_VERIFICATION_PROFILE,
+  V2_SPATIAL_VERIFICATION_PROFILE,
   canonicaliseSpatialGeometryPage,
   classifyOcrDocument,
   classifyPageText,
@@ -18,6 +20,8 @@ import {
   correctPageOrientation,
   detectPhysicalOrientation,
   enforceVisionWordLimits,
+  hasIndependentReadableOcrPage,
+  inspectRasterBlankness,
   isPdfImagesInventoryReliable,
   mapOrientationVariantToCanonical,
   mapVisionPageToCanonical,
@@ -31,6 +35,49 @@ import {
   resolvePhysicalOrientations,
 } from "./spatial-ocr.mjs";
 import { GoogleOcrOperationalError } from "./google-vision-api.mjs";
+import { hasSparseTailBlankConsensus } from "./tail-page-recovery.mjs";
+import {
+  authoriseTailBlankProof,
+  createTailBlankProofManifest,
+  parseTailBlankProofManifest,
+} from "./tail-blank-proof.mjs";
+
+function spatialTestProofToken() {
+  const source = Buffer.from("synthetic-source-raster");
+  const recovery = Buffer.from("synthetic-recovery-raster");
+  const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  const runId = "33333333-3333-4333-8333-333333333333";
+  const originalSha256 = "1".repeat(64);
+  const value = createTailBlankProofManifest({
+    runId,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    entries: [{
+      originalSha256,
+      pageNumber: 8,
+      pageCount: 8,
+      sourceRasterSha256: digest(source),
+      recoveryRasterSha256: digest(recovery),
+    }, ...[4, 5, 6, 7].map((digit, index) => ({
+      originalSha256: String(digit).repeat(64),
+      pageNumber: 9 + index,
+      pageCount: 9 + index,
+      sourceRasterSha256: String(digit + 1).repeat(64),
+      recoveryRasterSha256: String(digit + 2).repeat(64),
+    }))],
+  });
+  const manifest = parseTailBlankProofManifest(JSON.stringify(value), {
+    executionMode: "backfill",
+    expectedRunId: runId,
+  });
+  return authoriseTailBlankProof(manifest, {
+    runId,
+    originalSha256,
+    pageNumber: 8,
+    pageCount: 8,
+    sourceRasterBytes: source,
+    recoveryRasterBytes: recovery,
+  });
+}
 
 test("native tekst og billedside klassificeres forskelligt", () => {
   const nativeText = Array.from(
@@ -141,6 +188,82 @@ test("kun konservativt tomme rastere fritages fra ulæselig-kontrollen", () => {
   assert.equal(classifyRasterBlankness({ histogram: [], mean: 255, stdev: 0 }).blank, false);
 });
 
+test("to rastere med scanner-randstøj bevarer indholdsfeltets fail-closed kontrol", async () => {
+  const width = 1_000;
+  const height = 1_200;
+  const edgeStripe = await sharp({
+    create: { width: 4, height: 100, channels: 3, background: { r: 230, g: 230, b: 230 } },
+  }).png().toBuffer();
+  const base = sharp({
+    create: { width, height, channels: 3, background: "white" },
+  }).composite([{ input: edgeStripe, left: width - 4, top: 500 }]);
+  const source = await base.clone().jpeg({ quality: 95 }).toBuffer();
+  const recovery = await base.clone().jpeg({ quality: 96 }).toBuffer();
+  const [sourceEvidence, recoveryEvidence] = await Promise.all([
+    inspectRasterBlankness(source),
+    inspectRasterBlankness(recovery),
+  ]);
+  assert.equal(sourceEvidence.blank, false);
+  assert.ok(sourceEvidence.maxLocalNonWhiteRatio > 0.04);
+  assert.equal(sourceEvidence.interiorDarkRatio, 0);
+
+  const artifact = {
+    text: "x",
+    confidence: 0.2,
+    vertices: [
+      { x: 940, y: 500 }, { x: 950, y: 500 },
+      { x: 950, y: 506 }, { x: 940, y: 506 },
+    ],
+  };
+  const variants = [0, 1, 2, 3].map((index) => ({
+    pageNumber: 8,
+    imageWidth: width,
+    imageHeight: height,
+    words: index < 2 ? [artifact] : [],
+  }));
+  assert.equal(hasIndependentReadableOcrPage([
+    { pageNumber: 1, imageWidth: width, imageHeight: height, words: [] },
+    variants[0],
+  ], 8), false);
+  assert.equal(hasIndependentReadableOcrPage([
+    { pageNumber: 1, imageWidth: width, imageHeight: height, words: [{
+      text: "Kontrakt",
+      confidence: 0.99,
+      vertices: [
+        { x: 100, y: 100 }, { x: 200, y: 100 },
+        { x: 200, y: 120 }, { x: 100, y: 120 },
+      ],
+    }] },
+    variants[0],
+  ], 8), true);
+  assert.equal(hasSparseTailBlankConsensus({
+    pageNumber: 8,
+    pageCount: 8,
+    variantPages: variants,
+    sourceEvidence,
+    recoveryEvidence,
+    proofToken: spatialTestProofToken(),
+  }), true);
+
+  const signature = await sharp({
+    create: { width: 80, height: 20, channels: 3, background: "black" },
+  }).png().toBuffer();
+  const signed = await base.clone()
+    .composite([{ input: signature, left: 460, top: 800 }])
+    .jpeg({ quality: 95 })
+    .toBuffer();
+  const signedEvidence = await inspectRasterBlankness(signed);
+  assert.ok(signedEvidence.maxInteriorLocalDarkRatio > 0.02);
+  assert.equal(hasSparseTailBlankConsensus({
+    pageNumber: 8,
+    pageCount: 8,
+    variantPages: variants,
+    sourceEvidence,
+    recoveryEvidence: signedEvidence,
+    proofToken: spatialTestProofToken(),
+  }), false);
+});
+
 test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dfks-blank-page-"));
   try {
@@ -195,12 +318,47 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
       ] },
       symbols: text.split("").map((symbol) => ({ text: symbol })),
     });
+    const edgeArtifact = {
+      confidence: 0.7,
+      boundingBox: { vertices: [
+        { x: 94, y: 40 }, { x: 98, y: 40 },
+        { x: 98, y: 44 }, { x: 94, y: 44 },
+      ] },
+      symbols: [{ text: "x" }],
+    };
+    const runId = "33333333-3333-4333-8333-333333333333";
+    const originalSha256 = "1".repeat(64);
+    const proofValue = createTailBlankProofManifest({
+      runId,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      entries: [{
+        originalSha256,
+        pageNumber: 2,
+        pageCount: 2,
+        sourceRasterSha256: createHash("sha256").update(whiteJpeg).digest("hex"),
+        recoveryRasterSha256: createHash("sha256").update(whiteJpeg).digest("hex"),
+      }, ...[4, 5, 6, 7].map((digit, index) => ({
+        originalSha256: String(digit).repeat(64),
+        pageNumber: 3 + index,
+        pageCount: 3 + index,
+        sourceRasterSha256: String(digit + 1).repeat(64),
+        recoveryRasterSha256: String(digit + 2).repeat(64),
+      }))],
+    });
+    const tailBlankProofManifest = parseTailBlankProofManifest(JSON.stringify(proofValue), {
+      executionMode: "backfill",
+      expectedRunId: runId,
+    });
+    let recoveryCalls = 0;
     const result = await processPdfSpatially({
       inputPath: join(directory, "input.pdf"),
       outputPath: join(directory, "output.pdf"),
       geometryPath: join(directory, "geometry.json.gz"),
       workDir: directory,
       commandRunner: runner,
+      geometryBackfillRunId: runId,
+      originalSha256,
+      tailBlankProofManifest,
       googleClient: {
         async annotateDocument() {
           return {
@@ -209,7 +367,10 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
                 width: 100, height: 100,
                 blocks: [{ paragraphs: [{ words: [word("Ord1", 10), word("Ord2", 30), word("Ord3", 50)] }] }],
               }] } },
-              { fullTextAnnotation: { pages: [] } },
+              { fullTextAnnotation: { pages: [{
+                width: 100, height: 100,
+                blocks: [{ paragraphs: [{ words: [edgeArtifact] }] }],
+              }] } },
             ],
             sourcePages: [
               { pageNumber: 1, imageBytes: whiteJpeg },
@@ -224,11 +385,40 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
             })),
           };
         },
+        async annotateUnreadablePageVariants(page) {
+          recoveryCalls += 1;
+          assert.equal(page.pageNumber, 2);
+          return {
+            variants: ["colour", "contrast_gray", "threshold_185", "threshold_215"]
+              .map((kind) => ({
+                kind,
+                response: { fullTextAnnotation: { pages: [] } },
+                transform: {
+                  pageNumber: 2,
+                  sourceWidth: 100,
+                  sourceHeight: 100,
+                  visionWidth: 100,
+                  visionHeight: 100,
+                },
+              })),
+            retainedRasterBytes: 0,
+            retainedVisionResponseBytes: 0,
+          };
+        },
       },
     });
+    assert.equal(recoveryCalls, 1);
     assert.equal(result.status, "completed", JSON.stringify(result));
     assert.equal(result.blankPageCount, 1);
     assert.equal(result.unreadablePageCount, 0);
+    const geometry = JSON.parse(gunzipSync(await readFile(
+      join(directory, "geometry.json.gz"),
+    )).toString("utf8"));
+    assert.deepEqual(geometry.tailBlankRecovery, {
+      profile: "dfks-run-bound-tail-blank-v1",
+      manifestDigest: proofValue.manifestDigest,
+      pageNumbers: [2],
+    });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -1116,6 +1306,142 @@ test("en kort sidste side kan færdiggøres via kardinal konsensus", async () =>
   }
 });
 
+test("sidenummer-retry kan ikke overskrive modstridende original OCR", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dfks-page-number-conflict-"));
+  try {
+    const sourceJpeg = await sharp({
+      create: { width: 100, height: 100, channels: 3, background: "white" },
+    }).jpeg({ quality: 95 }).toBuffer();
+    const visionResponse = (words) => ({ fullTextAnnotation: { pages: [{
+      width: 100,
+      height: 100,
+      blocks: [{ paragraphs: [{ words: words.map((word) => ({
+        confidence: word.confidence,
+        boundingBox: { vertices: word.vertices },
+        symbols: word.text.split("").map((symbol) => ({ text: symbol })),
+      })) }] }],
+    }] } });
+    const pageNumberWord = {
+      text: "2",
+      confidence: 0.99,
+      vertices: [
+        { x: 47, y: 92 }, { x: 53, y: 92 },
+        { x: 53, y: 96 }, { x: 47, y: 96 },
+      ],
+    };
+    const conflictingWord = {
+      text: "X",
+      confidence: 0.99,
+      vertices: [
+        { x: 20, y: 20 }, { x: 20, y: 26 },
+        { x: 16, y: 26 }, { x: 16, y: 20 },
+      ],
+    };
+    const readableWords = [10, 40, 70].map((top, index) => ({
+      text: `Ord${index + 1}`,
+      confidence: 0.99,
+      vertices: [
+        { x: 10, y: top }, { x: 30, y: top },
+        { x: 30, y: top + 8 }, { x: 10, y: top + 8 },
+      ],
+    }));
+    const rotateClockwise = (point, degrees) => {
+      if (degrees === 90) return { x: 100 - point.y, y: point.x };
+      if (degrees === 180) return { x: 100 - point.x, y: 100 - point.y };
+      if (degrees === 270) return { x: point.y, y: 100 - point.x };
+      return point;
+    };
+    const runner = async (command, args) => {
+      if (command === "pdfinfo") {
+        return { stdout: "Pages: 2\nPage    1 size: 612 x 792 pts\n", stderr: "" };
+      }
+      if (command === "pdfimages") {
+        return {
+          stdout: "page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio\n",
+          stderr: "",
+        };
+      }
+      if (command === "pdftoppm") {
+        await writeFile(`${args.at(-1)}.jpg`, sourceJpeg);
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "pdftotext") {
+        const target = args.at(-1);
+        if (args.includes("-bbox-layout")) {
+          await writeFile(target, "<page width=\"612\" height=\"792\"></page><page width=\"612\" height=\"792\"></page>");
+        } else if (args[0] === "-f") {
+          await writeFile(target, "");
+        } else {
+          await writeFile(target, "A".repeat(200));
+        }
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command ${command}`);
+    };
+    let retryCalls = 0;
+    const result = await processPdfSpatially({
+      inputPath: join(directory, "input.pdf"),
+      outputPath: join(directory, "output.pdf"),
+      geometryPath: join(directory, "geometry.json.gz"),
+      workDir: directory,
+      commandRunner: runner,
+      googleClient: {
+        async annotateDocument() {
+          return {
+            responses: [
+              visionResponse(readableWords),
+              visionResponse([pageNumberWord, conflictingWord]),
+            ],
+            sourcePages: [1, 2].map((pageNumber) => ({ pageNumber, imageBytes: sourceJpeg })),
+            visionPageTransforms: [1, 2].map((pageNumber) => ({
+              pageNumber,
+              sourceWidth: 100,
+              sourceHeight: 100,
+              visionWidth: 100,
+              visionHeight: 100,
+            })),
+            retainedRasterBytes: sourceJpeg.length * 2,
+            retainedVisionResponseBytes: 2_000,
+          };
+        },
+        async annotateOrientationPageVariants(page) {
+          retryCalls += 1;
+          assert.equal(page.pageNumber, 2);
+          return {
+            variants: [0, 90, 180, 270].map((rotationDegrees) => ({
+              kind: `rotate_${rotationDegrees}`,
+              response: visionResponse([{
+                ...pageNumberWord,
+                vertices: pageNumberWord.vertices.map((point) => (
+                  rotateClockwise(point, rotationDegrees)
+                )),
+              }]),
+              transform: {
+                pageNumber: 2,
+                rotationDegrees,
+                canonicalWidth: 100,
+                canonicalHeight: 100,
+                sourceWidth: 100,
+                sourceHeight: 100,
+                visionWidth: 100,
+                visionHeight: 100,
+              },
+            })),
+            retainedRasterBytes: sourceJpeg.length * 4,
+            retainedVisionResponseBytes: 2_000,
+          };
+        },
+      },
+    });
+    assert.equal(retryCalls, 1);
+    assert.equal(result.status, "needs_review");
+    assert.equal(result.orientationQualityFailed, true);
+    assert.deepEqual(result.affectedPageNumbers, [2]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function recoveryVariantPage({ shift = 0, token = "Kontrakt", confidence = 0.95 } = {}) {
   return {
     pageNumber: 2,
@@ -1166,6 +1492,276 @@ test("geometrisk præcision måles mod PDF-tekstlaget", () => {
   assert.equal(result.matchCoverage, 1);
   assert.equal(result.score, 1);
   assert.equal(result.medianIou, 1);
+});
+
+function shortTokenHorizontalScaleFixture({
+  token = "i",
+  actualToken = token,
+  confidence = 0.95,
+  target = { xMin: 20, yMin: 10, xMax: 30, yMax: 20 },
+  actual = { xMin: 14.25, yMin: 10, xMax: 35.75, yMax: 20 },
+  anchorY = 10,
+} = {}) {
+  const geometryWords = [{
+    text: token,
+    confidence,
+    vertices: [
+      { x: target.xMin, y: target.yMin }, { x: target.xMax, y: target.yMin },
+      { x: target.xMax, y: target.yMax }, { x: target.xMin, y: target.yMax },
+    ],
+  }];
+  const extractedWords = [{ text: actualToken, ...actual }];
+  for (let index = 0; index < 49; index += 1) {
+    const yMin = index === 0 ? anchorY : 40 + index * 20;
+    const yMax = yMin + 10;
+    const xMin = index === 0 ? 40 : 80;
+    const xMax = index === 0 ? 70 : 120;
+    const text = `Anker${index}`;
+    geometryWords.push({
+      text,
+      confidence: 0.99,
+      vertices: [
+        { x: xMin, y: yMin }, { x: xMax, y: yMin },
+        { x: xMax, y: yMax }, { x: xMin, y: yMax },
+      ],
+    });
+    extractedWords.push({ text, xMin, yMin, xMax, yMax });
+  }
+  return {
+    geometry: [{
+      pageNumber: 1,
+      imageWidth: 160,
+      imageHeight: 1100,
+      words: geometryWords,
+    }],
+    extracted: [{ width: 160, height: 1100, words: extractedWords }],
+  };
+}
+
+test("v3 accepterer kun det kendte korte Poppler-breddeartefakt og bevarer v2", () => {
+  const { geometry, extracted } = shortTokenHorizontalScaleFixture();
+  const v2 = computeSpatialAccuracy(geometry, extracted, V2_SPATIAL_VERIFICATION_PROFILE);
+  const v3 = computeSpatialAccuracy(geometry, extracted, SPATIAL_VERIFICATION_PROFILE);
+
+  assert.deepEqual(v2, {
+    expectedWords: 50,
+    matchedWords: 50,
+    measurableWords: 50,
+    matchCoverage: 1,
+    score: 49 / 50,
+    medianIou: 1,
+    centerInsideRatio: 1,
+    passed: true,
+  });
+  assert.equal(v3.score, 1);
+  assert.equal(v3.centerInsideRatio, 1);
+  assert.equal(v3.passed, true);
+});
+
+test("v3 løfter den verificerede 150-token fixture uden at ændre IoU-målingerne", () => {
+  const geometryWords = [];
+  const extractedWords = [];
+  for (let index = 0; index < 128; index += 1) {
+    const yMin = 20 + index * 12;
+    const text = `Eksakt${index}`;
+    geometryWords.push({
+      text,
+      confidence: 0.99,
+      vertices: [
+        { x: 100, y: yMin }, { x: 140, y: yMin },
+        { x: 140, y: yMin + 8 }, { x: 100, y: yMin + 8 },
+      ],
+    });
+    extractedWords.push({ text, xMin: 100, yMin, xMax: 140, yMax: yMin + 8 });
+  }
+  for (let index = 0; index < 11; index += 1) {
+    const yMin = 1600 + index * 14;
+    const token = `x${index}`;
+    geometryWords.push({
+      text: token,
+      confidence: 0.948 + index * 0.003,
+      vertices: [
+        { x: 20, y: yMin }, { x: 30, y: yMin },
+        { x: 30, y: yMin + 10 }, { x: 20, y: yMin + 10 },
+      ],
+    }, {
+      text: `Nabo${index}`,
+      confidence: 0.99,
+      vertices: [
+        { x: 40, y: yMin }, { x: 70, y: yMin },
+        { x: 70, y: yMin + 10 }, { x: 40, y: yMin + 10 },
+      ],
+    });
+    extractedWords.push({
+      text: token, xMin: 14.25, yMin, xMax: 35.75, yMax: yMin + 10,
+    }, {
+      text: `Nabo${index}`, xMin: 40, yMin, xMax: 70, yMax: yMin + 10,
+    });
+  }
+  const geometry = [{
+    pageNumber: 1, imageWidth: 180, imageHeight: 1800, words: geometryWords,
+  }];
+  const extracted = [{ width: 180, height: 1800, words: extractedWords }];
+  const v2 = computeSpatialAccuracy(geometry, extracted, V2_SPATIAL_VERIFICATION_PROFILE);
+  const v3 = computeSpatialAccuracy(geometry, extracted, SPATIAL_VERIFICATION_PROFILE);
+
+  assert.equal(v2.expectedWords, 150);
+  assert.equal(v2.matchedWords, 150);
+  assert.equal(v2.score, 139 / 150);
+  assert.equal(v2.centerInsideRatio, 1);
+  assert.equal(v2.passed, false);
+  assert.equal(v3.score, 1);
+  assert.equal(v3.centerInsideRatio, 1);
+  assert.equal(v3.medianIou, v2.medianIou);
+  assert.equal(v3.passed, true);
+});
+
+test("v3 afviser lav confidence, forkert center, højde, bredde, lang og forkert tekst", () => {
+  const cases = [
+    shortTokenHorizontalScaleFixture({ confidence: 0.899 }),
+    shortTokenHorizontalScaleFixture({
+      actual: { xMin: 31, yMin: 10, xMax: 52.5, yMax: 20 },
+    }),
+    shortTokenHorizontalScaleFixture({
+      actual: { xMin: 23.8, yMin: 10, xMax: 33.8, yMax: 20 },
+    }),
+    shortTokenHorizontalScaleFixture({
+      actual: { xMin: 14.25, yMin: 12, xMax: 35.75, yMax: 18 },
+    }),
+    shortTokenHorizontalScaleFixture({
+      actual: { xMin: 13.5, yMin: 10, xMax: 36.5, yMax: 20 },
+    }),
+    shortTokenHorizontalScaleFixture({ token: "femte" }),
+    shortTokenHorizontalScaleFixture({ actualToken: "x" }),
+  ];
+  for (const { geometry, extracted } of cases) {
+    const result = computeSpatialAccuracy(geometry, extracted, SPATIAL_VERIFICATION_PROFILE);
+    assert.notEqual(result.score, 1);
+  }
+});
+
+test("v3 kræver entydigt 1:1 tekstmatch og en pålidelig nabo på samme linje", () => {
+  const withoutNeighbour = shortTokenHorizontalScaleFixture({ anchorY: 80 });
+  assert.notEqual(computeSpatialAccuracy(
+    withoutNeighbour.geometry,
+    withoutNeighbour.extracted,
+    SPATIAL_VERIFICATION_PROFILE,
+  ).score, 1);
+
+  const ambiguous = shortTokenHorizontalScaleFixture();
+  ambiguous.geometry[0].words.push({
+    ...ambiguous.geometry[0].words[0],
+    vertices: [
+      { x: 20, y: 10 }, { x: 30, y: 10 },
+      { x: 30, y: 20 }, { x: 20, y: 20 },
+    ],
+  });
+  ambiguous.extracted[0].words.push({
+    text: "i", xMin: 14.25, yMin: 10, xMax: 35.75, yMax: 20,
+  });
+  assert.notEqual(computeSpatialAccuracy(
+    ambiguous.geometry,
+    ambiguous.extracted,
+    SPATIAL_VERIFICATION_PROFILE,
+  ).score, 1);
+});
+
+test("v3 begrænser breddeundtagelsen til højst tolv tokens pr. side", () => {
+  const geometryWords = [];
+  const extractedWords = [];
+  for (let index = 0; index < 13; index += 1) {
+    const yMin = 10 + index * 15;
+    const token = `x${index}`;
+    const anchor = `Nabo${index}`;
+    geometryWords.push({
+      text: token,
+      confidence: 0.96,
+      vertices: [
+        { x: 20, y: yMin }, { x: 30, y: yMin },
+        { x: 30, y: yMin + 10 }, { x: 20, y: yMin + 10 },
+      ],
+    }, {
+      text: anchor,
+      confidence: 0.99,
+      vertices: [
+        { x: 40, y: yMin }, { x: 70, y: yMin },
+        { x: 70, y: yMin + 10 }, { x: 40, y: yMin + 10 },
+      ],
+    });
+    extractedWords.push({
+      text: token, xMin: 14.25, yMin, xMax: 35.75, yMax: yMin + 10,
+    }, {
+      text: anchor, xMin: 40, yMin, xMax: 70, yMax: yMin + 10,
+    });
+  }
+  for (let index = 0; index < 150; index += 1) {
+    const yMin = 250 + index * 8;
+    const text = `Eksakt${index}`;
+    geometryWords.push({
+      text,
+      confidence: 0.99,
+      vertices: [
+        { x: 20, y: yMin }, { x: 60, y: yMin },
+        { x: 60, y: yMin + 6 }, { x: 20, y: yMin + 6 },
+      ],
+    });
+    extractedWords.push({ text, xMin: 20, yMin, xMax: 60, yMax: yMin + 6 });
+  }
+  const result = computeSpatialAccuracy([{
+    pageNumber: 1, imageWidth: 100, imageHeight: 1500, words: geometryWords,
+  }], [{ width: 100, height: 1500, words: extractedWords }], SPATIAL_VERIFICATION_PROFILE);
+  assert.equal(result.expectedWords, 176);
+  assert.equal(result.score, 163 / 176);
+  assert.notEqual(result.score, 1);
+});
+
+test("v3 begrænser breddeundtagelsen til højst otte procent af en side", () => {
+  const geometryWords = [];
+  const extractedWords = [];
+  for (let index = 0; index < 5; index += 1) {
+    const yMin = 10 + index * 15;
+    const token = `x${index}`;
+    const anchor = `Nabo${index}`;
+    geometryWords.push({
+      text: token,
+      confidence: 0.96,
+      vertices: [
+        { x: 20, y: yMin }, { x: 30, y: yMin },
+        { x: 30, y: yMin + 10 }, { x: 20, y: yMin + 10 },
+      ],
+    }, {
+      text: anchor,
+      confidence: 0.99,
+      vertices: [
+        { x: 40, y: yMin }, { x: 70, y: yMin },
+        { x: 70, y: yMin + 10 }, { x: 40, y: yMin + 10 },
+      ],
+    });
+    extractedWords.push({
+      text: token, xMin: 14.25, yMin, xMax: 35.75, yMax: yMin + 10,
+    }, {
+      text: anchor, xMin: 40, yMin, xMax: 70, yMax: yMin + 10,
+    });
+  }
+  for (let index = 0; index < 40; index += 1) {
+    const yMin = 100 + index * 10;
+    const text = `Eksakt${index}`;
+    geometryWords.push({
+      text,
+      confidence: 0.99,
+      vertices: [
+        { x: 20, y: yMin }, { x: 60, y: yMin },
+        { x: 60, y: yMin + 8 }, { x: 20, y: yMin + 8 },
+      ],
+    });
+    extractedWords.push({ text, xMin: 20, yMin, xMax: 60, yMax: yMin + 8 });
+  }
+  const result = computeSpatialAccuracy([{
+    pageNumber: 1, imageWidth: 100, imageHeight: 520, words: geometryWords,
+  }], [{ width: 100, height: 520, words: extractedWords }], SPATIAL_VERIFICATION_PROFILE);
+  assert.equal(result.expectedWords, 50);
+  assert.equal(result.score, 45 / 50);
+  assert.equal(result.passed, false);
 });
 
 test("gentagne ord matches samlet i stedet for med en grådig kaskade", () => {
