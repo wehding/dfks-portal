@@ -22,6 +22,7 @@ type ExpectedQuestionResult = {
   experienceGroups?: StatisticsExperienceGroup[];
   membershipTypes?: StatisticsMembershipType[];
   professionTypes?: string[];
+  producerNames?: string[];
   producerTypeCodes?: string[];
   years?: number[];
   yearFrom?: number | null;
@@ -110,7 +111,7 @@ const questions: ExpectedQuestionResult[] = [
   { question: "Hvilke producenter betaler bedst?", metrics: ["median_monthly_salary"], compareBy: ["producer"], chart: "bar" },
   { question: "Vis løn efter producent", metrics: ["median_monthly_salary"], compareBy: ["producer"], chart: "bar" },
   { question: "Vis løn fordelt på producent", metrics: ["median_monthly_salary"], compareBy: ["producer"], chart: "bar" },
-  { question: "Hvordan er lønnen hos producent Nordisk Film?", expectNull: true },
+  { question: "Hvordan er lønnen hos producent Nordisk Film?", metrics: ["median_monthly_salary"], producerNames: ["Nordisk Film"], compareBy: [] },
   { question: "Vis løn efter erfaringsgruppe", metrics: ["median_monthly_salary"], experienceGroups: ["new_graduate", "early_career", "experienced", "veteran"], compareBy: ["experience_group"] },
   { question: "Vis pension fordelt på erfaring", metrics: ["average_pension"], experienceGroups: ["new_graduate", "early_career", "experienced", "veteran"], compareBy: ["experience_group"] },
   { question: "Sammenlign løn for 0-3 år og 4-7 år", metrics: ["median_monthly_salary"], experienceGroups: ["new_graduate", "early_career"], compareBy: ["experience_group"] },
@@ -168,6 +169,7 @@ for (const [index, entry] of questions.entries()) {
     assertOptionalDeepEqual(plan.filters.experienceGroups, entry.experienceGroups, "experienceGroups");
     assertOptionalDeepEqual(plan.filters.membershipTypes, entry.membershipTypes, "membershipTypes");
     assertOptionalDeepEqual(plan.filters.professionTypes, entry.professionTypes, "professionTypes");
+    assertOptionalDeepEqual(plan.filters.producerNames, entry.producerNames, "producerNames");
     assertOptionalDeepEqual(plan.filters.producerTypeCodes, entry.producerTypeCodes, "producerTypeCodes");
     assertOptionalDeepEqual(plan.filters.years, entry.years, "years");
     if (entry.yearFrom !== undefined) assert.equal(plan.filters.yearFrom, entry.yearFrom, "yearFrom");

@@ -171,8 +171,12 @@ test("queryplan accepterer ufarlige ældre modelvariationer", () => {
   assert.equal(plan.groupBy, "year");
 });
 
-test("navngivne producentspørgsmål overlades til registermatch via AI", () => {
-  assert.equal(predefinedStatisticsQueryPlan("Hvordan er lønnen hos producent Nordisk Film?"), null);
+test("navngivne producentspørgsmål sendes deterministisk til registermatch", () => {
+  const plan = predefinedStatisticsQueryPlan("Hvordan er lønnen hos producent Nordisk Film?");
+  assert.deepEqual(plan?.metrics, ["median_monthly_salary"]);
+  assert.deepEqual(plan?.filters.producerNames, ["Nordisk Film"]);
+  assert.deepEqual(plan?.compareBy, []);
+  assert.equal(plan?.chart, "line");
 });
 
 test("producentrangering bliver forstået som producentsammenligning", () => {

@@ -182,10 +182,13 @@ function producerRankingFactMatchesPlan(fact: ProducerRankingFact, plan: Statist
   return true;
 }
 
-function personWeightedMedianSalary(rows: Array<{ rightsHolderId: string; monthlySalary: number }>) {
+function personWeightedSalary(rows: Array<{ rightsHolderId: string; monthlySalary: number }>, mode: "median" | "average") {
   const byPerson = new Map<string, number[]>();
   for (const row of rows) byPerson.set(row.rightsHolderId, [...(byPerson.get(row.rightsHolderId) ?? []), row.monthlySalary]);
-  return median([...byPerson.values()].map(values => values.reduce((sum, value) => sum + value, 0) / values.length));
+  const personValues = [...byPerson.values()].map(values => values.reduce((sum, value) => sum + value, 0) / values.length);
+  if (!personValues.length) return 0;
+  if (mode === "average") return Math.round(personValues.reduce((sum, value) => sum + value, 0) / personValues.length);
+  return median(personValues);
 }
 
 async function resolveTopSalaryProducers(orgId: string, plan: StatisticsQueryPlan) {
@@ -204,6 +207,7 @@ async function resolveTopSalaryProducers(orgId: string, plan: StatisticsQueryPla
   if (error) throw new Error("Statistikgrundlaget kunne ikke hentes til producentrangering.");
 
   const byProducer = new Map<string, Array<{ rightsHolderId: string; monthlySalary: number }>>();
+  const rankingMode = plan.metrics.includes("average_monthly_salary") ? "average" : "median";
   for (const fact of (data ?? []) as ProducerRankingFact[]) {
     if (!producerRankingFactMatchesPlan(fact, plan)) continue;
     const monthlySalary = salaryDataToMonthly(fact.statistics_data ?? {});
@@ -217,7 +221,7 @@ async function resolveTopSalaryProducers(orgId: string, plan: StatisticsQueryPla
     id,
     memberCount: new Set(rows.map(row => row.rightsHolderId)).size,
     contractCount: rows.length,
-    salary: personWeightedMedianSalary(rows),
+    salary: personWeightedSalary(rows, rankingMode),
   })).filter(row => row.memberCount >= minimumGroupSize && row.salary > 0)
     .sort((left, right) => right.salary - left.salary || right.memberCount - left.memberCount || right.contractCount - left.contractCount)
     .slice(0, AUTO_PRODUCER_LIMIT);

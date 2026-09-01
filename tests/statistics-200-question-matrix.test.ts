@@ -26,6 +26,7 @@ type ExpectedQuestionResult = {
   experienceGroups?: StatisticsExperienceGroup[];
   membershipTypes?: StatisticsMembershipType[];
   professionTypes?: string[];
+  producerNames?: string[];
   producerTypeCodes?: string[];
   years?: number[];
   yearFrom?: number | null;
@@ -312,8 +313,8 @@ for (const category of categories) {
   { question: "Bedste producenter efter løn for spillefilm", metrics: ["median_monthly_salary"], categories: ["feature"], compareBy: ["producer"], chart: "bar" },
   { question: "Producenter betaler bedst for A-løn", metrics: ["median_monthly_salary"], contractTypes: ["a-løn"], compareBy: ["producer"], chart: "bar" },
   { question: "Hvilke producenter giver bedst gennemsnitsløn?", metrics: ["average_monthly_salary"], compareBy: ["producer"], chart: "bar" },
-  { question: "Hvordan er lønnen fra producenten Zentropa?", expectNull: true },
-  { question: "Hvordan er lønnen for producent Nordisk Film?", expectNull: true },
+  { question: "Hvordan er lønnen fra producenten Zentropa?", metrics: ["median_monthly_salary"], producerNames: ["Zentropa"], compareBy: [] },
+  { question: "Hvordan er lønnen for producent Nordisk Film?", metrics: ["median_monthly_salary"], producerNames: ["Nordisk Film"], compareBy: [] },
  ] satisfies ExpectedQuestionResult[]).forEach(add);
 
 ([
@@ -395,6 +396,7 @@ for (const [index, entry] of questions.entries()) {
     assertOptionalDeepEqual(plan.filters.experienceGroups, entry.experienceGroups, "experienceGroups");
     assertOptionalDeepEqual(plan.filters.membershipTypes, entry.membershipTypes, "membershipTypes");
     assertOptionalDeepEqual(plan.filters.professionTypes, entry.professionTypes, "professionTypes");
+    assertOptionalDeepEqual(plan.filters.producerNames, entry.producerNames, "producerNames");
     assertOptionalDeepEqual(plan.filters.producerTypeCodes, entry.producerTypeCodes, "producerTypeCodes");
     assertOptionalDeepEqual(plan.filters.years, entry.years, "years");
     if (entry.yearFrom !== undefined) assert.equal(plan.filters.yearFrom, entry.yearFrom, "yearFrom");
