@@ -10,6 +10,7 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 
 import {
   auditCompletedJobs,
+  auditReplacementDeletionLifecycle,
   captureBaseline,
   isActiveDlpReplacementCandidate,
   createReadOnlyFetch,
@@ -80,6 +81,8 @@ function fixture({
   status = "kladde",
   originalHash = sha256(original),
   processedHash = sha256(output),
+  direct = false,
+  downstreamAiPolicy = null,
 } = {}) {
   const contractId = "11111111-1111-4111-8111-111111111111";
   const orgId = "33333333-3333-4333-8333-333333333333";
@@ -88,11 +91,13 @@ function fixture({
   const outputPath = `${orgId}/processed/${contractId}/leases/${leaseId}/normalised.pdf`;
   const spatialPath = `${orgId}/processed/${contractId}/leases/${leaseId}/vision-layout.json.gz`;
   const spatial = gzipSync(Buffer.from(JSON.stringify({
-    schemaVersion: "google-vision-spatial-v2",
+    schemaVersion: direct ? "google-vision-spatial-v3" : "google-vision-spatial-v2",
     engine: "google-vision-document-text-detection",
-    redactionEngine: "google-sensitive-data-protection-image-redact",
-    redactionProfile: "dfks-contract-redaction-v1",
-    redactions: [],
+    ...(direct ? { processingProfile: "google-vision-direct-v1" } : {
+      redactionEngine: "google-sensitive-data-protection-image-redact",
+      redactionProfile: "dfks-contract-redaction-v1",
+      redactions: [],
+    }),
     spatialVerification: {
       expectedWords: expectedPages,
       matchedWords: expectedPages,
@@ -131,7 +136,10 @@ function fixture({
       original_sha256: originalHash,
       processed_sha256: processedHash,
       spatial_sha256: sha256(spatial),
-      spatial_schema_version: "google-vision-spatial-v2",
+      spatial_schema_version: direct ? "google-vision-spatial-v3" : "google-vision-spatial-v2",
+      redaction_profile: direct ? null : "dfks-contract-redaction-v1",
+      processing_profile: direct ? "google-vision-direct-v1" : null,
+      downstream_ai_policy: downstreamAiPolicy,
     }],
     contractsById: new Map([[
       contractId,
@@ -192,6 +200,51 @@ test("en intakt OCR-kørsel består alle kontroller", async () => {
   assert.equal(summary.completedJobsExamined, 1);
   assert.equal(summary.documentsPassingAllChecks, 1);
   assert.equal(summaryHasViolations(summary), false);
+});
+
+test("direkte Vision v3 består metadata- og geometriporten uden DLP-felter", async () => {
+  const original = await pdf(2);
+  const output = await pdf(2);
+  const summary = await auditCompletedJobs(fixture({ original, output, direct: true }));
+  assert.equal(summary.violations.missingJobMetadata, 0);
+  assert.equal(summary.violations.invalidSpatialArtifact, 0);
+  assert.equal(summary.documentsPassingAllChecks, 1);
+});
+
+test("replacement-audit kræver præcis to slettede DLP-artefakter og aldrig originalen", () => {
+  const sourceId = "11111111-1111-4111-8111-111111111111";
+  const replacementId = "22222222-2222-4222-8222-222222222222";
+  const source = {
+    id: sourceId,
+    original_storage_path: "org/original.pdf",
+    output_storage_path: "org/masked.pdf",
+    spatial_data_path: "org/masked.json.gz",
+    superseded_by_job_id: replacementId,
+  };
+  const replacementJobs = [{
+    id: replacementId,
+    replacement_of_job_id: sourceId,
+    status: "completed",
+  }];
+  const validRows = [
+    { source_job_id: sourceId, replacement_job_id: replacementId, artifact_kind: "masked_pdf", storage_path: source.output_storage_path, status: "deleted" },
+    { source_job_id: sourceId, replacement_job_id: replacementId, artifact_kind: "masked_spatial", storage_path: source.spatial_data_path, status: "deleted" },
+  ];
+  const valid = auditReplacementDeletionLifecycle({
+    replacementJobs,
+    sourceJobsById: new Map([[sourceId, source]]),
+    deletionRows: validRows,
+  });
+  assert.equal(valid.supersededArtifactDeletionMismatch, 0);
+  assert.equal(valid.originalDeletionCandidate, 0);
+
+  const invalid = auditReplacementDeletionLifecycle({
+    replacementJobs,
+    sourceJobsById: new Map([[sourceId, source]]),
+    deletionRows: [{ ...validRows[0], storage_path: source.original_storage_path }],
+  });
+  assert.equal(invalid.supersededArtifactDeletionMismatch, 1);
+  assert.equal(invalid.originalDeletionCandidate, 1);
 });
 
 test("audit accepterer workerens rotationsmetadata og kræver konsistente dimensioner", async () => {
