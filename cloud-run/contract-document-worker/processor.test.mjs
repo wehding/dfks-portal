@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { truncate, writeFile } from "node:fs/promises";
 import test from "node:test";
 
-import { GoogleOcrOperationalError } from "./google-secure-api.mjs";
+import { GoogleOcrOperationalError } from "./google-vision-api.mjs";
 import {
   createProcessor,
   FatalProcessingError,
@@ -67,6 +67,19 @@ test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () 
     && error.code === "invalid_temporary_storage_configuration"
   ));
   assert.equal(readRuntimeConfig({ ...env, OCR_TMP_DIR: "/mnt/ramdisk" }).tempRoot, "/mnt/ramdisk");
+  assert.equal(readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_REPLACEMENT_ONLY: "true",
+  }).replacementOnly, true);
+  assert.throws(() => readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_REPLACEMENT_ONLY: "TRUE",
+  }), (error) => (
+    error instanceof FatalProcessingError
+    && error.code === "invalid_replacement_only_configuration"
+  ));
   assert.equal(parseProcessingDeadlineSeconds(undefined), 780);
   assert.equal(parseProcessingDeadlineSeconds("0"), 0);
   assert.equal(parseProcessingDeadlineSeconds("900"), 900);
@@ -75,6 +88,24 @@ test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () 
       error instanceof FatalProcessingError && error.code === "invalid_processing_deadline"
     ));
   }
+});
+
+test("replacement-only worker markerer kun claim-kaldet eksplicit", async () => {
+  let claimHeaders;
+  const processor = createProcessor({
+    config: { ...config, replacementOnly: true },
+    identityTokenProvider: async () => "identity-secret",
+    googleClient: {},
+    fetchImpl: async (url, init) => {
+      assert.ok(String(url).endsWith("/claim"));
+      claimHeaders = init.headers;
+      return response(null, { status: 204 });
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "empty" });
+  assert.equal(claimHeaders["X-DFKS-OCR-Replacement-Only"], "1");
+  assert.equal(claimHeaders.Authorization, "Bearer identity-secret");
 });
 
 test("HTTP-processoren stopper kontrolleret før Cloud Run-requestens hårde timeout", async () => {
@@ -245,7 +276,7 @@ test("en kontrolleret dokumentfejl registreres og batchen kan fortsætte", async
   assert.equal(completions[0].errorCode, "invalid_pdf");
 });
 
-test("en genkørsel stopper før DLP og Vision, hvis originalens hash er ændret", async () => {
+test("en genkørsel stopper før Vision, hvis originalens hash er ændret", async () => {
   const completions = [];
   let spatialCalls = 0;
   const processor = createProcessor({
@@ -630,7 +661,7 @@ test("dokumentrelateret Google OCR-fejl registreres og batchen kan fortsætte", 
     config,
     identityTokenProvider: async () => "identity-secret",
     storage: { from() { throw new Error("storage should not be reached"); } },
-    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_request_too_large"); },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("vision_page_too_large"); },
     fetchImpl: async (url, init) => {
       const value = String(url);
       if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
@@ -644,23 +675,23 @@ test("dokumentrelateret Google OCR-fejl registreres og batchen kan fortsætte", 
 
   assert.deepEqual(await processor(), {
     outcome: "needs_review",
-    diagnosticCode: "dlp_request_too_large",
+    diagnosticCode: "vision_page_too_large",
   });
   assert.equal(completions[0].jobId, claimJob().jobId);
   assert.equal(completions[0].leaseToken, claimJob().leaseToken);
   assert.equal(completions[0].status, "needs_review");
-  assert.equal(completions[0].errorCode, "dlp_request_too_large");
+  assert.equal(completions[0].errorCode, "vision_page_too_large");
   assert.equal(completions[0].safeErrorMessage, "Dokumentet kunne ikke sikkerhedsbehandles automatisk og kræver manuel kontrol.");
   assert.match(completions[0].originalSha256, /^[0-9a-f]{64}$/);
 });
 
-test("DLP-geometri der ikke kan sikkerhedsverificeres sendes til manuel kontrol", async () => {
+test("Vision-geometri der ikke kan sikkerhedsverificeres sendes til manuel kontrol", async () => {
   const completions = [];
   const processor = createProcessor({
     config,
     identityTokenProvider: async () => "identity-secret",
     storage: { from() { throw new Error("storage should not be reached"); } },
-    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_location_missing"); },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("vision_page_invalid"); },
     fetchImpl: async (url, init) => {
       const value = String(url);
       if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
@@ -673,10 +704,10 @@ test("DLP-geometri der ikke kan sikkerhedsverificeres sendes til manuel kontrol"
   });
   assert.deepEqual(await processor(), {
     outcome: "needs_review",
-    diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationMissing,
+    diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.visionPageInvalid,
   });
   assert.equal(completions[0].status, "needs_review");
-  assert.equal(completions[0].errorCode, OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationMissing);
+  assert.equal(completions[0].errorCode, OCR_QUALITY_DIAGNOSTIC_CODES.visionPageInvalid);
 });
 
 test("Google IAM-fejl frigiver claim og stopper tasken", async () => {
@@ -685,7 +716,7 @@ test("Google IAM-fejl frigiver claim og stopper tasken", async () => {
     config,
     identityTokenProvider: async () => "identity-secret",
     storage: { from() { throw new Error("storage should not be reached"); } },
-    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_api_403"); },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("vision_api_403"); },
     fetchImpl: async (url, init) => {
       const value = String(url);
       if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
@@ -698,16 +729,16 @@ test("Google IAM-fejl frigiver claim og stopper tasken", async () => {
   });
 
   await assert.rejects(processor, (error) =>
-    error instanceof FatalProcessingError && error.code === "dlp_api_403");
+    error instanceof FatalProcessingError && error.code === "vision_api_403");
   assert.equal(completions.length, 1);
   assert.equal(completions[0].status, "failed");
-  assert.equal(completions[0].errorCode, "dlp_api_403");
+  assert.equal(completions[0].errorCode, "vision_api_403");
 });
 
 test("ugyldig Google-runtimekonfiguration stopper før claim med sikker kode", () => {
   assert.throws(() => createProcessor({
     config,
-    env: { GOOGLE_DLP_LOCATION: "eu" },
+    env: { GOOGLE_VISION_LOCATION: "us" },
     identityTokenProvider: async () => "identity-secret",
     storage: { from() { throw new Error("storage should not be reached"); } },
   }), (error) => error instanceof FatalProcessingError
@@ -719,7 +750,7 @@ test("callbackfejl efter Google-fejl er fatal", async () => {
     config,
     identityTokenProvider: async () => "identity-secret",
     storage: { from() { throw new Error("storage should not be reached"); } },
-    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_location_missing"); },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("vision_page_invalid"); },
     fetchImpl: async (url) => {
       const value = String(url);
       if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
@@ -735,9 +766,9 @@ test("callbackfejl efter Google-fejl er fatal", async () => {
 test("ukendt Google-fejlkode bliver sanitiseret", () => {
   assert.equal(safeGoogleErrorCode("CPR 010101-1234"), "google_ocr_service_failed");
   assert.equal(safeGoogleErrorCode("google_api_503"), "google_api_503");
-  assert.equal(safeGoogleErrorCode("dlp_api_400"), "dlp_api_400");
+  assert.equal(safeGoogleErrorCode("dlp_api_400"), "google_ocr_service_failed");
   assert.equal(safeGoogleErrorCode("vision_api_503"), "vision_api_503");
-  assert.equal(safeGoogleErrorCode("dlp_location_missing"), "dlp_location_missing");
+  assert.equal(safeGoogleErrorCode("dlp_location_missing"), "google_ocr_service_failed");
 });
 
 test("fatal identitetsfejl stopper før claim", async () => {
@@ -768,10 +799,10 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
       return {
         status: "completed", classification: "image_only", pageCount: 2,
         nativePageCount: 0, ocrPageCount: 2, unreadablePageCount: 0,
-        textCharCount: 300, redactionCounts: { DENMARK_CPR_NUMBER: 1 },
+        textCharCount: 300,
         spatial: { score: 0.99, medianIou: 0.9, centerInsideRatio: 1 },
-        redactionProfile: "dfks-contract-redaction-v1",
-        spatialSchemaVersion: "google-vision-spatial-v2",
+        processingProfile: "google-vision-direct-v1",
+        spatialSchemaVersion: "google-vision-spatial-v3",
       };
     },
     fetchImpl: async (url, init) => {
@@ -814,8 +845,8 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
   assert.deepEqual(events, ["spatial-complete", "upload-authorisation"]);
   assert.equal(completions[0].status, "completed");
   assert.equal(completions[0].pageCount, 2);
-  assert.equal(completions[0].redactionProfile, "dfks-contract-redaction-v1");
-  assert.equal(completions[0].spatialSchemaVersion, "google-vision-spatial-v2");
+  assert.equal(completions[0].processingProfile, "google-vision-direct-v1");
+  assert.equal(completions[0].spatialSchemaVersion, "google-vision-spatial-v3");
   assert.match(completions[0].originalSha256, /^[0-9a-f]{64}$/);
   assert.match(completions[0].processedSha256, /^[0-9a-f]{64}$/);
   assert.match(completions[0].spatialSha256, /^[0-9a-f]{64}$/);

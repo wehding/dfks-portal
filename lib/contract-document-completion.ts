@@ -35,6 +35,7 @@ const CONTRACT_DOCUMENT_REVIEW_CODES = new Set([
   "processed_file_too_large",
   "spatial_artifact_too_large",
   "vision_page_too_large",
+  "vision_page_invalid",
   "vision_request_too_large",
   "vision_response_too_large",
   "vision_word_limit_exceeded",

@@ -1,12 +1,10 @@
 # Privat PDF-normalisering på Cloud Run
 
 PDF-filer med et fuldt brugbart tekstlag markeres som `not_required`. Hvis en PDF har
-billedsider eller ulæselige sider, rasteriseres alle dens sider. Hver side sendes først
-til regional Google Sensitive Data Protection (DLP) `image:redact`, som maskerer CPR,
-personnavne og bankdata inklusive IBAN og SWIFT i selve billedets pixels. Kun Googles
-maskerede retur-billede sendes derefter til synkron Google Cloud Vision OCR på
-EU-endpointet. Den søgbare afledte PDF genopbygges udelukkende af de maskerede billeder
-og Visions ordkoordinater; originalfilen overskrives aldrig.
+billedsider eller ulæselige sider, rasteriseres alle dens sider. De rå sider sendes
+direkte til synkron Google Cloud Vision OCR på EU-endpointet. Den søgbare afledte PDF
+genopbygges af kilderastrene og Visions ordkoordinater; originalfilen overskrives aldrig.
+Tekstmaskeringen før den separate AI-kontraktanalyse er uændret og ligger i portalen.
 
 Tjenesten må kun deployes som en privat Cloud Run-service. Cloud Scheduler får rollen
 `Cloud Run Invoker`; `allUsers` og `allAuthenticatedUsers` må ikke tilføjes.
@@ -17,9 +15,7 @@ Miljøvariabler:
 - `OCR_CLOUD_RUN_AUDIENCE`: samme faste audience som portalen verificerer.
 - `SUPABASE_URL` og `SUPABASE_ANON_KEY`: offentlige projektværdier; aldrig service-role.
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud-projektet.
-- `GOOGLE_VISION_LOCATION=eu` og `GOOGLE_DLP_LOCATION=europe`. Vision bruger
-  `eu` i ressourcevejen, mens Sensitive Data Protection bruger `europe` på
-  `dlp.eu.rep.googleapis.com`.
+- `GOOGLE_VISION_LOCATION=eu`: låser både ressourcevej og endpoint til EU.
 - `OCR_TMP_DIR=/mnt/ramdisk`: anbefalet memory volume i Cloud Run.
 
 Cloud Run-servicekontoens mail gemmes i portalen som `OCR_CLOUD_RUN_SERVICE_ACCOUNT`.
@@ -63,7 +59,7 @@ jobbet før Cloud Runs 15-minutters request-timeout. Backfill-jobbet bruger
 `OCR_PROCESSING_DEADLINE_SECONDS=0`, fordi task-timeoutet er 12 timer.
 
 Et dokument må højst have 200 sider, 64 MiB bevaret kilderaster og 128 MiB samlet
-kilde- og DLP-raster. Overskridelser sendes til manuel kontrol i stedet for at kunne
+kilde- og Vision-transportraster. Overskridelser sendes til manuel kontrol i stedet for at kunne
 udtømme en 2 GiB-instans. Grænserne kan kun strammes i tests, aldrig hæves ved runtime.
 
 Supabase er eneste kø. Tre Cloud Run-tasks kan arbejde parallelt, fordi portalens
@@ -72,6 +68,13 @@ kun få de offentlige Supabase-oplysninger; service-role, AI-nøgler og permanen
 Google-nøgler må aldrig tilføjes. Produktionsprocessen afviser opstart, hvis
 `OCR_TMP_DIR` ikke peger på den monterede memory volume `/mnt/ramdisk`.
 
+Det midlertidige DLP-erstatningsjob skal have `OCR_REPLACEMENT_ONLY=true`. Det får
+workeren til at markere claim-kaldet, og portalen bruger derefter en separat
+service-only databaseclaim, som kun kan tage jobs med `replacement_of_job_id`.
+Tilstanden opretter aldrig automatiske recovery-generationer. Den almindelige
+Scheduler-service må ikke have variablen, så fremtidige uploads fortsat bruger den
+normale kø. Andre stavemåder end de eksakte værdier `true` og `false` afvises.
+
 Portalen accepterer kun output fra den konfigurerede Google-servicekonto og en aktiv
 joblease. Output- og geometristier er deterministisk bundet til kontrakt, job og det
 tilfældige lease-token. Workeren afleverer SHA-256 for begge artefakter; den særskilte
@@ -79,9 +82,26 @@ backfill-audit verificerer derefter de private bytes, PDF-sideantal og hele det
 allowlistede geometriskema mod den låste originalbaseline før næste udrulningsfase.
 
 Google-adgang sker med Cloud Run-servicens kortlivede metadata-token. Der bruges ingen
-API-nøgle eller permanent service-account-fil. Vision og DLP kaldes synkront over TLS;
-globale eller asynkrone endpoints afvises af klienten. Hvert råt sidebillede sendes kun
-én gang til DLP. Workeren accepterer kun DLP's returnerede pixelmaskerede billede og
-afviser et fund, hvis Google returnerer uændrede billedbytes. Kun fundtyper, antal og
-ufølsomme regioner gemmes; fundet tekst og råbilleder gemmes aldrig i logs eller
-databasen. Geometrien gemmes privat med skemaet `google-vision-spatial-v2`.
+API-nøgle eller permanent service-account-fil. Vision kaldes synkront over TLS 1.3;
+globale eller asynkrone endpoints afvises af klienten. Hvert råt sidebillede sendes
+direkte til Vision EU. En stor side kan få en midlertidig, nedskaleret transportkopi,
+mens den kanoniske kildeside fortsat bruges til PDF'en og koordinaterne mappes tilbage.
+Dokumenttekst og råbilleder gemmes aldrig i logs eller databasen. Geometrien gemmes
+privat med skemaet `google-vision-spatial-v3` og profilen `google-vision-direct-v1`.
+
+Før DLP-erstatningskørslen oprettes en ejerbeskyttet v3-baseline med præcis de
+aktive DLP-generationer. Udvælgelsen kræver, at kontraktens aktive original,
+behandlede PDF og koordinatfil alle peger på samme færdige DLP-job:
+
+```bash
+OCR_BACKFILL_BASELINE_PATH=/private/tmp/dfks-direct-vision-active-dlp-baseline.json \
+  node scripts/audit-ocr-backfill.mjs capture-direct-vision-baseline
+```
+
+Baselinefilen verificeres igen umiddelbart før pilot og fuld kølægning. Historiske,
+superseded eller allerede direkte Vision-behandlede generationer medtages ikke.
+
+```bash
+OCR_BACKFILL_BASELINE_PATH=/private/tmp/dfks-direct-vision-active-dlp-baseline.json \
+  node scripts/audit-ocr-backfill.mjs verify-direct-vision-baseline
+```

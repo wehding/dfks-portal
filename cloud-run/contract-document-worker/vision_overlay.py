@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a searchable PDF from DLP-redacted page images and Vision geometry."""
+"""Build a searchable PDF from source page images and Vision geometry."""
 
 import json
 import math
@@ -16,10 +16,9 @@ from reportlab.pdfgen import canvas
 
 FONT_NAME = "DFKSDejaVu"
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-# Only a DLP-redacted, pixel-verified PNG reaches this script. If the lossless
-# derivative exceeds the portal's 25 MB limit, these bounded JPEG encodings are
-# generated from that safe PNG—not from the legal original. Compression can
-# therefore not reveal pixels that DLP removed, and the original is untouched.
+# Only the locally normalised OCR source reaches this script. If the lossless
+# derivative exceeds the portal's 25 MB limit, bounded JPEG encodings are
+# generated from that source copy. The immutable legal original is untouched.
 DERIVATIVE_JPEG_QUALITIES = (92, 84, 76)
 
 
@@ -33,7 +32,7 @@ def derivative_image(image_path, geometry, page_number, image_dir, jpeg_quality)
     with Image.open(image_path) as image:
         image.load()
         if image.format != "PNG" or image.size != (image_width, image_height):
-            raise ValueError("redacted image dimensions do not match Vision geometry")
+            raise ValueError("OCR page dimensions do not match Vision geometry")
         if jpeg_quality is None:
             return image_path
         safe_path = os.path.join(
@@ -112,9 +111,9 @@ def build_pdf(input_path, page_geometry, image_dir, output_path, jpeg_quality):
         output_pdf = pikepdf.Pdf.new()
         for page_number, page in enumerate(pdf.pages, start=1):
             geometry = page_geometry.get(page_number)
-            image_path = os.path.join(image_dir, f"redacted-{page_number}.png")
+            image_path = os.path.join(image_dir, f"ocr-page-{page_number}.png")
             if geometry is None or not os.path.isfile(image_path):
-                raise ValueError("missing redacted page or Vision geometry")
+                raise ValueError("missing OCR page or Vision geometry")
             with pikepdf.open(rebuilt_page(
                 page, geometry, image_path, page_number, image_dir, jpeg_quality
             )) as rebuilt:

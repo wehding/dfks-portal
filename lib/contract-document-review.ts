@@ -167,6 +167,11 @@ export const CONTRACT_DOCUMENT_REVIEW_DESCRIPTORS: Readonly<Record<string, Contr
     reason: "En side overskred den sikre grænse for OCR-behandling.",
     recommendedAction: RETRY,
   },
+  vision_page_invalid: {
+    title: "OCR-siden kunne ikke valideres",
+    reason: "Google Vision returnerede ikke en sidegeometri, som kunne sikkerhedsverificeres.",
+    recommendedAction: TECHNICAL,
+  },
   vision_request_too_large: {
     title: "OCR-anmodningen er for stor",
     reason: "Dokumentet overskred den sikre grænse for én OCR-anmodning.",

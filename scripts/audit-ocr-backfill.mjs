@@ -509,17 +509,23 @@ async function inspectSpatialArtifact(readStorage, job) {
     const geometry = JSON.parse(jsonBytes.toString("utf8"));
     const pages = geometry?.pages;
     const uniquePages = new Set(Array.isArray(pages) ? pages.map((page) => page?.pageNumber) : []);
-    const valid = hasExactKeys(geometry, [
+    const legacyRedacted = hasExactKeys(geometry, [
       "schemaVersion", "engine", "redactionEngine", "redactionProfile", "redactions", "pages",
       "spatialVerification",
     ])
       && geometry.schemaVersion === "google-vision-spatial-v2"
-      && geometry.engine === "google-vision-document-text-detection"
       && geometry.redactionEngine === "google-sensitive-data-protection-image-redact"
       && geometry.redactionProfile === "dfks-contract-redaction-v1"
-      && job.spatial_schema_version === geometry.schemaVersion
       && Array.isArray(geometry.redactions) && geometry.redactions.length <= 200_000
-      && geometry.redactions.every((redaction) => validRedaction(redaction, job.page_count))
+      && geometry.redactions.every((redaction) => validRedaction(redaction, job.page_count));
+    const directVision = hasExactKeys(geometry, [
+      "schemaVersion", "engine", "processingProfile", "pages", "spatialVerification",
+    ])
+      && geometry.schemaVersion === "google-vision-spatial-v3"
+      && geometry.processingProfile === "google-vision-direct-v1";
+    const valid = (legacyRedacted || directVision)
+      && geometry.engine === "google-vision-document-text-detection"
+      && job.spatial_schema_version === geometry.schemaVersion
       && Array.isArray(pages)
       && pages.length === job.page_count
       && uniquePages.size === pages.length
@@ -1021,6 +1027,10 @@ async function selectAllCompletedJobs(db) {
       .from("contract_document_jobs")
       .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,ocr_applied,page_count,original_sha256,processed_sha256,spatial_sha256,spatial_schema_version,completed_at")
       .eq("status", "completed")
+      // Superseded DLP generations retain immutable hashes and lineage in the
+      // database, but their masked Storage artifacts are intentionally deleted.
+      // Only the promoted generation is therefore subject to byte verification.
+      .is("superseded_by_job_id", null)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
@@ -1047,6 +1057,53 @@ async function selectAllDocumentJobs(db) {
     if (page.length < PAGE_SIZE) break;
   }
   return rows;
+}
+
+export function isActiveDlpReplacementCandidate(job, contract) {
+  return Boolean(job && contract
+    && job.status === "completed"
+    && job.ocr_applied === true
+    && job.redaction_profile === "dfks-contract-redaction-v1"
+    && job.spatial_schema_version === "google-vision-spatial-v2"
+    && job.superseded_by_job_id == null
+    && typeof job.original_storage_path === "string"
+    && job.original_storage_path.length > 0
+    && job.original_storage_path === contract.pdf_url
+    && job.output_storage_path === contract.processed_pdf_url
+    && job.spatial_data_path === contract.document_spatial_data_path
+    && ["kladde", "afventer", "valideret"].includes(contract.status));
+}
+
+async function selectActiveDlpReplacementJobs(db) {
+  const rows = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await db
+      .from("contract_document_jobs")
+      .select("id,contract_id,original_storage_path,output_storage_path,spatial_data_path,status,ocr_applied,redaction_profile,spatial_schema_version,superseded_by_job_id")
+      .eq("status", "completed")
+      .eq("ocr_applied", true)
+      .eq("redaction_profile", "dfks-contract-redaction-v1")
+      .eq("spatial_schema_version", "google-vision-spatial-v2")
+      .is("superseded_by_job_id", null)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new AuditOperationalError("database_query_failed");
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  const contractsById = await loadContracts(
+    db,
+    [...new Set(rows.map((job) => job.contract_id))],
+  );
+  return {
+    contractsById,
+    jobs: rows.filter((job) => isActiveDlpReplacementCandidate(
+      job,
+      contractsById.get(job.contract_id),
+    )),
+  };
 }
 
 function chunks(values, size) {
@@ -1186,6 +1243,40 @@ export async function captureDatabaseBaseline({ db, concurrency = DEFAULT_CONCUR
   });
 }
 
+export async function captureDatabaseDirectVisionBaseline({
+  db,
+  concurrency = DEFAULT_CONCURRENCY,
+}) {
+  const { jobs, contractsById } = await selectActiveDlpReplacementJobs(db);
+  return captureBaseline({
+    jobs,
+    contractsById,
+    readStorage: createStorageReader(db),
+    concurrency,
+  });
+}
+
+export async function verifyDatabaseDirectVisionBaseline({
+  db,
+  baseline,
+  concurrency = DEFAULT_CONCURRENCY,
+}) {
+  assertValidBaseline(baseline);
+  const { jobs, contractsById } = await selectActiveDlpReplacementJobs(db);
+  const activeJobIds = new Set(jobs.map((job) => job.id));
+  if (jobs.length !== baseline.records.length
+    || baseline.records.some((record) => !activeJobIds.has(record.jobId))) {
+    throw new AuditOperationalError("direct_vision_cohort_changed");
+  }
+  return verifyBaseline({
+    baseline,
+    jobsById: new Map(jobs.map((job) => [job.id, job])),
+    contractsById,
+    readStorage: createStorageReader(db),
+    concurrency,
+  });
+}
+
 export async function runAudit({ db, concurrency = DEFAULT_CONCURRENCY, baseline = null }) {
   const [jobs, allDocumentJobs] = await Promise.all([
     selectAllCompletedJobs(db),
@@ -1258,7 +1349,7 @@ export function safeSummaryJson(summary) {
 async function main() {
   loadEnv({ path: ".env.local", quiet: true });
   const mode = process.argv[2] ?? "audit";
-  if (!["audit", "capture-baseline", "verify-baseline"].includes(mode)) {
+  if (!["audit", "capture-baseline", "capture-direct-vision-baseline", "verify-baseline", "verify-direct-vision-baseline"].includes(mode)) {
     throw new AuditOperationalError("invalid_mode");
   }
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
@@ -1270,10 +1361,13 @@ async function main() {
   );
   const db = createReadOnlySupabaseClient(url, serviceRoleKey);
 
-  if (mode === "capture-baseline") {
+  if (mode === "capture-baseline" || mode === "capture-direct-vision-baseline") {
     const baselinePath = process.env.OCR_BACKFILL_BASELINE_PATH;
     assertSecureBaselinePath(baselinePath);
-    const { baseline, summary } = await captureDatabaseBaseline({ db, concurrency });
+    const capture = mode === "capture-direct-vision-baseline"
+      ? captureDatabaseDirectVisionBaseline
+      : captureDatabaseBaseline;
+    const { baseline, summary } = await capture({ db, concurrency });
     if (!baseline || summaryHasViolations(summary)) {
       process.stdout.write(`${safeSummaryJson({ mode, ...summary })}\n`);
       process.exitCode = 1;
@@ -1281,6 +1375,14 @@ async function main() {
     }
     await writeBaselineFile(baselinePath, baseline);
     process.stdout.write(`${safeSummaryJson({ mode, ...summary })}\n`);
+    return;
+  }
+
+  if (mode === "verify-direct-vision-baseline") {
+    const baseline = await readBaselineFile(process.env.OCR_BACKFILL_BASELINE_PATH);
+    const summary = await verifyDatabaseDirectVisionBaseline({ db, baseline, concurrency });
+    process.stdout.write(`${safeSummaryJson({ mode, ...summary })}\n`);
+    if (summaryHasViolations(summary)) process.exitCode = 1;
     return;
   }
 

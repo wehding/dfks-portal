@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { verifyOcrCloudRunRequest } from "@/lib/server/cloud-run-identity";
+import { processContractDocumentArtifactDeletions } from "@/lib/server/contract-document-artifact-deletions";
 import { parseContractDocumentLeaseArtifactPath } from "@/lib/server/contract-document-lease-artifacts";
 import { createServiceClient } from "@/lib/supabase/service";
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
@@ -34,12 +35,46 @@ async function cleanupAbandonedLeaseArtifacts(db: ServiceClient) {
   if (paths.length > 0) await db.storage.from("kontrakter").remove(paths);
 }
 
+async function retrySupersededArtifactDeletions(db: ServiceClient) {
+  const results = await processContractDocumentArtifactDeletions(db, { limit: 25 });
+  const grouped = new Map<string, typeof results>();
+  for (const result of results) {
+    const key = `${result.orgId}:${result.contractId}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), result]);
+  }
+  for (const entries of grouped.values()) {
+    const first = entries[0];
+    const { data: contract } = await db.from("contracts")
+      .select("rights_holder_id")
+      .eq("id", first.contractId)
+      .eq("org_id", first.orgId)
+      .maybeSingle();
+    const deleted = entries.filter((entry) => entry.succeeded).length;
+    await recordSensitiveFlow({
+      actor: { orgId: first.orgId, source: "cron" },
+      action: "delete",
+      component: "internal.document-processing.retry-artifact-deletion",
+      entityType: "contracts",
+      entityId: first.contractId,
+      targetMemberUuid: contract?.rights_holder_id ?? null,
+      orgIds: [first.orgId],
+      purposeCode: "document_ocr_replacement_cleanup",
+      legalBasis: "GDPR Art. 6(1)(b)/(f) og 9(2)(d)",
+      dataCategories: ["contract_data", "document_data"],
+      outcome: deleted === entries.length ? "success" : "partial",
+      counts: { attempted: entries.length, deleted, pendingRetry: entries.length - deleted },
+    });
+  }
+}
+
 export async function POST(request: Request) {
   try {
     await verifyOcrCloudRunRequest(request);
   } catch {
     return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
   }
+
+  const replacementOnly = request.headers.get("X-DFKS-OCR-Replacement-Only") === "1";
 
   const audit = { source: "cron" as const, mode: "summary" as const };
   const db = createServiceClient({ audit });
@@ -53,10 +88,15 @@ export async function POST(request: Request) {
   // Best effort and non-blocking for the authoritative queue: claim starts at
   // once, while abandoned lease artifacts are removed in parallel. Cleanup is
   // bounded and abortable, so a slow Storage request cannot stall the worker.
-  const cleanup = cleanupAbandonedLeaseArtifacts(cleanupDb)
+  const cleanup = Promise.all([
+    cleanupAbandonedLeaseArtifacts(cleanupDb),
+    retrySupersededArtifactDeletions(cleanupDb),
+  ])
     .catch(() => undefined)
     .finally(() => clearTimeout(cleanupTimer));
-  const claim = db.rpc("claim_next_contract_document_job", { p_lease_minutes: 30 });
+  const claim = replacementOnly
+    ? db.rpc("claim_next_direct_vision_replacement_job", { p_lease_minutes: 30 })
+    : db.rpc("claim_next_contract_document_job", { p_lease_minutes: 30 });
   let [{ data: job, error }] = await Promise.all([claim, cleanup]);
   if (error) return NextResponse.json({ error: "Dokumentkøen kunne ikke læses" }, { status: 500 });
 
@@ -65,7 +105,7 @@ export async function POST(request: Request) {
   // service-only RPC applies the immutable-source, generation and retry caps
   // before creating at most one recovery generation. Rescan requests are
   // explicitly excluded by the database policy.
-  if (!job?.id || !job.lease_token) {
+  if ((!job?.id || !job.lease_token) && !replacementOnly) {
     const recovery = await db.rpc(
       "queue_contract_document_job_automatic_recovery_batch",
       { p_limit: 1 },
@@ -90,7 +130,7 @@ export async function POST(request: Request) {
   // Every lease writes to its own immutable derivative namespace. A stale
   // worker may retain a short-lived signed token, but it can then only write
   // to its abandoned lease path and can never overwrite the active result.
-  // finish_contract_document_job_v6 promotes only the paths belonging to the
+  // finish_contract_document_job_v7 promotes only the paths belonging to the
   // currently locked lease into the contract row.
   const leasePrefix = `${job.org_id}/processed/${job.contract_id}/leases/${job.lease_token}`;
   const outputUploadPath = `${leasePrefix}/normalised.pdf`;
@@ -106,7 +146,7 @@ export async function POST(request: Request) {
     .select("id")
     .maybeSingle();
   if (download.error || derivativePathError || !leasedJob?.id) {
-    await db.rpc("finish_contract_document_job_v6", {
+    await db.rpc("finish_contract_document_job_v7", {
       p_job_id: job.id,
       p_lease_token: job.lease_token,
       p_status: "failed",

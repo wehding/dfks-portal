@@ -21,7 +21,7 @@ import {
   processPdfSpatially,
   readTextArtifactWithinLimit,
 } from "./spatial-ocr.mjs";
-import { GoogleOcrOperationalError } from "./google-secure-api.mjs";
+import { GoogleOcrOperationalError } from "./google-vision-api.mjs";
 
 test("native tekst og billedside klassificeres forskelligt", () => {
   const nativeText = Array.from(
@@ -135,7 +135,7 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
       workDir: directory,
       commandRunner: runner,
       googleClient: {
-        async redactAndAnnotate() {
+        async annotateDocument() {
           return {
             responses: [
               { fullTextAnnotation: { pages: [{
@@ -144,9 +144,7 @@ test("verificeret blank side bevares uden at stoppe et ellers læsbart dokument"
               }] } },
               { fullTextAnnotation: { pages: [] } },
             ],
-            redactionCounts: {},
-            redactionRegions: [],
-            redactedPages: [
+            sourcePages: [
               { pageNumber: 1, imageBytes: whiteJpeg },
               { pageNumber: 2, imageBytes: whiteJpeg },
             ],
@@ -218,7 +216,7 @@ test("mange små rasterfliser kan ikke skjule en scannet side som native tekst",
   assert.equal(evidence.coverage >= 0.72, true);
 });
 
-test("Vision-ord fra transportkopien mappes tilbage til den kanoniske DLP-side", () => {
+test("Vision-ord fra transportkopien mappes tilbage til den kanoniske kildeside", () => {
   const mapped = mapVisionPageToCanonical({
     pageNumber: 3,
     imageWidth: 1_600,

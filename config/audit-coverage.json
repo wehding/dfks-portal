@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "lastReviewed": "2026-08-31",
+  "lastReviewed": "2026-09-01",
   "mode": "reporting",
   "statusTaxonomy": ["implemented", "activated", "verified", "pending"],
   "classificationGroups": [
@@ -115,7 +115,7 @@
   "processingActivities": [
     { "id": "PROC-CONTRACT-ACCESS", "name": "Kontraktadgang og sagsbehandling", "lifecyclePhase": "use", "categories": ["contract_data", "salary_data", "union_membership_data"], "owner": "Portalteam" },
     { "id": "PROC-MEMBER-ADMIN", "name": "Medlemsadministration og søgning", "lifecyclePhase": "use", "categories": ["identity_data", "contact_data", "union_membership_data"], "owner": "Portalteam" },
-    { "id": "PROC-DOCUMENT-AI", "name": "Dokument-, OCR- og AI-behandling", "lifecyclePhase": "analysis", "categories": ["contract_data", "salary_data", "ai_analysis"], "owner": "AI- og portalteam" },
+    { "id": "PROC-DOCUMENT-AI", "name": "Dokument-, direkte Vision OCR-, derivatslette- og AI-behandling", "lifecyclePhase": "analysis", "categories": ["contract_data", "salary_data", "ai_analysis"], "owner": "AI- og portalteam" },
     { "id": "PROC-STATISTICS", "name": "Statistik og diskretion", "lifecyclePhase": "analysis", "categories": ["salary_data", "contract_data", "union_membership_data"], "owner": "Statistikteam" },
     { "id": "PROC-COMMUNICATION", "name": "Kommunikation og eksterne kladder", "lifecyclePhase": "sharing", "categories": ["contact_data", "communication_data", "contract_data"], "owner": "Juridisk team og portalteam" },
     { "id": "PROC-RIGHTS-DISTRIBUTION", "name": "Afstemning og fordeling af arbejdsandele", "lifecyclePhase": "use", "categories": ["work_credit_data", "union_membership_data"], "owner": "Rettigheds- og portalteam" },

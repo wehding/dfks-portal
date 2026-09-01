@@ -7,9 +7,8 @@ import sharp from "sharp";
 
 import {
   GoogleOcrOperationalError,
-  isDlpRequestBodyWithinLimit,
-  MAX_DLP_IMAGE_BYTES,
-} from "./google-secure-api.mjs";
+  MAX_VISION_IMAGE_BYTES,
+} from "./google-vision-api.mjs";
 import { resolveDocumentResourceLimits } from "./resource-limits.mjs";
 
 const gzipAsync = promisify(gzip);
@@ -26,7 +25,7 @@ const MIN_SPARSE_NATIVE_WORDLIKE_RATIO = 0.8;
 const FULL_PAGE_RASTER_COVERAGE = 0.72;
 const MIN_RASTER_TILE_PIXELS = 64 * 64;
 // A page is exempted from the unreadable-page gate only when it is almost
-// completely white, contains no extracted/OCR text and has no DLP redaction.
+// completely white and contains no extracted or OCR text.
 // The limits deliberately reject sparse signatures, initials and faint text.
 const MAX_BLANK_NON_WHITE_RATIO = 0.003;
 const MAX_BLANK_DARK_RATIO = 0.0015;
@@ -42,7 +41,7 @@ const MAX_EXACT_ASSIGNMENT_WORDS_PER_GROUP = 128;
 // reading-order fallback preserves fail-closed spatial verification.
 const MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE = 2_000_000;
 const MAX_JOINED_TOKENS = 3;
-const DLP_RENDER_PROFILES = Object.freeze([
+const VISION_RENDER_PROFILES = Object.freeze([
   { dpi: 300, quality: 95 },
   { dpi: 275, quality: 90 },
   { dpi: 250, quality: 88 },
@@ -329,7 +328,7 @@ export function pageRasterEvidence(images, pageSize) {
     coverage = Math.max(0, Math.min(1, coverage));
     // Scanners may encode one page as many small image tiles. Ignoring every
     // tile below 50k pixels can make a scanned page with a hidden OCR layer
-    // look native and bypass DLP/Vision. The bounded pdfimages inventory keeps
+    // look native and bypass Vision. The bounded pdfimages inventory keeps
     // this aggregation finite; over-counting overlapping tiles fails safely
     // toward OCR rather than skipping it.
     if (image.width * image.height >= MIN_RASTER_TILE_PIXELS) {
@@ -492,26 +491,6 @@ export function correctPageOrientation(page, correctionDegrees) {
       ...word,
       vertices: word.vertices.map((point) => transformPoint(point, correction, sourceWidth, sourceHeight)),
     })),
-  };
-}
-
-function correctRedactionRegion(region, correctionDegrees, sourceWidth, sourceHeight) {
-  const correction = normaliseDegrees(correctionDegrees);
-  if (correction === 0) return { ...region };
-  const corners = [
-    { x: region.left, y: region.top },
-    { x: region.left + region.width, y: region.top },
-    { x: region.left + region.width, y: region.top + region.height },
-    { x: region.left, y: region.top + region.height },
-  ].map((point) => transformPoint(point, correction, sourceWidth, sourceHeight));
-  const xs = corners.map((point) => point.x);
-  const ys = corners.map((point) => point.y);
-  return {
-    ...region,
-    left: Math.min(...xs),
-    top: Math.min(...ys),
-    width: Math.max(...xs) - Math.min(...xs),
-    height: Math.max(...ys) - Math.min(...ys),
   };
 }
 
@@ -985,7 +964,7 @@ export async function processPdfSpatially({
   }
 
   // These counters describe mutually exclusive source-page classes. A mixed
-  // document is deliberately sent through DLP/Vision for every page before
+  // document is deliberately sent through Vision for every page before
   // rebuilding the safe derivative, but a native source page must not then
   // count as both native and OCR-required in completion evidence.
   const nativePageCount = pageStates.filter((page) => page.classification === "native_text").length;
@@ -1004,9 +983,9 @@ export async function processPdfSpatially({
   }
   const ocrDocumentClassification = classifyOcrDocument(pageStates);
 
-  // A document that needs OCR is rebuilt consistently from DLP-redacted pages.
-  // Processing every page prevents a mixed PDF from retaining unredacted native
-  // pages next to redacted scan pages in the derivative.
+  // A document that needs OCR is rebuilt consistently from the raw page rasters.
+  // Processing every page keeps a mixed document's geometry and text layer on
+  // one deterministic representation.
   const pagesForOcr = [];
   let retainedRasterBytes = 0;
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
@@ -1015,7 +994,7 @@ export async function processPdfSpatially({
     const pageSize = pageStates[pageNumber - 1]?.pageSize;
     if (!pageSize) throw new GoogleOcrOperationalError("page_geometry_unavailable");
     let imageBytes = null;
-    for (const profile of DLP_RENDER_PROFILES) {
+    for (const profile of VISION_RENDER_PROFILES) {
       assertProcessingHealthy();
       if (renderedPixelCount(pageSize, profile.dpi) > MAX_RENDERED_PAGE_PIXELS) continue;
       await runCommand("pdftoppm", [
@@ -1025,14 +1004,12 @@ export async function processPdfSpatially({
       ], 120_000);
       const candidatePath = `${prefix}.jpg`;
       const candidateInfo = await stat(candidatePath);
-      if (candidateInfo.size > MAX_DLP_IMAGE_BYTES) continue;
+      if (candidateInfo.size > MAX_VISION_IMAGE_BYTES) continue;
       const candidate = await readFile(candidatePath);
-      if (isDlpRequestBodyWithinLimit(candidate)) {
-        imageBytes = candidate;
-        break;
-      }
+      imageBytes = candidate;
+      break;
     }
-    if (!imageBytes) throw new GoogleOcrOperationalError("dlp_request_too_large");
+    if (!imageBytes) throw new GoogleOcrOperationalError("vision_page_too_large");
     retainedRasterBytes += imageBytes.length;
     if (retainedRasterBytes > limits.maxDocumentRasterBytes) {
       throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
@@ -1043,11 +1020,9 @@ export async function processPdfSpatially({
   assertProcessingHealthy();
   const {
     responses,
-    redactionCounts,
-    redactionRegions,
-    redactedPages,
+    sourcePages,
     visionPageTransforms,
-  } = await googleClient.redactAndAnnotate(
+  } = await googleClient.annotateDocument(
     pagesForOcr,
     { assertHealthy: assertProcessingHealthy, resourceLimits: limits, signal },
   );
@@ -1064,8 +1039,7 @@ export async function processPdfSpatially({
     );
   });
   enforceVisionWordLimits(rawGeometryPages, limits);
-  const redactedPageByNumber = new Map((redactedPages ?? []).map((page) => [page.pageNumber, page]));
-  const redactionPageNumbers = new Set((redactionRegions ?? []).map((region) => region.pageNumber));
+  const sourcePageByNumber = new Map((sourcePages ?? []).map((page) => [page.pageNumber, page]));
   const blankPageNumbers = new Set();
   const hasReadableVisionPage = rawGeometryPages.some((page) => page.words.length > 0);
   // A completely blank document is still rejected. Within an otherwise
@@ -1073,11 +1047,11 @@ export async function processPdfSpatially({
   // original position without being mistaken for an OCR failure.
   if (hasReadableVisionPage) {
     for (const page of rawGeometryPages) {
-      if (page.words.length > 0 || redactionPageNumbers.has(page.pageNumber)) continue;
+      if (page.words.length > 0) continue;
       const pageState = pageStates[page.pageNumber - 1];
-      const redactedPage = redactedPageByNumber.get(page.pageNumber);
-      if (!pageState || pageState.chars > 0 || !redactedPage?.imageBytes) continue;
-      const inspection = await inspectRasterBlankness(redactedPage.imageBytes);
+      const sourcePage = sourcePageByNumber.get(page.pageNumber);
+      if (!pageState || pageState.chars > 0 || !sourcePage?.imageBytes) continue;
+      const inspection = await inspectRasterBlankness(sourcePage.imageBytes);
       assertProcessingHealthy();
       if (!inspection.blank || !(inspection.width > 0) || !(inspection.height > 0)) continue;
       blankPageNumbers.add(page.pageNumber);
@@ -1111,13 +1085,13 @@ export async function processPdfSpatially({
       status: "needs_review", classification: "unreadable", pageCount,
       nativePageCount,
       ocrPageCount: pageCount - nativePageCount,
-      unreadablePageCount, redactionCounts,
+      unreadablePageCount,
       orientationCorrections,
       orientationUncertainPageCount,
       affectedPageNumbers: unreadablePageNumbers,
       blankPageCount,
-      redactionProfile: "dfks-contract-redaction-v1",
-      spatialSchemaVersion: "google-vision-spatial-v2",
+      processingProfile: "google-vision-direct-v1",
+      spatialSchemaVersion: "google-vision-spatial-v3",
     };
   }
   if (orientationUncertainPageCount > 0) {
@@ -1126,14 +1100,13 @@ export async function processPdfSpatially({
       nativePageCount,
       ocrPageCount: pageCount - nativePageCount,
       unreadablePageCount,
-      redactionCounts,
       orientationCorrections,
       orientationUncertainPageCount,
       affectedPageNumbers: orientationUncertainPageNumbers,
       blankPageCount,
       orientationQualityFailed: true,
-      redactionProfile: "dfks-contract-redaction-v1",
-      spatialSchemaVersion: "google-vision-spatial-v2",
+      processingProfile: "google-vision-direct-v1",
+      spatialSchemaVersion: "google-vision-spatial-v3",
     };
   }
 
@@ -1141,21 +1114,10 @@ export async function processPdfSpatially({
     const orientation = orientationByPage.get(page.pageNumber);
     return correctPageOrientation(page, orientation.correctionDegrees);
   });
-  const correctedRedactionRegions = (redactionRegions ?? []).map((region) => {
-    const page = rawGeometryPages.find((candidate) => candidate.pageNumber === region.pageNumber);
-    const orientation = orientationByPage.get(region.pageNumber);
-    if (!page || !orientation?.reliable) return { ...region };
-    return correctRedactionRegion(
-      region, orientation.correctionDegrees, page.imageWidth, page.imageHeight,
-    );
-  });
-
   const geometry = {
-    schemaVersion: "google-vision-spatial-v2",
+    schemaVersion: "google-vision-spatial-v3",
     engine: "google-vision-document-text-detection",
-    redactionEngine: "google-sensitive-data-protection-image-redact",
-    redactionProfile: "dfks-contract-redaction-v1",
-    redactions: correctedRedactionRegions,
+    processingProfile: "google-vision-direct-v1",
     pages: geometryPages,
   };
   const plainGeometryPath = join(workDir, "vision-geometry.json");
@@ -1165,9 +1127,9 @@ export async function processPdfSpatially({
     { mode: 0o600 },
   );
   assertProcessingHealthy();
-  for (const page of redactedPages) {
-    const sourcePath = join(workDir, `redacted-source-${page.pageNumber}.jpg`);
-    const outputImagePath = join(workDir, `redacted-${page.pageNumber}.png`);
+  for (const page of sourcePages) {
+    const sourcePath = join(workDir, `ocr-source-${page.pageNumber}.jpg`);
+    const outputImagePath = join(workDir, `ocr-page-${page.pageNumber}.png`);
     const orientation = orientationByPage.get(page.pageNumber);
     await writeFile(sourcePath, page.imageBytes, { mode: 0o600 });
     await runCommand("python3", [
@@ -1239,9 +1201,8 @@ export async function processPdfSpatially({
     blankPageCount,
     orientationCorrections,
     orientationUncertainPageCount,
-    redactionCounts,
-    redactionProfile: "dfks-contract-redaction-v1",
-    spatialSchemaVersion: "google-vision-spatial-v2",
+    processingProfile: "google-vision-direct-v1",
+    spatialSchemaVersion: "google-vision-spatial-v3",
     spatial,
     textCharCount,
     affectedPageNumbers: spatialPassed ? [] : spatialPageNumbers,

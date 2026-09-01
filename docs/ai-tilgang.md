@@ -146,4 +146,7 @@ Feedback fra jurister gemmes og bruges til løbende at forbedre mønstre og note
 | Database | Supabase (PostgreSQL + pgvector) | Vektorssøgning og strukturerede data i ét system |
 | Hosting | Vercel | Serverless, ingen infrastruktur at vedligeholde |
 
-Alle API-kald sker server-side. Kontrakttekst forlader aldrig serveren ukrypteret, og CPR-numre, bankkontonumre og adresser maskeres automatisk inden teksten sendes til AI'en.
+Alle API-kald sker server-side og over TLS. Billedbaserede kontraktsider behandles råt
+af Google Vision på EU-endpointet for at skabe søgbar tekst og koordinater. CPR-numre,
+bankkontonumre og adresser maskeres fortsat automatisk i den udtrukne tekst, inden den
+sendes til den separate AI-kontraktanalyse.

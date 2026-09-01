@@ -9,6 +9,7 @@ import {
   type StoredDocumentCompletion,
 } from "@/lib/contract-document-completion";
 import { verifyOcrCloudRunRequest } from "@/lib/server/cloud-run-identity";
+import { processContractDocumentArtifactDeletions } from "@/lib/server/contract-document-artifact-deletions";
 import { createServiceClient } from "@/lib/supabase/service";
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
@@ -29,8 +30,7 @@ type Completion = {
   nativePageCount?: number;
   ocrPageCount?: number;
   unreadablePageCount?: number;
-  redactionCounts?: Record<string, number>;
-  redactionProfile?: string | null;
+  processingProfile?: string | null;
   spatialSchemaVersion?: string | null;
   spatialAccuracyScore?: number | null;
   spatialMedianIou?: number | null;
@@ -73,9 +73,6 @@ export async function POST(request: Request) {
     && Number(value) >= 0 && Number(value) <= MAX_DOCUMENT_PAGES ? Number(value) : 0;
   const safeRatio = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
   const safeHash = (value: unknown) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value) ? value : null;
-  const redactionCounts = Object.fromEntries(Object.entries(body.redactionCounts ?? {})
-    .filter(([key, value]) => /^[A-Z_]{2,60}$/.test(key) && Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 100_000)
-    .slice(0, 20));
   const safeProfile = (value: unknown) => typeof value === "string"
     && /^[a-z0-9][a-z0-9._-]{2,79}$/.test(value) ? value : null;
   const safeErrorCode = safeProfile(body.errorCode);
@@ -103,7 +100,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Ugyldig sidediagnostik" }, { status: 400 });
   }
 
-  const { data: finished, error } = await db.rpc("finish_contract_document_job_v6", {
+  const completionResult = await db.rpc("finish_contract_document_job_v7", {
     p_job_id: body.jobId,
     p_lease_token: body.leaseToken,
     p_status: body.status,
@@ -116,32 +113,34 @@ export async function POST(request: Request) {
     p_native_page_count: safeCount(body.nativePageCount),
     p_ocr_page_count: safeCount(body.ocrPageCount),
     p_unreadable_page_count: safeCount(body.unreadablePageCount),
-    p_redaction_counts: redactionCounts,
     p_spatial_accuracy_score: safeRatio(body.spatialAccuracyScore),
     p_spatial_median_iou: safeRatio(body.spatialMedianIou),
     p_spatial_center_inside_ratio: safeRatio(body.spatialCenterInsideRatio),
     p_original_sha256: safeHash(body.originalSha256),
     p_processed_sha256: safeHash(body.processedSha256),
-    p_redaction_profile: safeProfile(body.redactionProfile),
+    p_processing_profile: safeProfile(body.processingProfile),
     p_spatial_schema_version: safeProfile(body.spatialSchemaVersion),
     p_spatial_sha256: safeHash(body.spatialSha256),
     p_error_code: safeErrorCode,
     p_safe_error_message: body.safeErrorMessage?.slice(0, 500) || null,
     p_review_details: reviewDetails,
   });
+  let finished = completionResult.data;
+  const { error } = completionResult;
   if (error || !finished?.contract_id) {
     const { data: stored } = await db.from("contract_document_jobs")
       .select("contract_id,status,lease_token,document_classification,ocr_applied,processed_sha256,spatial_sha256,error_code")
       .eq("id", body.jobId)
       .maybeSingle<StoredDocumentCompletion>();
     if (isIdempotentDocumentCompletionReplay(stored, body)) {
-      return NextResponse.json({ ok: true, replayed: true });
+      finished = stored;
+    } else {
+      const failure = classifyDocumentCompletionFailure(error?.code);
+      return NextResponse.json({
+        error: "Dokumentjobbet kunne ikke afsluttes",
+        code: failure.code,
+      }, { status: failure.status });
     }
-    const failure = classifyDocumentCompletionFailure(error?.code);
-    return NextResponse.json({
-      error: "Dokumentjobbet kunne ikke afsluttes",
-      code: failure.code,
-    }, { status: failure.status });
   }
 
   const { data: contract } = await db.from("contracts")
@@ -164,8 +163,33 @@ export async function POST(request: Request) {
     counts: {
       pageCount: Number.isInteger(body.pageCount) ? Number(body.pageCount) : null,
       ocrApplied: Boolean(body.ocrApplied),
+      promoted: body.status === "completed"
+        && body.processingProfile === "google-vision-direct-v1" ? 1 : 0,
     },
   });
 
-  return NextResponse.json({ ok: true });
+  const deletions = await processContractDocumentArtifactDeletions(db, {
+    limit: 2,
+    replacementJobId: body.jobId,
+  });
+  if (deletions.length > 0) {
+    const deleted = deletions.filter((entry) => entry.succeeded).length;
+    await recordSensitiveFlow({
+      actor: { orgId: contract?.org_id ?? null, source: "cron" },
+      action: "delete",
+      component: "internal.document-processing.delete-superseded-artifacts",
+      entityType: "contracts",
+      entityId: finished.contract_id,
+      targetMemberUuid: contract?.rights_holder_id ?? null,
+      orgIds: contract?.org_id ? [contract.org_id] : [],
+      purposeCode: "document_ocr_replacement_cleanup",
+      legalBasis: "GDPR Art. 6(1)(b)/(f) og 9(2)(d)",
+      dataCategories: ["contract_data", "document_data"],
+      outcome: deleted === deletions.length ? "success" : "partial",
+      correlationId: body.jobId,
+      counts: { attempted: deletions.length, deleted, pendingRetry: deletions.length - deleted },
+    });
+  }
+
+  return NextResponse.json({ ok: true, replayed: Boolean(error) });
 }
