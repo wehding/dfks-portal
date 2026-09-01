@@ -94,6 +94,7 @@ function fixture({
   originalHash = sha256(original),
   processedHash = sha256(output),
   direct = false,
+  directOverlayProfile = "primary-v1",
   downstreamAiPolicy = null,
 } = {}) {
   const contractId = "11111111-1111-4111-8111-111111111111";
@@ -105,7 +106,10 @@ function fixture({
   const spatial = gzipSync(Buffer.from(JSON.stringify({
     schemaVersion: direct ? "google-vision-spatial-v3" : "google-vision-spatial-v2",
     engine: "google-vision-document-text-detection",
-    ...(direct ? { processingProfile: "google-vision-direct-v1" } : {
+    ...(direct ? {
+      processingProfile: "google-vision-direct-v1",
+      overlayProfile: directOverlayProfile,
+    } : {
       redactionEngine: "google-sensitive-data-protection-image-redact",
       redactionProfile: "dfks-contract-redaction-v1",
       redactions: [],
@@ -766,6 +770,27 @@ test("direkte Vision v3 består metadata- og geometriporten uden DLP-felter", as
   assert.equal(summary.documentsPassingAllChecks, 1);
 });
 
+test("direkte Vision-audit accepterer kun workerens allowlistede overlay-profiler", async () => {
+  const original = await pdf(2);
+  const output = await pdf(2);
+  for (const directOverlayProfile of [
+    undefined,
+    "primary-v1",
+    "font-metrics-v1",
+    "axis-aligned-font-metrics-v1",
+  ]) {
+    const summary = await auditCompletedJobs(fixture({
+      original, output, direct: true, directOverlayProfile,
+    }));
+    assert.equal(summary.violations.invalidSpatialArtifact, 0);
+  }
+  const invalid = await auditCompletedJobs(fixture({
+    original, output, direct: true, directOverlayProfile: "ukendt-profil",
+  }));
+  assert.equal(invalid.violations.invalidSpatialArtifact, 1);
+  assert.equal(invalid.documentsPassingAllChecks, 0);
+});
+
 test("replacement-audit kræver præcis to slettede DLP-artefakter og aldrig originalen", () => {
   const sourceId = "11111111-1111-4111-8111-111111111111";
   const replacementId = "22222222-2222-4222-8222-222222222222";
@@ -923,6 +948,39 @@ test("kendt uparsebar original kræver samme hash og uafhængigt sideantal", asy
   assert.equal(rejected.violations.invalidOriginalPdf, 1);
   assert.equal(rejected.documentsPassingAllChecks, 0);
   assert.equal(extractorCalls, 2);
+});
+
+test("kendt uparsebar original accepterer kun den eksakte geometry-backfill-kilde", async () => {
+  const original = Buffer.from("%PDF-kendt-uparsebar-backfill");
+  const input = fixture({ original, output: await pdf(2), expectedPages: 2, direct: true });
+  const job = input.jobs[0];
+  const sourceJobId = "55555555-5555-4555-8555-555555555555";
+  job.backfill_source_job_id = sourceJobId;
+  input.baselineOriginalByJob = new Map([[
+    job.contract_id,
+    knownUnparseableBaseline(job, {
+      jobId: sourceJobId,
+      originalPageCount: 2,
+      originalPageCountSource: "qpdf-poppler",
+    }),
+  ]]);
+  let extractorCalls = 0;
+  input.extractOriginalPageCount = async (bytes) => {
+    extractorCalls += 1;
+    assert.strictEqual(bytes, original);
+    return 2;
+  };
+
+  const accepted = await auditCompletedJobs(input);
+  assert.equal(accepted.violations.invalidOriginalPdf, 0);
+  assert.equal(accepted.documentsPassingAllChecks, 1);
+  assert.equal(extractorCalls, 1);
+
+  job.backfill_source_job_id = "66666666-6666-4666-8666-666666666666";
+  const rejected = await auditCompletedJobs(input);
+  assert.equal(rejected.violations.invalidOriginalPdf, 1);
+  assert.equal(rejected.documentsPassingAllChecks, 0);
+  assert.equal(extractorCalls, 1);
 });
 
 test("uparsebar original uden baseline kalder ikke den uafhængige extractor", async () => {

@@ -7,6 +7,7 @@ import { gunzipSync } from "node:zlib";
 import sharp from "sharp";
 
 import {
+  canonicaliseSpatialGeometryPage,
   classifyOcrDocument,
   classifyPageText,
   classifyRasterBlankness,
@@ -41,6 +42,42 @@ test("native tekst og billedside klassificeres forskelligt", () => {
   }).classification, "mixed");
   assert.equal(classifyPageText(nativeText, { rasterInspectionReliable: false }).classification, "mixed");
   assert.equal(classifyPageText("").classification, "image_only");
+});
+
+test("v3-geometri fjerner al midlertidig recovery-metadata før persistens", () => {
+  const canonical = canonicaliseSpatialGeometryPage({
+    pageNumber: 8,
+    imageWidth: 600,
+    imageHeight: 1_000,
+    recoveryProfile: "vision-sparse-tail-orientation-consensus-v1",
+    recoveryRotationDegrees: 270,
+    internalEvidence: { confidence: 1 },
+    words: [{
+      text: "Slutnote",
+      confidence: 0.99,
+      recoveryHint: "temporary",
+      vertices: [
+        { x: 100, y: 200, internal: true },
+        { x: 100, y: 240, internal: true },
+        { x: 80, y: 240, internal: true },
+        { x: 80, y: 200, internal: true },
+      ],
+    }],
+  }, 90);
+  assert.deepEqual(Object.keys(canonical).sort(), [
+    "imageHeight",
+    "imageWidth",
+    "orientationCorrection",
+    "pageNumber",
+    "sourceImageHeight",
+    "sourceImageWidth",
+    "words",
+  ]);
+  assert.deepEqual(Object.keys(canonical.words[0]).sort(), ["confidence", "text", "vertices"]);
+  assert.deepEqual(Object.keys(canonical.words[0].vertices[0]).sort(), ["x", "y"]);
+  assert.equal(canonical.imageWidth, 1_000);
+  assert.equal(canonical.imageHeight, 600);
+  assert.equal(canonical.orientationCorrection, 90);
 });
 
 test("tvungen Vision rapporterer alle faktisk behandlede native sider som OCR-sider", () => {
@@ -1200,7 +1237,7 @@ test("modgående centerkontrol accepterer samme slanke ordgeometri uden at sænk
   assert.equal(result.passed, true);
 });
 
-test("ét Vision-ord kan matches mod højst tre tilstødende PDF-tokens", () => {
+test("ét Vision-ord kan matches mod et afgrænset antal tilstødende PDF-tokens", () => {
   const geometry = [{
     pageNumber: 1,
     imageWidth: 100,
@@ -1225,6 +1262,31 @@ test("ét Vision-ord kan matches mod højst tre tilstødende PDF-tokens", () => 
   assert.equal(result.passed, true);
 });
 
+test("ét Vision-compound kan matches mod fem geometrisk tilstødende PDF-tokens", () => {
+  const parts = ["arbejds", "markeds", "bidrags", "grund", "lag"];
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 140,
+    imageHeight: 40,
+    words: [{
+      text: parts.join(""),
+      vertices: [{ x: 5, y: 10 }, { x: 125, y: 10 }, { x: 125, y: 20 }, { x: 5, y: 20 }],
+    }],
+  }];
+  const extracted = [{
+    width: 140,
+    height: 40,
+    words: parts.map((text, index) => ({
+      text, xMin: 5 + index * 24, yMin: 10, xMax: 27 + index * 24, yMax: 20,
+    })),
+  }];
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.matchedWords, 1);
+  assert.equal(result.matchCoverage, 1);
+  assert.equal(result.score, 1);
+  assert.equal(result.passed, true);
+});
+
 test("tilstødende Vision-ord kan matches mod ét samlet PDF-token", () => {
   const geometry = [{
     pageNumber: 1,
@@ -1245,6 +1307,116 @@ test("tilstødende Vision-ord kan matches mod ét samlet PDF-token", () => {
   assert.equal(result.matchedWords, 2);
   assert.equal(result.score, 1);
   assert.equal(result.passed, true);
+});
+
+test("fem tilstødende Vision-ord kan matches sikkert mod ét samlet PDF-token", () => {
+  const parts = ["Dansk", "Film", "Klipper", "Selskab", "Aftale"];
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 160,
+    imageHeight: 40,
+    words: parts.map((text, index) => ({
+      text,
+      vertices: [
+        { x: 10 + index * 24, y: 10 }, { x: 32 + index * 24, y: 10 },
+        { x: 32 + index * 24, y: 20 }, { x: 10 + index * 24, y: 20 },
+      ],
+    })),
+  }];
+  const extracted = [{
+    width: 160,
+    height: 40,
+    words: [{
+      text: parts.join(""), xMin: 10, yMin: 10, xMax: 128, yMax: 20,
+    }],
+  }];
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.expectedWords, 5);
+  assert.equal(result.matchedWords, 5);
+  assert.equal(result.matchCoverage, 1);
+  assert.equal(result.score, 1);
+  assert.equal(result.passed, true);
+});
+
+test("matcherfix løfter 92,667 procent til over 95 uden at sænke kvalitetsporten", () => {
+  const exactCount = 139;
+  const joinedCount = 5;
+  const missingCount = 6;
+  const exactWords = Array.from({ length: exactCount }, (_, index) => ({
+    text: `Ord${index}`,
+    vertices: [
+      { x: 2, y: index * 2 + 1 }, { x: 22, y: index * 2 + 1 },
+      { x: 22, y: index * 2 + 2 }, { x: 2, y: index * 2 + 2 },
+    ],
+  }));
+  const joinedWords = Array.from({ length: joinedCount }, (_, index) => ({
+    text: `Del${index}`,
+    vertices: [
+      { x: 2 + index * 24, y: 281 }, { x: 22 + index * 24, y: 281 },
+      { x: 22 + index * 24, y: 291 }, { x: 2 + index * 24, y: 291 },
+    ],
+  }));
+  const missingWords = Array.from({ length: missingCount }, (_, index) => ({
+    text: `Mangler${index}`,
+    vertices: [
+      { x: 2, y: 294 + index * 2 }, { x: 22, y: 294 + index * 2 },
+      { x: 22, y: 295 + index * 2 }, { x: 2, y: 295 + index * 2 },
+    ],
+  }));
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 140,
+    imageHeight: 310,
+    words: [...exactWords, ...joinedWords, ...missingWords],
+  }];
+  const extracted = [{
+    width: 140,
+    height: 310,
+    words: [
+      ...exactWords.map((word) => ({
+        text: word.text,
+        xMin: word.vertices[0].x,
+        yMin: word.vertices[0].y,
+        xMax: word.vertices[2].x,
+        yMax: word.vertices[2].y,
+      })),
+      {
+        text: joinedWords.map((word) => word.text).join(""),
+        xMin: joinedWords[0].vertices[0].x,
+        yMin: joinedWords[0].vertices[0].y,
+        xMax: joinedWords.at(-1).vertices[2].x,
+        yMax: joinedWords.at(-1).vertices[2].y,
+      },
+    ],
+  }];
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.expectedWords, exactCount + joinedCount + missingCount);
+  assert.equal(result.matchedWords, exactCount + joinedCount);
+  assert.equal(Number(result.matchCoverage.toFixed(3)), 0.96);
+  assert.ok(result.score >= 0.95);
+  assert.equal(result.passed, true);
+});
+
+test("tokens på forskellige linjer samles ikke til et falsk compound-match", () => {
+  const geometry = [{
+    pageNumber: 1,
+    imageWidth: 120,
+    imageHeight: 60,
+    words: [
+      { text: "første", vertices: [{ x: 10, y: 10 }, { x: 40, y: 10 }, { x: 40, y: 20 }, { x: 10, y: 20 }] },
+      { text: "anden", vertices: [{ x: 10, y: 30 }, { x: 40, y: 30 }, { x: 40, y: 40 }, { x: 10, y: 40 }] },
+      { text: "tredje", vertices: [{ x: 42, y: 30 }, { x: 72, y: 30 }, { x: 72, y: 40 }, { x: 42, y: 40 }] },
+      { text: "fjerde", vertices: [{ x: 74, y: 30 }, { x: 104, y: 30 }, { x: 104, y: 40 }, { x: 74, y: 40 }] },
+    ],
+  }];
+  const extracted = [{
+    width: 120,
+    height: 60,
+    words: [{ text: "førsteandentredjefjerde", xMin: 10, yMin: 10, xMax: 104, yMax: 40 }],
+  }];
+  const result = computeSpatialAccuracy(geometry, extracted);
+  assert.equal(result.matchedWords, 0);
+  assert.equal(result.passed, false);
 });
 
 test("ikke-tilstødende tokens samles ikke og kvalitetsgrænsen sænkes ikke", () => {

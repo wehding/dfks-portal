@@ -46,6 +46,11 @@ const GEOMETRY_BACKFILL_BUSINESS_STATUSES = Object.freeze([
   "afventer",
   "valideret",
 ]);
+const DIRECT_VISION_OVERLAY_PROFILES = new Set([
+  "primary-v1",
+  "font-metrics-v1",
+  "axis-aligned-font-metrics-v1",
+]);
 
 // The OCR callback atomically creates one replacement AI job. It may already
 // be `done` by the time the audit runs, so both active states and `done` count
@@ -722,10 +727,15 @@ async function inspectSpatialArtifact(readStorage, job) {
       && Array.isArray(geometry.redactions) && geometry.redactions.length <= 200_000
       && geometry.redactions.every((redaction) => validRedaction(redaction, job.page_count));
     const directVision = hasExactKeys(geometry, [
+      "schemaVersion", "engine", "processingProfile", "overlayProfile", "pages",
+      "spatialVerification",
+    ], [
       "schemaVersion", "engine", "processingProfile", "pages", "spatialVerification",
     ])
       && geometry.schemaVersion === "google-vision-spatial-v3"
-      && geometry.processingProfile === "google-vision-direct-v1";
+      && geometry.processingProfile === "google-vision-direct-v1"
+      && (!Object.hasOwn(geometry, "overlayProfile")
+        || DIRECT_VISION_OVERLAY_PROFILES.has(geometry.overlayProfile));
     const valid = (legacyRedacted || directVision)
       && geometry.engine === "google-vision-document-text-detection"
       && job.spatial_schema_version === geometry.schemaVersion
@@ -827,7 +837,8 @@ async function inspectCompletedJob({
         const matchesKnownUnparseableBaseline = original.hashMatches
           && baselineOriginal?.contractId === job.contract_id
           && (baselineOriginal.jobId === job.id
-            || baselineOriginal.jobId === job.replacement_of_job_id)
+            || baselineOriginal.jobId === job.replacement_of_job_id
+            || baselineOriginal.jobId === job.backfill_source_job_id)
           && baselineOriginal?.originalSha256 === original.sha256
           && baselineOriginal.originalSha256 === job.original_sha256
           && baselineOriginal?.originalStoragePathDigest === originalStoragePathDigest
@@ -1400,7 +1411,7 @@ async function selectAllCompletedJobs(db) {
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await db
       .from("contract_document_jobs")
-      .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,ocr_applied,page_count,original_sha256,processed_sha256,spatial_sha256,spatial_schema_version,redaction_profile,processing_profile,downstream_ai_policy,replacement_of_job_id,completed_at")
+      .select("id,org_id,contract_id,original_storage_path,output_storage_path,spatial_data_path,ocr_applied,page_count,original_sha256,processed_sha256,spatial_sha256,spatial_schema_version,redaction_profile,processing_profile,downstream_ai_policy,replacement_of_job_id,backfill_source_job_id,completed_at")
       .eq("status", "completed")
       // Superseded DLP generations retain immutable hashes and lineage in the
       // database, but their masked Storage artifacts are intentionally deleted.

@@ -222,11 +222,11 @@ async function readImageMetadata(imageBytes) {
 }
 
 /**
- * Build exactly two deterministic, metadata-free retry images for a page that
- * produced no Vision words. The colour variant preserves tonal information;
- * the grayscale variant applies bounded contrast normalisation and sharpening.
- * Neither variant is accepted on its own: spatial-ocr.mjs requires strict text
- * and geometry agreement before either response can replace an empty page.
+ * Build four deterministic, metadata-free retry images for a page that
+ * produced no Vision words. Colour and contrast/grayscale preserve ordinary
+ * recovery behaviour; two fixed threshold variants add bounded evidence for
+ * faint sparse tail text. No variant is accepted on its own: spatial-ocr.mjs
+ * requires strict text/geometric consensus or independent blank evidence.
  */
 export async function createUnreadablePageVisionVariants(imageBytes) {
   if (!Buffer.isBuffer(imageBytes) || imageBytes.length < 1
@@ -251,7 +251,19 @@ export async function createUnreadablePageVisionVariants(imageBytes) {
       .sharpen({ sigma: 1 })
       .jpeg({ quality: UNREADABLE_PAGE_VARIANT_QUALITY, chromaSubsampling: "4:4:4" })
       .toBuffer();
-    for (const bytes of [colour, contrastGray]) {
+    const threshold185 = await sharp(imageBytes, baseOptions)
+      .greyscale()
+      .normalise({ lower: 1, upper: 99 })
+      .threshold(185)
+      .jpeg({ quality: UNREADABLE_PAGE_VARIANT_QUALITY, chromaSubsampling: "4:4:4" })
+      .toBuffer();
+    const threshold215 = await sharp(imageBytes, baseOptions)
+      .greyscale()
+      .normalise({ lower: 1, upper: 99 })
+      .threshold(215)
+      .jpeg({ quality: UNREADABLE_PAGE_VARIANT_QUALITY, chromaSubsampling: "4:4:4" })
+      .toBuffer();
+    for (const bytes of [colour, contrastGray, threshold185, threshold215]) {
       if (bytes.length < 1 || bytes.length > MAX_VISION_IMAGE_BYTES) {
         throw new GoogleOcrOperationalError("vision_page_too_large");
       }
@@ -259,6 +271,8 @@ export async function createUnreadablePageVisionVariants(imageBytes) {
     return [
       { kind: "colour", imageBytes: colour, ...source },
       { kind: "contrast_gray", imageBytes: contrastGray, ...source },
+      { kind: "threshold_185", imageBytes: threshold185, ...source },
+      { kind: "threshold_215", imageBytes: threshold215, ...source },
     ];
   } catch (error) {
     if (error instanceof GoogleOcrOperationalError) throw error;

@@ -10,6 +10,11 @@ import {
   MAX_VISION_IMAGE_BYTES,
 } from "./google-vision-api.mjs";
 import { resolveDocumentResourceLimits } from "./resource-limits.mjs";
+import {
+  hasSparseTailBlankConsensus,
+  recoverSparseTailOrientationFromVariants,
+  recoverSparseTailTextFromVariants,
+} from "./tail-page-recovery.mjs";
 
 const gzipAsync = promisify(gzip);
 const MIN_NATIVE_CHARS = 160;
@@ -40,7 +45,14 @@ const MAX_EXACT_ASSIGNMENT_WORDS_PER_GROUP = 128;
 // many repeated tokens cannot monopolise the worker. The deterministic
 // reading-order fallback preserves fail-closed spatial verification.
 const MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE = 2_000_000;
-const MAX_JOINED_TOKENS = 3;
+// Poppler may emit a compound word as several short PDF tokens (and Vision can
+// do the inverse). Keep the reconciliation bounded, require exact normalised
+// text and only combine geometrically adjacent tokens on the same line. The
+// unchanged centre/IoU gates below still decide whether the union is valid.
+const MAX_JOINED_TOKENS = 8;
+const MAX_JOINED_TOKEN_CHARS = 96;
+const MIN_JOINED_TOKEN_VERTICAL_OVERLAP_RATIO = 0.5;
+const MAX_JOINED_TOKEN_GAP_HEIGHT_RATIO = 1.5;
 const MAX_UNREADABLE_RECOVERY_PAGES = 4;
 const MAX_ORIENTATION_RECOVERY_PAGES = 4;
 const MIN_ORIENTATION_RECOVERY_VARIANTS = 2;
@@ -280,10 +292,24 @@ async function inspectRasterBlankness(imageBytes) {
       ...classification,
       width: Number(info.width || 0),
       height: Number(info.height || 0),
+      mean,
+      stdev: Math.sqrt(variance),
+      maxLocalNonWhiteRatio,
+      maxLocalDarkRatio,
     };
   } catch {
     // A decode/statistics error can never turn a page into a trusted blank.
-    return { blank: false, nonWhiteRatio: 1, darkRatio: 1, width: 0, height: 0 };
+    return {
+      blank: false,
+      nonWhiteRatio: 1,
+      darkRatio: 1,
+      width: 0,
+      height: 0,
+      mean: 0,
+      stdev: Number.POSITIVE_INFINITY,
+      maxLocalNonWhiteRatio: 1,
+      maxLocalDarkRatio: 1,
+    };
   }
 }
 
@@ -531,6 +557,31 @@ export function correctPageOrientation(page, correctionDegrees) {
     words: (page.words ?? []).map((word) => ({
       ...word,
       vertices: word.vertices.map((point) => transformPoint(point, correction, sourceWidth, sourceHeight)),
+    })),
+  };
+}
+
+/**
+ * Persist only the documented v3 page schema. Recovery profiles, retry
+ * rotations and other in-memory decision evidence must never leak into the
+ * long-lived geometry artifact.
+ */
+export function canonicaliseSpatialGeometryPage(page, correctionDegrees) {
+  const corrected = correctPageOrientation(page, correctionDegrees);
+  return {
+    pageNumber: corrected.pageNumber,
+    sourceImageWidth: corrected.sourceImageWidth,
+    sourceImageHeight: corrected.sourceImageHeight,
+    imageWidth: corrected.imageWidth,
+    imageHeight: corrected.imageHeight,
+    orientationCorrection: corrected.orientationCorrection,
+    words: corrected.words.map((word) => ({
+      text: String(word.text ?? ""),
+      confidence: Number(word.confidence) || 0,
+      vertices: word.vertices.map((point) => ({
+        x: Number(point.x),
+        y: Number(point.y),
+      })),
     })),
   };
 }
@@ -821,6 +872,23 @@ function unionAxisBoxes(boxes) {
   };
 }
 
+function verticallyOverlap(first, second) {
+  const overlap = Math.max(0, Math.min(first.yMax, second.yMax)
+    - Math.max(first.yMin, second.yMin));
+  const minimumHeight = Math.min(first.yMax - first.yMin, second.yMax - second.yMin);
+  return minimumHeight > 0 && overlap / minimumHeight >= MIN_JOINED_TOKEN_VERTICAL_OVERLAP_RATIO;
+}
+
+function geometricallyAdjacent(previous, next) {
+  if (!verticallyOverlap(previous, next)) return false;
+  const previousCenter = boxCenter(previous);
+  const nextCenter = boxCenter(next);
+  if (!(nextCenter.x > previousCenter.x)) return false;
+  const minimumHeight = Math.min(previous.yMax - previous.yMin, next.yMax - next.yMin);
+  const maximumGap = Math.max(2, minimumHeight * MAX_JOINED_TOKEN_GAP_HEIGHT_RATIO);
+  return next.xMin - previous.xMax <= maximumGap;
+}
+
 function adjacentTokenWindows(items, used, boxKey) {
   const windowsByText = new Map();
   for (let start = 0; start < items.length; start += 1) {
@@ -830,8 +898,9 @@ function adjacentTokenWindows(items, used, boxKey) {
       const end = start + length;
       const part = items[end - 1];
       if (!part || used.has(part)) break;
+      if (!geometricallyAdjacent(items[end - 2][boxKey], part[boxKey])) break;
       text += part.normalized;
-      if (!text) continue;
+      if (!text || text.length > MAX_JOINED_TOKEN_CHARS) break;
       const parts = items.slice(start, end);
       const window = { parts, box: unionAxisBoxes(parts.map((item) => item[boxKey])) };
       const candidates = windowsByText.get(text) ?? [];
@@ -1035,8 +1104,9 @@ export function computeSpatialAccuracy(geometryPages, extractedPages) {
 
     // PDF text extractors may split a Vision token at a hyphen/ligature or join
     // two adjacent Vision tokens. Reconcile only 1:n or n:1 adjacent sequences,
-    // bounded to three tokens. Text still has to match exactly after the same
-    // normalisation, and the unchanged centre/IoU gates verify the union box.
+    // bounded to eight tokens and 96 normalised characters. Text still has to
+    // match exactly after the same normalisation, and the unchanged centre/IoU
+    // gates verify the union box.
     const actualWindows = adjacentTokenWindows(actualEntries, usedActual, "box");
     for (const expected of expectedEntries) {
       if (usedExpected.has(expected)) continue;
@@ -1304,6 +1374,7 @@ export async function processPdfSpatially({
   const sourcePageByNumber = new Map((sourcePages ?? []).map((page) => [page.pageNumber, page]));
   const blankPageNumbers = new Set();
   const verifiedBlankCandidates = new Map();
+  const blankInspectionByPage = new Map();
   // A completely blank document is still rejected. Within an otherwise
   // readable document, however, a verified blank page is preserved in its
   // original position without being mistaken for an OCR failure.
@@ -1314,6 +1385,7 @@ export async function processPdfSpatially({
     if (!pageState || pageState.chars > 0 || !sourcePage?.imageBytes) continue;
     const inspection = await inspectRasterBlankness(sourcePage.imageBytes);
     assertProcessingHealthy();
+    blankInspectionByPage.set(page.pageNumber, inspection);
     if (!inspection.blank || !(inspection.width > 0) || !(inspection.height > 0)) continue;
     verifiedBlankCandidates.set(page.pageNumber, inspection);
   }
@@ -1393,8 +1465,31 @@ export async function processPdfSpatially({
         throw new GoogleOcrOperationalError("vision_word_limit_exceeded");
       }
       retainedRetryWordCount += retryWordCount;
-      const recovered = recoverUnreadablePageFromVariants(recoveredVariants);
-      if (recovered) rawGeometryPages[page.pageNumber - 1] = recovered;
+      const recovered = recoverUnreadablePageFromVariants(recoveredVariants.slice(0, 2))
+        ?? recoverSparseTailTextFromVariants(recoveredVariants, {
+          pageNumber: page.pageNumber,
+          pageCount,
+        });
+      if (recovered) {
+        rawGeometryPages[page.pageNumber - 1] = recovered;
+        continue;
+      }
+      const sourceEvidence = blankInspectionByPage.get(page.pageNumber);
+      const recoveryEvidence = await inspectRasterBlankness(recoveryImageBytes);
+      assertProcessingHealthy();
+      if (hasSparseTailBlankConsensus({
+        pageNumber: page.pageNumber,
+        pageCount,
+        variantPages: recoveredVariants,
+        sourceEvidence,
+        recoveryEvidence,
+      })) {
+        verifiedBlankCandidates.set(page.pageNumber, {
+          ...sourceEvidence,
+          width: page.imageWidth,
+          height: page.imageHeight,
+        });
+      }
     }
     enforceVisionWordLimits(rawGeometryPages, limits);
     // A page verified as blank before recovery remains only a candidate until
@@ -1403,6 +1498,7 @@ export async function processPdfSpatially({
     promoteVerifiedBlankCandidates();
   }
 
+  const sparseTailOrientationByPage = new Map();
   let orientationByPage = resolvePhysicalOrientations(rawGeometryPages);
   const orientationRecoveryCandidates = rawGeometryPages.filter((page) => (
     page.words.length > 0 && !orientationByPage.get(page.pageNumber).reliable
@@ -1449,10 +1545,24 @@ export async function processPdfSpatially({
       }
       retainedRetryWordCount += retryWordCount;
       const recovered = recoverOrientationPageFromVariants(recoveredVariants);
-      if (recovered) rawGeometryPages[page.pageNumber - 1] = recovered;
+      if (recovered) {
+        rawGeometryPages[page.pageNumber - 1] = recovered;
+        continue;
+      }
+      const sparseRecovery = recoverSparseTailOrientationFromVariants(recoveredVariants, {
+        pageNumber: page.pageNumber,
+        pageCount,
+      });
+      if (sparseRecovery) {
+        rawGeometryPages[page.pageNumber - 1] = sparseRecovery.page;
+        sparseTailOrientationByPage.set(page.pageNumber, sparseRecovery.orientation);
+      }
     }
     enforceVisionWordLimits(rawGeometryPages, limits);
     orientationByPage = resolvePhysicalOrientations(rawGeometryPages);
+    for (const [pageNumber, orientation] of sparseTailOrientationByPage) {
+      orientationByPage.set(pageNumber, orientation);
+    }
   }
   const orientationCorrections = rawGeometryPages
     .map((page) => ({ page: page.pageNumber, degrees: orientationByPage.get(page.pageNumber).correctionDegrees }))
@@ -1504,7 +1614,7 @@ export async function processPdfSpatially({
 
   const geometryPages = rawGeometryPages.map((page) => {
     const orientation = orientationByPage.get(page.pageNumber);
-    return correctPageOrientation(page, orientation.correctionDegrees);
+    return canonicaliseSpatialGeometryPage(page, orientation.correctionDegrees);
   });
   const geometry = {
     schemaVersion: "google-vision-spatial-v3",
