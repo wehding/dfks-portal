@@ -12,6 +12,7 @@ import {
   readRuntimeConfig,
   runCommand,
   safeGoogleErrorCode,
+  sanitiseAffectedPageNumbers,
   startLeaseHeartbeat,
 } from "./processor.mjs";
 import { processPdfSpatially } from "./spatial-ocr.mjs";
@@ -45,6 +46,12 @@ function claimJob(overrides = {}) {
     ...overrides,
   };
 }
+
+test("berørte sidenumre sorteres, deduplikeres og afgrænses til dokumentet", () => {
+  assert.deepEqual(sanitiseAffectedPageNumbers([3, 1, 3, 0, 5, "2", 2.5, 2], 3), [1, 2, 3]);
+  assert.deepEqual(sanitiseAffectedPageNumbers([1], 0), []);
+  assert.deepEqual(sanitiseAffectedPageNumbers("1", 3), []);
+});
 
 test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () => {
   const env = {
@@ -267,7 +274,7 @@ test("en genkørsel stopper før DLP og Vision, hvis originalens hash er ændret
   assert.equal(completions.length, 1);
   assert.equal(completions[0].status, "needs_review");
   assert.equal(completions[0].errorCode, "original_sha256_mismatch");
-  assert.equal("originalSha256" in completions[0], false);
+  assert.equal(completions[0].originalSha256, "0".repeat(64));
   assert.equal(JSON.stringify(completions[0]).includes("%PDF-"), false);
   assert.equal(JSON.stringify(completions[0]).includes("signed-secret"), false);
 });
@@ -285,6 +292,7 @@ test("OCR-kvalitetsfejl propagerer en sikker diagnose til backfill-stopreglen", 
       ocrPageCount: 1,
       unreadablePageCount: 1,
       textCharCount: 0,
+      affectedPageNumbers: [1, 1, 0, 2, "1"],
     }),
     fetchImpl: async (url, init) => {
       const value = String(url);
@@ -301,8 +309,17 @@ test("OCR-kvalitetsfejl propagerer en sikker diagnose til backfill-stopreglen", 
   assert.deepEqual(await processor(), {
     outcome: "needs_review",
     diagnosticCode: "ocr_unreadable_page",
+    reviewDetails: {
+      schemaVersion: 1,
+      reasons: [{ code: "ocr_unreadable_page", pageNumbers: [1] }],
+    },
   });
   assert.equal(completions[0].errorCode, "ocr_unreadable_page");
+  assert.deepEqual(completions[0].reviewDetails, {
+    schemaVersion: 1,
+    reasons: [{ code: "ocr_unreadable_page", pageNumbers: [1] }],
+  });
+  assert.equal("affectedPageNumbers" in completions[0], false);
 });
 
 test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
@@ -319,6 +336,7 @@ test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
       unreadablePageCount: 0,
       orientationCorrections: [{ page: 1, degrees: 270 }, { page: 3, degrees: 90 }],
       orientationQualityFailed: true,
+      affectedPageNumbers: [3, 2, 3, 4],
     }),
     fetchImpl: async (url, init) => {
       const value = String(url);
@@ -335,11 +353,20 @@ test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
   assert.deepEqual(await processor(), {
     outcome: "needs_review",
     diagnosticCode: "orientation_uncertain",
+    reviewDetails: {
+      schemaVersion: 1,
+      reasons: [{ code: "orientation_uncertain", pageNumbers: [2, 3] }],
+    },
   });
   assert.deepEqual(completions[0].orientationCorrections, [
     { page: 1, degrees: 270 }, { page: 3, degrees: 90 },
   ]);
   assert.equal(completions[0].errorCode, "orientation_uncertain");
+  assert.deepEqual(completions[0].reviewDetails, {
+    schemaVersion: 1,
+    reasons: [{ code: "orientation_uncertain", pageNumbers: [2, 3] }],
+  });
+  assert.equal("affectedPageNumbers" in completions[0], false);
   assert.equal(completions[0].documentClassification, "image_only");
 });
 
@@ -619,13 +646,12 @@ test("dokumentrelateret Google OCR-fejl registreres og batchen kan fortsætte", 
     outcome: "needs_review",
     diagnosticCode: "dlp_request_too_large",
   });
-  assert.deepEqual(completions[0], {
-    jobId: claimJob().jobId,
-    leaseToken: claimJob().leaseToken,
-    status: "needs_review",
-    errorCode: "dlp_request_too_large",
-    safeErrorMessage: "Dokumentet kunne ikke sikkerhedsbehandles automatisk og kræver manuel kontrol.",
-  });
+  assert.equal(completions[0].jobId, claimJob().jobId);
+  assert.equal(completions[0].leaseToken, claimJob().leaseToken);
+  assert.equal(completions[0].status, "needs_review");
+  assert.equal(completions[0].errorCode, "dlp_request_too_large");
+  assert.equal(completions[0].safeErrorMessage, "Dokumentet kunne ikke sikkerhedsbehandles automatisk og kræver manuel kontrol.");
+  assert.match(completions[0].originalSha256, /^[0-9a-f]{64}$/);
 });
 
 test("DLP-geometri der ikke kan sikkerhedsverificeres sendes til manuel kontrol", async () => {
@@ -839,6 +865,7 @@ test("for stor behandlet PDF læses ikke i RAM og sendes til manuel kontrol", as
     diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.processedFileTooLarge,
   });
   assert.equal(result.completions[0].errorCode, "processed_file_too_large");
+  assert.match(result.completions[0].originalSha256, /^[0-9a-f]{64}$/);
   assert.equal(result.uploadAuthorisationCalled, false);
 });
 

@@ -87,6 +87,25 @@ function requireDocumentClassification(value) {
   return value;
 }
 
+export function sanitiseAffectedPageNumbers(value, pageCount) {
+  const maximum = Number.isSafeInteger(pageCount) && pageCount >= 1
+    ? Math.min(pageCount, 200)
+    : 0;
+  if (!Array.isArray(value) || maximum === 0) return [];
+  return [...new Set(value.filter((entry) => (
+    Number.isSafeInteger(entry) && entry >= 1 && entry <= maximum
+  )))].sort((left, right) => left - right);
+}
+
+export function buildReviewDetails(code, pageNumbers, pageCount) {
+  const safePages = sanitiseAffectedPageNumbers(pageNumbers, pageCount);
+  if (!OCR_QUALITY_DIAGNOSTIC_CODE_SET.has(code) || safePages.length === 0) return null;
+  return {
+    schemaVersion: 1,
+    reasons: [{ code, pageNumbers: safePages }],
+  };
+}
+
 export function parseProcessingDeadlineSeconds(value) {
   if (value == null || value === "") return DEFAULT_PROCESSING_DEADLINE_SECONDS;
   if (value === "0") return 0;
@@ -602,6 +621,10 @@ export function createProcessor(options = {}) {
     const processingSignal = processingAbortController?.signal;
     let workDir;
     let heartbeat;
+    // Preserve a previously verified source hash across every terminal
+    // callback. Once this run has downloaded and verified the immutable
+    // original, replace it with the freshly calculated value.
+    let originalSha256 = job.expectedOriginalSha256 ?? null;
     const completionOptions = {
       assertHealthy: () => heartbeat?.assertHealthy(),
     };
@@ -655,15 +678,16 @@ export function createProcessor(options = {}) {
       if (input.length < 5 || input.subarray(0, 5).toString("ascii") !== "%PDF-") {
         throw new DocumentProcessingError("invalid_pdf", "needs_review", "Filen er ikke en gyldig PDF.");
       }
-      const originalSha256 = sha256(input);
+      const downloadedOriginalSha256 = sha256(input);
       if (job.expectedOriginalSha256 != null
-        && originalSha256 !== job.expectedOriginalSha256) {
+        && downloadedOriginalSha256 !== job.expectedOriginalSha256) {
         throw new DocumentProcessingError(
           "original_sha256_mismatch",
           "needs_review",
           "Originalfilens integritetskontrol stemte ikke. Dokumentet blev ikke sendt til OCR.",
         );
       }
+      originalSha256 = downloadedOriginalSha256;
       await writeFile(inputPath, input, { mode: 0o600 });
       const result = await spatialProcessor({
         inputPath, outputPath, geometryPath, workDir, commandRunner, googleClient,
@@ -691,6 +715,10 @@ export function createProcessor(options = {}) {
         spatialCenterInsideRatio: result.spatial?.centerInsideRatio ?? null,
         originalSha256,
       };
+      const affectedPageNumbers = sanitiseAffectedPageNumbers(
+        result.affectedPageNumbers,
+        result.pageCount,
+      );
       if (result.status === "not_required") {
         await sendCompletion(config, identityTokenProvider, { ...completion, status: "not_required" }, fetchImpl, completionOptions);
         return { outcome: "completed" };
@@ -701,17 +729,27 @@ export function createProcessor(options = {}) {
           : result.unreadablePageCount > 0
             ? OCR_QUALITY_DIAGNOSTIC_CODES.unreadablePage
             : OCR_QUALITY_DIAGNOSTIC_CODES.spatialQuality;
+        const reviewDetails = buildReviewDetails(
+          diagnosticCode,
+          affectedPageNumbers,
+          result.pageCount,
+        );
         await sendCompletion(config, identityTokenProvider, {
           ...completion,
           status: "needs_review",
           errorCode: diagnosticCode,
+          ...(reviewDetails ? { reviewDetails } : {}),
           safeErrorMessage: result.orientationQualityFailed === true
             ? "Mindst én sides orientering kunne ikke bestemmes sikkert. Kontrollér scanningens retning."
             : result.unreadablePageCount > 0
               ? "Mindst én side gav ikke læsbar tekst. Kontrollér scanningens kvalitet."
               : "Tekstlagets placering bestod ikke den geometriske kvalitetskontrol.",
         }, fetchImpl, completionOptions);
-        return { outcome: "needs_review", diagnosticCode };
+        return {
+          outcome: "needs_review",
+          diagnosticCode,
+          ...(reviewDetails ? { reviewDetails } : {}),
+        };
       }
 
       const output = await readLocalArtifactWithinLimit(
@@ -782,6 +820,7 @@ export function createProcessor(options = {}) {
         await sendCompletion(config, identityTokenProvider, {
           jobId: job.jobId,
           leaseToken: job.leaseToken,
+          originalSha256,
           status: documentError ? "needs_review" : "failed",
           errorCode,
           safeErrorMessage: documentError
@@ -797,6 +836,7 @@ export function createProcessor(options = {}) {
       await sendCompletion(config, identityTokenProvider, {
         jobId: job.jobId,
         leaseToken: job.leaseToken,
+        originalSha256,
         status: documentError.status,
         errorCode: documentError.code,
         safeErrorMessage: documentError.safeMessage,
