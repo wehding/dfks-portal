@@ -131,6 +131,12 @@ type AiAnswer = {
   series?: AiSeriesRow[];
   visualization?: StatisticsVisualization;
   omittedData?: OmittedStatisticsPoint[];
+  directAnswer?: {
+    kind: "yes_no";
+    shortAnswer: "Ja" | "Nej" | "Delvist" | "Kan ikke besvares";
+    sentence: string;
+    explanation: string;
+  } | null;
 };
 
 async function readJsonResponse(response: Response) {
@@ -317,6 +323,7 @@ export default function AdminStatistikPage() {
         {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Ikke nok data til et sikkert resultat</AlertTitle><AlertDescription>Det valgte udsnit indeholder færre end {aiAnswer.minimum ?? 3} forskellige personer. Prøv en længere periode, færre filtre eller en bredere produktionstype.</AlertDescription></Alert>}
         {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4">
           <div className="space-y-1 text-sm"><p className="font-medium">Sådan blev spørgsmålet forstået</p><p>{aiAnswer.understoodAs}</p><p className="text-muted-foreground">{aiAnswer.explanation}</p></div>
+          {aiAnswer.directAnswer && <Alert><AlertTitle>{aiAnswer.directAnswer.shortAnswer}</AlertTitle><AlertDescription><span className="block">{aiAnswer.directAnswer.sentence}</span><span className="mt-1 block">{aiAnswer.directAnswer.explanation}</span></AlertDescription></Alert>}
           <p className="text-xs text-muted-foreground">
             Beregnet med mindst {aiAnswer.minimumGroupSize ?? aiAnswer.minimum ?? 3} personer pr. gruppe og dominansgrænse på {Math.round((aiAnswer.dominanceLimit ?? 0.8) * 100)} %. Beregningsversion: {aiAnswer.calculationVersion ?? "union-stats-v1"}.
           </p>

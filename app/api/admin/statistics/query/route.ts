@@ -27,6 +27,7 @@ import { sampleSizeBand } from "@/lib/statistics/privacy-guard";
 import { experienceGroupAt } from "@/lib/experience-groups";
 import { normalizeStatisticsMinimumGroupSize } from "@/lib/statistics-privacy";
 import { buildStatisticsVisualization } from "@/lib/statistics/visualization";
+import { buildStatisticsDirectAnswer } from "@/lib/statistics/direct-answer";
 import { collectOmittedStatisticsPoints, describeOmittedStatisticsPoints, type OmittedStatisticsPoint } from "@/lib/statistics/omitted-points";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { auditRequestContext } from "@/lib/audit-access-server";
@@ -437,6 +438,7 @@ export async function POST(request: NextRequest) {
     }
     const comparison = applyInflation(allSeries, inflation).map(row => ({ ...row, sampleBand: sampleSizeBand(row.memberCount) }));
     const visualization = buildStatisticsVisualization(comparison, plan.chart);
+    const directAnswer = buildStatisticsDirectAnswer(question, comparison);
     await recordStatisticsAudit({
       orgId: caller.orgId, actorUserId: caller.userId, plan,
       suppressionCount: suppressedSegments + suppressedCells, pointCount: comparison.length,
@@ -477,6 +479,7 @@ export async function POST(request: NextRequest) {
       omittedData,
       series: comparison,
       visualization,
+      directAnswer,
       metricMeta: plan.metrics.map(metric => ({ metric, ...STATISTICS_METRIC_META[metric] })),
       caveats,
       explanation: `${comparison.length} aggregerede datapunkter i ${new Set(comparison.map(row => row.seriesKey)).size} serie(r). Hvert person-gennemsnit vægter én gang i løn-, pensions- og arbejdsugeberegninger.`,
