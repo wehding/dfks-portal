@@ -280,26 +280,27 @@ begin
     raise exception 'Geometry backfill regression: quality-pending run did not return an empty claim';
   end if;
 
-  completion_result := public.complete_contract_document_geometry_backfill_run(
-    test_run_id, cohort_digest, repeat('9', 64), 1, 1, 1
-  );
-  if completion_result is distinct from true then
-    raise exception 'Geometry backfill regression: quality gate returned false';
-  end if;
-  if (select state from public.contract_document_backfill_runs where id = test_run_id) <> 'completed' then
-    raise exception 'Geometry backfill regression: quality gate did not close the run';
+  begin
+    completion_result := public.complete_contract_document_geometry_backfill_run(
+      test_run_id, cohort_digest, repeat('9', 64), 1, 1, 1
+    );
+    raise exception 'Geometry backfill regression: partial quality gate was accepted';
+  exception when sqlstate '55000' then
+    null;
+  end;
+  if (select state from public.contract_document_backfill_runs where id = test_run_id) <> 'quality_pending' then
+    raise exception 'Geometry backfill regression: partial quality gate closed the run';
   end if;
   if public.claim_next_contract_document_geometry_backfill_job(test_run_id, 30) is not null then
     raise exception 'Geometry backfill regression: completed run did not return an empty claim';
   end if;
-  if not exists (
+  if exists (
       select 1
       from public.audit_events as event
       where event.correlation_id = test_run_id
         and event.metadata ->> 'event_code' = 'vision_v3_geometry_backfill_quality_approved'
-        and public.verify_audit_event_subjects(event.id)
     ) then
-    raise exception 'Geometry backfill regression: quality audit event is missing or incomplete';
+    raise exception 'Geometry backfill regression: partial quality gate wrote an approval event';
   end if;
 end;
 $$;
