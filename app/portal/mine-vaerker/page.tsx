@@ -17,6 +17,12 @@ import { LegacyDeclarationPanel } from "./LegacyDeclarationPanel";
 type PageSearchParams = Promise<Record<string, string | string[] | undefined>>;
 const stringParam = (value: string | string[] | undefined, fallback = "") => Array.isArray(value) ? value[0] ?? fallback : value ?? fallback;
 
+type MemberDashboardTaskSummary = {
+  review_work_count?: number | string;
+  share_task_count?: number | string;
+  share_tasks?: Array<{ caseId?: string | null }> | null;
+};
+
 export default async function MineVaerkerPage({ searchParams }: { searchParams: PageSearchParams }) {
   const timer = createListLoadTimer("member-works");
   const context = await getRequestAppAccessContext();
@@ -38,7 +44,7 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
     sortKey: stringParam(query.sort, "date"),
     sortDir: stringParam(query.direction, "desc") === "asc" ? "asc" as const : "desc" as const,
   };
-  const [rightsHolderResult, overview, broadcastersResult, legacyDeclarations] = await Promise.all([
+  const [rightsHolderResult, overview, broadcastersResult, legacyDeclarations, contractedOverview, contractRequiredResult, dashboardTaskResult] = await Promise.all([
     db.from("rettighedshavere")
       .select("id,full_name,dfi_person_id")
       .eq("id", context.rightsHolderId)
@@ -56,12 +62,40 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
     }),
     db.from("broadcasters").select("name,logo_path").order("name", { ascending: true }),
     fetchLegacyDeclarationTasks(),
+    db.rpc("list_member_work_page", {
+      p_org_id: context.orgId,
+      p_rights_holder_id: context.rightsHolderId,
+      p_search: "",
+      p_work_type: "all",
+      p_status: "hasContract",
+      p_sort: "date",
+      p_direction: "desc",
+      p_page: 1,
+      p_page_size: 1,
+    }),
+    db.rpc("count_member_contract_required_works", {
+      p_org_id: context.orgId,
+      p_rights_holder_id: context.rightsHolderId,
+    }),
+    db.rpc("get_member_dashboard_task_overview", {
+      p_org_id: context.orgId,
+      p_rights_holder_id: context.rightsHolderId,
+      p_user_id: context.userId,
+      p_preview_limit: 1,
+    }),
   ]);
   timer.mark("page-data");
 
   const rightsHolder = rightsHolderResult.data;
   if (!rightsHolder) redirect("/admin?notice=member-org-required");
   if (!overview.success) throw new Error(overview.error ?? "Mine værker kunne ikke indlæses.");
+  if (contractedOverview.error || contractRequiredResult.error || dashboardTaskResult.error) {
+    throw new Error(contractedOverview.error?.message ?? contractRequiredResult.error?.message ?? dashboardTaskResult.error?.message ?? "Oversigten kunne ikke beregnes.");
+  }
+
+  const contractedRows = (contractedOverview.data ?? []) as Array<{ filtered_count?: number | string }>;
+  const dashboardSummary = ((Array.isArray(dashboardTaskResult.data) ? dashboardTaskResult.data[0] : dashboardTaskResult.data) ?? {}) as MemberDashboardTaskSummary;
+  const firstShareTaskId = dashboardSummary.share_tasks?.[0]?.caseId ?? null;
 
   const assignments = memberOverviewItemsToAssignments(
     overview.items as unknown as MemberOverviewItem[],
@@ -96,7 +130,14 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
       contractedWorkIds={contractedWorkIds}
       legacyDeclarationRequiredWorkIds={legacyDeclarations.tasks.flatMap(task => task.qualifyingScopeIds)}
       legacyDeclaredWorkIds={((activeDeclarationScopes ?? []) as Array<{ work_id: string }>).map(row => row.work_id)}
-      legacyDeclarationTaskCount={legacyDeclarations.tasks.length}
+      summaryCounts={{
+        totalWorks: overview.totalCount ?? 0,
+        withContract: Number(contractedRows[0]?.filtered_count ?? 0),
+        missingContract: Number(contractRequiredResult.data ?? 0),
+        reviewWorks: Number(dashboardSummary.review_work_count ?? 0),
+        unresolvedShares: Number(dashboardSummary.share_task_count ?? 0),
+      }}
+      firstUnresolvedShareTaskId={firstShareTaskId}
       contracts={[] as Contract[]}
       organisationShortName={context.brand.short_name}
       defaultRoleLabel={context.terminology.default_role_label}

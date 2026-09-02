@@ -18,7 +18,6 @@ import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { createClientId } from "@/lib/client-id";
-import { MemberDriveConnections } from "@/components/portal/member-drive-connections";
 import { externalLookupWarning, runWithLookupDeadline } from "@/lib/external-lookup";
 
 const MAX_FILES = 15;
@@ -883,13 +882,6 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
               </span>
             </label>
             <p className="text-xs text-muted-foreground mt-2">PDF eller Word (.doc og .docx). Maks. {MAX_FILES} filer.</p>
-          </div>
-          )}
-
-          {!isBatchUpload && (
-          <div className="rounded-lg border bg-muted/20 p-4">
-            <p className="mb-3 text-sm font-medium">Eller vælg fra dit online-drev</p>
-            <MemberDriveConnections allowImport onImported={() => { toast.success("Importen fortsætter i baggrunden"); onClose(); }} />
           </div>
           )}
 
