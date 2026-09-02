@@ -12,6 +12,7 @@ test("arbejdskøer er organisations- og brugerafgrænsede", () => {
   assert.match(action, /eq\("created_by", caller\.userId\)/);
   assert.match(action, /gt\("expires_at", new Date\(\)\.toISOString\(\)\)/);
   assert.match(action, /requireQueueCaller\(input\.kind === "ownership"\)/);
+  assert.match(action, /modules\.contract_ownership\?\.write/);
   assert.match(action, /recordSensitiveFlow/);
 });
 
@@ -23,9 +24,12 @@ test("køerne er stabile snapshots uden kontrakttekst og udløber efter 24 timer
   assert.doesNotMatch(action, /filter_context:[\s\S]{0,400}search:/);
 });
 
-test("arkivet opretter filtrerede, valgte, validerings- og ejerskabskøer", () => {
-  for (const kind of ["filtered", "selected", "validation", "ownership"]) assert.match(archive, new RegExp(`openWorkQueue\\(\\"${kind}\\"\\)`));
-  assert.match(archive, /Køen følger de aktuelle filtre og omfatter også resultater på andre sider/);
+test("arkivet viser opgaver og opretter navigation uden synlige køknapper", () => {
+  assert.match(archive, /fetchAdminContractTaskCounts/);
+  for (const label of ["Afventer validering", "Ejerskab skal afklares", "Ulæste beskeder"]) assert.match(archive, new RegExp(label));
+  assert.doesNotMatch(archive, /Åbn aktuel liste som kø|Start valideringskø|Start ejerskabskø|Åbn valgte som kø/);
+  assert.match(action, /kind === "messages"/);
+  assert.match(migration, /'messages'/);
 });
 
 test("editoren bevarer section og queueId og beskytter tastaturkontekst", () => {
@@ -34,4 +38,7 @@ test("editoren bevarer section og queueId og beskytter tastaturkontekst", () => 
   assert.match(editor, /blocksContractArrowNavigation/);
   assert.match(editor, /Du har ændringer, der ikke er gemt/);
   assert.match(editor, /metaKey \|\| event\.ctrlKey/);
+  assert.match(editor, /value="messages"/);
+  assert.match(editor, /markContractCommentsRead\(contract\.id, "admin"\)/);
+  assert.doesNotMatch(editor, /Start valideringskø|Start ejerskabskø|Vis kontraktkø/);
 });

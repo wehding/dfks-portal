@@ -131,7 +131,7 @@ export async function matchingAdminContractIds(
   }
 
   if (params.status === "beskeder") {
-    const result = await db.from("contract_comments").select("contract_id").eq("author_role", "member").is("admin_read_at", null).limit(5000);
+    const result = await db.from("contract_comments").select("contract_id").eq("org_id", orgId).eq("author_role", "member").is("admin_read_at", null).limit(5000);
     if (result.error) throw new Error(result.error.message);
     ids = intersectIds(ids, (result.data ?? []).map(row => row.contract_id));
   } else if (params.status === "missingWork") {
@@ -139,7 +139,7 @@ export async function matchingAdminContractIds(
     if (result.error) throw new Error(result.error.message);
     ids = intersectIds(ids, (result.data ?? []).map(row => row.id));
   } else if (params.status === "validationPending") {
-    const result = await db.from("contracts").select("id").eq("org_id", orgId).not("work_id", "is", null).not("rights_holder_id", "is", null).neq("status", "valideret").limit(5000);
+    const result = await db.from("contracts").select("id").eq("org_id", orgId).eq("status", "kladde").not("work_id", "is", null).not("rights_holder_id", "is", null).limit(5000);
     if (result.error) throw new Error(result.error.message);
     ids = intersectIds(ids, (result.data ?? []).map(row => row.id));
   } else if (params.status === "validationRecommended") {
@@ -180,7 +180,13 @@ export async function matchingAdminContractIds(
     else if (ownership === "corrected") query = query.eq("status", "corrected");
     const result = await query.limit(5000);
     if (result.error) throw new Error(result.error.message);
-    ids = intersectIds(ids, (result.data ?? []).map(row => row.contract_id));
+    let ownershipIds = (result.data ?? []).map(row => row.contract_id);
+    if (ownership === "review") {
+      const missing = await db.from("contracts").select("id").eq("org_id", orgId).is("rights_holder_id", null).limit(5000);
+      if (missing.error) throw new Error(missing.error.message);
+      ownershipIds = uniqueIds([...ownershipIds, ...(missing.data ?? []).map(row => row.id)]);
+    }
+    ids = intersectIds(ids, ownershipIds);
   }
 
   return ids;

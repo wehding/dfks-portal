@@ -161,7 +161,7 @@ export function ContractOwnershipEditor({
       <Badge variant="outline">{contractOwnerStatusLabel(detail.verification.status)}</Badge>
     </div>
     <dl className="rounded-md border px-3">
-      <InfoRow label="Nuværende registrerede ejer">{assignedOwner?.name ?? "Mangler ejer"}</InfoRow>
+      <InfoRow label="Nuværende registreret ejer">{assignedOwner?.name ?? "Mangler ejer"}</InfoRow>
     </dl>
 
     <details className="mt-3 rounded-md border bg-muted/10">

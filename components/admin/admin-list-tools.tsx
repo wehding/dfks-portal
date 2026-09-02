@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Columns3, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePathname } from "next/navigation";
+import { cn } from "@/lib/utils";
 
 type Column = { id: string; label: string; index: number; required?: boolean };
 
-export function AdminListTools({ pageKey, title, columns }: { pageKey: string; title: string; columns: Column[] }) {
+export function AdminListTools({ pageKey, title, columns, className }: { pageKey: string; title: string; columns: Column[]; className?: string }) {
   const storageKey = `dfks:admin-columns:${pageKey}`;
   const [visible, setVisible] = useState(() => new Set(columns.map(column => column.id)));
   useEffect(() => {
@@ -35,7 +36,7 @@ export function AdminListTools({ pageKey, title, columns }: { pageKey: string; t
     window.print();
     window.setTimeout(() => { document.title = previous; }, 100);
   };
-  return <div data-explicit-admin-list-tools className="grid grid-cols-2 gap-2 print:hidden sm:flex sm:flex-wrap sm:justify-end">
+  return <div data-explicit-admin-list-tools className={cn("grid grid-cols-2 gap-2 print:hidden sm:flex sm:flex-wrap sm:justify-end", className)}>
     <details className="relative min-w-0">
       <summary className="list-none [&>span]:w-full"><Button type="button" variant="outline" size="sm" asChild><span><Columns3 className="mr-2 h-4 w-4" />Vælg kolonner</span></Button></summary>
       <div className="absolute left-0 right-0 z-30 mt-2 max-h-[60vh] min-w-56 overflow-y-auto rounded-md border bg-popover p-2 text-sm shadow-lg sm:left-auto">

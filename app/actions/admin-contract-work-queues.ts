@@ -57,7 +57,7 @@ type QueueRow = {
 async function requireQueueCaller(requireOwnership = false): Promise<QueueCaller | null> {
   const context = await getRequestAppAccessContext();
   if (!context?.canUseAdmin || !context.role || !context.modules?.contracts?.read) return null;
-  const canManageOwnership = Boolean(context.modules.contract_ownership?.read);
+  const canManageOwnership = Boolean(context.modules.contract_ownership?.write);
   if (requireOwnership && !canManageOwnership) return null;
   return { userId: context.userId, orgId: context.orgId, role: context.role, canManageOwnership };
 }
@@ -84,10 +84,33 @@ function normalizeFilters(input: AdminContractFilterParams | undefined): AdminCo
 }
 
 function queueLabel(kind: CreateAdminContractQueueInput["kind"], count: number) {
-  if (kind === "validation") return `Valideringskø · ${count}`;
-  if (kind === "ownership") return `Ejerskabskø · ${count}`;
+  if (kind === "validation") return `Afventer validering · ${count}`;
+  if (kind === "ownership") return `Ejerskab skal afklares · ${count}`;
+  if (kind === "messages") return `Ulæste beskeder · ${count}`;
   if (kind === "selected") return `Valgte kontrakter · ${count}`;
   return `Aktuel liste · ${count}`;
+}
+
+async function existingScopedContractIds(
+  db: ReturnType<typeof createServiceClient>,
+  orgId: string,
+  ids: Set<string> | null,
+) {
+  if (!ids?.size) return new Set<string>();
+  const result = await db.from("contracts").select("id")
+    .eq("org_id", orgId)
+    .is("superseded_by_contract_id", null)
+    .in("id", [...ids]);
+  if (result.error) throw new Error(result.error.message);
+  return new Set((result.data ?? []).map(row => row.id));
+}
+
+async function ownershipTaskIds(db: ReturnType<typeof createServiceClient>, orgId: string) {
+  const [missing, review] = await Promise.all([
+    matchingAdminContractIds(db, orgId, { ownership: "missing" }),
+    matchingAdminContractIds(db, orgId, { ownership: "review" }),
+  ]);
+  return existingScopedContractIds(db, orgId, new Set([...(missing ?? []), ...(review ?? [])]));
 }
 
 function applyQueueOrder(query: any, params: AdminContractFilterParams) {
@@ -119,7 +142,7 @@ async function resolveQueueContracts(
       ? {
           ...filters,
           search: "",
-          status: "kladde",
+          status: "validationPending",
           type: "all",
           ownership: "all",
           rightsHolderId: null,
@@ -130,11 +153,22 @@ async function resolveQueueContracts(
             search: "",
             status: "all",
             type: "all",
-            ownership: "missing",
+            ownership: "review",
             rightsHolderId: null,
           }
+        : input.kind === "messages"
+          ? {
+              ...filters,
+              search: "",
+              status: "beskeder",
+              type: "all",
+              ownership: "all",
+              rightsHolderId: null,
+            }
         : filters;
-    matchedIds = await matchingAdminContractIds(db, caller.orgId, queueFilters);
+    matchedIds = input.kind === "ownership"
+      ? await ownershipTaskIds(db, caller.orgId)
+      : await matchingAdminContractIds(db, caller.orgId, queueFilters);
     filters = queueFilters;
   }
 
@@ -163,6 +197,29 @@ async function resolveQueueContracts(
       .map(item => item.row);
   }
   return rows;
+}
+
+export async function fetchAdminContractTaskCounts() {
+  const caller = await requireQueueCaller(false);
+  if (!caller) return { success: false as const, error: "Ikke autoriseret" };
+  const db = createServiceClient();
+  try {
+    const [validationRaw, messagesRaw, ownership] = await Promise.all([
+      matchingAdminContractIds(db, caller.orgId, { status: "validationPending" }),
+      matchingAdminContractIds(db, caller.orgId, { status: "beskeder" }),
+      caller.canManageOwnership ? ownershipTaskIds(db, caller.orgId) : Promise.resolve(new Set<string>()),
+    ]);
+    const [validation, messages] = await Promise.all([
+      existingScopedContractIds(db, caller.orgId, validationRaw),
+      existingScopedContractIds(db, caller.orgId, messagesRaw),
+    ]);
+    return {
+      success: true as const,
+      counts: { validation: validation.size, ownership: ownership.size, messages: messages.size },
+    };
+  } catch (error) {
+    return { success: false as const, error: error instanceof Error ? error.message : "Opgaverne kunne ikke hentes" };
+  }
 }
 
 async function deleteQueue(db: ReturnType<typeof createServiceClient>, queueId: string) {

@@ -337,6 +337,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         : null
     const activeBbox: ContractEvidenceBbox | null = useMemo(() => activeEvidence?.bbox
         ?? (legacyBbox ? { ...legacyBbox, space: "pdf_bottom_left" } : null), [activeEvidence?.bbox, legacyBbox])
+    const activeBboxes = useMemo(() => activeEvidence?.bboxes?.length ? activeEvidence.bboxes : activeBbox ? [activeBbox] : [], [activeBbox, activeEvidence?.bboxes])
     const hasCoordinateBox = Boolean(activeBbox)
     // En verificeret koordinatboks er den autoritative markering. Tekstlaget
     // må ikke samtidig tegne ekstra bokse over de enkelte ord eller linjer.
@@ -352,10 +353,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     effectiveSectionHighlightsRef.current = effectiveSectionHighlights
 
     useEffect(() => {
-        if (activeHighlight && !hasCoordinateBox) {
-            setFitMode("manual")
-            setScale(1.2)
-        }
+        if (activeHighlight && !hasCoordinateBox) setFitMode("width")
     }, [activeHighlight, hasCoordinateBox, hasPreciseFocus, preciseFocusText])
 
     const previousResetToken = useRef(resetViewToken)
@@ -479,8 +477,18 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     useEffect(() => {
         if (!pageRendered || !activeBbox || !containerRef.current) return
         const frame = requestAnimationFrame(() => {
-            containerRef.current?.querySelector<HTMLElement>('[data-coordinate-hl="active"]')
-                ?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" })
+            const container = containerRef.current
+            const highlight = container?.querySelector<HTMLElement>('[data-coordinate-hl="active"]')
+            if (!container || !highlight) return
+            const containerRect = container.getBoundingClientRect()
+            const highlightRect = highlight.getBoundingClientRect()
+            const targetLeft = container.scrollLeft + highlightRect.left - containerRect.left - (container.clientWidth - highlightRect.width) / 2
+            const targetTop = container.scrollTop + highlightRect.top - containerRect.top - (container.clientHeight - highlightRect.height) / 2
+            container.scrollTo({
+                left: Math.max(0, Math.min(targetLeft, container.scrollWidth - container.clientWidth)),
+                top: Math.max(0, Math.min(targetTop, container.scrollHeight - container.clientHeight)),
+                behavior: "smooth",
+            })
         })
         return () => cancelAnimationFrame(frame)
     }, [activeBbox, pageNumber, pageRendered, scale])
@@ -524,16 +532,16 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                                 renderTextLayer={true} renderAnnotationLayer={false}
                                 onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
                             {/* Koordinatbaseret fallback — den aktive kilde markeres altid gult. */}
-                            {pageViewport && activeBbox && contractEvidencePage(activeEvidence) === pageNumber && (() => {
-                                const style = bboxToScreenStyle(activeBbox, pageViewport)
+                            {pageViewport && activeBboxes.length > 0 && contractEvidencePage(activeEvidence) === pageNumber && activeBboxes.map((box, index) => {
+                                const style = bboxToScreenStyle(box, pageViewport)
                                 return (
-                                    <div key={`${activeEvidence?.fieldKey ?? activeClauseId}-${pageNumber}`}
+                                    <div key={`${activeEvidence?.fieldKey ?? activeClauseId}-${pageNumber}-${index}`}
                                         data-coordinate-hl="active"
                                         style={{ ...style, scrollMargin: 80, background: "rgba(250,204,21,0.3)", border: "2px solid rgba(202,138,4,0.7)", borderRadius: 2, zIndex: 10 }}
                                         title="Kilde i kontrakten"
                                     />
                                 )
-                            })()}
+                            })}
                         </div>
                     </Document>
                 </div>

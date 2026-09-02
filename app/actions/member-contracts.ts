@@ -2488,11 +2488,6 @@ export async function fetchAdminContractEditorData(contractId: string) {
     signedUrl(contract.original_view_pdf_url),
     signedUrl(contract.processed_pdf_url),
   ]);
-  await db.from("contract_comments")
-    .update({ admin_read_at: new Date().toISOString() })
-    .eq("contract_id", contractId)
-    .eq("author_role", "member")
-    .is("admin_read_at", null);
   const producerSelections: ProductionCompanySelection[] = producerResult.error
     ? (contract.employer_id && employer?.name ? [{ employerId: contract.employer_id, canonicalName: employer.name }] : [])
     : (producerResult.data ?? []).map(row => {
@@ -2700,8 +2695,11 @@ export async function markContractCommentsRead(contractId: string, viewerRole: "
 
   // Rollen bestemmes af HVILKEN side der kalder (admin vs portal), ikke af hvem
   // brugeren er — ellers fejler mark-læst når admin selv er rettighedshaveren.
+  let auditRole = "member";
   if (viewerRole === "admin") {
-    if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+    const staffRole = await staffRoleForOrg(db, user.id, contract.org_id);
+    if (!staffRole) return { success: false, error: "Ikke autoriseret" };
+    auditRole = staffRole;
   } else {
     const { data: rh } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
     if (!rh || rh.id !== contract.rights_holder_id) return { success: false, error: "Ikke autoriseret" };
@@ -2719,6 +2717,19 @@ export async function markContractCommentsRead(contractId: string, viewerRole: "
 
   const { error } = await query;
   if (error) return { success: false, error: error.message };
+
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: auditRole }, viewerRole === "admin" ? "admin" : "portal", "contracts.messages.read"),
+    action: "update",
+    entityType: "contract_comments",
+    entityId: contract.id,
+    entityLabel: "Beskedtråd markeret som læst",
+    targetMemberUuid: contract.rights_holder_id,
+    purposeCode: "contract_case_management",
+    legalBasis: viewerRole === "admin" ? "GDPR Art. 6(1)(c) og 6(1)(f)" : "GDPR Art. 6(1)(b)",
+    dataCategories: ["message_data", "contract_data"],
+    orgIds: [contract.org_id],
+  });
 
   revalidatePath("/portal/mine-kontrakter");
   revalidatePath("/admin/kontrakter");

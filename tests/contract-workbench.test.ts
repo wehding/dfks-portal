@@ -120,6 +120,7 @@ test("juridiske kilder bruger hele klausulens boks frem for kun første OCR-linj
     { copydan: { quote: "Copydan-forbehold", page: 1, bbox: { x: 0.1, y: 0.2, width: 0.2, height: 0.02, space: "normalized_top_left" }, coordinateSource: "spatial_v3", confidence: 0.98 } },
   );
   assert.deepEqual(evidence.bbox, { x: 40, y: 300, width: 510, height: 58, space: "pdf_bottom_left" });
+  assert.deepEqual(evidence.bboxes, [{ x: 40, y: 300, width: 510, height: 58, space: "pdf_bottom_left" }]);
   assert.equal(evidence.coordinateSource, "legacy_layout");
 });
 

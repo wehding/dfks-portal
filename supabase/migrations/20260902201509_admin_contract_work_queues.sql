@@ -5,7 +5,7 @@ create table public.admin_contract_work_queues (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organisations(id) on delete cascade,
   created_by uuid not null references auth.users(id) on delete cascade,
-  kind text not null check (kind in ('filtered', 'selected', 'validation', 'ownership')),
+  kind text not null check (kind in ('filtered', 'selected', 'validation', 'ownership', 'messages')),
   label text not null check (char_length(label) between 1 and 80),
   current_position integer not null default 1 check (current_position >= 1),
   filter_context jsonb not null default '{}'::jsonb,

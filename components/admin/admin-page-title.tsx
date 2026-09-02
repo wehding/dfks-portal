@@ -1,15 +1,7 @@
 "use client";
 
-import { createContext, useContext, useEffect, type Dispatch, type SetStateAction } from "react";
+import { usePageMetadata } from "@/components/page-metadata";
 
-export const AdminPageTitleContext = createContext<Dispatch<SetStateAction<string | null>> | null>(null);
-
-export function useAdminPageTitle(title: string | null) {
-  const setPageTitle = useContext(AdminPageTitleContext);
-
-  useEffect(() => {
-    if (!setPageTitle) return;
-    setPageTitle(title);
-    return () => setPageTitle(null);
-  }, [setPageTitle, title]);
+export function useAdminPageTitle(title: string | null, subtitle: string | null = null) {
+  usePageMetadata(title, subtitle);
 }

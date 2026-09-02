@@ -43,6 +43,8 @@ export type ContractFieldEvidence = {
   page: number | null;
   focusText?: string | null;
   bbox?: ContractEvidenceBbox | null;
+  /** Flere præcise linjebokse for en sammenhængende klausul. `bbox` er deres samlede fokusområde. */
+  bboxes?: ContractEvidenceBbox[] | null;
   coordinateSource?: ContractEvidenceCoordinateSource | null;
   confidence?: number | null;
 };
@@ -158,10 +160,10 @@ const CLAUSE_LEVEL_EVIDENCE_SOURCES = new Set([
   "creditedRoles", "hasCreditClause", "aiDataMiningClause", "futureRightsReservation",
 ]);
 
-function expandedClauseBbox(layout: ContractLayout, clause: LayoutClause) {
-  if (!clause.pdfBbox) return null;
+function expandedClauseBboxes(layout: ContractLayout, clause: LayoutClause) {
+  if (!clause.pdfBbox) return [];
   const startIndex = layout.clauses.findIndex(item => item.id === clause.id);
-  if (startIndex < 0) return clause.pdfBbox;
+  if (startIndex < 0) return [clause.pdfBbox];
 
   const boxes = [clause.pdfBbox];
   let previous = clause;
@@ -183,6 +185,11 @@ function expandedClauseBbox(layout: ContractLayout, clause: LayoutClause) {
     previous = next;
   }
 
+  return boxes;
+}
+
+function boundingUnion(boxes: Array<{ x: number; y: number; width: number; height: number }>) {
+  if (!boxes.length) return null;
   const left = Math.min(...boxes.map(box => box.x));
   const bottom = Math.min(...boxes.map(box => box.y));
   const right = Math.max(...boxes.map(box => box.x + box.width));
@@ -207,10 +214,11 @@ export function fieldEvidence(
   // ikke kun den første OCR-linje. Korte identitetsfelter beholder den mere
   // præcise ord-boks fra spatial OCR.
   const legalClauseBbox = clause && layout && CLAUSE_LEVEL_EVIDENCE_SOURCES.has(sourceKey)
-    ? expandedClauseBbox(layout, clause)
-    : null;
+    ? expandedClauseBboxes(layout, clause)
+    : [];
+  const legalClauseUnion = boundingUnion(legalClauseBbox);
   const clauseBbox = legalClauseBbox
-    ? { ...legalClauseBbox, space: "pdf_bottom_left" as const }
+    ? legalClauseUnion && { ...legalClauseUnion, space: "pdf_bottom_left" as const }
     : null;
   return {
     fieldKey,
@@ -219,6 +227,7 @@ export function fieldEvidence(
     clause,
     page: stored?.page ?? parsedPage,
     bbox: clauseBbox ?? stored?.bbox ?? null,
+    bboxes: legalClauseBbox.length ? legalClauseBbox.map(box => ({ ...box, space: "pdf_bottom_left" as const })) : null,
     coordinateSource: clauseBbox ? "legacy_layout" : stored?.coordinateSource ?? null,
     confidence: clauseBbox ? 0.9 : stored?.confidence ?? null,
   };
