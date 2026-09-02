@@ -47,6 +47,7 @@ function claimJob(overrides = {}) {
     downloadUrl: "https://project.supabase.co/storage/v1/object/sign/kontrakter/original.pdf?token=signed-secret",
     uploadPath: "org/processed/job/normalised.pdf",
     spatialUploadPath: "org/processed/job/vision-layout.json.gz",
+    sourceFormat: "pdf",
     maxBytes: config.maxBytes,
     ...overrides,
   };
@@ -408,7 +409,136 @@ test("en kontrolleret dokumentfejl registreres og batchen kan fortsætte", async
   });
   assert.deepEqual(await processor(), { outcome: "needs_review" });
   assert.equal(completions[0].status, "needs_review");
-  assert.equal(completions[0].errorCode, "invalid_pdf");
+  assert.equal(completions[0].errorCode, "unsupported_document_format");
+});
+
+test("DOCX konverteres til PDF og tvinges gennem spatial OCR", async () => {
+  const completions = [];
+  let spatialInput;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    commandRunner: async (command, args) => {
+      assert.equal(command, "libreoffice");
+      const outputDirectory = args[args.indexOf("--outdir") + 1];
+      await writeFile(join(outputDirectory, "source.pdf"), Buffer.from("%PDF-1.7\nconverted"));
+      return { stdout: "", stderr: "" };
+    },
+    spatialProcessor: async (options) => {
+      spatialInput = options;
+      return {
+        status: "needs_review",
+        classification: "mixed",
+        pageCount: 1,
+        nativePageCount: 0,
+        ocrPageCount: 1,
+        unreadablePageCount: 1,
+        orientationCorrections: [],
+        redactionCounts: {},
+      };
+    },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob({ sourceFormat: "docx" })), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "needs_review", diagnosticCode: "ocr_unreadable_page" });
+  assert.equal(spatialInput.forceOcr, true);
+  assert.equal(spatialInput.inputPath.endsWith("source.pdf"), true);
+  assert.equal(completions[0].status, "needs_review");
+  assert.equal(completions[0].errorCode, "ocr_unreadable_page");
+});
+
+test("en vellykket Word-behandling gemmer neutral visnings-PDF separat fra OCR-PDF", async () => {
+  const uploads = [];
+  const completions = [];
+  const job = claimJob({
+    sourceFormat: "docx",
+    originalViewUploadPath: "org/processed/job/original-view.pdf",
+  });
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    commandRunner: async (command, args) => {
+      assert.equal(command, "libreoffice");
+      const outputDirectory = args[args.indexOf("--outdir") + 1];
+      await writeFile(join(outputDirectory, "source.pdf"), Buffer.from("%PDF-1.7\nneutral-word-view"));
+      return { stdout: "", stderr: "" };
+    },
+    spatialProcessor: async ({ outputPath, geometryPath, forceOcr }) => {
+      assert.equal(forceOcr, true);
+      await writeFile(outputPath, Buffer.from("%PDF-1.7\ncommented-working-copy"));
+      await writeFile(geometryPath, Buffer.from("geometry"));
+      return {
+        status: "completed", classification: "mixed", pageCount: 1,
+        nativePageCount: 0, ocrPageCount: 1, unreadablePageCount: 0,
+        textCharCount: 120, redactionCounts: {},
+      };
+    },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(job), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/upload-authorisation")) return response(JSON.stringify({
+        uploadToken: "processed-token",
+        originalViewUploadToken: "original-view-token",
+        spatialUploadToken: "spatial-token",
+      }), { status: 200 });
+      if (value.includes("/storage/v1/object/upload/sign/kontrakter/")) {
+        uploads.push({ path: decodeURIComponent(new URL(value).pathname.split("/kontrakter/")[1]), bytes: Buffer.from(init.body).toString("utf8") });
+        return response("{}", { status: 200 }, value);
+      }
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "completed" });
+  assert.equal(uploads.length, 3);
+  assert.deepEqual(uploads.map(item => item.path), [job.uploadPath, job.originalViewUploadPath, job.spatialUploadPath]);
+  assert.match(uploads[1].bytes, /neutral-word-view/);
+  assert.match(completions[0].originalViewSha256, /^[0-9a-f]{64}$/);
+  assert.notEqual(completions[0].originalViewSha256, completions[0].processedSha256);
+});
+
+test("claim og dokument skal have samme filformat", async () => {
+  const completions = [];
+  let spatialCalled = false;
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    storage: { from() { throw new Error("storage should not be reached"); } },
+    spatialProcessor: async () => {
+      spatialCalled = true;
+      throw new Error("spatial processor should not be reached");
+    },
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) {
+        return response(JSON.stringify(claimJob({ sourceFormat: "docx" })), { status: 200 });
+      }
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\nnot-a-docx"), { status: 200 }, value);
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "needs_review" });
+  assert.equal(spatialCalled, false);
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].errorCode, "source_format_mismatch");
 });
 
 test("en genkørsel stopper før Vision, hvis originalens hash er ændret", async () => {

@@ -10,6 +10,7 @@ const ORG_ID = "11111111-1111-4111-8111-111111111111";
 const CONTRACT_ID = "22222222-2222-4222-8222-222222222222";
 const LEASE_ID = "33333333-3333-4333-8333-333333333333";
 const OUTPUT = `${ORG_ID}/processed/${CONTRACT_ID}/leases/${LEASE_ID}/normalised.pdf`;
+const ORIGINAL_VIEW = `${ORG_ID}/processed/${CONTRACT_ID}/leases/${LEASE_ID}/original-view.pdf`;
 const SPATIAL = `${ORG_ID}/processed/${CONTRACT_ID}/leases/${LEASE_ID}/vision-layout.json.gz`;
 
 test("selects only strict, unpromoted lease artifacts", () => {
@@ -18,16 +19,23 @@ test("selects only strict, unpromoted lease artifacts", () => {
     contractId: CONTRACT_ID,
     leaseToken: LEASE_ID,
     outputStoragePath: OUTPUT,
+    originalViewStoragePath: ORIGINAL_VIEW,
     spatialDataPath: SPATIAL,
-  }), [OUTPUT, SPATIAL]);
+  }), [OUTPUT, ORIGINAL_VIEW, SPATIAL]);
 });
 
-test("parses only the two strict lease artifact names", () => {
+test("parses only the strict lease artifact names", () => {
   assert.deepEqual(parseContractDocumentLeaseArtifactPath(OUTPUT), {
     orgId: ORG_ID,
     contractId: CONTRACT_ID,
     leaseToken: LEASE_ID,
     filename: "normalised.pdf",
+  });
+  assert.deepEqual(parseContractDocumentLeaseArtifactPath(ORIGINAL_VIEW), {
+    orgId: ORG_ID,
+    contractId: CONTRACT_ID,
+    leaseToken: LEASE_ID,
+    filename: "original-view.pdf",
   });
   assert.equal(parseContractDocumentLeaseArtifactPath(`${ORG_ID}/processed/${CONTRACT_ID}/leases/${LEASE_ID}/original.pdf`), null);
   assert.equal(parseContractDocumentLeaseArtifactPath(`${ORG_ID}/${CONTRACT_ID}/original.pdf`), null);

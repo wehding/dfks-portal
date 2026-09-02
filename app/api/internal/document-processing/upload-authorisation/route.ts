@@ -43,6 +43,8 @@ export async function POST(request: Request) {
 
   const leasePrefix = `${job.org_id}/processed/${job.contract_id}/leases/${body.leaseToken}`;
   if (job.output_storage_path !== `${leasePrefix}/normalised.pdf`
+    || (job.original_view_storage_path != null
+      && job.original_view_storage_path !== `${leasePrefix}/original-view.pdf`)
     || job.spatial_data_path !== `${leasePrefix}/vision-layout.json.gz`) {
     return NextResponse.json({ error: "Ugyldige lease-stier" }, { status: 409 });
   }
@@ -54,12 +56,16 @@ export async function POST(request: Request) {
     .createSignedUploadUrl(job.output_storage_path);
   const spatialUpload = await db.storage.from("kontrakter")
     .createSignedUploadUrl(job.spatial_data_path);
-  if (outputUpload.error || spatialUpload.error) {
+  const originalViewUpload = job.original_view_storage_path
+    ? await db.storage.from("kontrakter").createSignedUploadUrl(job.original_view_storage_path)
+    : null;
+  if (outputUpload.error || spatialUpload.error || originalViewUpload?.error) {
     return NextResponse.json({ error: "Midlertidig uploadadgang kunne ikke oprettes" }, { status: 503 });
   }
 
   return NextResponse.json({
     uploadToken: outputUpload.data.token,
+    originalViewUploadToken: originalViewUpload?.data.token ?? null,
     spatialUploadToken: spatialUpload.data.token,
   }, { headers: { "Cache-Control": "no-store" } });
 }

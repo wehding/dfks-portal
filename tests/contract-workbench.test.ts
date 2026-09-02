@@ -1,0 +1,169 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { contractDocumentPresentation, contractEpisodeNumbersFromLayout, contractEvidencePage, contractSeriesBaseTitle, fieldEvidence, findContractTypeEvidence, pdfBboxToViewportRect, safeContractReturnTo, suggestLocalContractWork } from "../lib/contract-workbench";
+import { calculatePdfFitWidthScale, CONTRACT_WORKBENCH_SPLIT_MIN_WIDTH, usesContractWorkbenchSplitLayout } from "../lib/contract-workbench-responsive";
+
+test("kontraktarbejdsfladen accepterer kun retur-URL'er i kontraktadministrationen", () => {
+  assert.equal(
+    safeContractReturnTo(encodeURIComponent("/admin/kontrakter?tab=arkiv&page=3&search=film")),
+    "/admin/kontrakter?tab=arkiv&page=3&search=film",
+  );
+  assert.equal(safeContractReturnTo("https://example.com"), "/admin/kontrakter?tab=arkiv");
+  assert.equal(safeContractReturnTo("//example.com/admin/kontrakter"), "/admin/kontrakter?tab=arkiv");
+});
+
+test("dokumentversioner skelner mellem juridisk original, Word-visning og kommenteret PDF", () => {
+  assert.deepEqual(contractDocumentPresentation({
+    originalPath: "org/contract.docx",
+    originalViewPath: "org/processed/original-view.pdf",
+    commentedPath: "org/processed/normalised.pdf",
+    processingStatus: "ready",
+  }), {
+    sourceFormat: "docx",
+    hasOriginal: true,
+    hasOriginalView: true,
+    hasCommentedPdf: true,
+    processingLabel: "Kommenteret PDF klar",
+    processingTone: "success",
+  });
+});
+
+test("dokumentstatus lover ikke en kommenteret PDF for en ubehandlet original", () => {
+  const state = contractDocumentPresentation({
+    originalPath: "org/contract.pdf",
+    processingStatus: "processing",
+  });
+  assert.equal(state.hasOriginal, true);
+  assert.equal(state.hasCommentedPdf, false);
+  assert.equal(state.processingLabel, "Dokument behandles");
+});
+
+test("kildebevis kobler citat og klausul uden at gætte koordinater", () => {
+  const evidence = fieldEvidence(
+    "producer",
+    "employerName",
+    { employerName: "Producent ApS", employerName_clause_id: "clause-1" },
+    {
+      type: "pdf",
+      pageCount: 2,
+      fragmentCount: 1,
+      clauses: [{ id: "clause-1", page: 2, text: "Producent ApS", bold: false, numbered: false }],
+    },
+  );
+
+  assert.equal(evidence.quote, "Producent ApS");
+  assert.equal(evidence.clause?.page, 2);
+  assert.equal(evidence.clause?.pdfBbox, undefined);
+  assert.equal(contractEvidencePage(evidence), 2);
+});
+
+test("kildenavigation bruger gemt side når klausulkoordinater mangler", () => {
+  const evidence = fieldEvidence(
+    "signatureEvidence",
+    "signatureEvidence",
+    {
+      signatureEvidence: "Digitalt underskrevet 05.06.2025",
+      signatureEvidence_page: "4",
+    },
+    null,
+  );
+
+  assert.equal(evidence.quote, "Digitalt underskrevet 05.06.2025");
+  assert.equal(evidence.clause, null);
+  assert.equal(contractEvidencePage(evidence), 4);
+});
+
+test("felter uden dokumentkilde aktiverer ikke en falsk kilde", () => {
+  const evidence = fieldEvidence("royalty", "royalty", {}, null);
+  assert.equal(evidence.quote, null);
+  assert.equal(contractEvidencePage(evidence), null);
+});
+
+test("PDF-koordinater omregnes ens til udsnit og fuld dokumentmarkering", () => {
+  const rect = pdfBboxToViewportRect(
+    { x: 50, y: 100, width: 200, height: 20 },
+    { pdfWidth: 600, pdfHeight: 800, renderedWidth: 1200, renderedHeight: 1600 },
+  );
+  assert.deepEqual(rect, { left: 100, top: 1360, width: 400, height: 40 });
+});
+
+test("kontraktarbejdsfladen skifter mellem mobil og delt tabletvisning ved samme breakpoint", () => {
+  assert.equal(CONTRACT_WORKBENCH_SPLIT_MIN_WIDTH, 760);
+  assert.equal(usesContractWorkbenchSplitLayout(759), false);
+  assert.equal(usesContractWorkbenchSplitLayout(760), true);
+  assert.equal(usesContractWorkbenchSplitLayout(933), true);
+});
+
+test("PDF-skalaen holder hele siden inden for dokumentkolonnens bredde", () => {
+  assert.equal(calculatePdfFitWidthScale(632, 600), 1);
+  assert.equal(calculatePdfFitWidthScale(332, 600), 0.5);
+  assert.equal(calculatePdfFitWidthScale(120, 600), 0.26666666666666666);
+});
+
+test("kontraktens sæsonangivelse fjernes kun fra det lokale værkmatch", () => {
+  assert.equal(contractSeriesBaseTitle("SOMMERDAHL VI"), "SOMMERDAHL");
+  assert.equal(contractSeriesBaseTitle("Forbrydelsen sæson 2"), "Forbrydelsen");
+  assert.equal(contractSeriesBaseTitle("1917"), "1917");
+});
+
+test("et entydigt lokalt serie-parentværk foreslås uden at blive tilknyttet automatisk", () => {
+  const works = [
+    { id: "parent", title: "Sommerdahl", type: "tv-serie" },
+    { id: "episode", title: "Sommerdahl - S05E01", type: "tv-serie" },
+  ];
+  assert.equal(suggestLocalContractWork("SOMMERDAHL VI", works)?.id, "parent");
+  assert.equal(suggestLocalContractWork("Ukendt serie II", works), null);
+});
+
+test("et tvetydigt lokalt titelmatch foreslås ikke", () => {
+  const works = [
+    { id: "one", title: "Sommerdahl", type: "tv-serie" },
+    { id: "two", title: "SOMMERDAHL", type: "tv-serie" },
+  ];
+  assert.equal(suggestLocalContractWork("Sommerdahl VI", works), null);
+});
+
+test("A-løn får et forsigtigt dokumentbevis fra en lønpassage", () => {
+  const evidence = findContractTypeEvidence("a-løn", {
+    type: "pdf",
+    pageCount: 2,
+    fragmentCount: 2,
+    clauses: [
+      { id: "intro", page: 1, text: "Producenten indgår denne aftale.", bold: false, numbered: false },
+      { id: "salary", page: 2, text: "Medarbejderens grundløn udgør en ugeløn på 18.500 kr.", bold: false, numbered: false },
+    ],
+  });
+
+  assert.equal(evidence?.clauseId, "salary");
+  assert.equal(evidence?.page, 2);
+  assert.match(evidence?.quote ?? "", /ugeløn/i);
+});
+
+test("A-løn genkender kontraktens formulering aftalt løn pr. uge", () => {
+  const evidence = findContractTypeEvidence("a-løn", {
+    type: "pdf",
+    pageCount: 1,
+    fragmentCount: 1,
+    clauses: [
+      { id: "salary", page: 1, text: "Aftalt løn kr.: 14.824 pr. uge", bold: false, numbered: false },
+    ],
+  });
+
+  assert.equal(evidence?.clauseId, "salary");
+  assert.equal(evidence?.focusText?.toLocaleLowerCase("da"), "aftalt løn");
+});
+
+test("afsnitsnumre kan aflæses fra kontraktens egen episodepassage", () => {
+  assert.deepEqual(contractEpisodeNumbersFromLayout({
+    type: "pdf",
+    pageCount: 1,
+    fragmentCount: 1,
+    clauses: [{ id: "work", page: 1, text: "KLIPPER AF 2 EPISODER (5 + 6) samt sammenklip", bold: false, numbered: false }],
+  }), [5, 6]);
+  assert.deepEqual(contractEpisodeNumbersFromLayout({
+    type: "pdf",
+    pageCount: 1,
+    fragmentCount: 1,
+    clauses: [{ id: "ocr", page: 1, text: "KLIPPERAF2EPISODER(5+6)samtsammenklip", bold: false, numbered: false }],
+  }), [5, 6]);
+});

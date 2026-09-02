@@ -37,6 +37,30 @@ function dateOnly(value: unknown): string | null {
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) && !Number.isNaN(Date.parse(raw)) ? raw : null;
 }
 
+export function normalizeRoyaltyProductionType(value: unknown): string | null {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLocaleLowerCase("da")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+
+  if (["feature", "spillefilm", "featurefilm", "dkspillefilm", "uspillefilm"].includes(normalized)) return "feature";
+  if (["tvseries", "tvserie", "fiktionsserie"].includes(normalized)) return "tvSeries";
+  if (["documentary", "dokumentarfilm", "tvdokumentar"].includes(normalized)) return "documentary";
+  if (["docseries", "dokumentarserie"].includes(normalized)) return "docSeries";
+  if (["short", "kortfilm", "kortfiktion"].includes(normalized)) return "short";
+  return null;
+}
+
+function effectiveRuleProductionType(rule: AgreementRoyaltyRule) {
+  const configured = normalizeRoyaltyProductionType(rule.productionType);
+  if (configured) return configured;
+  // Ældre De4-regler blev oprettet uden production_type, selv om selve
+  // retsgrundlaget og basisfeltet udtrykkeligt afgrænser royalty til spillefilm.
+  return String(rule.basis ?? "").toLocaleLowerCase("da").includes("spillefilm") ? "feature" : null;
+}
+
 export type RoyaltyResolution = {
   data: Record<string, unknown>;
   applied: boolean;
@@ -70,7 +94,7 @@ export function applyAgreementRoyalty(
   }
 
   const effectiveDate = dateOnly(input.startDate) ?? dateOnly(input.contractDate);
-  const productionType = String(input.productionType ?? "");
+  const productionType = normalizeRoyaltyProductionType(input.productionType);
   // _workDistributionType injiceres af server-wrapper fra det matchede works-felt
   const workDistributionType = typeof input._workDistributionType === "string" ? input._workDistributionType : null;
 
@@ -91,12 +115,38 @@ export function applyAgreementRoyalty(
 
   // Find bedste match: specifik productionType > catch-all (null)
   const rule =
-    candidates.find(r => r.productionType === productionType) ??
-    candidates.find(r => r.productionType == null);
+    candidates.find(r => effectiveRuleProductionType(r) === productionType) ??
+    candidates.find(r => effectiveRuleProductionType(r) == null);
 
   if (!rule) {
-    // Regel findes, men matcher ikke produktionstype — bevar AI's vurdering
-    return { applied: false, reason: "no_matching_production_type", data: input };
+    if (!productionType || input.royalty === true) {
+      // En ukendt produktionstype eller et eksplicit kontraktvilkår må ikke
+      // ændres til et automatisk nej.
+      return { applied: false, reason: "no_matching_production_type", data: input };
+    }
+    const scopedRule = candidates.find(candidate => effectiveRuleProductionType(candidate) != null);
+    if (!scopedRule) return { applied: false, reason: "no_matching_production_type", data: input };
+    return {
+      applied: true,
+      reason: "not_applicable_production_type",
+      data: {
+        ...input,
+        royalty: false,
+        royaltyPercent: null,
+        royaltySourceType: "collective_agreement",
+        royaltyAgreementCode: scopedRule.agreementCode,
+        royaltyAgreementTitle: scopedRule.agreementTitle,
+        royaltyAgreementSection: scopedRule.sectionReference,
+        royaltyTag: `Ingen royalty via ${scopedRule.agreementTitle} · bestemmelsen gælder spillefilm`,
+        _royaltyResolution: {
+          appliedAt: new Date().toISOString(),
+          ruleId: scopedRule.id,
+          effectiveDate,
+          productionType,
+          reason: "not_applicable_production_type",
+        },
+      },
+    };
   }
 
   // Distributions-filter: en regel med sat distributionType skal matche værkets type

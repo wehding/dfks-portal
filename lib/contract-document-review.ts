@@ -82,6 +82,36 @@ export const CONTRACT_DOCUMENT_REVIEW_DESCRIPTORS: Readonly<Record<string, Contr
     reason: "PDF-filen kan ikke åbnes sikkert. Upload dokumentet igen som en gyldig PDF.",
     recommendedAction: RESCAN,
   },
+  unsupported_document_format: {
+    title: "Dokumenttypen understøttes ikke",
+    reason: "Dokumentet skal være en PDF- eller Word-fil, før det kan behandles automatisk.",
+    recommendedAction: RESCAN,
+  },
+  source_format_mismatch: {
+    title: "Dokumenttypen stemmer ikke",
+    reason: "Filens indhold stemmer ikke med den registrerede filtype. Upload dokumentet igen i det korrekte format.",
+    recommendedAction: RESCAN,
+  },
+  word_conversion_failed: {
+    title: "Word-dokumentet kunne ikke konverteres",
+    reason: "Den neutrale PDF-visning kunne ikke dannes sikkert. Kontrollér dokumentet eller upload en PDF-version.",
+    recommendedAction: RESCAN,
+  },
+  converted_pdf_invalid: {
+    title: "Word-konverteringen gav en ugyldig PDF",
+    reason: "Det konverterede dokument kunne ikke godkendes som PDF. Upload om muligt en PDF-version.",
+    recommendedAction: RESCAN,
+  },
+  converted_file_too_large: {
+    title: "Word-konverteringen blev for stor",
+    reason: "Den neutrale PDF-visning overskred størrelsesgrænsen. Upload en mindre PDF-version.",
+    recommendedAction: RESCAN,
+  },
+  original_view_upload_failed: {
+    title: "Word-visningen kunne ikke gemmes",
+    reason: "Den neutrale PDF-visning kunne ikke gemmes sikkert. Behandlingen kan forsøges igen.",
+    recommendedAction: TECHNICAL,
+  },
   file_too_large: {
     title: "PDF-filen er for stor",
     reason: "Filen er større end den tilladte grænse på 25 MB. Upload en mindre PDF uden at gøre teksten utydelig.",

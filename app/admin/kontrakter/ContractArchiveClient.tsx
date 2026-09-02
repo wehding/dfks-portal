@@ -51,20 +51,12 @@ import { ManualWorkFormFields } from "@/components/works/manual-work-form"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
 import { extractedProductionCompanyNames } from "@/lib/production-companies"
 import { contractReadinessDetails, effectiveCopydanStatus, normalizeTriState } from "@/lib/contract-list-status"
-import {
-    affectedPagesText,
-    contractDocumentReviewActions,
-    contractDocumentReviewDescriptor,
-    type ContractDocumentReviewAction,
-    type ContractDocumentReviewData,
-} from "@/lib/contract-document-review"
 import { contractDataToManualWorkSeed, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work"
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker"
-import { SourcePictogram } from "@/components/source-pictogram"
+import { contractDocumentPresentation } from "@/lib/contract-workbench"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
-const PdfViewer = dynamic(() => import("@/components/pdf-viewer").then(mod => mod.PdfViewer), { ssr: false })
 const WORK_TYPE_FILTERS = WORK_TYPES
 
 type ContractRow = {
@@ -73,6 +65,7 @@ type ContractRow = {
     overenskomst: string | null
     status: string
     pdf_url: string | null
+    original_view_pdf_url: string | null
     processed_pdf_url: string | null
     document_processing_status: string
     document_processing_error_code: string | null
@@ -109,111 +102,56 @@ type ContractVersion = {
     contract_date: string | null
     created_at: string
     pdf_url: string | null
+    original_view_pdf_url: string | null
     processed_pdf_url: string | null
     superseded_at: string | null
     superseded_by_contract_id: string | null
 }
 
 function documentProcessingErrorMessage(contract: ContractRow) {
-    if (contract.document_processing_error_code) return contractDocumentReviewDescriptor(contract.document_processing_error_code).reason
+    const messages: Record<string, string> = {
+        ocr_no_readable_text: "OCR fandt ikke nok læsbar tekst. Kontrollér scanningens kvalitet og at filen indeholder kontrakttekst.",
+        invalid_pdf: "Filen er ikke en gyldig PDF.",
+        unsupported_document_format: "Filen er ikke en understøttet PDF- eller Word-fil.",
+        source_format_mismatch: "Filens indhold stemmer ikke med dens registrerede dokumenttype.",
+        word_conversion_failed: "Word-dokumentet kunne ikke konverteres sikkert til PDF.",
+        converted_pdf_invalid: "Word-dokumentet gav ikke en gyldig PDF efter konvertering.",
+        original_view_upload_failed: "Word-visningen kunne ikke gemmes sikkert.",
+        converted_file_too_large: "Dokumentet blev større end 25 MB efter Word-konvertering.",
+        file_too_large: "Dokumentet er større end den tilladte grænse på 25 MB.",
+        processed_file_too_large: "Den OCR-behandlede PDF blev for stor og kræver manuel behandling.",
+        invalid_download_origin: "Den midlertidige filadresse kom ikke fra den forventede lagerkonto.",
+        signed_url_failed: "Systemet kunne ikke oprette sikker, midlertidig adgang til PDF-filen.",
+        document_processing_failed: "PDF'en kunne ikke rettes eller OCR-behandles efter de automatiske forsøg.",
+        ocr_unreadable_page: "Mindst én PDF-side gav ikke læsbar tekst. Kontrollér scanningens kvalitet.",
+        ocr_spatial_quality: "PDF'ens søgbare tekstlag bestod ikke den geometriske kvalitetskontrol.",
+        ocr_rescan_required: "PDF'en er fotograferet eller skannet i en kvalitet, som ikke kan sikkerhedsbehandles automatisk. Upload en ny, lige og tydelig scanning uden skygger eller baggrund.",
+    }
+    if (contract.document_processing_error_code) {
+        return messages[contract.document_processing_error_code] ?? "PDF-behandlingen fejlede og kræver manuel kontrol."
+    }
     if (contract.document_processing_status === "failed") return "PDF-behandlingen fejlede og prøves automatisk igen, hvis der er forsøg tilbage."
     return null
 }
 
-function documentReviewFallback(contract: ContractRow): ContractDocumentReviewData | null {
-    if (contract.document_processing_status !== "needs_review" && contract.document_processing_status !== "failed") return null
-    const descriptor = contractDocumentReviewDescriptor(contract.document_processing_error_code)
-    const actions = contractDocumentReviewActions({
-        status: contract.document_processing_status,
-        errorCode: contract.document_processing_error_code,
-        contractStatus: contract.status,
-        hasRightsHolder: Boolean(contract.rights_holder_id),
-        hasJob: false,
+function ContractDocumentBadges({ contract }: { contract: ContractRow }) {
+    const state = contractDocumentPresentation({
+        originalPath: contract.pdf_url,
+        originalViewPath: contract.original_view_pdf_url,
+        commentedPath: contract.processed_pdf_url,
+        processingStatus: contract.document_processing_status,
     })
-    return {
-        status: contract.document_processing_status,
-        errorCode: contract.document_processing_error_code,
-        title: descriptor.title,
-        reason: descriptor.reason,
-        pageCount: null,
-        affectedPages: [],
-        affectedPagesText: affectedPagesText([]),
-        attempts: 0,
-        reviewDisposition: null,
-        recommendedAction: actions.recommendedAction,
-        canRetry: false,
-        canRequestRescan: false,
-    }
-}
-
-function DocumentProcessingReviewCard({
-    review,
-    loading,
-    activeAction,
-    statusMessage,
-    onAction,
-}: {
-    review: ContractDocumentReviewData | null
-    loading: boolean
-    activeAction: ContractDocumentReviewAction | null
-    statusMessage: string | null
-    onAction: (action: ContractDocumentReviewAction) => void
-}) {
-    if (!review && !statusMessage) return null
-    const busy = Boolean(activeAction)
-    return (
-        <div className="mt-3 w-full rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="alert">
-            {review && (
-                <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
-                    <div className="min-w-0 flex-1">
-                        <p className="font-semibold">PDF kræver kontrol</p>
-                        <p className="mt-1 font-medium">{review.title}</p>
-                        <p className="mt-1 text-xs leading-5 text-amber-900">{review.reason}</p>
-                        <p className="mt-1 text-xs font-medium text-amber-900">{review.affectedPagesText}</p>
-                        {review.attempts > 0 && <p className="mt-1 text-xs text-amber-800">Forsøg på denne behandling: {review.attempts}</p>}
-                    </div>
-                </div>
-            )}
-            {loading && (
-                <p className="mt-2 flex items-center gap-2 text-xs text-amber-800">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                    Henter den seneste PDF-status…
-                </p>
-            )}
-            {review && (review.canRetry || review.canRequestRescan) && (
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {review.canRetry && (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            className="min-h-11 w-full bg-white"
-                            disabled={busy || loading}
-                            onClick={() => onAction("retry")}
-                        >
-                            {activeAction === "retry" && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
-                            Prøv igen
-                        </Button>
-                    )}
-                    {review.canRequestRescan && (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            className="min-h-11 w-full bg-white"
-                            disabled={busy || loading}
-                            onClick={() => onAction("request_rescan")}
-                        >
-                            {activeAction === "request_rescan" && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
-                            Markér: ny scanning nødvendig
-                        </Button>
-                    )}
-                </div>
-            )}
-            <div className="mt-2 text-xs text-amber-900" aria-live="polite" aria-atomic="true">
-                {statusMessage}
-            </div>
-        </div>
-    )
+    const tone = state.processingTone === "danger"
+        ? "border-red-300 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
+        : state.processingTone === "warning"
+            ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+            : state.processingTone === "success"
+                ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"
+                : ""
+    return <div className="flex flex-wrap gap-1">
+        {state.hasOriginal && <Badge variant="outline" className="text-[10px]">Original</Badge>}
+        <Badge variant="outline" className={`text-[10px] ${tone}`}>{state.processingLabel}</Badge>
+    </div>
 }
 
 type ContractComment = {
@@ -492,6 +430,9 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     // View dialog
     const [viewContract, setViewContract] = useState<ContractRow | null>(null)
     const [viewPdfUrl, setViewPdfUrl] = useState<string | null>(null)
+    const [viewDocumentVariant, setViewDocumentVariant] = useState<"original" | "commented">("original")
+    // Beholdes indtil den gamle modal er fjernet helt; nye åbninger bruger arbejdsfladen.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [editDocUrl, setEditDocUrl] = useState<string | null>(null)
 
     // Edit dialog
@@ -501,10 +442,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     const [editWorkSearch, setEditWorkSearch] = useState("")
     const [editWorkTypeFilter, setEditWorkTypeFilter] = useState("all")
     const [editSaving, setEditSaving] = useState(false)
-    const [documentReview, setDocumentReview] = useState<ContractDocumentReviewData | null>(null)
-    const [documentReviewLoading, setDocumentReviewLoading] = useState(false)
-    const [documentReviewAction, setDocumentReviewAction] = useState<ContractDocumentReviewAction | null>(null)
-    const [documentReviewStatus, setDocumentReviewStatus] = useState<string | null>(null)
 
     const [unifiedResults, setUnifiedResults] = useState<UnifiedSearchWorkResult[]>([])
     const [isSearching, setIsSearching] = useState(false)
@@ -615,8 +552,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     const editDialogRef = useRef<HTMLDivElement>(null)
     const editDialogScrollRef = useRef<HTMLDivElement>(null)
     const flushAiEditorRef = useRef<(() => Promise<boolean>) | null>(null)
-    const documentReviewContractIdRef = useRef<string | null>(null)
-    const editSessionGenerationRef = useRef(0)
 
     useEffect(() => {
         if (!editContract?.id) return
@@ -630,8 +565,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     }, [editContract?.id])
 
     const closeEditDialog = useCallback(() => {
-        editSessionGenerationRef.current += 1
-        documentReviewContractIdRef.current = null
         setEditContract(null)
         setEditForm(null)
         setEditWorkTypeFilter("all")
@@ -643,10 +576,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         setEpisodeOptions([])
         setDetectedEpisodeCount(null)
         setSeriesSectionRequested(false)
-        setDocumentReview(null)
-        setDocumentReviewLoading(false)
-        setDocumentReviewAction(null)
-        setDocumentReviewStatus(null)
     }, [])
 
     // Upload flow
@@ -717,7 +646,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             if (e.key === "Escape") {
                 if (duplicatesOpen) {
                     setDuplicatesOpen(false)
-                } else if (editContract && !editSaving && !documentReviewAction) {
+                } else if (editContract && !editSaving) {
                     closeEditDialog()
                 } else if (viewContract) {
                     setViewContract(null)
@@ -731,7 +660,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         }
         window.addEventListener("keydown", handleKeyDown)
         return () => window.removeEventListener("keydown", handleKeyDown)
-    }, [editContract, editSaving, documentReviewAction, viewContract, showUpload, saving, duplicatesOpen, closeEditDialog])
+    }, [editContract, editSaving, viewContract, showUpload, saving, duplicatesOpen, closeEditDialog])
 
     // Delete
     const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -748,17 +677,14 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         if (c) {
             editParamHandledRef.current = true
             openEdit(c)
-            window.history.replaceState(null, "", "/admin/kontrakter")
             return
         }
         editParamHandledRef.current = true
         void fetchAdminContractsPage({ search: editId, pageSize: 1 }).then(result => {
             const row = result.success ? result.contracts?.[0] as unknown as ContractRow | undefined : undefined
             if (row) openEdit(row)
-            window.history.replaceState(null, "", "/admin/kontrakter")
-        }).catch(() => {
-            window.history.replaceState(null, "", "/admin/kontrakter")
-        })
+            else window.history.replaceState(null, "", "/admin/kontrakter")
+        }).catch(() => window.history.replaceState(null, "", "/admin/kontrakter"))
     }, [contracts]) // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
@@ -935,13 +861,20 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
 
     // ── Signed URL for PDF ────────────────────────────────────
 
-    const openPdf = async (contract: ContractRow) => {
-        setViewContract(contract)
+    const loadDocumentVariant = async (contract: ContractRow, variant: "original" | "commented") => {
+        setViewDocumentVariant(variant)
         setViewPdfUrl(null)
-        const displayPath = contract.processed_pdf_url ?? contract.pdf_url
+        const displayPath = variant === "commented"
+            ? contract.processed_pdf_url
+            : contract.original_view_pdf_url ?? contract.pdf_url
         if (!displayPath) return
         const { url } = await getContractSignedUrl(displayPath)
         if (url) setViewPdfUrl(url)
+    }
+
+    const openPdf = async (contract: ContractRow) => {
+        setViewContract(contract)
+        await loadDocumentVariant(contract, "original")
     }
 
     // ── Upload: file selection ────────────────────────────────
@@ -1135,165 +1068,21 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
 
     // ── Edit ──────────────────────────────────────────────────
 
-    const isCurrentEditSession = (contractId: string, generation: number) => (
-        documentReviewContractIdRef.current === contractId
-        && editSessionGenerationRef.current === generation
-    )
-
-    const loadDocumentProcessingReview = async (
-        contractId: string,
-        generation: number,
-        options?: { preserveStatus?: boolean },
-    ) => {
-        setDocumentReviewLoading(true)
-        try {
-            const response = await fetch(`/api/admin/contracts/${contractId}/document-processing`, {
-                cache: "no-store",
-            })
-            const json = await response.json().catch(() => ({})) as {
-                data?: ContractDocumentReviewData | null
-                error?: string
-            }
-            if (!response.ok) throw new Error(json.error ?? "PDF-status kunne ikke hentes.")
-            if (!isCurrentEditSession(contractId, generation)) return
-            setDocumentReview(json.data ?? null)
-            if (!options?.preserveStatus) setDocumentReviewStatus(null)
-        } catch (error) {
-            if (!isCurrentEditSession(contractId, generation)) return
-            setDocumentReviewStatus(error instanceof Error ? error.message : "PDF-status kunne ikke hentes.")
-        } finally {
-            if (isCurrentEditSession(contractId, generation)) setDocumentReviewLoading(false)
-        }
-    }
-
-    const handleDocumentReviewAction = async (action: ContractDocumentReviewAction) => {
-        const contractId = editContract?.id
-        const contractSnapshot = editContract
-        if (!contractId || !contractSnapshot || documentReviewAction || editSaving) return
-        const generation = editSessionGenerationRef.current + 1
-        editSessionGenerationRef.current = generation
-        setDocumentReviewLoading(false)
-        setDocumentReviewAction(action)
-        setDocumentReviewStatus(action === "retry" ? "Sætter PDF'en i kø…" : "Registrerer behovet for en ny scanning…")
-        try {
-            const response = await fetch(`/api/admin/contracts/${contractId}/document-processing`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action }),
-            })
-            const json = await response.json().catch(() => ({})) as {
-                accepted?: boolean
-                error?: string
-                status?: string
-                errorCode?: string | null
-            }
-            if (!response.ok || !json.accepted) throw new Error(json.error ?? "PDF-handlingen kunne ikke gennemføres.")
-            if (!isCurrentEditSession(contractId, generation)) return
-            await Promise.all([
-                loadContractDetail(contractSnapshot, generation),
-                loadDocumentProcessingReview(contractId, generation, { preserveStatus: true }),
-            ])
-            if (!isCurrentEditSession(contractId, generation)) return
-
-            if (action === "retry") {
-                setDocumentReviewStatus("PDF'en er sat i kø til ny behandling.")
-                toast.success("PDF'en er sat i kø til ny behandling")
-            } else {
-                setDocumentReviewStatus("Behovet for en ny scanning er registreret. Send besked til medlemmet særskilt.")
-                toast.success("Behovet for en ny scanning er registreret")
-            }
-        } catch (error) {
-            if (!isCurrentEditSession(contractId, generation)) return
-            const message = error instanceof Error ? error.message : "PDF-handlingen kunne ikke gennemføres."
-            setDocumentReviewStatus(message)
-            toast.error(message)
-        } finally {
-            if (isCurrentEditSession(contractId, generation)) setDocumentReviewAction(null)
-        }
-    }
-
     const openEdit = (c: ContractRow) => {
-        const generation = editSessionGenerationRef.current + 1
-        editSessionGenerationRef.current = generation
-        documentReviewContractIdRef.current = c.id
-        setEditContract(c)
-        setDocumentReview(documentReviewFallback(c))
-        setDocumentReviewLoading(false)
-        setDocumentReviewAction(null)
-        setDocumentReviewStatus(null)
-        setAdminReply("")
-        void markAdminCommentsRead(c)
-        // Auto-hent dokument-URL så kontrakten vises til venstre uden knap-tryk
-        setEditDocUrl(null)
-        setActiveHighlight(null)
-        setNavneTjekResult(null)
-        setSeriesSectionRequested(false)
-
-        const displayPath = c.processed_pdf_url ?? c.pdf_url
-        if (displayPath) {
-            getContractSignedUrl(displayPath).then(({ url }) => {
-                if (url && isCurrentEditSession(c.id, generation)) setEditDocUrl(url)
-            })
-        }
-        setEditForm({
-            type: c.type,
-            overenskomst: c.overenskomst ?? "ingen",
-            status: c.status,
-            contract_date: c.contract_date ?? "",
-            start_date: c.start_date ?? "",
-            end_date: c.end_date ?? "",
-            employer_id: c.employer_id ?? "",
-            rights_holder_id: c.rights_holder_id ?? "",
-            work_id: c.work_id ?? "",
-            working_title: c.working_title ?? "",
-        })
-        setManualWorkMode(false)
-        setManualWork(emptyManualWorkForm({
-            title: c.working_title ?? c.work_title ?? "",
-            contract_id: c.id,
-        }))
-        setEditProducerSelections(c.employer_id ? [{
-            employerId: c.employer_id,
-            canonicalName: c.employer_name ?? employers.find(employer => employer.id === c.employer_id)?.name ?? "Producent",
-        }] : [])
-        void fetch(`/api/admin/contracts/${c.id}/producers`)
-            .then(response => response.ok ? response.json() : null)
-            .then(json => {
-                if (json?.data?.length && isCurrentEditSession(c.id, generation)) setEditProducerSelections(json.data)
-            })
-            .catch(() => undefined)
-        setAddSeason(String(c.season_number ?? 1))
-        setSelectedEpisodes(c.episode_numbers ?? [])
-        if (c.work_id) {
-            setPickedUnifiedResult({
-                id: `local:${c.work_id}`,
-                local_id: c.work_id,
-                title: c.work_title ?? c.working_title ?? "Valgt værk",
-                // Værkets type kendes først efter loadContractDetail — c.type er kontraktens type (a-løn/leverandør).
-                type: "spillefilm" as UnifiedSearchWorkResult["type"],
-                year: null,
-                description: null,
-                poster_url: null,
-                director: null,
-                genre: null,
-                duration_minutes: null,
-                sources: ["local"],
-            })
-        } else {
-            setPickedUnifiedResult(null)
-        }
-        setEditWorkSearch(c.work_title ?? c.working_title ?? "")
-        setEditRightsHolderSearch(c.rights_holder_name ?? "")
-        void loadContractDetail(c, generation)
-        void loadDocumentProcessingReview(c.id, generation)
+        const params = new URLSearchParams(pageSearchParams.toString())
+        params.delete("edit")
+        if (!params.has("tab")) params.set("tab", "arkiv")
+        const returnTo = `/admin/kontrakter?${params.toString()}`
+        router.push(`/admin/kontrakter/${c.id}/rediger?returnTo=${encodeURIComponent(returnTo)}`)
     }
 
-    const loadContractDetail = async (c: ContractRow, generation: number) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const loadContractDetail = async (c: ContractRow) => {
         const supabase = createClient()
         const { data } = await supabase
             .from("contracts")
             .select(`
-                id, type, overenskomst, status, pdf_url, processed_pdf_url,
+                id, type, overenskomst, status, pdf_url, original_view_pdf_url, processed_pdf_url,
                 document_processing_status, document_processing_error_code,
                 contract_date, start_date, end_date, created_at,
                 employer_id, rights_holder_id, working_title,
@@ -1324,8 +1113,8 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                 .order("created_at", { ascending: false }),
         ])
 
-        if (!data || !isCurrentEditSession(c.id, generation)) return
-        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; processed_pdf_url?: string | null; document_processing_status?: string; document_processing_error_code?: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
+        if (!data) return
+        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; original_view_pdf_url?: string | null; processed_pdf_url?: string | null; document_processing_status?: string; document_processing_error_code?: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
         const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations
         const latestJob = (jobs ?? [])[0] as { status?: string; error_message?: string | null } | undefined
         const detail: ContractRow = {
@@ -1334,6 +1123,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             type: row.type,
             overenskomst: row.overenskomst,
             status: row.status,
+            original_view_pdf_url: row.original_view_pdf_url ?? null,
             processed_pdf_url: row.processed_pdf_url ?? null,
             document_processing_status: row.document_processing_status ?? "pending",
             document_processing_error_code: row.document_processing_error_code ?? null,
@@ -1386,15 +1176,13 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             if (!row.rights_holder_id) setEditRightsHolderSearch(rightsHolderName)
             setNavneTjekLoading(true)
             checkRightsHolderName(rightsHolderName).then(res => {
-                if (!isCurrentEditSession(c.id, generation)) return
                 if (res.success && res.result) setNavneTjekResult(res.result)
                 setNavneTjekLoading(false)
-            }).catch(() => {
-                if (isCurrentEditSession(c.id, generation)) setNavneTjekLoading(false)
-            })
+            }).catch(() => setNavneTjekLoading(false))
         }
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const markAdminCommentsRead = async (c: ContractRow) => {
         const hasUnread = c.contract_comments.some(
             comment => comment.author_role === "member" && !comment.admin_read_at
@@ -1542,7 +1330,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         statusOverride?: "kladde" | "valideret" | "arkiveret",
         options?: { skipMissingWorkConfirm?: boolean; openNextAfterSave?: boolean; saveOnly?: boolean }
     ) => {
-        if (!editContract || !editForm || documentReviewAction || editSaving) return false
+        if (!editContract || !editForm) return false
         if (flushAiEditorRef.current && !(await flushAiEditorRef.current())) {
             toast.error("De aflæste kontraktdata kunne ikke gemmes. Prøv igen, før kontrakten lukkes.")
             return false
@@ -1733,7 +1521,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     }
 
     const handleValidateAndNext = async () => {
-        if (!editContract || documentReviewAction || editSaving) return
+        if (!editContract) return
         const currentId = editContract.id
         const saved = await handleSaveEdit("valideret", { openNextAfterSave: true })
         if (saved) openNextValidationContract(currentId)
@@ -1741,7 +1529,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     validateAndNextRef.current = handleValidateAndNext
 
     const handleArchiveEdit = async () => {
-        if (!editContract || documentReviewAction || editSaving) return
+        if (!editContract) return
         setArchiveEditOpen(true)
     }
 
@@ -1751,7 +1539,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     }
 
     const handleDeleteEdit = async () => {
-        if (!editContract || documentReviewAction || editSaving) return
+        if (!editContract) return
         setDeleteEditOpen(true)
     }
 
@@ -1786,14 +1574,14 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     useEffect(() => {
         if (!editContract) return
         const onKeyDown = (event: KeyboardEvent) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !editSaving && !documentReviewAction) {
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                 event.preventDefault()
                 void validateAndNextRef.current()
             }
         }
         window.addEventListener("keydown", onKeyDown)
         return () => window.removeEventListener("keydown", onKeyDown)
-    }, [editContract, editSaving, documentReviewAction])
+    }, [editContract])
 
     const handleAdminReply = async () => {
         if (!editContract || !adminReply.trim()) return
@@ -1861,7 +1649,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     const editRightsHolderResults = editRightsHolderSearch.trim()
         ? rightsHolders.filter(r => r.full_name.toLowerCase().includes(editRightsHolderSearch.toLowerCase())).slice(0, 8)
         : rightsHolders.slice(0, 8)
-    const dialogBusy = editSaving || documentReviewAction !== null
     const editPreviewContract = editContract && editForm ? {
         ...editContract,
         status: editForm.status,
@@ -1876,6 +1663,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         ? editValidationData.rightsOverview as Record<string, unknown>
         : {}
     const editStreamingStatus = normalizeTriState(editValidationData.svod ?? editValidationData.streamingReservation ?? editRightsOverview.streamingforbehold)
+    const editDocumentError = editContract ? documentProcessingErrorMessage(editContract) : null
     const activeUploadBatch = activeUploadBatchId ? recentImportBatches.find(batch => batch.id === activeUploadBatchId) ?? null : null
     const toggleSelected = (id: string) => {
         setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id])
@@ -1884,7 +1672,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         setSelectedIds(allFilteredSelected ? [] : filtered.map(contract => contract.id))
     }
     const markAsPreviousVersion = async () => {
-        if (!editContract || !currentVersionId || dialogBusy) return
+        if (!editContract || !currentVersionId) return
         setVersionSaving(true)
         try {
             const response = await fetch(`/api/admin/contracts/${editContract.id}/versions`, {
@@ -1906,7 +1694,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     }
 
     const showVersionHistory = async () => {
-        if (!editContract || dialogBusy) return
+        if (!editContract) return
         setVersionHistoryOpen(true)
         setVersionHistoryLoading(true)
         setVersionHistory([])
@@ -1923,8 +1711,10 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         }
     }
 
-    const openContractVersion = async (version: ContractVersion) => {
-        const path = version.processed_pdf_url ?? version.pdf_url
+    const openContractVersion = async (version: ContractVersion, variant: "original" | "commented") => {
+        const path = variant === "commented"
+            ? version.processed_pdf_url
+            : version.original_view_pdf_url ?? version.pdf_url
         if (!path) return toast.error("Denne version har ingen dokumentfil")
         const { url, error } = await getContractSignedUrl(path)
         if (error || !url) return toast.error("Dokumentet kunne ikke åbnes sikkert")
@@ -2054,6 +1844,10 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                         <SelectItem value="kladde">Kladde</SelectItem>
                         <SelectItem value="validationPending">Afventer validering</SelectItem>
                         <SelectItem value="validationRecommended">Validering anbefalet</SelectItem>
+                        <SelectItem value="documentProcessing">Dokument behandles</SelectItem>
+                        <SelectItem value="documentReady">Dokument klar</SelectItem>
+                        <SelectItem value="documentNeedsReview">Dokument kræver kontrol</SelectItem>
+                        <SelectItem value="documentFailed">Dokumentbehandling fejlede</SelectItem>
                         <SelectItem value="missingOwner">Mangler ejer</SelectItem>
                         <SelectItem value="missingWork">Mangler værk</SelectItem>
                         <SelectItem value="valideret">Valideret</SelectItem>
@@ -2177,9 +1971,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                                 <Badge variant="outline" className="font-mono text-[10px]">{contractEpisodeTag(c.season_number, c.episode_numbers)}</Badge>
                                             )}
                                             {c.previous_version_count > 0 && <Badge variant="outline">Har tidligere version</Badge>}
-                                            {c.document_processing_status === "processing" && <Badge variant="outline">PDF behandles</Badge>}
-                                            {c.document_processing_status === "needs_review" && <Badge variant="destructive">PDF kræver manuel kontrol</Badge>}
-                                            {c.document_processing_status === "failed" && <Badge variant="destructive">PDF-behandling fejlede</Badge>}
+                                            <ContractDocumentBadges contract={c} />
                                             {unreadMemberComments > 0 && (
                                                 <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />
@@ -2267,9 +2059,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                                 <Badge variant="outline" className="font-mono text-[10px]">{contractEpisodeTag(c.season_number, c.episode_numbers)}</Badge>
                                             )}
                                             {c.previous_version_count > 0 && <Badge variant="outline">Har tidligere version</Badge>}
-                                            {c.document_processing_status === "processing" && <Badge variant="outline">PDF behandles</Badge>}
-                                            {c.document_processing_status === "needs_review" && <Badge variant="destructive">PDF kræver manuel kontrol</Badge>}
-                                            {c.document_processing_status === "failed" && <Badge variant="destructive">PDF-behandling fejlede</Badge>}
+                                            <ContractDocumentBadges contract={c} />
                                             {unreadMemberComments > 0 && (
                                                 <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />
@@ -2339,10 +2129,27 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                         <DialogDescription>
                             {viewContract?.rights_holder_name} • {viewContract?.employer_name} • {viewContract?.type === "a-løn" ? "A-løn" : "Leverandør"}
                         </DialogDescription>
+                        {viewContract && <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <div className="flex rounded-md border p-0.5">
+                                <Button type="button" size="sm" variant={viewDocumentVariant === "original" ? "secondary" : "ghost"} onClick={() => void loadDocumentVariant(viewContract, "original")}>Original</Button>
+                                <Button type="button" size="sm" variant={viewDocumentVariant === "commented" ? "secondary" : "ghost"} disabled={!viewContract.processed_pdf_url} onClick={() => void loadDocumentVariant(viewContract, "commented")}>Kommenteret PDF</Button>
+                            </div>
+                            {viewContract.pdf_url && <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={async () => {
+                                const originalPath = viewContract.pdf_url
+                                if (!originalPath) return
+                                const { url } = await getContractSignedUrl(originalPath)
+                                if (!url) return
+                                const link = document.createElement("a")
+                                link.href = url
+                                link.download = originalPath.split("/").pop() ?? "kontrakt"
+                                link.click()
+                            }}><Download className="h-3.5 w-3.5" />Download original</Button>}
+                        </div>}
+                        {viewContract?.original_view_pdf_url && viewDocumentVariant === "original" && <p className="text-xs text-muted-foreground">Visningen er en neutral PDF-konvertering af Word-filen. Download original for den uændrede fil.</p>}
                     </DialogHeader>
                     <div className="flex-1 overflow-hidden rounded-lg border">
                         {viewPdfUrl ? (
-                            <PdfViewer url={viewPdfUrl} />
+                            <ContractDocViewer url={viewPdfUrl} filename={viewDocumentVariant === "commented" ? viewContract?.processed_pdf_url : viewContract?.original_view_pdf_url ?? viewContract?.pdf_url} />
                         ) : viewContract?.pdf_url ? (
                             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Henter PDF...</div>
                         ) : (
@@ -2556,9 +2363,14 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                         {version.superseded_at ? ` · erstattet ${new Date(version.superseded_at).toLocaleDateString("da-DK")}` : ""}
                                     </p>
                                 </div>
-                                <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void openContractVersion(version)} disabled={!version.pdf_url && !version.processed_pdf_url}>
-                                    <Eye className="h-4 w-4" />Åbn dokument
-                                </Button>
+                                <div className="flex flex-wrap gap-2">
+                                    <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void openContractVersion(version, "original")} disabled={!version.pdf_url}>
+                                        <Eye className="h-4 w-4" />Original
+                                    </Button>
+                                    <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void openContractVersion(version, "commented")} disabled={!version.processed_pdf_url}>
+                                        <FileText className="h-4 w-4" />Kommenteret PDF
+                                    </Button>
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -2566,7 +2378,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={!!editContract} onOpenChange={o => { if (!o && !dialogBusy) { closeEditDialog() } }}>
+            <Dialog open={!!editContract} onOpenChange={o => { if (!o && !editSaving) { closeEditDialog() } }}>
                 <DialogContent
                     ref={editDialogRef}
                     className="top-2 bottom-2 flex h-auto max-h-none min-h-0 w-full max-w-[95vw] flex-col gap-3 overflow-hidden p-4 sm:top-[50%] sm:bottom-auto sm:h-[92vh] sm:max-h-[92vh] sm:max-w-4xl sm:gap-4 sm:p-6 lg:max-w-[1180px]"
@@ -2586,26 +2398,26 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                     </DialogHeader>
                     <div className="shrink-0 border-b pb-3">
 	                    <div className="flex flex-wrap gap-2">
-	                        <Button type="button" variant="outline" size="sm" onClick={closeEditDialog} disabled={dialogBusy}>
+	                        <Button type="button" variant="outline" size="sm" onClick={closeEditDialog} disabled={editSaving}>
 	                            {t("common.cancel")}
 	                        </Button>
-	                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => handleSaveEdit(undefined, { saveOnly: true })} disabled={dialogBusy}>
+	                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => handleSaveEdit(undefined, { saveOnly: true })} disabled={editSaving}>
 	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
 	                            {t("admin.contracts.saveContract")}
 	                        </Button>
-	                        <Button type="button" size="sm" className="gap-2" onClick={handleValidateAndNext} disabled={dialogBusy}>
+	                        <Button type="button" size="sm" className="gap-2" onClick={handleValidateAndNext} disabled={editSaving}>
 	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
 	                            {t("admin.contracts.validate")}
 	                        </Button>
-                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleArchiveEdit} disabled={dialogBusy}>
+                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleArchiveEdit} disabled={editSaving}>
                             <Archive className="h-4 w-4" />
                             Arkiver
                         </Button>
-                        <Button type="button" variant="outline" size="sm" onClick={() => { setCurrentVersionId(""); setVersionDialogOpen(true) }} disabled={dialogBusy}>
+                        <Button type="button" variant="outline" size="sm" onClick={() => { setCurrentVersionId(""); setVersionDialogOpen(true) }} disabled={editSaving}>
                             Markér som tidligere version
                         </Button>
                         {Boolean(editContract?.previous_version_count) && (
-                            <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void showVersionHistory()} disabled={dialogBusy}>
+                            <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void showVersionHistory()} disabled={editSaving}>
                                 <FileText className="h-4 w-4" />Versionshistorik
                             </Button>
                         )}
@@ -2619,13 +2431,13 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                     if (editDocUrl) window.open(editDocUrl, "_blank", "noopener,noreferrer")
                                     else void openPdf(editContract)
                                 }}
-                                disabled={dialogBusy}
+                                disabled={editSaving}
                             >
                                 <Eye className="h-4 w-4" />
                                 Åbn PDF
                             </Button>
                         )}
-                        <Button type="button" variant="destructive" size="sm" className="gap-2" onClick={handleDeleteEdit} disabled={dialogBusy}>
+                        <Button type="button" variant="destructive" size="sm" className="gap-2" onClick={handleDeleteEdit} disabled={editSaving}>
                             <Trash2 className="h-4 w-4" />
                             Slet
                         </Button>
@@ -2633,19 +2445,15 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                         {!editForm?.work_id && (
                             <p className="mt-2 text-xs text-amber-600">Hvis du validerer uden et værk tilknyttet, bliver du spurgt om der skal oprettes et nyt værk med arbejdstitlen.</p>
                         )}
-                        {editContract?.ai_job_error && (
+                        {(editContract?.ai_job_error || editDocumentError) && (
                             <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800" role="alert">
-                                <p className="font-medium">AI-aflæsningen kræver manuel kontrol</p>
-                                <p className="mt-0.5">{editContract.ai_job_error}</p>
+                                <p className="font-medium">Kontrakten kræver manuel kontrol</p>
+                                <p className="mt-0.5">{editContract?.ai_job_error ?? editDocumentError}</p>
                             </div>
                         )}
                     </div>
                     {editForm && (
-                        <div
-                            ref={editDialogScrollRef}
-                            aria-busy={documentReviewAction ? "true" : undefined}
-                            className={`min-h-0 flex-1 overflow-y-auto overscroll-contain md:grid md:grid-cols-[1.05fr_1fr] md:gap-4 md:overflow-hidden ${documentReviewAction ? "pointer-events-none opacity-80" : ""}`}
-                        >
+                        <div ref={editDialogScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain md:grid md:grid-cols-[1.05fr_1fr] md:gap-4 md:overflow-hidden">
                             <div className="hidden h-full min-h-0 overflow-hidden rounded-md border md:block">
                                 {editContract?.pdf_url
                                     ? (() => {
@@ -2663,13 +2471,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                     : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen fil på kontrakten</div>}
                             </div>
                             <div className="space-y-4 py-2 pr-1 md:h-full md:min-h-0 md:overflow-y-auto md:overscroll-contain">
-                            <DocumentProcessingReviewCard
-                                review={documentReview}
-                                loading={documentReviewLoading}
-                                activeAction={documentReviewAction}
-                                statusMessage={documentReviewStatus}
-                                onAction={action => void handleDocumentReviewAction(action)}
-                            />
                             <div className="grid gap-4 sm:grid-cols-2">
                                 <div className="space-y-1">
                                     <div className="flex items-center justify-between">
@@ -2899,8 +2700,8 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                                         >
                                                             <div className="flex items-center justify-between gap-1 w-full font-medium">
                                                                 <span className="truncate">{item.title}</span>
-                                                                <span className="flex shrink-0 flex-wrap justify-end gap-1">
-                                                                    {item.sources.map(source => <SourcePictogram key={source} source={source} />)}
+                                                                <span className="text-[9px] uppercase font-bold text-muted-foreground shrink-0">
+                                                                    {item.sources.map(source => source === "local" ? "Findes allerede" : source).join(" · ")}
                                                                 </span>
                                                             </div>
                                                             <span className="text-[10px] text-muted-foreground mt-0.5">

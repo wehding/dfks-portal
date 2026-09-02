@@ -142,6 +142,7 @@ test("rigtig processOne-orienteringsfejl stopper pilotens runBackfill", async ()
         downloadUrl: "https://project.supabase.co/original.pdf",
         uploadPath: "org/processed/job/normalised.pdf",
         spatialUploadPath: "org/processed/job/vision-layout.json.gz",
+        sourceFormat: "pdf",
       }), { status: 200 });
       if (value.endsWith("/complete")) {
         completions.push(JSON.parse(init.body));

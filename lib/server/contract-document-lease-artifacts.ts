@@ -5,10 +5,14 @@ type LeaseArtifactPathsInput = {
   contractId: string;
   leaseToken?: string | null;
   outputStoragePath?: string | null;
+  originalViewStoragePath?: string | null;
   spatialDataPath?: string | null;
   promotedPdfPath?: string | null;
+  promotedOriginalViewPath?: string | null;
   promotedSpatialPath?: string | null;
 };
+
+type LeaseArtifactFilename = "normalised.pdf" | "original-view.pdf" | "vision-layout.json.gz";
 
 export function parseContractDocumentLeaseArtifactPath(path: string) {
   const parts = path.split("/");
@@ -18,14 +22,14 @@ export function parseContractDocumentLeaseArtifactPath(path: string) {
     || !UUID_PATTERN.test(parts[2] ?? "")
     || parts[3] !== "leases"
     || !UUID_PATTERN.test(parts[4] ?? "")
-    || !["normalised.pdf", "vision-layout.json.gz"].includes(parts[5] ?? "")) {
+    || !["normalised.pdf", "original-view.pdf", "vision-layout.json.gz"].includes(parts[5] ?? "")) {
     return null;
   }
   return {
     orgId: parts[0],
     contractId: parts[2],
     leaseToken: parts[4],
-    filename: parts[5] as "normalised.pdf" | "vision-layout.json.gz",
+    filename: parts[5] as LeaseArtifactFilename,
   };
 }
 
@@ -33,7 +37,7 @@ function isExpectedLeaseArtifact(
   path: string,
   orgId: string,
   contractId: string,
-  filename: "normalised.pdf" | "vision-layout.json.gz",
+  filename: LeaseArtifactFilename,
   leaseToken?: string | null,
 ) {
   const parsed = parseContractDocumentLeaseArtifactPath(path);
@@ -60,6 +64,17 @@ export function getRemovableLeaseArtifactPaths(input: LeaseArtifactPathsInput) {
       input.leaseToken,
     )) {
     paths.push(input.outputStoragePath);
+  }
+  if (input.originalViewStoragePath
+    && input.originalViewStoragePath !== input.promotedOriginalViewPath
+    && isExpectedLeaseArtifact(
+      input.originalViewStoragePath,
+      input.orgId,
+      input.contractId,
+      "original-view.pdf",
+      input.leaseToken,
+    )) {
+    paths.push(input.originalViewStoragePath);
   }
   if (input.spatialDataPath
     && input.spatialDataPath !== input.promotedSpatialPath

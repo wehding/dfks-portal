@@ -54,6 +54,7 @@ import { AdminContextualHelp } from "@/components/admin/admin-contextual-help"
 import { AdminListAutoTools } from "@/components/admin/admin-list-tools"
 import { resolveNavigationTitle } from "@/lib/navigation-title"
 import { OnboardingRequirementBanner } from "@/components/onboarding-requirement-banner"
+import { AdminPageTitleContext } from "@/components/admin/admin-page-title"
 
 const ADMIN_NAV_ITEMS = [
     { key: "overblik",            href: "/admin",                     icon: Home,        labelKey: "nav.dashboard"        },
@@ -153,6 +154,7 @@ export default function AdminShellClient({ children, initialContext }: { childre
     const [badges, setBadges] = useState<NavigationBadgeCounts>(EMPTY_NAVIGATION_BADGES)
     const isAssociationMember = initialContext.canUseMember
     const [activeOrgId, setActiveOrgId] = useState(initialContext.orgId)
+    const [pageTitleOverride, setPageTitleOverride] = useState<string | null>(null)
     const organisations = initialContext.organisations
 
     // Kollaps-tilstand per sektion. Opsætning er lukket som standard.
@@ -229,7 +231,7 @@ export default function AdminShellClient({ children, initialContext }: { childre
             ...item,
             label: t(item.labelKey as Parameters<typeof t>[0]),
         }))
-    const currentPageTitle = resolveNavigationTitle(pathname, [...adminItems, ...rettighedsItems, ...setupItems, ...userNavItems], t("nav.admin"))
+    const currentPageTitle = pageTitleOverride ?? resolveNavigationTitle(pathname, [...adminItems, ...rettighedsItems, ...setupItems, ...userNavItems], t("nav.admin"))
 
     const renderItem = (item: typeof adminItems[0]) => (
         <SidebarMenuItem key={item.key}>
@@ -273,6 +275,7 @@ export default function AdminShellClient({ children, initialContext }: { childre
     )
 
     return (
+        <AdminPageTitleContext.Provider value={setPageTitleOverride}>
         <SidebarProvider>
             <SidebarCloseOnNavigation />
             <Sidebar variant="inset">
@@ -387,5 +390,6 @@ export default function AdminShellClient({ children, initialContext }: { childre
                 <AdminListAutoTools />
             </SidebarInset>
         </SidebarProvider>
+        </AdminPageTitleContext.Provider>
     )
 }

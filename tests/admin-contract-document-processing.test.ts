@@ -6,7 +6,7 @@ import * as ts from "typescript";
 import * as reviewModule from "../lib/contract-document-review";
 
 const routePath = new URL("../app/api/admin/contracts/[id]/document-processing/route.ts", import.meta.url);
-const clientPath = new URL("../app/admin/kontrakter/ContractArchiveClient.tsx", import.meta.url);
+const clientPath = new URL("../app/admin/kontrakter/[id]/rediger/ContractWorkbenchClient.tsx", import.meta.url);
 const coveragePath = new URL("../config/audit-coverage.json", import.meta.url);
 
 type RouteExports = {
@@ -38,28 +38,6 @@ function parseClient(source: string) {
     true,
     ts.ScriptKind.TSX,
   );
-}
-
-function findVariable(sourceFile: ts.SourceFile, name: string): ts.VariableDeclaration {
-  let result: ts.VariableDeclaration | undefined;
-  const visit = (node: ts.Node) => {
-    if (
-      ts.isVariableDeclaration(node)
-      && ts.isIdentifier(node.name)
-      && node.name.text === name
-    ) {
-      result = node;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  assert.ok(result, `Variablen ${name} blev ikke fundet`);
-  return result;
-}
-
-function compact(node: ts.Node, sourceFile: ts.SourceFile) {
-  return node.getText(sourceFile).replace(/\s+/g, " ");
 }
 
 function jsxAttributeText(
@@ -261,76 +239,20 @@ test("mobilkortet har fuldbredde handlinger, loading og aria-live", async () => 
   assert.match(source, /Henter den seneste PDF-status/);
 });
 
-test("redigeringssessionen afviser sene svar, også når samme kontrakt genåbnes", async () => {
+test("arbejdsfladen afviser et sent PDF-statussvar efter navigation", async () => {
   const source = await readFile(clientPath, "utf8");
-  const sourceFile = parseClient(source);
-  const sessionGate = compact(findVariable(sourceFile, "isCurrentEditSession"), sourceFile);
-  const closeDialog = compact(findVariable(sourceFile, "closeEditDialog"), sourceFile);
-  const openEdit = compact(findVariable(sourceFile, "openEdit"), sourceFile);
-  const loadReview = compact(findVariable(sourceFile, "loadDocumentProcessingReview"), sourceFile);
-  const loadDetail = compact(findVariable(sourceFile, "loadContractDetail"), sourceFile);
-  const reviewAction = compact(findVariable(sourceFile, "handleDocumentReviewAction"), sourceFile);
-
-  assert.match(sessionGate, /documentReviewContractIdRef\.current === contractId/);
-  assert.match(sessionGate, /editSessionGenerationRef\.current === generation/);
-  assert.match(closeDialog, /editSessionGenerationRef\.current \+= 1/);
-  assert.match(closeDialog, /documentReviewContractIdRef\.current = null/);
-  assert.match(openEdit, /const generation = editSessionGenerationRef\.current \+ 1/);
-  assert.match(openEdit, /editSessionGenerationRef\.current = generation/);
-  assert.match(openEdit, /loadContractDetail\(c, generation\)/);
-  assert.match(openEdit, /loadDocumentProcessingReview\(c\.id, generation\)/);
-  assert.ok((loadReview.match(/isCurrentEditSession\(contractId, generation\)/g) ?? []).length >= 3);
-  assert.match(loadDetail, /if \(!data \|\| !isCurrentEditSession\(c\.id, generation\)\) return/);
-  assert.match(reviewAction, /editSessionGenerationRef\.current = generation/);
-  assert.match(reviewAction, /Promise\.all\(\[ loadContractDetail\(contractSnapshot, generation\), loadDocumentProcessingReview\(contractId, generation/);
-  assert.ok((reviewAction.match(/isCurrentEditSession\(contractId, generation\)/g) ?? []).length >= 4);
+  assert.match(source, /const controller = new AbortController\(\)/);
+  assert.match(source, /signal: controller\.signal/);
+  assert.match(source, /if \(!controller\.signal\.aborted\)/);
+  assert.match(source, /return \(\) => controller\.abort\(\)/);
 });
 
-test("OCR-handling låser dialogens knapper og tastaturhandlinger", async () => {
+test("OCR-handling kan ikke startes dobbelt og låser sine handlinger", async () => {
   const source = await readFile(clientPath, "utf8");
-  const sourceFile = parseClient(source);
-  const dialogBusy = compact(findVariable(sourceFile, "dialogBusy"), sourceFile);
-  const handleSave = compact(findVariable(sourceFile, "handleSaveEdit"), sourceFile);
-  const handleValidate = compact(findVariable(sourceFile, "handleValidateAndNext"), sourceFile);
-  const handleArchive = compact(findVariable(sourceFile, "handleArchiveEdit"), sourceFile);
-  const handleDelete = compact(findVariable(sourceFile, "handleDeleteEdit"), sourceFile);
-
-  assert.match(dialogBusy, /editSaving \|\| documentReviewAction !== null/);
-  for (const [name, handler] of [
-    ["gem", handleSave],
-    ["validér", handleValidate],
-    ["arkivér", handleArchive],
-    ["slet", handleDelete],
-  ] as const) {
-    assert.match(handler, /documentReviewAction \|\| editSaving/, `${name}-handleren mangler intern busy-guard`);
-  }
-
-  const guardedButtons: string[] = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isJsxElement(node) && node.openingElement.tagName.getText(sourceFile) === "Button") {
-      if (jsxAttributeText(node.openingElement, "disabled", sourceFile).includes("dialogBusy")) {
-        guardedButtons.push(compact(node, sourceFile));
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  assert.ok(guardedButtons.length >= 8, "alle dialogens topfunktioner skal bruge den fælles busy-state");
-  for (const expectedAction of [
-    "closeEditDialog",
-    "handleSaveEdit",
-    "handleValidateAndNext",
-    "handleArchiveEdit",
-    "handleDeleteEdit",
-  ]) {
-    assert.ok(
-      guardedButtons.some(button => button.includes(expectedAction)),
-      `${expectedAction} er ikke låst af dialogBusy`,
-    );
-  }
-  assert.match(source, /editContract && !editSaving && !documentReviewAction/);
-  assert.match(source, /event\.key === "Enter" && !editSaving && !documentReviewAction/);
-  assert.match(source, /\[editContract, editSaving, documentReviewAction\]/);
+  assert.match(source, /if \(documentReviewAction\) return/);
+  assert.match(source, /setDocumentReviewAction\(action\)/);
+  assert.ok((source.match(/disabled=\{Boolean\(activeAction\)\}/g) ?? []).length >= 2);
+  assert.match(source, /setDocumentReviewAction\(null\)/);
 });
 
 test("OCR-kortet ligger i mobilens scrollområde og ikke i den faste topbjælke", async () => {

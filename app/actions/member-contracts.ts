@@ -11,9 +11,11 @@ import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncContractProducerRelations } from "@/lib/server/production-company-relations";
 import { mergeContractWorkData, type LinkedContractWorkData } from "@/lib/contract-work-data";
+import { applyApprovedAgreementRoyalty } from "@/lib/agreement-royalty-server";
 import { isUuid } from "@/lib/uuid";
 import { resolveDefaultRole } from "@/lib/branding";
-import { parseLocalEpisodeCode } from "@/lib/series-episodes";
+import { buildCompleteEpisodeOptions, episodeOptionsFromLocalChildren, mergeEpisodeOptionsByPriority, parseLocalEpisodeCode } from "@/lib/series-episodes";
+import { resolveExternalSeriesEpisodesForTitle } from "@/app/actions/member-works";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { effectiveCopydanStatus, normalizeTriState, weeklySalaryWithPersonalSupplement } from "@/lib/contract-list-status";
 import { resolveSeriesScopeTarget, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
@@ -21,6 +23,13 @@ import { auditHeadersContext } from "@/lib/audit-access-server";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { extractWordText } from "@/lib/word-text";
+import { extractPdfTextWithLayout } from "@/lib/pdf-parse";
+import { buildPdfLayout } from "@/lib/contract-layout";
+import type { ContractLayout } from "@/lib/contract-layout";
+import { matchCitationToClause } from "@/lib/contract-layout-store";
+import { findContractTypeEvidence, type StoredContractFieldEvidence } from "@/lib/contract-workbench";
+import { mergeContractEvidence, resolveNativeLayoutEvidence, resolveSpatialV3Evidence, sanitizeStoredContractEvidence } from "@/lib/contract-field-evidence";
+import { parseVerifiedSpatialV3Artifact } from "@/lib/server/contract-spatial-artifact";
 import { hasActiveMemberContractOwnership, type MemberOrgAffiliation } from "@/lib/member-contract-access";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -399,6 +408,22 @@ async function matchingAdminContractIds(
       .limit(5000);
     if (error) throw new Error(error.message);
     ids = intersectIds(ids, (data ?? []).map(row => row.contract_id));
+  } else if (params.status === "documentProcessing") {
+    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).in("document_processing_status", ["pending", "processing"]).limit(5000);
+    if (error) throw new Error(error.message);
+    ids = intersectIds(ids, (data ?? []).map(row => row.id));
+  } else if (params.status === "documentReady") {
+    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).in("document_processing_status", ["ready", "not_required"]).limit(5000);
+    if (error) throw new Error(error.message);
+    ids = intersectIds(ids, (data ?? []).map(row => row.id));
+  } else if (params.status === "documentNeedsReview") {
+    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).eq("document_processing_status", "needs_review").limit(5000);
+    if (error) throw new Error(error.message);
+    ids = intersectIds(ids, (data ?? []).map(row => row.id));
+  } else if (params.status === "documentFailed") {
+    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).eq("document_processing_status", "failed").limit(5000);
+    if (error) throw new Error(error.message);
+    ids = intersectIds(ids, (data ?? []).map(row => row.id));
   }
 
   return ids;
@@ -441,7 +466,7 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
   }
 
   const selectFields = `
-    id, type, overenskomst, status, pdf_url, processed_pdf_url,
+    id, type, overenskomst, status, pdf_url, original_view_pdf_url, processed_pdf_url,
     document_processing_status, document_processing_error_code, superseded_by_contract_id,
     contract_date, start_date, end_date, created_at,
     employer_id, rights_holder_id, working_title,
@@ -456,7 +481,7 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
   const applyFilters = (query: any) => {
     let next = query;
     if (matchedIds) next = next.in("id", [...matchedIds]);
-    if (params.status && !["all", "beskeder", "missingOwner", "missingWork", "validationPending", "validationRecommended"].includes(params.status)) next = next.eq("status", params.status);
+    if (params.status && !["all", "beskeder", "missingOwner", "missingWork", "validationPending", "validationRecommended", "documentProcessing", "documentReady", "documentNeedsReview", "documentFailed"].includes(params.status)) next = next.eq("status", params.status);
     if (params.type && params.type !== "all") next = next.eq("type", params.type);
     return next;
   };
@@ -1682,7 +1707,7 @@ export async function deleteMemberContract(contractId: string) {
 
   const { data: contract } = await db
     .from("contracts")
-    .select("pdf_url, rights_holder_id")
+    .select("pdf_url, original_view_pdf_url, processed_pdf_url, document_spatial_data_path, rights_holder_id")
     .eq("id", contractId)
     .single();
 
@@ -1691,14 +1716,20 @@ export async function deleteMemberContract(contractId: string) {
 
   // Slet altid databaserækken først. Hvis storage slettes først og database-
   // sletningen fejler, står brugeren ellers med en kontrakt uden dokument.
-  const { data: attachments } = await db
-    .from("contract_attachments")
-    .select("pdf_url")
-    .eq("contract_id", contractId);
-  const storagePaths = [
+  const [{ data: attachments }, { data: documentJobs }] = await Promise.all([
+    db.from("contract_attachments").select("pdf_url").eq("contract_id", contractId),
+    db.from("contract_document_jobs")
+      .select("output_storage_path,original_view_storage_path,spatial_data_path")
+      .eq("contract_id", contractId),
+  ]);
+  const storagePaths = [...new Set([
     contract.pdf_url,
+    contract.original_view_pdf_url,
+    contract.processed_pdf_url,
+    contract.document_spatial_data_path,
     ...((attachments ?? []).map(a => a.pdf_url)),
-  ].filter((p): p is string => Boolean(p));
+    ...((documentJobs ?? []).flatMap(job => [job.output_storage_path, job.original_view_storage_path, job.spatial_data_path])),
+  ].filter((p): p is string => Boolean(p)))];
   const { error: deleteError } = await db.from("contracts").delete().eq("id", contractId);
   if (deleteError) {
     console.error("[member-contracts] contract delete failed", deleteError.code);
@@ -1753,13 +1784,18 @@ export async function getContractValidation(contractId: string, includeEpisodes 
     season_number: relatedWork.season_number ?? parsedEpisode?.seasonNumber ?? null,
     episode_number: relatedWork.episode_number ?? parsedEpisode?.episodeNumber ?? null,
   } : null;
-  const extractedData = mergeContractWorkData({
+  let extractedData = mergeContractWorkData({
     extractedData: (data?.extracted_data ?? null) as Record<string, unknown> | null,
     contract,
     work,
     employerName: employer?.name ?? null,
     rightsHolderName: rightsHolder?.full_name ?? null,
   });
+  try {
+    extractedData = (await applyApprovedAgreementRoyalty(extractedData)).data;
+  } catch (error) {
+    console.warn("[contract-validation] Royaltyreglen kunne ikke anvendes", error instanceof Error ? error.message : error);
+  }
 
   const linkedEpisodes: Array<{ id: string; title: string; seasonNumber: number; episodeNumber: number; role: string | null }> = [];
   const episodeOptions: Array<{ id: string; title: string; seasonNumber: number; episodeNumber: number }> = [];
@@ -1829,9 +1865,15 @@ export async function getContractValidation(contractId: string, includeEpisodes 
   };
 }
 
-export type ContractValidationSectionKey = "rights" | "dates" | "salary" | "series" | "signature" | "ids" | "work";
+export type ContractValidationSectionKey = "approval" | "rights" | "dates" | "salary" | "series" | "signature" | "ids" | "work";
 
 const CONTRACT_VALIDATION_SECTION_FIELDS: Record<ContractValidationSectionKey, readonly string[]> = {
+  approval: [
+    "copydan", "svod", "hasCreditClause", "royalty", "royaltyPercent",
+    "royaltySourceType", "royaltyResolutionReason", "royaltyAgreementCode",
+    "royaltyAgreementTitle", "royaltyAgreementSection", "royaltyTag", "_royaltyResolution",
+    "signatureStatus", "signatureDate", "contractDate", "_sources", "_lockedFields",
+  ],
   rights: [
     "copydan", "svod", "agreementReferenceStatus", "collectiveAgreement",
     "collectiveAgreementByReference", "hasOverenskomstIncorporation", "rightsNotApplicable",
@@ -1908,7 +1950,7 @@ export async function getContractValidationSection(params: { contractId: string;
     sectionData.tmdbId = result.workIdentifiers?.tmdbId ?? null;
     sectionData.imdbId = result.workIdentifiers?.imdbId ?? null;
   }
-  if (params.section === "rights" && sectionData.agreementReferenceStatus == null) {
+  if ((params.section === "rights" || params.section === "approval") && sectionData.agreementReferenceStatus == null) {
     sectionData.agreementReferenceStatus = [
       sectionData.collectiveAgreement,
       sectionData.collectiveAgreementByReference,
@@ -1922,6 +1964,70 @@ export async function getContractValidationSection(params: { contractId: string;
     episodeOptions: params.section === "series" ? result.episodeOptions : undefined,
     isSeriesWork: result.isSeriesWork,
   };
+}
+
+export async function getAdminContractSeriesEpisodeOptions(params: { contractId: string; seasonNumber: number }) {
+  const user = await currentUser();
+  if (!user) return { success: false as const, error: "Ikke logget ind", options: [], selectedEpisodes: [] };
+  const db = createServiceClient();
+  const { data: contract } = await db.from("contracts")
+    .select("id,org_id,rights_holder_id,work_id,episode_numbers,works(id,title,type,year,parent_work_id,episode_count,dfi_id,tmdb_id)")
+    .eq("id", params.contractId)
+    .maybeSingle();
+  if (!contract || !(await assertAdminForOrg(db, user.id, contract.org_id))) {
+    return { success: false as const, error: "Ikke autoriseret", options: [], selectedEpisodes: [] };
+  }
+  const relatedWork = Array.isArray(contract.works) ? contract.works[0] : contract.works;
+  if (!relatedWork || !contract.work_id) {
+    return { success: false as const, error: "Kontrakten mangler et tilknyttet serieværk", options: [], selectedEpisodes: [] };
+  }
+  const parentId = relatedWork.parent_work_id ?? relatedWork.id;
+  const { data: parentWork } = relatedWork.parent_work_id
+    ? await db.from("works").select("id,title,type,year,episode_count,dfi_id,tmdb_id").eq("id", parentId).eq("org_id", contract.org_id).maybeSingle()
+    : { data: relatedWork };
+  if (!parentWork) return { success: false as const, error: "Serien blev ikke fundet", options: [], selectedEpisodes: [] };
+
+  const seasonNumber = Math.max(1, Math.floor(Number(params.seasonNumber) || 1));
+  const { data: localChildren } = await db.from("works")
+    .select("id,title,season_number,episode_number,parent_work_id")
+    .eq("org_id", contract.org_id)
+    .eq("parent_work_id", parentId)
+    .eq("season_number", seasonNumber)
+    .order("episode_number", { ascending: true });
+  const external = await resolveExternalSeriesEpisodesForTitle({
+    title: parentWork.title,
+    year: parentWork.year,
+    dfiId: parentWork.dfi_id == null ? null : String(parentWork.dfi_id),
+    tmdbId: parentWork.tmdb_id == null ? null : Number(parentWork.tmdb_id),
+    seasonNumber,
+  });
+  const localOptions = episodeOptionsFromLocalChildren(localChildren, seasonNumber);
+  const merged = mergeEpisodeOptionsByPriority(localOptions, external.dfiEpisodeOptions, external.tmdbEpisodeOptions);
+  const directSelection = Array.isArray(contract.episode_numbers)
+    ? contract.episode_numbers.filter((number): number is number => Number.isInteger(number) && number > 0)
+    : [];
+  let selectedEpisodes = directSelection;
+  if (selectedEpisodes.length === 0 && contract.rights_holder_id && (localChildren?.length ?? 0) > 0) {
+    const childById = new Map((localChildren ?? []).map(child => [child.id, Number(child.episode_number)]));
+    const { data: assignments } = await db.from("work_assignments")
+      .select("work_id")
+      .eq("org_id", contract.org_id)
+      .eq("rights_holder_id", contract.rights_holder_id)
+      .in("work_id", [...childById.keys()]);
+    selectedEpisodes = (assignments ?? [])
+      .map(assignment => childById.get(assignment.work_id) ?? 0)
+      .filter(number => number > 0)
+      .sort((left, right) => left - right);
+  }
+  const episodeCount = Math.max(
+    Number(parentWork.episode_count ?? 0) || 0,
+    external.episodeCount ?? 0,
+    ...merged.map(option => option.number),
+    ...selectedEpisodes,
+    0,
+  );
+  const options = buildCompleteEpisodeOptions({ episodeCount, externalOptions: merged, localChildren, seasonNumber });
+  return { success: true as const, options, selectedEpisodes, seasonNumber };
 }
 
 export async function saveContractValidationSection(params: {
@@ -2089,18 +2195,20 @@ export async function deleteAdminContractsPermanently(contractIds: string[]) {
   const db = createServiceClient();
   const { data: rows, error: fetchErr } = await db
     .from("contracts")
-    .select("id, org_id, pdf_url")
+    .select("id, org_id, pdf_url, original_view_pdf_url, processed_pdf_url, document_spatial_data_path")
     .in("id", ids);
   if (fetchErr) return { success: false, error: fetchErr.message };
 
   const found = rows ?? [];
   if (found.length === 0) return { success: false, error: "Ingen af kontrakterne blev fundet" };
-  const { data: attachmentRows, error: attachmentFetchError } = await db
-    .from("contract_attachments")
-    .select("pdf_url")
-    .in("contract_id", found.map(row => row.id));
-  if (attachmentFetchError) {
-    console.error("[member-contracts] attachment paths could not be loaded", attachmentFetchError.code);
+  const [{ data: attachmentRows, error: attachmentFetchError }, { data: documentJobRows, error: documentJobFetchError }] = await Promise.all([
+    db.from("contract_attachments").select("pdf_url").in("contract_id", found.map(row => row.id)),
+    db.from("contract_document_jobs")
+      .select("output_storage_path,original_view_storage_path,spatial_data_path")
+      .in("contract_id", found.map(row => row.id)),
+  ]);
+  if (attachmentFetchError || documentJobFetchError) {
+    console.error("[member-contracts] derivative paths could not be loaded", attachmentFetchError?.code ?? documentJobFetchError?.code);
     return { success: false, error: "Kontraktfilerne kunne ikke klargøres til sletning." };
   }
 
@@ -2139,8 +2247,9 @@ export async function deleteAdminContractsPermanently(contractIds: string[]) {
   }
 
   const pdfs = [...new Set([
-    ...found.map(row => row.pdf_url),
+    ...found.flatMap(row => [row.pdf_url, row.original_view_pdf_url, row.processed_pdf_url, row.document_spatial_data_path]),
     ...(attachmentRows ?? []).map(row => row.pdf_url),
+    ...(documentJobRows ?? []).flatMap(row => [row.output_storage_path, row.original_view_storage_path, row.spatial_data_path]),
   ].filter((url): url is string => Boolean(url)))];
   let cleanupWarning: string | undefined;
   if (pdfs.length > 0) {
@@ -2279,6 +2388,32 @@ export type AdminContractUpdate = {
   producer_selections?: ProductionCompanySelection[];
 };
 
+export async function queueAdminContractAiExtraction(contractId: string) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const db = createServiceClient();
+  const orgId = await requireOrgId(db, user.id);
+  if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+  const { data: contract, error: contractError } = await db.from("contracts")
+    .select("id,pdf_url,document_processing_status")
+    .eq("id", contractId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (contractError) return { success: false, error: contractError.message };
+  if (!contract?.pdf_url) return { success: false, error: "Kontrakten mangler en fil" };
+  if (contract.pdf_url.toLowerCase().endsWith(".pdf") && !["ready", "not_required"].includes(contract.document_processing_status ?? "")) {
+    return { success: false, error: "PDF-behandlingen skal være færdig, før AI-aflæsningen kan startes" };
+  }
+  const { data: job, error } = await db.from("contract_ai_jobs").insert({
+    contract_id: contract.id,
+    org_id: orgId,
+    status: "queued",
+    priority: 0,
+  }).select("id").single();
+  if (error) return { success: false, error: error.message };
+  return { success: true, jobId: job.id };
+}
+
 export async function fetchAdminContractEditorData(contractId: string) {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
@@ -2288,7 +2423,7 @@ export async function fetchAdminContractEditorData(contractId: string) {
 
   const [contractResult, rightsHoldersResult, worksResult, producerResult] = await Promise.all([
     db.from("contracts")
-      .select("id,type,overenskomst,status,pdf_url,contract_date,start_date,end_date,employer_id,rights_holder_id,work_id,working_title,season_number,episode_numbers,employers(name),rettighedshavere(full_name),works(title,year,type),contract_comments(*),contract_attachments(*)")
+      .select("id,org_id,type,overenskomst,status,pdf_url,original_view_pdf_url,processed_pdf_url,layout_data,document_processing_status,document_processing_error_code,document_spatial_data_path,document_spatial_schema_version,document_spatial_accuracy,contract_date,start_date,end_date,employer_id,rights_holder_id,work_id,working_title,season_number,episode_numbers,employers(name),rettighedshavere(full_name),works(id,title,year,type,dfi_id,tmdb_id,imdb_id),contract_validations(id,extracted_data,has_credit_clause,has_overenskomst_incorporation),contract_comments(*),contract_attachments(*)")
       .eq("id", contractId)
       .eq("org_id", orgId)
       .maybeSingle(),
@@ -2298,7 +2433,7 @@ export async function fetchAdminContractEditorData(contractId: string) {
       .order("full_name")
       .limit(1000),
     db.from("works")
-      .select("id,title,year,type")
+      .select("id,title,year,type,dfi_id,tmdb_id,imdb_id")
       .eq("org_id", orgId)
       .order("title")
       .limit(1000),
@@ -2314,7 +2449,127 @@ export async function fetchAdminContractEditorData(contractId: string) {
   if (worksResult.error) return { success: false, error: worksResult.error.message };
 
   const contract = contractResult.data;
+  const validation = Array.isArray(contract.contract_validations)
+    ? contract.contract_validations[0]
+    : contract.contract_validations;
+  const relatedWork = Array.isArray(contract.works) ? contract.works[0] : contract.works;
   const employer = Array.isArray(contract.employers) ? contract.employers[0] : contract.employers;
+  const rightsHolder = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere;
+  let extractedData = mergeContractWorkData({
+    extractedData: (validation?.extracted_data ?? {}) as Record<string, unknown>,
+    contract,
+    work: relatedWork,
+    employerName: employer?.name ?? null,
+    rightsHolderName: rightsHolder?.full_name ?? null,
+  });
+  try {
+    extractedData = (await applyApprovedAgreementRoyalty(extractedData)).data;
+  } catch (error) {
+    console.warn("[contract-editor] Royaltyreglen kunne ikke anvendes", error instanceof Error ? error.message : error);
+  }
+  const sources = extractedData._sources && typeof extractedData._sources === "object"
+    ? extractedData._sources as Record<string, string | null>
+    : {};
+  let layout = contract.layout_data as ContractLayout | null;
+  const layoutPath = contract.processed_pdf_url ?? contract.pdf_url;
+  if (!layout && layoutPath && documentExtension(layoutPath) === "pdf") {
+    try {
+      const { data: file } = await db.storage.from(BUCKET).download(layoutPath);
+      if (file) {
+        layout = buildPdfLayout(await extractPdfTextWithLayout(Buffer.from(await file.arrayBuffer())));
+        await db.from("contracts").update({ layout_data: layout }).eq("id", contractId).eq("org_id", orgId);
+      }
+    } catch (error) {
+      console.warn("[contract-editor] Layout kunne ikke bygges", error instanceof Error ? error.message : error);
+    }
+  }
+  const addEvidence = (key: string, value: unknown) => {
+    const quote = typeof value === "string" ? value.trim() : "";
+    if (!quote || sources[key]) return;
+    sources[key] = quote;
+    sources[`${key}_clause_id`] = matchCitationToClause(quote, layout);
+  };
+  addEvidence("employerName", extractedData.employerName ?? extractedData.producerName);
+  addEvidence("rightsHolderName", extractedData.rightsHolderName);
+  addEvidence("director", extractedData.director);
+  addEvidence("signatureEvidence", extractedData.signatureEvidence);
+  if (typeof extractedData.signaturePage === "number" || typeof extractedData.signaturePage === "string") {
+    sources.signatureEvidence_page = String(extractedData.signaturePage);
+  }
+  if (!sources.contractType) {
+    const evidence = findContractTypeEvidence(contract.type, layout);
+    if (evidence) {
+      sources.contractType = evidence.quote;
+      sources.contractType_focus = evidence.focusText;
+      sources.contractType_clause_id = evidence.clauseId;
+      sources.contractType_page = String(evidence.page);
+    }
+  }
+  // Normalisér navigationen for alle kilder ét sted. Ældre AI-resultater har
+  // ofte citatet, men mangler klausul-id og sidenummer.
+  for (const [key, quote] of Object.entries({ ...sources })) {
+    if (!quote || key.endsWith("_clause_id") || key.endsWith("_page")) continue;
+    const clauseKey = `${key}_clause_id`;
+    const pageKey = `${key}_page`;
+    const clauseId = sources[clauseKey] ?? matchCitationToClause(quote, layout);
+    if (!clauseId) continue;
+    sources[clauseKey] = clauseId;
+    const clause = layout?.clauses.find(item => item.id === clauseId);
+    if (clause?.page && !sources[pageKey]) sources[pageKey] = String(clause.page);
+  }
+  const storedEvidence = sanitizeStoredContractEvidence(extractedData._evidence);
+  const nativeEvidence = resolveNativeLayoutEvidence(sources, layout);
+  let spatialEvidence: Record<string, StoredContractFieldEvidence> = {};
+  if (
+    contract.document_spatial_schema_version === "google-vision-spatial-v3"
+    && Number(contract.document_spatial_accuracy ?? 0) >= 0.95
+    && contract.document_spatial_data_path
+  ) {
+    try {
+      const { data: spatialJob } = await db.from("contract_document_jobs")
+        .select("spatial_data_path,spatial_sha256,spatial_schema_version,spatial_accuracy_score")
+        .eq("contract_id", contractId)
+        .eq("status", "completed")
+        .eq("spatial_data_path", contract.document_spatial_data_path)
+        .eq("spatial_schema_version", "google-vision-spatial-v3")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (spatialJob?.spatial_sha256 && Number(spatialJob.spatial_accuracy_score ?? 0) >= 0.95) {
+        const { data: file, error: downloadError } = await db.storage.from(BUCKET).download(contract.document_spatial_data_path);
+        if (downloadError || !file) throw downloadError ?? new Error("Spatial-artefaktet kunne ikke hentes");
+        const artifact = parseVerifiedSpatialV3Artifact(Buffer.from(await file.arrayBuffer()), spatialJob.spatial_sha256);
+        spatialEvidence = resolveSpatialV3Evidence(sources, artifact);
+      }
+    } catch (error) {
+      console.warn("[contract-editor] Spatial v3 kunne ikke bruges", error instanceof Error ? error.message : error);
+    }
+  }
+  const evidence = mergeContractEvidence(storedEvidence, nativeEvidence, spatialEvidence);
+  if (validation?.id && JSON.stringify(storedEvidence) !== JSON.stringify(evidence)) {
+    const nextExtractedData = { ...extractedData, _evidence: evidence };
+    const { error: evidenceSaveError } = await db.from("contract_validations")
+      .update({ extracted_data: nextExtractedData })
+      .eq("id", validation.id)
+      .eq("contract_id", contractId);
+    if (evidenceSaveError) throw new Error(`Kildekoordinater kunne ikke gemmes: ${evidenceSaveError.message}`);
+    extractedData = nextExtractedData;
+  }
+  const signedUrl = async (path: string | null) => {
+    if (!path) return null;
+    const { data } = await db.storage.from(BUCKET).createSignedUrl(path, 60 * 60);
+    return data?.signedUrl ?? null;
+  };
+  const [originalUrl, originalViewUrl, commentedUrl] = await Promise.all([
+    signedUrl(contract.pdf_url),
+    signedUrl(contract.original_view_pdf_url),
+    signedUrl(contract.processed_pdf_url),
+  ]);
+  await db.from("contract_comments")
+    .update({ admin_read_at: new Date().toISOString() })
+    .eq("contract_id", contractId)
+    .eq("author_role", "member")
+    .is("admin_read_at", null);
   const producerSelections: ProductionCompanySelection[] = producerResult.error
     ? (contract.employer_id && employer?.name ? [{ employerId: contract.employer_id, canonicalName: employer.name }] : [])
     : (producerResult.data ?? []).map(row => {
@@ -2344,10 +2599,40 @@ export async function fetchAdminContractEditorData(contractId: string) {
 
   return {
     success: true,
-    contract,
+    contract: {
+      ...contract,
+      validation_data: extractedData,
+      validation_has_credit_clause: validation?.has_credit_clause ?? null,
+      validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
+    },
     rightsHolders: rightsHoldersResult.data ?? [],
     works: worksResult.data ?? [],
     producerSelections,
+    documents: {
+      original: contract.pdf_url ? {
+        path: contract.original_view_pdf_url ?? contract.pdf_url,
+        url: originalViewUrl ?? originalUrl,
+        sourcePath: contract.pdf_url,
+        sourceUrl: originalUrl,
+        sourceFormat: documentExtension(contract.pdf_url) === "docx"
+          ? "docx"
+          : documentExtension(contract.pdf_url) === "doc" ? "doc" : documentExtension(contract.pdf_url) === "pdf" ? "pdf" : "unknown",
+        convertedForViewing: Boolean(contract.original_view_pdf_url),
+      } : null,
+      commented: contract.processed_pdf_url ? {
+        path: contract.processed_pdf_url,
+        url: commentedUrl,
+        sourcePath: contract.pdf_url ?? contract.processed_pdf_url,
+        sourceUrl: originalUrl,
+        sourceFormat: documentExtension(contract.pdf_url) === "docx"
+          ? "docx"
+          : documentExtension(contract.pdf_url) === "doc" ? "doc" : documentExtension(contract.pdf_url) === "pdf" ? "pdf" : "unknown",
+        convertedForViewing: false,
+      } : null,
+    },
+    layout,
+    sources,
+    evidence,
   };
 }
 

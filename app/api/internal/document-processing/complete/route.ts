@@ -39,6 +39,7 @@ type Completion = {
   spatialCenterInsideRatio?: number | null;
   originalSha256?: string | null;
   processedSha256?: string | null;
+  originalViewSha256?: string | null;
   spatialSha256?: string | null;
   errorCode?: string | null;
   safeErrorMessage?: string | null;
@@ -111,7 +112,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Ugyldig sidediagnostik" }, { status: 400 });
   }
 
-  const completionResult = await db.rpc("finish_contract_document_job_v8", {
+  const completionResult = await db.rpc("finish_contract_document_job_v9", {
     p_job_id: body.jobId,
     p_lease_token: body.leaseToken,
     p_status: body.status,
@@ -129,6 +130,7 @@ export async function POST(request: Request) {
     p_spatial_center_inside_ratio: safeRatio(body.spatialCenterInsideRatio),
     p_original_sha256: safeHash(body.originalSha256),
     p_processed_sha256: safeHash(body.processedSha256),
+    p_original_view_sha256: safeHash(body.originalViewSha256),
     p_processing_profile: safeProfile(body.processingProfile),
     p_spatial_schema_version: safeProfile(body.spatialSchemaVersion),
     p_spatial_sha256: safeHash(body.spatialSha256),

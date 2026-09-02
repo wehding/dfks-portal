@@ -13,6 +13,12 @@ type ServiceClient = ReturnType<typeof createServiceClient>;
 const CLEANUP_TIMEOUT_MS = 2_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function sourceFormatFromStoragePath(path: unknown) {
+  const match = typeof path === "string" ? path.match(/\.([a-z0-9]+)$/i) : null;
+  const extension = match?.[1]?.toLocaleLowerCase("en-US") ?? "";
+  return ["pdf", "doc", "docx"].includes(extension) ? extension : null;
+}
+
 function createCleanupFetch(signal: AbortSignal): typeof globalThis.fetch {
   return (input, init) => globalThis.fetch(input, {
     ...init,
@@ -130,10 +136,26 @@ export async function POST(request: Request) {
     if (error) return NextResponse.json({ error: "Dokumentkøen kunne ikke læses" }, { status: 500 });
   }
   if (!job?.id || !job.lease_token) return new NextResponse(null, { status: 204 });
+  const sourceFormat = sourceFormatFromStoragePath(job.original_storage_path);
   const expectedOriginalSha256 = typeof job.original_sha256 === "string"
     && /^[0-9a-f]{64}$/i.test(job.original_sha256)
     ? job.original_sha256.toLowerCase()
     : null;
+  if (!sourceFormat) {
+    await db.rpc("finish_contract_document_job_v9", {
+      p_job_id: job.id,
+      p_lease_token: job.lease_token,
+      p_status: "needs_review",
+      p_error_code: "unsupported_document_format",
+      p_safe_error_message: "Dokumenttypen kan ikke behandles automatisk.",
+      p_original_sha256: expectedOriginalSha256,
+      p_review_details: {
+        schemaVersion: 1,
+        reasons: [{ code: "unsupported_document_format", pageNumbers: [] }],
+      },
+    });
+    return new NextResponse(null, { status: 204 });
+  }
 
   const download = await db.storage.from("kontrakter").createSignedUrl(job.original_storage_path, 10 * 60, {
     download: false,
@@ -145,10 +167,14 @@ export async function POST(request: Request) {
   // currently locked lease into the contract row.
   const leasePrefix = `${job.org_id}/processed/${job.contract_id}/leases/${job.lease_token}`;
   const outputUploadPath = `${leasePrefix}/normalised.pdf`;
+  const originalViewUploadPath = sourceFormat && sourceFormat !== "pdf"
+    ? `${leasePrefix}/original-view.pdf`
+    : null;
   const spatialUploadPath = `${leasePrefix}/vision-layout.json.gz`;
   const { data: leasedJob, error: derivativePathError } = await db.from("contract_document_jobs")
     .update({
       output_storage_path: outputUploadPath,
+      original_view_storage_path: originalViewUploadPath,
       spatial_data_path: spatialUploadPath,
     })
     .eq("id", job.id)
@@ -157,7 +183,7 @@ export async function POST(request: Request) {
     .select("id")
     .maybeSingle();
   if (download.error || derivativePathError || !leasedJob?.id) {
-    await db.rpc("finish_contract_document_job_v8", {
+    await db.rpc("finish_contract_document_job_v9", {
       p_job_id: job.id,
       p_lease_token: job.lease_token,
       p_status: "failed",
@@ -189,8 +215,10 @@ export async function POST(request: Request) {
     jobId: job.id,
     leaseToken: job.lease_token,
     expectedOriginalSha256,
+    sourceFormat,
     downloadUrl: download.data.signedUrl,
     uploadPath: outputUploadPath,
+    originalViewUploadPath,
     spatialUploadPath,
     maxBytes: 25 * 1024 * 1024,
   }, { headers: { "Cache-Control": "no-store" } });

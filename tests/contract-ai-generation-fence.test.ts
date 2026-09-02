@@ -14,6 +14,10 @@ const migration = fs.readFileSync(
   new URL("../supabase/migrations/20260830230930_contract_ai_job_generation_fence.sql", import.meta.url),
   "utf8",
 );
+const documentVersionMigration = fs.readFileSync(
+  new URL("../supabase/migrations/20260902133000_contract_original_view_pdf.sql", import.meta.url),
+  "utf8",
+);
 const directVisionMigration = fs.readFileSync(
   new URL("../supabase/migrations/20260831224204_direct_vision_ocr_without_dlp.sql", import.meta.url),
   "utf8",
@@ -42,7 +46,9 @@ test("contract extraction uses only lease/input-generation fenced worker RPCs", 
 });
 
 test("OCR completion and AI apply share one advisory generation lock", () => {
-  assert.match(completionRoute, /finish_contract_document_job_v8/);
+  assert.match(completionRoute, /finish_contract_document_job_v9/);
+  assert.match(documentVersionMigration, /create or replace function public\.finish_contract_document_job_v9/);
+  assert.match(documentVersionMigration, /public\.finish_contract_document_job_v8/);
   assert.match(recoveryMigration, /create or replace function public\.finish_contract_document_job_v6/);
   assert.match(recoveryMigration, /public\.finish_contract_document_job_v5/);
   assert.match(migration, /create or replace function public\.finish_contract_document_job_v5/);

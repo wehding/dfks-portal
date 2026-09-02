@@ -157,6 +157,23 @@ begin
     raise exception 'Document queue regression: browser roles can access the server-only queue';
   end if;
   if exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'finish_contract_document_job_v9'
+      and has_function_privilege('authenticated', p.oid, 'EXECUTE')
+  ) or not exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'finish_contract_document_job_v9'
+      and has_function_privilege('service_role', p.oid, 'EXECUTE')
+  ) then
+    raise exception 'Document queue regression: version 9 completion privileges are unsafe';
+  end if;
+  if exists (
     select 1 from pg_policies
     where schemaname = 'storage' and tablename = 'objects'
       and roles && array['public', 'anon', 'authenticated']::name[]

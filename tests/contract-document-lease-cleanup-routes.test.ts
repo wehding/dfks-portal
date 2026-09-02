@@ -8,13 +8,13 @@ function routeSource(relativePath: string) {
 
 test("completion promoverer før den service-role-afgrænsede artefaktsletning", () => {
   const source = routeSource("app/api/internal/document-processing/complete/route.ts");
-  assert.match(source, /finish_contract_document_job_v8/);
+  assert.match(source, /finish_contract_document_job_v9/);
   assert.match(source, /p_review_details:\s*reviewDetails/);
   assert.match(source, /p_spatial_sha256:\s*safeHash\(body\.spatialSha256\)/);
   assert.match(source, /isSpatialVerificationCompletionValid/);
   assert.match(source, /safeSpatialVerificationProfile/);
   assert.doesNotMatch(source, /\.storage\.from\(["']kontrakter["']\)\.remove\(/);
-  assert.ok(source.indexOf("finish_contract_document_job_v8")
+  assert.ok(source.indexOf("finish_contract_document_job_v9")
     < source.lastIndexOf("processContractDocumentArtifactDeletions"));
   const deletionHelper = routeSource("lib/server/contract-document-artifact-deletions.ts");
   assert.match(deletionHelper, /parseContractDocumentLeaseArtifactPath/);
@@ -38,8 +38,7 @@ test("claim bruger kun den databasegodkendte karantæne-GC til storage-oprydning
   assert.match(source, /queue_contract_document_job_automatic_recovery_batch/);
   assert.match(source, /claim_next_direct_vision_replacement_job/);
   assert.match(source, /claim_next_contract_document_geometry_backfill_job/);
-  assert.match(source, /finish_contract_document_job_v8/);
-  assert.doesNotMatch(source, /finish_contract_document_job_v7/);
+  assert.match(source, /finish_contract_document_job_v9/);
   assert.match(source, /UUID_PATTERN\.test\(geometryBackfillRunId\)/);
   assert.match(source, /replacementOnly && geometryBackfillRunId != null/);
   assert.match(source, /p_run_id:\s*geometryBackfillRunId/);
