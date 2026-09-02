@@ -156,6 +156,8 @@ export interface DbContract {
     overenskomst: string | null
     status: string
     pdf_url: string | null
+    original_view_pdf_url: string | null
+    processed_pdf_url: string | null
     working_title: string | null
     contract_date: string | null
     start_date: string | null

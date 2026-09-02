@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +9,7 @@ import {
   readGoogleConfig,
 } from "./google-secure-api.mjs";
 import { MAX_SPATIAL_GZIP_BYTES } from "./resource-limits.mjs";
+import { detectContractSourceFormat } from "./source-format.mjs";
 import { processPdfSpatially, sha256 } from "./spatial-ocr.mjs";
 
 const REQUIRED_ENV = ["PORTAL_BASE_URL", "OCR_CLOUD_RUN_AUDIENCE", "SUPABASE_URL", "SUPABASE_ANON_KEY", "GOOGLE_CLOUD_PROJECT"];
@@ -17,6 +18,7 @@ const DEFAULT_PROCESSING_DEADLINE_SECONDS = 13 * 60;
 const MAX_PROCESSING_DEADLINE_SECONDS = 12 * 60 * 60;
 const DEFAULT_SIGNED_UPLOAD_TIMEOUT_MS = 60_000;
 const MAX_SIGNED_UPLOAD_TIMEOUT_MS = 10 * 60_000;
+const WORD_CONVERSION_TIMEOUT_MS = 3 * 60_000;
 export const OCR_QUALITY_DIAGNOSTIC_CODES = Object.freeze({
   unreadablePage: "ocr_unreadable_page",
   spatialQuality: "ocr_spatial_quality",
@@ -387,7 +389,7 @@ async function readResponseWithLimit(response, byteLimit, signal) {
     total += value.byteLength;
     if (total > byteLimit) {
       await reader.cancel();
-      throw new DocumentProcessingError("file_too_large", "needs_review", "PDF-filen overskrider den tilladte størrelse.");
+      throw new DocumentProcessingError("file_too_large", "needs_review", "Dokumentet overskrider den tilladte størrelse.");
     }
     chunks.push(Buffer.from(value));
   }
@@ -395,11 +397,77 @@ async function readResponseWithLimit(response, byteLimit, signal) {
   return Buffer.concat(chunks, total);
 }
 
+export async function convertWordSourceToPdf({
+  input,
+  format,
+  workDir,
+  commandRunner,
+  signal,
+  assertHealthy = () => {},
+  maxBytes = MAX_BYTES,
+}) {
+  if (!Buffer.isBuffer(input) || !["doc", "docx"].includes(format)) {
+    throw new DocumentProcessingError(
+      "unsupported_document_format",
+      "needs_review",
+      "Dokumenttypen kan ikke konverteres automatisk.",
+    );
+  }
+  const sourcePath = join(workDir, `source.${format}`);
+  const profilePath = join(workDir, "libreoffice-profile");
+  const convertedPath = join(workDir, "source.pdf");
+  await mkdir(profilePath, { recursive: true, mode: 0o700 });
+  await writeFile(sourcePath, input, { mode: 0o600 });
+  assertHealthy();
+  try {
+    await commandRunner("libreoffice", [
+      "--headless",
+      "--invisible",
+      "--nologo",
+      "--nodefault",
+      "--nolockcheck",
+      "--norestore",
+      "--nofirststartwizard",
+      `-env:UserInstallation=file://${profilePath}`,
+      "--convert-to",
+      "pdf:writer_pdf_Export",
+      "--outdir",
+      workDir,
+      sourcePath,
+    ], WORD_CONVERSION_TIMEOUT_MS, { signal });
+  } catch (error) {
+    if (signal?.aborted) throw abortedProcessingError(signal);
+    if (error instanceof FatalProcessingError) throw error;
+    throw new DocumentProcessingError(
+      "word_conversion_failed",
+      "needs_review",
+      "Word-dokumentet kunne ikke konverteres sikkert til PDF.",
+    );
+  }
+  assertHealthy();
+  const converted = await readLocalArtifactWithinLimit(
+    convertedPath,
+    maxBytes,
+    "converted_file_too_large",
+    "Dokumentet overskrider størrelsesgrænsen efter konvertering.",
+  );
+  if (detectContractSourceFormat(converted) !== "pdf") {
+    throw new DocumentProcessingError(
+      "converted_pdf_invalid",
+      "needs_review",
+      "Word-dokumentet gav ikke en gyldig PDF efter konvertering.",
+    );
+  }
+  return convertedPath;
+}
+
 function validateClaim(job) {
   if (!job || typeof job !== "object" || typeof job.jobId !== "string"
     || typeof job.leaseToken !== "string"
     || typeof job.downloadUrl !== "string" || typeof job.uploadPath !== "string"
     || typeof job.spatialUploadPath !== "string"
+    || (job.originalViewUploadPath != null && typeof job.originalViewUploadPath !== "string")
+    || !["pdf", "doc", "docx"].includes(job.sourceFormat)
     || (job.expectedOriginalSha256 != null
       && (typeof job.expectedOriginalSha256 !== "string"
         || !/^[0-9a-f]{64}$/.test(job.expectedOriginalSha256)))) {
@@ -408,12 +476,16 @@ function validateClaim(job) {
   return job;
 }
 
-function validateUploadAuthorisation(value) {
+function validateUploadAuthorisation(value, requireOriginalViewToken = false) {
   if (!value || typeof value !== "object"
     || typeof value.uploadToken !== "string" || !value.uploadToken
     || typeof value.spatialUploadToken !== "string" || !value.spatialUploadToken
+    || (requireOriginalViewToken
+      && (typeof value.originalViewUploadToken !== "string" || !value.originalViewUploadToken))
     || value.uploadToken.length > 16_384 || value.spatialUploadToken.length > 16_384
-    || /\s/.test(value.uploadToken) || /\s/.test(value.spatialUploadToken)) {
+    || (typeof value.originalViewUploadToken === "string" && value.originalViewUploadToken.length > 16_384)
+    || /\s/.test(value.uploadToken) || /\s/.test(value.spatialUploadToken)
+    || (typeof value.originalViewUploadToken === "string" && /\s/.test(value.originalViewUploadToken))) {
     throw new FatalProcessingError("invalid_upload_authorisation_response");
   }
   return value;
@@ -433,7 +505,7 @@ async function requestUploadAuthorisation(config, identityTokenProvider, job, fe
   );
   if (!response.ok) throw new FatalProcessingError("upload_authorisation_failed");
   try {
-    return validateUploadAuthorisation(await response.json());
+    return validateUploadAuthorisation(await response.json(), Boolean(job.originalViewUploadPath));
   } catch (error) {
     if (error instanceof FatalProcessingError) throw error;
     throw new FatalProcessingError("invalid_upload_authorisation_response", { cause: error });
@@ -618,7 +690,6 @@ export function createProcessor(options = {}) {
         if (processingSignal?.aborted) throw abortedProcessingError(processingSignal);
       };
       workDir = await mkdtemp(join(config.tempRoot, "dfks-ocr-"));
-      const inputPath = join(workDir, "input.pdf");
       const outputPath = join(workDir, "output.pdf");
       const geometryPath = join(workDir, "vision-layout.json.gz");
       let downloadUrl;
@@ -648,13 +719,10 @@ export function createProcessor(options = {}) {
       const byteLimit = Math.min(Number(job.maxBytes) || config.maxBytes, config.maxBytes);
       const contentLength = Number(source.headers.get("content-length") || 0);
       if (contentLength > byteLimit) {
-        throw new DocumentProcessingError("file_too_large", "needs_review", "PDF-filen overskrider den tilladte størrelse.");
+        throw new DocumentProcessingError("file_too_large", "needs_review", "Dokumentet overskrider den tilladte størrelse.");
       }
       const input = await readResponseWithLimit(source, byteLimit, processingSignal);
       assertProcessingHealthy();
-      if (input.length < 5 || input.subarray(0, 5).toString("ascii") !== "%PDF-") {
-        throw new DocumentProcessingError("invalid_pdf", "needs_review", "Filen er ikke en gyldig PDF.");
-      }
       const originalSha256 = sha256(input);
       if (job.expectedOriginalSha256 != null
         && originalSha256 !== job.expectedOriginalSha256) {
@@ -664,13 +732,50 @@ export function createProcessor(options = {}) {
           "Originalfilens integritetskontrol stemte ikke. Dokumentet blev ikke sendt til OCR.",
         );
       }
-      await writeFile(inputPath, input, { mode: 0o600 });
+      const sourceFormat = detectContractSourceFormat(input);
+      if (!sourceFormat) {
+        throw new DocumentProcessingError(
+          "unsupported_document_format",
+          "needs_review",
+          "Filen er ikke en understøttet PDF- eller Word-fil.",
+        );
+      }
+      if (sourceFormat !== job.sourceFormat) {
+        throw new DocumentProcessingError(
+          "source_format_mismatch",
+          "needs_review",
+          "Filens indhold stemmer ikke med den registrerede dokumenttype.",
+        );
+      }
+      let inputPath = join(workDir, "input.pdf");
+      if (sourceFormat === "pdf") {
+        await writeFile(inputPath, input, { mode: 0o600 });
+      } else {
+        inputPath = await convertWordSourceToPdf({
+          input,
+          format: sourceFormat,
+          workDir,
+          commandRunner,
+          signal: processingSignal,
+          assertHealthy: assertProcessingHealthy,
+          maxBytes: byteLimit,
+        });
+      }
       const result = await spatialProcessor({
         inputPath, outputPath, geometryPath, workDir, commandRunner, googleClient,
         assertLeaseHealthy: assertProcessingHealthy,
         signal: processingSignal,
+        forceOcr: sourceFormat !== "pdf",
       });
       assertProcessingHealthy();
+      const originalView = sourceFormat === "pdf"
+        ? null
+        : await readLocalArtifactWithinLimit(
+            inputPath,
+            byteLimit,
+            "converted_file_too_large",
+            "Word-visningen overskrider den tilladte størrelse.",
+          );
       const completion = {
         jobId: job.jobId,
         leaseToken: job.leaseToken,
@@ -747,6 +852,20 @@ export function createProcessor(options = {}) {
         errorCode: "upload_failed",
       });
       assertProcessingHealthy();
+      if (originalView && job.originalViewUploadPath) {
+        await uploadSignedArtifact({
+          config,
+          fetchImpl,
+          path: job.originalViewUploadPath,
+          token: uploadAuthorisation.originalViewUploadToken,
+          bytes: originalView,
+          contentType: "application/pdf",
+          signal: processingSignal,
+          timeoutMs: uploadTimeoutMs,
+          errorCode: "original_view_upload_failed",
+        });
+        assertProcessingHealthy();
+      }
       await uploadSignedArtifact({
         config,
         fetchImpl,
@@ -763,6 +882,7 @@ export function createProcessor(options = {}) {
         ...completion,
         status: "completed",
         processedSha256: sha256(output),
+        originalViewSha256: originalView ? sha256(originalView) : null,
         spatialSha256: sha256(geometry),
       }, fetchImpl, completionOptions);
       return { outcome: "completed" };

@@ -1,17 +1,18 @@
 # Audit-gaprapport
 
-Genereret for registry-review 2026-08-31 fra schema version 2. Tilstand: reporting.
+Genereret for registry-review 2026-09-02 fra schema version 2. Tilstand: reporting.
 
 ## Resultat
 
-- Registrerede flows: 20
+- Registrerede flows: 22
 - Dokumenterede udeladelser: 2
 - Automatisk fundne følsomme kandidater: 100
-- Rapporterede fund: 78
+- Rapporterede fund: 77
 - Strukturelle fejl: 0
 
 ## Rapporterede fund
 
+- app/api/internal/document-processing/claim/route.ts: semantisk audit-event kan ikke bekræftes statisk i app/api/internal/document-processing/claim/route.ts
 - app/actions/admin-messages.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/actions/admin-search.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/actions/contract-episode-confirmations.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
@@ -20,7 +21,6 @@ Genereret for registry-review 2026-08-31 fra schema version 2. Tilstand: reporti
 - app/actions/dfks-members.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/actions/legal-documents.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/actions/member-attachments.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
-- app/actions/member-contracts.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/actions/member-inbox.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/actions/member-profile.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/actions/member-rights.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
@@ -77,7 +77,6 @@ Genereret for registry-review 2026-08-31 fra schema version 2. Tilstand: reporti
 - app/api/auth/request-password-reset/route.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/api/gennemgang/route.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/api/integrations/gmail/contracts/push/route.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
-- app/api/internal/document-processing/claim/route.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/api/internal/document-processing/complete/route.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/api/internal/document-processing/heartbeat/route.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse
 - app/api/internal/document-processing/upload-authorisation/route.ts: følsomt flow er ikke klassificeret i registry eller som dokumenteret udeladelse

@@ -34,6 +34,7 @@ type Completion = {
   spatialCenterInsideRatio?: number | null;
   originalSha256?: string | null;
   processedSha256?: string | null;
+  originalViewSha256?: string | null;
   spatialSha256?: string | null;
   errorCode?: string | null;
   safeErrorMessage?: string | null;
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
   const safeProfile = (value: unknown) => typeof value === "string"
     && /^[a-z0-9][a-z0-9._-]{2,79}$/.test(value) ? value : null;
 
-  const { data: finished, error } = await db.rpc("finish_contract_document_job_v5", {
+  const { data: finished, error } = await db.rpc("finish_contract_document_job_v6", {
     p_job_id: body.jobId,
     p_lease_token: body.leaseToken,
     p_status: body.status,
@@ -95,6 +96,7 @@ export async function POST(request: Request) {
     p_spatial_center_inside_ratio: safeRatio(body.spatialCenterInsideRatio),
     p_original_sha256: safeHash(body.originalSha256),
     p_processed_sha256: safeHash(body.processedSha256),
+    p_original_view_sha256: safeHash(body.originalViewSha256),
     p_redaction_profile: safeProfile(body.redactionProfile),
     p_spatial_schema_version: safeProfile(body.spatialSchemaVersion),
     p_spatial_sha256: safeHash(body.spatialSha256),

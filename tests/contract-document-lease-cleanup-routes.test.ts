@@ -8,7 +8,7 @@ function routeSource(relativePath: string) {
 
 test("completion terminaliserer før karantæne-GC og sletter aldrig storage direkte", () => {
   const source = routeSource("app/api/internal/document-processing/complete/route.ts");
-  assert.match(source, /finish_contract_document_job_v5/);
+  assert.match(source, /finish_contract_document_job_v6/);
   assert.match(source, /p_spatial_sha256:\s*safeHash\(body\.spatialSha256\)/);
   assert.doesNotMatch(source, /\.storage\.from\(["']kontrakter["']\)\.remove\(/);
 });

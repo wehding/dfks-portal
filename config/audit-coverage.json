@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "lastReviewed": "2026-08-31",
+  "lastReviewed": "2026-09-02",
   "mode": "reporting",
   "statusTaxonomy": ["implemented", "activated", "verified", "pending"],
   "discoveryRoots": ["app/api"],
@@ -29,6 +29,8 @@
     { "path": "app/api/admin/contracts/status/route.ts", "reason": "Returnerer kun teknisk jobstatus for allerede synlige, organisationsafgrænsede review-id'er. Den smalle polling må ikke oprette gentagne læseaudit-events.", "test": "tests/list-load-performance.test.ts", "owner": "Portalteam" }
   ],
   "entries": [
+    { "path": "app/api/internal/document-processing/claim/route.ts", "processing": "Privat dokumentnormalisering, neutral Word-visning, DLP og Spatial OCR med uændret original", "categories": ["contract_data", "salary_data", "ai_analysis"], "members": "contracts.rights_holder_id", "purpose": "kontraktanalyse og dokumentation af feltkilder", "legalBasis": "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", "action": "ai_analysis", "component": "internal.contract-document-processing", "targetResolution": "jobbet tilknyttede kontrakts rettighedshaver", "failClosed": true, "test": "cloud-run/contract-document-worker/processor.test.mjs", "owner": "AI- og portalteam" },
+    { "path": "app/actions/member-contracts.ts", "auditImplementation": "app/actions/member-contracts.ts", "processing": "Kontrakteditor med privat Spatial v3- og native PDF-evidens", "categories": ["contract_data", "salary_data", "ai_analysis"], "members": "contracts.rights_holder_id", "purpose": "sagsbehandling og dokumentation af feltkilder", "legalBasis": "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", "action": "read", "component": "admin.contracts.editor", "targetResolution": "kontraktens rettighedshaver", "failClosed": true, "test": "tests/contract-field-evidence.test.ts", "owner": "Portalteam" },
     { "path": "app/api/admin/contracts/route.ts", "auditImplementation": "lib/server/contract-review-list.ts", "processing": "Kontraktliste og søgning", "categories": ["contract_data", "salary_data"], "members": "rights_holder_id fra resultater", "purpose": "sagsbehandling", "legalBasis": "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", "action": "search", "component": "admin.contracts.list", "targetResolution": "resultaternes rettighedshavere", "failClosed": true, "test": "tests/audit-log.test.ts", "owner": "Portalteam" },
     { "path": "app/api/admin/contracts/[id]/route.ts", "processing": "Kontraktdetaljer", "categories": ["contract_data", "salary_data"], "members": "contracts.rights_holder_id", "purpose": "sagsbehandling", "legalBasis": "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", "action": "read", "component": "admin.contracts.detail", "targetResolution": "kontraktens rettighedshaver", "failClosed": true, "test": "tests/audit-log.test.ts", "owner": "Portalteam" },
     { "path": "app/api/admin/contracts/[id]/pdf/route.ts", "processing": "Download af kontrakt-PDF", "categories": ["contract_data"], "members": "contracts.rights_holder_id", "purpose": "sagsbehandling", "legalBasis": "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)", "action": "download", "component": "admin.contracts.pdf", "targetResolution": "kontraktens rettighedshaver", "failClosed": true, "test": "tests/audit-log.test.ts", "owner": "Portalteam" },

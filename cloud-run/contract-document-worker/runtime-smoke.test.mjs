@@ -43,6 +43,11 @@ function run(command, args, { input } = {}) {
   });
 }
 
+test("containeren indeholder LibreOffice til sikker Word-konvertering", runtimeOnly, async () => {
+  const version = (await run("libreoffice", ["--headless", "--version"])).toString("utf8");
+  assert.match(version, /LibreOffice/i);
+});
+
 async function commandRunner(command, args) {
   const stdout = await run(command, args);
   return { stdout: stdout.toString("utf8"), stderr: "" };

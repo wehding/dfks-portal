@@ -153,7 +153,7 @@ async function findDfiSeriesByTitle(title: string, year: number | null | undefin
   return null;
 }
 
-async function resolveExternalSeriesEpisodesForTitle(params: {
+export async function resolveExternalSeriesEpisodesForTitle(params: {
   title: string;
   year?: number | null;
   dfiId?: string | null;

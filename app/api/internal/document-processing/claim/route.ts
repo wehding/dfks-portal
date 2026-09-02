@@ -10,6 +10,12 @@ export const dynamic = "force-dynamic";
 type ServiceClient = ReturnType<typeof createServiceClient>;
 const CLEANUP_TIMEOUT_MS = 2_000;
 
+function sourceFormatFromStoragePath(path: unknown) {
+  const match = typeof path === "string" ? path.match(/\.([a-z0-9]+)$/i) : null;
+  const extension = match?.[1]?.toLocaleLowerCase("en-US") ?? "";
+  return ["pdf", "doc", "docx"].includes(extension) ? extension : null;
+}
+
 function createCleanupFetch(signal: AbortSignal): typeof globalThis.fetch {
   return (input, init) => globalThis.fetch(input, {
     ...init,
@@ -60,6 +66,18 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: "Dokumentkøen kunne ikke læses" }, { status: 500 });
   if (!job?.id || !job.lease_token) return new NextResponse(null, { status: 204 });
 
+  const sourceFormat = sourceFormatFromStoragePath(job.original_storage_path);
+  if (!sourceFormat) {
+    await db.rpc("finish_contract_document_job_v5", {
+      p_job_id: job.id,
+      p_lease_token: job.lease_token,
+      p_status: "needs_review",
+      p_error_code: "unsupported_document_format",
+      p_safe_error_message: "Dokumenttypen kan ikke behandles automatisk.",
+    });
+    return new NextResponse(null, { status: 204 });
+  }
+
   const download = await db.storage.from("kontrakter").createSignedUrl(job.original_storage_path, 10 * 60, {
     download: false,
   });
@@ -70,10 +88,12 @@ export async function POST(request: Request) {
   // currently locked lease into the contract row.
   const leasePrefix = `${job.org_id}/processed/${job.contract_id}/leases/${job.lease_token}`;
   const outputUploadPath = `${leasePrefix}/normalised.pdf`;
+  const originalViewUploadPath = sourceFormat === "pdf" ? null : `${leasePrefix}/original-view.pdf`;
   const spatialUploadPath = `${leasePrefix}/vision-layout.json.gz`;
   const { data: leasedJob, error: derivativePathError } = await db.from("contract_document_jobs")
     .update({
       output_storage_path: outputUploadPath,
+      original_view_storage_path: originalViewUploadPath,
       spatial_data_path: spatialUploadPath,
     })
     .eq("id", job.id)
@@ -98,8 +118,10 @@ export async function POST(request: Request) {
       && /^[0-9a-f]{64}$/i.test(job.original_sha256)
       ? job.original_sha256.toLowerCase()
       : null,
+    sourceFormat,
     downloadUrl: download.data.signedUrl,
     uploadPath: outputUploadPath,
+    originalViewUploadPath,
     spatialUploadPath,
     maxBytes: 25 * 1024 * 1024,
   }, { headers: { "Cache-Control": "no-store" } });

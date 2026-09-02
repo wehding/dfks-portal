@@ -53,10 +53,10 @@ import { extractedProductionCompanyNames } from "@/lib/production-companies"
 import { contractReadinessDetails, effectiveCopydanStatus, normalizeTriState } from "@/lib/contract-list-status"
 import { contractDataToManualWorkSeed, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work"
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker"
+import { contractDocumentPresentation } from "@/lib/contract-workbench"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
-const PdfViewer = dynamic(() => import("@/components/pdf-viewer").then(mod => mod.PdfViewer), { ssr: false })
 const WORK_TYPE_FILTERS = WORK_TYPES
 
 type ContractRow = {
@@ -65,6 +65,7 @@ type ContractRow = {
     overenskomst: string | null
     status: string
     pdf_url: string | null
+    original_view_pdf_url: string | null
     processed_pdf_url: string | null
     document_processing_status: string
     document_processing_error_code: string | null
@@ -101,6 +102,7 @@ type ContractVersion = {
     contract_date: string | null
     created_at: string
     pdf_url: string | null
+    original_view_pdf_url: string | null
     processed_pdf_url: string | null
     superseded_at: string | null
     superseded_by_contract_id: string | null
@@ -110,7 +112,13 @@ function documentProcessingErrorMessage(contract: ContractRow) {
     const messages: Record<string, string> = {
         ocr_no_readable_text: "OCR fandt ikke nok læsbar tekst. Kontrollér scanningens kvalitet og at filen indeholder kontrakttekst.",
         invalid_pdf: "Filen er ikke en gyldig PDF.",
-        file_too_large: "PDF-filen er større end den tilladte grænse på 25 MB.",
+        unsupported_document_format: "Filen er ikke en understøttet PDF- eller Word-fil.",
+        source_format_mismatch: "Filens indhold stemmer ikke med dens registrerede dokumenttype.",
+        word_conversion_failed: "Word-dokumentet kunne ikke konverteres sikkert til PDF.",
+        converted_pdf_invalid: "Word-dokumentet gav ikke en gyldig PDF efter konvertering.",
+        original_view_upload_failed: "Word-visningen kunne ikke gemmes sikkert.",
+        converted_file_too_large: "Dokumentet blev større end 25 MB efter Word-konvertering.",
+        file_too_large: "Dokumentet er større end den tilladte grænse på 25 MB.",
         processed_file_too_large: "Den OCR-behandlede PDF blev for stor og kræver manuel behandling.",
         invalid_download_origin: "Den midlertidige filadresse kom ikke fra den forventede lagerkonto.",
         signed_url_failed: "Systemet kunne ikke oprette sikker, midlertidig adgang til PDF-filen.",
@@ -124,6 +132,26 @@ function documentProcessingErrorMessage(contract: ContractRow) {
     }
     if (contract.document_processing_status === "failed") return "PDF-behandlingen fejlede og prøves automatisk igen, hvis der er forsøg tilbage."
     return null
+}
+
+function ContractDocumentBadges({ contract }: { contract: ContractRow }) {
+    const state = contractDocumentPresentation({
+        originalPath: contract.pdf_url,
+        originalViewPath: contract.original_view_pdf_url,
+        commentedPath: contract.processed_pdf_url,
+        processingStatus: contract.document_processing_status,
+    })
+    const tone = state.processingTone === "danger"
+        ? "border-red-300 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
+        : state.processingTone === "warning"
+            ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+            : state.processingTone === "success"
+                ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"
+                : ""
+    return <div className="flex flex-wrap gap-1">
+        {state.hasOriginal && <Badge variant="outline" className="text-[10px]">Original</Badge>}
+        <Badge variant="outline" className={`text-[10px] ${tone}`}>{state.processingLabel}</Badge>
+    </div>
 }
 
 type ContractComment = {
@@ -402,6 +430,9 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     // View dialog
     const [viewContract, setViewContract] = useState<ContractRow | null>(null)
     const [viewPdfUrl, setViewPdfUrl] = useState<string | null>(null)
+    const [viewDocumentVariant, setViewDocumentVariant] = useState<"original" | "commented">("original")
+    // Beholdes indtil den gamle modal er fjernet helt; nye åbninger bruger arbejdsfladen.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [editDocUrl, setEditDocUrl] = useState<string | null>(null)
 
     // Edit dialog
@@ -646,17 +677,14 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         if (c) {
             editParamHandledRef.current = true
             openEdit(c)
-            window.history.replaceState(null, "", "/admin/kontrakter")
             return
         }
         editParamHandledRef.current = true
         void fetchAdminContractsPage({ search: editId, pageSize: 1 }).then(result => {
             const row = result.success ? result.contracts?.[0] as unknown as ContractRow | undefined : undefined
             if (row) openEdit(row)
-            window.history.replaceState(null, "", "/admin/kontrakter")
-        }).catch(() => {
-            window.history.replaceState(null, "", "/admin/kontrakter")
-        })
+            else window.history.replaceState(null, "", "/admin/kontrakter")
+        }).catch(() => window.history.replaceState(null, "", "/admin/kontrakter"))
     }, [contracts]) // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
@@ -833,13 +861,20 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
 
     // ── Signed URL for PDF ────────────────────────────────────
 
-    const openPdf = async (contract: ContractRow) => {
-        setViewContract(contract)
+    const loadDocumentVariant = async (contract: ContractRow, variant: "original" | "commented") => {
+        setViewDocumentVariant(variant)
         setViewPdfUrl(null)
-        const displayPath = contract.processed_pdf_url ?? contract.pdf_url
+        const displayPath = variant === "commented"
+            ? contract.processed_pdf_url
+            : contract.original_view_pdf_url ?? contract.pdf_url
         if (!displayPath) return
         const { url } = await getContractSignedUrl(displayPath)
         if (url) setViewPdfUrl(url)
+    }
+
+    const openPdf = async (contract: ContractRow) => {
+        setViewContract(contract)
+        await loadDocumentVariant(contract, "original")
     }
 
     // ── Upload: file selection ────────────────────────────────
@@ -1034,79 +1069,20 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     // ── Edit ──────────────────────────────────────────────────
 
     const openEdit = (c: ContractRow) => {
-        setEditContract(c)
-        setAdminReply("")
-        void markAdminCommentsRead(c)
-        // Auto-hent dokument-URL så kontrakten vises til venstre uden knap-tryk
-        setEditDocUrl(null)
-        setActiveHighlight(null)
-        setNavneTjekResult(null)
-        setSeriesSectionRequested(false)
-
-        const displayPath = c.processed_pdf_url ?? c.pdf_url
-        if (displayPath) {
-            getContractSignedUrl(displayPath).then(({ url }) => {
-                if (url) setEditDocUrl(url)
-            })
-        }
-        setEditForm({
-            type: c.type,
-            overenskomst: c.overenskomst ?? "ingen",
-            status: c.status,
-            contract_date: c.contract_date ?? "",
-            start_date: c.start_date ?? "",
-            end_date: c.end_date ?? "",
-            employer_id: c.employer_id ?? "",
-            rights_holder_id: c.rights_holder_id ?? "",
-            work_id: c.work_id ?? "",
-            working_title: c.working_title ?? "",
-        })
-        setManualWorkMode(false)
-        setManualWork(emptyManualWorkForm({
-            title: c.working_title ?? c.work_title ?? "",
-            contract_id: c.id,
-        }))
-        setEditProducerSelections(c.employer_id ? [{
-            employerId: c.employer_id,
-            canonicalName: c.employer_name ?? employers.find(employer => employer.id === c.employer_id)?.name ?? "Producent",
-        }] : [])
-        void fetch(`/api/admin/contracts/${c.id}/producers`)
-            .then(response => response.ok ? response.json() : null)
-            .then(json => {
-                if (json?.data?.length) setEditProducerSelections(json.data)
-            })
-            .catch(() => undefined)
-        setAddSeason(String(c.season_number ?? 1))
-        setSelectedEpisodes(c.episode_numbers ?? [])
-        if (c.work_id) {
-            setPickedUnifiedResult({
-                id: `local:${c.work_id}`,
-                local_id: c.work_id,
-                title: c.work_title ?? c.working_title ?? "Valgt værk",
-                // Værkets type kendes først efter loadContractDetail — c.type er kontraktens type (a-løn/leverandør).
-                type: "spillefilm" as UnifiedSearchWorkResult["type"],
-                year: null,
-                description: null,
-                poster_url: null,
-                director: null,
-                genre: null,
-                duration_minutes: null,
-                sources: ["local"],
-            })
-        } else {
-            setPickedUnifiedResult(null)
-        }
-        setEditWorkSearch(c.work_title ?? c.working_title ?? "")
-        setEditRightsHolderSearch(c.rights_holder_name ?? "")
-        void loadContractDetail(c)
+        const params = new URLSearchParams(pageSearchParams.toString())
+        params.delete("edit")
+        if (!params.has("tab")) params.set("tab", "arkiv")
+        const returnTo = `/admin/kontrakter?${params.toString()}`
+        router.push(`/admin/kontrakter/${c.id}/rediger?returnTo=${encodeURIComponent(returnTo)}`)
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const loadContractDetail = async (c: ContractRow) => {
         const supabase = createClient()
         const { data } = await supabase
             .from("contracts")
             .select(`
-                id, type, overenskomst, status, pdf_url, processed_pdf_url,
+                id, type, overenskomst, status, pdf_url, original_view_pdf_url, processed_pdf_url,
                 document_processing_status, document_processing_error_code,
                 contract_date, start_date, end_date, created_at,
                 employer_id, rights_holder_id, working_title,
@@ -1138,7 +1114,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         ])
 
         if (!data) return
-        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; processed_pdf_url?: string | null; document_processing_status?: string; document_processing_error_code?: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
+        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; original_view_pdf_url?: string | null; processed_pdf_url?: string | null; document_processing_status?: string; document_processing_error_code?: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
         const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations
         const latestJob = (jobs ?? [])[0] as { status?: string; error_message?: string | null } | undefined
         const detail: ContractRow = {
@@ -1147,6 +1123,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             type: row.type,
             overenskomst: row.overenskomst,
             status: row.status,
+            original_view_pdf_url: row.original_view_pdf_url ?? null,
             processed_pdf_url: row.processed_pdf_url ?? null,
             document_processing_status: row.document_processing_status ?? "pending",
             document_processing_error_code: row.document_processing_error_code ?? null,
@@ -1205,6 +1182,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         }
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const markAdminCommentsRead = async (c: ContractRow) => {
         const hasUnread = c.contract_comments.some(
             comment => comment.author_role === "member" && !comment.admin_read_at
@@ -1733,8 +1711,10 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         }
     }
 
-    const openContractVersion = async (version: ContractVersion) => {
-        const path = version.processed_pdf_url ?? version.pdf_url
+    const openContractVersion = async (version: ContractVersion, variant: "original" | "commented") => {
+        const path = variant === "commented"
+            ? version.processed_pdf_url
+            : version.original_view_pdf_url ?? version.pdf_url
         if (!path) return toast.error("Denne version har ingen dokumentfil")
         const { url, error } = await getContractSignedUrl(path)
         if (error || !url) return toast.error("Dokumentet kunne ikke åbnes sikkert")
@@ -1864,6 +1844,10 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                         <SelectItem value="kladde">Kladde</SelectItem>
                         <SelectItem value="validationPending">Afventer validering</SelectItem>
                         <SelectItem value="validationRecommended">Validering anbefalet</SelectItem>
+                        <SelectItem value="documentProcessing">Dokument behandles</SelectItem>
+                        <SelectItem value="documentReady">Dokument klar</SelectItem>
+                        <SelectItem value="documentNeedsReview">Dokument kræver kontrol</SelectItem>
+                        <SelectItem value="documentFailed">Dokumentbehandling fejlede</SelectItem>
                         <SelectItem value="missingOwner">Mangler ejer</SelectItem>
                         <SelectItem value="missingWork">Mangler værk</SelectItem>
                         <SelectItem value="valideret">Valideret</SelectItem>
@@ -1987,9 +1971,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                                 <Badge variant="outline" className="font-mono text-[10px]">{contractEpisodeTag(c.season_number, c.episode_numbers)}</Badge>
                                             )}
                                             {c.previous_version_count > 0 && <Badge variant="outline">Har tidligere version</Badge>}
-                                            {c.document_processing_status === "processing" && <Badge variant="outline">PDF behandles</Badge>}
-                                            {c.document_processing_status === "needs_review" && <Badge variant="destructive">PDF kræver manuel kontrol</Badge>}
-                                            {c.document_processing_status === "failed" && <Badge variant="destructive">PDF-behandling fejlede</Badge>}
+                                            <ContractDocumentBadges contract={c} />
                                             {unreadMemberComments > 0 && (
                                                 <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />
@@ -2077,9 +2059,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                                 <Badge variant="outline" className="font-mono text-[10px]">{contractEpisodeTag(c.season_number, c.episode_numbers)}</Badge>
                                             )}
                                             {c.previous_version_count > 0 && <Badge variant="outline">Har tidligere version</Badge>}
-                                            {c.document_processing_status === "processing" && <Badge variant="outline">PDF behandles</Badge>}
-                                            {c.document_processing_status === "needs_review" && <Badge variant="destructive">PDF kræver manuel kontrol</Badge>}
-                                            {c.document_processing_status === "failed" && <Badge variant="destructive">PDF-behandling fejlede</Badge>}
+                                            <ContractDocumentBadges contract={c} />
                                             {unreadMemberComments > 0 && (
                                                 <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />
@@ -2149,10 +2129,27 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                         <DialogDescription>
                             {viewContract?.rights_holder_name} • {viewContract?.employer_name} • {viewContract?.type === "a-løn" ? "A-løn" : "Leverandør"}
                         </DialogDescription>
+                        {viewContract && <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <div className="flex rounded-md border p-0.5">
+                                <Button type="button" size="sm" variant={viewDocumentVariant === "original" ? "secondary" : "ghost"} onClick={() => void loadDocumentVariant(viewContract, "original")}>Original</Button>
+                                <Button type="button" size="sm" variant={viewDocumentVariant === "commented" ? "secondary" : "ghost"} disabled={!viewContract.processed_pdf_url} onClick={() => void loadDocumentVariant(viewContract, "commented")}>Kommenteret PDF</Button>
+                            </div>
+                            {viewContract.pdf_url && <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={async () => {
+                                const originalPath = viewContract.pdf_url
+                                if (!originalPath) return
+                                const { url } = await getContractSignedUrl(originalPath)
+                                if (!url) return
+                                const link = document.createElement("a")
+                                link.href = url
+                                link.download = originalPath.split("/").pop() ?? "kontrakt"
+                                link.click()
+                            }}><Download className="h-3.5 w-3.5" />Download original</Button>}
+                        </div>}
+                        {viewContract?.original_view_pdf_url && viewDocumentVariant === "original" && <p className="text-xs text-muted-foreground">Visningen er en neutral PDF-konvertering af Word-filen. Download original for den uændrede fil.</p>}
                     </DialogHeader>
                     <div className="flex-1 overflow-hidden rounded-lg border">
                         {viewPdfUrl ? (
-                            <PdfViewer url={viewPdfUrl} />
+                            <ContractDocViewer url={viewPdfUrl} filename={viewDocumentVariant === "commented" ? viewContract?.processed_pdf_url : viewContract?.original_view_pdf_url ?? viewContract?.pdf_url} />
                         ) : viewContract?.pdf_url ? (
                             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Henter PDF...</div>
                         ) : (
@@ -2366,9 +2363,14 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                         {version.superseded_at ? ` · erstattet ${new Date(version.superseded_at).toLocaleDateString("da-DK")}` : ""}
                                     </p>
                                 </div>
-                                <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void openContractVersion(version)} disabled={!version.pdf_url && !version.processed_pdf_url}>
-                                    <Eye className="h-4 w-4" />Åbn dokument
-                                </Button>
+                                <div className="flex flex-wrap gap-2">
+                                    <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void openContractVersion(version, "original")} disabled={!version.pdf_url}>
+                                        <Eye className="h-4 w-4" />Original
+                                    </Button>
+                                    <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void openContractVersion(version, "commented")} disabled={!version.processed_pdf_url}>
+                                        <FileText className="h-4 w-4" />Kommenteret PDF
+                                    </Button>
+                                </div>
                             </div>
                         ))}
                     </div>

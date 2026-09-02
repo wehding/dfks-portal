@@ -26,7 +26,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   const chain: Array<Record<string, unknown>> = [];
   for (let i = 0; i < 100; i += 1) {
     const row = await db.from("contracts")
-      .select("id,working_title,status,contract_date,created_at,pdf_url,processed_pdf_url,superseded_at,superseded_by_contract_id")
+      .select("id,working_title,status,contract_date,created_at,pdf_url,original_view_pdf_url,processed_pdf_url,superseded_at,superseded_by_contract_id")
       .eq("id", currentId).eq("org_id", caller.orgId).maybeSingle();
     if (!row.data) break;
     chain.push(row.data);

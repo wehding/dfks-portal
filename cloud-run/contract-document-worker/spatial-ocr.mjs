@@ -809,6 +809,7 @@ export async function processPdfSpatially({
   assertLeaseHealthy = () => {},
   resourceLimits,
   signal,
+  forceOcr = false,
 }) {
   const assertProcessingHealthy = () => {
     if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("processing_aborted");
@@ -880,7 +881,7 @@ export async function processPdfSpatially({
   // count as both native and OCR-required in completion evidence.
   const nativePageCount = pageStates.filter((page) => page.classification === "native_text").length;
   const pagesNeedingOcr = pageStates.filter((page) => page.classification !== "native_text");
-  if (pagesNeedingOcr.length === 0) {
+  if (pagesNeedingOcr.length === 0 && !forceOcr) {
     return {
       status: "not_required",
       classification: "native_text",
@@ -892,6 +893,8 @@ export async function processPdfSpatially({
       textCharCount: pageStates.reduce((total, page) => total + page.chars, 0),
     };
   }
+  const completionNativePageCount = forceOcr ? 0 : nativePageCount;
+  const completionOcrPageCount = forceOcr ? pageCount : pageCount - nativePageCount;
   const ocrDocumentClassification = classifyOcrDocument(pageStates);
 
   // A document that needs OCR is rebuilt consistently from DLP-redacted pages.
@@ -991,8 +994,8 @@ export async function processPdfSpatially({
   if (unreadablePageCount > 0) {
     return {
       status: "needs_review", classification: "unreadable", pageCount,
-      nativePageCount,
-      ocrPageCount: pageCount - nativePageCount,
+      nativePageCount: completionNativePageCount,
+      ocrPageCount: completionOcrPageCount,
       unreadablePageCount, redactionCounts,
       orientationCorrections,
       orientationUncertainPageCount,
@@ -1004,8 +1007,8 @@ export async function processPdfSpatially({
   if (orientationUncertainPageCount > 0) {
     return {
       status: "needs_review", classification: ocrDocumentClassification, pageCount,
-      nativePageCount,
-      ocrPageCount: pageCount - nativePageCount,
+      nativePageCount: completionNativePageCount,
+      ocrPageCount: completionOcrPageCount,
       unreadablePageCount,
       redactionCounts,
       orientationCorrections,
@@ -1097,8 +1100,8 @@ export async function processPdfSpatially({
     status: spatial.passed && textCharCount >= 120 ? "completed" : "needs_review",
     classification: ocrDocumentClassification,
     pageCount,
-    nativePageCount,
-    ocrPageCount: pageCount - nativePageCount,
+    nativePageCount: completionNativePageCount,
+    ocrPageCount: completionOcrPageCount,
     unreadablePageCount,
     blankPageCount,
     orientationCorrections,
