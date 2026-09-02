@@ -19,6 +19,7 @@ import {
   NON_MEMBER_WORK_INVITE_TEXT,
 } from "@/lib/rights-holder-invitation-templates";
 import { renderInvitationTemplate } from "@/lib/work-share-reconciliation";
+import { addCalendarDays, DEFAULT_BETA_INVITE_SUBJECT, DEFAULT_BETA_INVITE_TEXT, renderBetaInviteTemplate, todayInCopenhagen, unknownBetaPlaceholders } from "@/lib/beta-test";
 
 type FormState = {
   org_id: string;
@@ -29,6 +30,9 @@ type FormState = {
   from_email: string;
   invite_email_text: string;
   invite_reminder_text: string;
+  beta_invite_subject: string;
+  beta_invite_text: string;
+  beta_default_duration_days: number;
   member_work_invite_subject: string;
   member_work_invite_text: string;
   non_member_work_invite_subject: string;
@@ -70,6 +74,9 @@ const emptyForm: FormState = {
   from_email: "",
   invite_email_text: "",
   invite_reminder_text: "",
+  beta_invite_subject: DEFAULT_BETA_INVITE_SUBJECT,
+  beta_invite_text: DEFAULT_BETA_INVITE_TEXT,
+  beta_default_duration_days: 10,
   member_work_invite_subject: MEMBER_WORK_INVITE_SUBJECT,
   member_work_invite_text: MEMBER_WORK_INVITE_TEXT,
   non_member_work_invite_subject: NON_MEMBER_WORK_INVITE_SUBJECT,
@@ -121,6 +128,9 @@ export default function OrganisationSettingsPage() {
           from_email: settings.from_email ?? "",
           invite_email_text: settings.invite_email_text ?? "",
           invite_reminder_text: settings.invite_reminder_text ?? "",
+          beta_invite_subject: settings.beta_invite_subject ?? DEFAULT_BETA_INVITE_SUBJECT,
+          beta_invite_text: settings.beta_invite_text ?? DEFAULT_BETA_INVITE_TEXT,
+          beta_default_duration_days: settings.beta_default_duration_days ?? 10,
           member_work_invite_subject: settings.member_work_invite_subject ?? MEMBER_WORK_INVITE_SUBJECT,
           member_work_invite_text: settings.member_work_invite_text ?? MEMBER_WORK_INVITE_TEXT,
           non_member_work_invite_subject: settings.non_member_work_invite_subject ?? NON_MEMBER_WORK_INVITE_SUBJECT,
@@ -224,6 +234,9 @@ export default function OrganisationSettingsPage() {
           from_email: form.from_email || null,
           invite_email_text: form.invite_email_text || null,
           invite_reminder_text: form.invite_reminder_text || null,
+          beta_invite_subject: form.beta_invite_subject || null,
+          beta_invite_text: form.beta_invite_text || null,
+          beta_default_duration_days: form.beta_default_duration_days,
           member_work_invite_subject: form.member_work_invite_subject || null,
           member_work_invite_text: form.member_work_invite_text || null,
           non_member_work_invite_subject: form.non_member_work_invite_subject || null,
@@ -541,6 +554,30 @@ export default function OrganisationSettingsPage() {
               placeholder="Skriv den tekst, der skal bruges, når en invitation gensendes som rykker."
               rows={4}
             />
+          </div>
+          <div className="space-y-3 rounded-md border p-3">
+            <div>
+              <Label>Betatest-invitation</Label>
+              <p className="mt-1 text-xs text-muted-foreground">Tilladte pladsholdere: {'{navn}'}, {'{organisation}'}, {'{startdato}'}, {'{slutdato}'} og {'{invitationslink}'}. Perioden er informativ og fjerner aldrig betatesterstatus.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="beta-duration">Standardvarighed i dage</Label>
+              <Input id="beta-duration" type="number" min={1} max={365} value={form.beta_default_duration_days} onChange={event => setForm(current => ({ ...current, beta_default_duration_days: Number(event.target.value) }))} />
+            </div>
+            <Input aria-label="Emne til betatest-invitation" value={form.beta_invite_subject} onChange={event => setForm(current => ({ ...current, beta_invite_subject: event.target.value }))} />
+            <Textarea rows={8} value={form.beta_invite_text} onChange={event => setForm(current => ({ ...current, beta_invite_text: event.target.value }))} />
+            {unknownBetaPlaceholders(form.beta_invite_subject, form.beta_invite_text).length > 0 && (
+              <p className="text-sm text-destructive">Ukendte pladsholdere: {unknownBetaPlaceholders(form.beta_invite_subject, form.beta_invite_text).map(value => `{${value}}`).join(", ")}</p>
+            )}
+            <details className="rounded-md bg-muted/40 p-3 text-sm">
+              <summary className="cursor-pointer font-medium">Forhåndsvisning</summary>
+              {(() => {
+                const startDate = todayInCopenhagen();
+                const endDate = addCalendarDays(startDate, Math.min(365, Math.max(1, form.beta_default_duration_days || 10)));
+                const values = { name: "Anna Jensen", organisation: form.long_name || form.short_name || "Organisationen", startDate, endDate, invitationLink: "https://portal.eksempel.dk/invitation" };
+                return <><p className="mt-3 font-semibold">{renderBetaInviteTemplate(form.beta_invite_subject, values)}</p><p className="mt-2 whitespace-pre-line text-muted-foreground">{renderBetaInviteTemplate(form.beta_invite_text, values)}</p></>;
+              })()}
+            </details>
           </div>
           <div className="space-y-3 rounded-md border p-3">
             <div>

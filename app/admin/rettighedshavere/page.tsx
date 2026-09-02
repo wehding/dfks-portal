@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Fragment, type ReactNode } from "react"
 import Image from "next/image"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown, GitMerge } from "lucide-react"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown, GitMerge, FlaskConical, Send } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -39,8 +39,10 @@ import { ListSkeleton, TableSkeleton } from "@/components/ui/data-skeletons"
 import { RightsHolderRelations } from "@/components/admin/rights-holder-relations"
 import { ListResultSummary } from "@/components/list-result-summary"
 import { rightsHolderInvitationState, rightsHolderPortalAction } from "@/lib/admin-rights-holder-invitation"
+import { createAdminBetaTesterMessage, getBetaTestAdminSummary, removeBetaTester } from "@/app/actions/beta-test"
+import { addCalendarDays } from "@/lib/beta-test"
 
-type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "inviteret" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
+type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "betatestere" | "inviteret" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
 type SortKey = "name" | "email" | "member_no" | "contracts" | "works" | "status" | "portal" | "validated"
 type AdminUserResponse = {
     error?: string
@@ -186,6 +188,15 @@ export default function RettighedshavereAdminPage() {
     const [createSaving, setCreateSaving] = useState(false)
     const [bulkSendingInvitations, setBulkSendingInvitations] = useState(false)
     const [inviteConfirmOpen, setInviteConfirmOpen] = useState(false)
+    const [betaInviteTargets, setBetaInviteTargets] = useState<RettighedshaverWithAffiliation[]>([])
+    const [betaInviteOpen, setBetaInviteOpen] = useState(false)
+    const [betaInviteStartDate, setBetaInviteStartDate] = useState("")
+    const [betaInviteEndDate, setBetaInviteEndDate] = useState("")
+    const [betaInviteSending, setBetaInviteSending] = useState(false)
+    const [betaTesterCount, setBetaTesterCount] = useState(0)
+    const [betaMessageOpen, setBetaMessageOpen] = useState(false)
+    const [betaMessageSending, setBetaMessageSending] = useState(false)
+    const [betaMessage, setBetaMessage] = useState({ subject: "", body: "" })
     const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
     const [createForm, setCreateForm] = useState({ ...EMPTY_FORM })
     const [createMemberNoTouched, setCreateMemberNoTouched] = useState(false)
@@ -265,6 +276,7 @@ export default function RettighedshavereAdminPage() {
             if (!result) return
             void loadDfksMembers(result.orgId)
             void refreshMemberSyncStatus()
+            void refreshBetaSummary()
         }).finally(() => {
             searchReadyRef.current = true
         })
@@ -342,6 +354,15 @@ export default function RettighedshavereAdminPage() {
         const status = await getDfksMembersSyncStatus()
         if (status.success) {
             setMemberSyncStatus({ count: status.count ?? 0, syncedAt: status.syncedAt ?? null })
+        }
+    }
+
+    async function refreshBetaSummary() {
+        try {
+            const summary = await getBetaTestAdminSummary()
+            setBetaTesterCount(summary.count)
+        } catch {
+            setBetaTesterCount(0)
         }
     }
 
@@ -492,6 +513,7 @@ export default function RettighedshavereAdminPage() {
             }
             if (filter === "medlemmer" && !aff?.is_member) return false
             if (filter === "ikke-medlemmer" && aff?.is_member) return false
+            if (filter === "betatestere" && !aff?.beta_tester_since) return false
             if (filter === "inviteret" && !rh.user_id) return false
             if (filter === "alle-kontrakter-valideret" && !counts.allContractsValidated) return false
             const invStatus = rh.onboarding_completed_at && !rh.onboarding_required_at ? "registreret" : rh.user_id ? "afventer" : "ikke-inviteret"
@@ -664,6 +686,54 @@ export default function RettighedshavereAdminPage() {
             toast.warning(`${targets.length - sent} adgangslink(s) blev ikke sendt${emailErrors[0] ? `: ${emailErrors[0]}` : "."}`)
         }
         void load(search.trim())
+    }
+
+    async function openBetaInvite(targets: RettighedshaverWithAffiliation[]) {
+        const eligible = targets.filter(holder => holder.email).slice(0, 50)
+        if (!eligible.length) { toast.info("Ingen af de valgte har en emailadresse."); return }
+        if (targets.length > 50) { toast.error("Der kan højst sendes 50 betainvitationer ad gangen."); return }
+        try {
+            const summary = await getBetaTestAdminSummary()
+            setBetaInviteTargets(eligible)
+            setBetaInviteStartDate(summary.startDate)
+            setBetaInviteEndDate(summary.suggestedEndDate)
+            setBetaInviteOpen(true)
+        } catch (error) {
+            toast.error(errorMessage(error))
+        }
+    }
+
+    async function confirmBetaInvite() {
+        setBetaInviteSending(true)
+        let sent = 0
+        let marked = 0
+        for (const holder of betaInviteTargets) {
+            try {
+                const response = await fetch("/api/admin/user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "beta_invite", rhId: holder.id, betaEndDate: betaInviteEndDate }) })
+                const result = await response.json() as AdminUserResponse
+                if (!response.ok) throw new Error(result.error)
+                marked += 1
+                if (result.email_sent) sent += 1
+            } catch (error) {
+                toast.error(errorMessage(error))
+            }
+        }
+        setBetaInviteSending(false)
+        setBetaInviteOpen(false)
+        toast.success(`${marked} markeret som betatestere · ${sent} mail${sent === 1 ? "" : "s"} sendt`)
+        setSelectedIds(new Set())
+        await Promise.all([load(search.trim()), refreshBetaSummary()])
+    }
+
+    async function sendBetaTesterMessage() {
+        setBetaMessageSending(true)
+        const result = await createAdminBetaTesterMessage(betaMessage)
+        setBetaMessageSending(false)
+        if (!result.success) { toast.error(result.error ?? "Beskeden kunne ikke sendes."); return }
+        toast.success(`${result.count ?? 0} portalbeskeder og ${result.emailSent ?? 0} mails oprettet`)
+        if ((result.failed ?? 0) > 0 || (result.skippedWithoutPortalUser ?? 0) > 0) toast.warning(`${(result.failed ?? 0) + (result.skippedWithoutPortalUser ?? 0)} modtagere blev helt eller delvist sprunget over.`)
+        setBetaMessageOpen(false)
+        setBetaMessage({ subject: "", body: "" })
     }
 
     function handleArchiveSelected() {
@@ -927,6 +997,9 @@ export default function RettighedshavereAdminPage() {
                         <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
                             <Plus className="h-4 w-4 mr-1" />Indtast rettighedshaver manuelt
                         </Button>
+                        <Button size="sm" variant="outline" onClick={() => setBetaMessageOpen(true)} disabled={betaTesterCount === 0}>
+                            <Send className="mr-1 h-4 w-4" />Besked til betatestere ({betaTesterCount})
+                        </Button>
                     </div>
                 }
             />
@@ -965,6 +1038,7 @@ export default function RettighedshavereAdminPage() {
                         <SelectItem value="alle">Alle</SelectItem>
                         <SelectItem value="medlemmer">Kun medlemmer</SelectItem>
                         <SelectItem value="ikke-medlemmer">Ikke-medlemmer</SelectItem>
+                        <SelectItem value="betatestere">Betatestere</SelectItem>
                         <SelectItem value="inviteret">Inviteret</SelectItem>
                         <SelectItem value="afventer">Afventer onboarding</SelectItem>
                         <SelectItem value="ikke-inviteret">Ikke inviteret</SelectItem>
@@ -1004,6 +1078,9 @@ export default function RettighedshavereAdminPage() {
                         <Button size="sm" variant="outline" onClick={handleBulkSendInvitation} disabled={bulkSendingInvitations}>
                             {bulkSendingInvitations ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Mail className="mr-1 h-4 w-4" />}
                             Send invitation
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => void openBetaInvite(visible.filter(holder => selectedIds.has(holder.id)))} disabled={betaInviteSending || selectedIds.size > 50}>
+                            <FlaskConical className="mr-1 h-4 w-4" />Send betainvitation
                         </Button>
                         {filter === "arkiverede" ? (
                             <Button size="sm" variant="outline" onClick={handleRestoreSelected} disabled={restoringSelected}>
@@ -1076,6 +1153,7 @@ export default function RettighedshavereAdminPage() {
                                                 <KeyRound className="mr-2 h-3.5 w-3.5" />Send loginlink
                                             </DropdownMenuItem>
                                         )}
+                                        {rh.email && <DropdownMenuItem onClick={() => void openBetaInvite([rh])}><FlaskConical className="mr-2 h-3.5 w-3.5" />Send betainvitation</DropdownMenuItem>}
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </div>
@@ -1091,6 +1169,7 @@ export default function RettighedshavereAdminPage() {
                                         {aff?.is_member
                                             ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
                                             : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
+                                        {aff?.beta_tester_since && <Badge className="bg-violet-600 text-white text-xs">Betatester</Badge>}
                                         {counts.allContractsValidated && <Badge className="bg-emerald-600 text-white text-xs">Alle kontrakter valideret</Badge>}
                                     </div>
                                 </MobileMetaRow>
@@ -1171,6 +1250,7 @@ export default function RettighedshavereAdminPage() {
                                             {aff?.is_member
                                                 ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
                                                 : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
+                                            {aff?.beta_tester_since && <Badge className="bg-violet-600 text-white text-xs">Betatester</Badge>}
                                             {counts.allContractsValidated && <Badge className="bg-emerald-600 text-white text-xs">Alle kontrakter valideret</Badge>}
                                         </div>
                                     </TableCell>
@@ -1233,6 +1313,7 @@ export default function RettighedshavereAdminPage() {
                                                         <KeyRound className="h-3.5 w-3.5 mr-2" />Send loginlink
                                                     </DropdownMenuItem>
                                                 )}
+                                                {rh.email && <DropdownMenuItem onClick={() => void openBetaInvite([rh])}><FlaskConical className="mr-2 h-3.5 w-3.5" />Send betainvitation</DropdownMenuItem>}
                                                 <DropdownMenuSeparator />
                                                 {rh.archived_at ? (
                                                     <DropdownMenuItem onClick={async () => {
@@ -1371,6 +1452,18 @@ export default function RettighedshavereAdminPage() {
                                 </Button>
                                 {portalAction?.rh.id === editTarget.id && portalLink && (
                                     <p className="break-all rounded-md bg-muted px-3 py-2 text-xs">{portalLink}</p>
+                                )}
+                                {orgId && getAffiliation(editTarget, orgId)?.beta_tester_since && (
+                                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-violet-200 bg-violet-50 p-3 dark:border-violet-900 dark:bg-violet-950/30">
+                                        <div><Badge className="bg-violet-600 text-white">Betatester</Badge><p className="mt-1 text-xs text-muted-foreground">Markeringen udløber ikke automatisk.</p></div>
+                                        <Button type="button" size="sm" variant="outline" onClick={async () => {
+                                            const result = await removeBetaTester(editTarget.id)
+                                            if (!result.success) { toast.error(result.error); return }
+                                            toast.success("Betatesterstatus fjernet. Portaladgangen er uændret.")
+                                            setEditTarget(null)
+                                            await Promise.all([load(search.trim()), refreshBetaSummary()])
+                                        }}>Fjern betatesterstatus</Button>
+                                    </div>
                                 )}
                             </section>
                         )}
@@ -1721,6 +1814,33 @@ export default function RettighedshavereAdminPage() {
                             Send adgangslinks
                         </Button>
                     </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={betaInviteOpen} onOpenChange={open => { if (!betaInviteSending) setBetaInviteOpen(open) }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Send betatest-invitation</DialogTitle>
+                        <DialogDescription>{betaInviteTargets.length} rettighedshaver(e) markeres som betatestere og får almindelig portaladgang.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div className="space-y-1"><Label>Startdato</Label><Input type="date" value={betaInviteStartDate} disabled /></div>
+                        <div className="space-y-1"><Label htmlFor="beta-end-date">Slutdato i invitationsteksten</Label><Input id="beta-end-date" type="date" min={betaInviteStartDate ? addCalendarDays(betaInviteStartDate, 1) : undefined} value={betaInviteEndDate} onChange={event => setBetaInviteEndDate(event.target.value)} /></div>
+                        <p className="text-xs text-muted-foreground">Slutdatoen er kun information. Betatesterstatus og adgang fortsætter, indtil en administrator ændrer dem.</p>
+                    </div>
+                    <DialogFooter><Button variant="outline" onClick={() => setBetaInviteOpen(false)} disabled={betaInviteSending}>Annuller</Button><Button onClick={confirmBetaInvite} disabled={betaInviteSending || !betaInviteEndDate}>{betaInviteSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send invitation</Button></DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={betaMessageOpen} onOpenChange={open => { if (!betaMessageSending) setBetaMessageOpen(open) }}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader><DialogTitle>Besked til alle betatestere</DialogTitle><DialogDescription>Opretter en privat portalbesked og sender en individuel driftsmail til op til {betaTesterCount} betatestere i organisationen.</DialogDescription></DialogHeader>
+                    <div className="space-y-3">
+                        <div className="space-y-1"><Label htmlFor="beta-message-subject">Emne</Label><Input id="beta-message-subject" maxLength={200} value={betaMessage.subject} onChange={event => setBetaMessage(current => ({ ...current, subject: event.target.value }))} /></div>
+                        <div className="space-y-1"><Label htmlFor="beta-message-body">Besked</Label><Textarea id="beta-message-body" rows={8} maxLength={10000} value={betaMessage.body} onChange={event => setBetaMessage(current => ({ ...current, body: event.target.value }))} /></div>
+                        <p className="text-xs text-muted-foreground">Mailen er driftskommunikation om betaprogrammet og sendes individuelt. Modtagerne kan ikke se hinandens adresser.</p>
+                    </div>
+                    <DialogFooter><Button variant="outline" onClick={() => setBetaMessageOpen(false)} disabled={betaMessageSending}>Annuller</Button><Button onClick={sendBetaTesterMessage} disabled={betaMessageSending || !betaMessage.subject.trim() || !betaMessage.body.trim()}>{betaMessageSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send til {betaTesterCount}</Button></DialogFooter>
                 </DialogContent>
             </Dialog>
 
