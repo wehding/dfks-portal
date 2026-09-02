@@ -18,10 +18,9 @@ import {
   type StatisticsMetric,
   type StatisticsQueryPlan,
 } from "@/lib/statistics-query-plan";
-import { buildStatisticsQuerySegments, describeStatisticsPlan } from "@/lib/statistics-query-execution";
+import { buildStatisticsQuerySegments, describeStatisticsPlan, interpretStatisticsQuestion } from "@/lib/statistics-query-execution";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getAnnualCpi } from "@/lib/statistics-cpi";
-import { companyMatchScore, normalizeCompanyBaseName, type ProductionCompanyOption } from "@/lib/production-companies";
 import { salaryDataToMonthly } from "@/lib/statistics-calculations";
 import { sampleSizeBand } from "@/lib/statistics/privacy-guard";
 import { experienceGroupAt } from "@/lib/experience-groups";
@@ -29,6 +28,7 @@ import { normalizeStatisticsMinimumGroupSize } from "@/lib/statistics-privacy";
 import { buildStatisticsVisualization } from "@/lib/statistics/visualization";
 import { buildStatisticsDirectAnswer } from "@/lib/statistics/direct-answer";
 import { collectOmittedStatisticsPoints, describeOmittedStatisticsPoints, type OmittedStatisticsPoint } from "@/lib/statistics/omitted-points";
+import { resolveStatisticsProducerNames, type ProducerCandidate } from "@/lib/statistics-query-producers";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { auditRequestContext } from "@/lib/audit-access-server";
 import { recordAuditEvent } from "@/lib/audit-log-server";
@@ -36,7 +36,6 @@ import type { AuditContext } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
 
-type ProducerCandidate = { id: string; name: string; score: number };
 const STATISTICS_CALCULATION_VERSION = "union-stats-v1";
 const AUTO_PRODUCER_LIMIT = 5;
 
@@ -88,49 +87,14 @@ async function recordStatisticsAudit(input: {
   if (error) throw new Error("Statistikforespørgslen kunne ikke revisionslogges sikkert.");
 }
 
-async function resolveProducerNames(names: string[]) {
-  if (!names.length) return { resolved: [] as Array<{ id: string; name: string }>, ambiguous: null as null | { query: string; candidates: ProducerCandidate[] } };
+async function resolveProducerNames(names: string[], question: string) {
+  if (!names.length) return { resolved: [], ambiguous: null as null | { query: string; candidates: ProducerCandidate[] } };
   const db = createServiceClient();
   const { data, error } = await db.from("employers")
-    .select("id,name,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_number,entity_kind,is_primary,registration_status,website,archived_at)")
+    .select("id,name,parent_id,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_number,entity_kind,is_primary,registration_status,website,archived_at)")
     .is("merged_into_id", null).is("archived_at", null).limit(5000);
   if (error) throw new Error("Producentregisteret kunne ikke hentes.");
-  const options: ProductionCompanyOption[] = (data ?? []).map(employer => ({
-    employerId: employer.id,
-    canonicalName: employer.name,
-    aliases: (employer.employer_aliases ?? []).map(alias => alias.alias),
-    legalEntities: (employer.employer_legal_entities ?? []).filter(entity => !entity.archived_at).map(entity => ({
-      id: entity.id,
-      legalName: entity.legal_name,
-      registrationCountry: "DK",
-      registrationType: "CVR",
-      registrationNumber: entity.registration_number,
-      entityKind: entity.entity_kind as "company" | "subsidiary" | "spv",
-      isPrimary: entity.is_primary,
-      registrationStatus: entity.registration_status,
-      website: entity.website,
-    })),
-    isVerified: true,
-  }));
-
-  const resolved: Array<{ id: string; name: string }> = [];
-  for (const name of names) {
-    const candidates = options.map(option => {
-      const exact = [option.canonicalName, ...option.aliases, ...option.legalEntities.map(entity => entity.legalName)]
-        .some(candidate => normalizeCompanyBaseName(candidate) === normalizeCompanyBaseName(name));
-      return { id: option.employerId, name: option.canonicalName, score: exact ? 200 : companyMatchScore(option, name) };
-    }).filter(candidate => candidate.score >= 50)
-      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name, "da-DK"))
-      .slice(0, 5);
-    const best = candidates[0];
-    const second = candidates[1];
-    if (!best) return { resolved, ambiguous: { query: name, candidates: [] } };
-    if (best.score < 100 || (second && best.score - second.score < 10)) {
-      return { resolved, ambiguous: { query: name, candidates } };
-    }
-    if (!resolved.some(item => item.id === best.id)) resolved.push({ id: best.id, name: best.name });
-  }
-  return { resolved, ambiguous: null };
+  return resolveStatisticsProducerNames(names, question, data ?? []);
 }
 
 type ProducerRankingFact = {
@@ -236,7 +200,7 @@ async function resolveTopSalaryProducers(orgId: string, plan: StatisticsQueryPla
   const names = new Map((employers ?? []).map(employer => [employer.id, employer.name]));
   return ranked.flatMap(row => {
     const name = names.get(row.id);
-    return name ? [{ id: row.id, name }] : [];
+    return name ? [{ ids: [row.id], name, scope: "group" as const }] : [];
   });
 }
 
@@ -344,7 +308,7 @@ export async function POST(request: NextRequest) {
     }
     const jsonText = response?.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
     const plan = deterministicPlan ?? parseStatisticsQueryPlan(JSON.parse(jsonText ?? ""));
-    const producers = await resolveProducerNames(plan.filters.producerNames);
+    const producers = await resolveProducerNames(plan.filters.producerNames, question);
     if (producers.ambiguous) {
       await finishAiUsageRun(runId, "succeeded");
       return NextResponse.json({
@@ -363,6 +327,7 @@ export async function POST(request: NextRequest) {
       ? await resolveTopSalaryProducers(caller.orgId, plan)
       : [];
     const resolvedProducers = producers.resolved.length ? producers.resolved : autoSelectedProducers;
+    const interpretedQuestion = interpretStatisticsQuestion(plan, resolvedProducers);
     const segments = buildStatisticsQuerySegments(plan, resolvedProducers);
     const allSeries: ReturnType<typeof extractStatisticsSeries> = [];
     let minimum = 5;
@@ -423,6 +388,7 @@ export async function POST(request: NextRequest) {
         minimumGroupSize: minimum,
         dominanceLimit,
         calculationVersion: STATISTICS_CALCULATION_VERSION,
+        interpretedQuestion,
         understoodAs: describeStatisticsPlan(plan),
         explanation: "Der blev ikke fundet et tilstrækkeligt datagrundlag til den valgte kombination.",
         caveats: ["Små eller tomme udsnit returneres ikke som statistik."],
@@ -474,6 +440,7 @@ export async function POST(request: NextRequest) {
       calculationVersion: STATISTICS_CALCULATION_VERSION,
       plan,
       interpretedBy,
+      interpretedQuestion,
       understoodAs: describeStatisticsPlan(plan),
       chart: plan.chart,
       includeDrafts,

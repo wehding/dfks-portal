@@ -132,14 +132,15 @@ assert.equal(questions.length, 100, "Testmatricen skal indeholde præcis 100 bre
 function producersFor(plan: StatisticsQueryPlan): ResolvedStatisticsProducer[] {
   if (plan.filters.producerNames.length) {
     return plan.filters.producerNames.map((name, index) => ({
-      id: `${index + 1}`.repeat(8).slice(0, 8) + "-1111-4111-8111-111111111111",
+      ids: [`${index + 1}`.repeat(8).slice(0, 8) + "-1111-4111-8111-111111111111"],
       name,
+      scope: "group" as const,
     }));
   }
   return [
-    { id: "11111111-1111-4111-8111-111111111111", name: "Alpha Film" },
-    { id: "22222222-2222-4222-8222-222222222222", name: "Beta TV" },
-    { id: "33333333-3333-4333-8333-333333333333", name: "Gamma Dokumentar" },
+    { ids: ["11111111-1111-4111-8111-111111111111"], name: "Alpha Film", scope: "group" as const },
+    { ids: ["22222222-2222-4222-8222-222222222222"], name: "Beta TV", scope: "group" as const },
+    { ids: ["33333333-3333-4333-8333-333333333333"], name: "Gamma Dokumentar", scope: "group" as const },
   ];
 }
 

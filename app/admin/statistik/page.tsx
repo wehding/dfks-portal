@@ -87,7 +87,7 @@ const querySuggestions = [
   "Er reallønnen faldet siden 2016?",
   "Vis løn for fiktion og dokumentar siden 2016",
   "Vis snitløn for A-løn og leverandør",
-  "Vis pension for A-løn og leverandør",
+  "Vis pension for A-løn",
   "Hvor mange kontrakter pr. år?",
   "Vis Copydan og streaming siden 2016",
   "Hvilke producenter giver bedst snitløn?",
@@ -128,7 +128,7 @@ type OmittedStatisticsPoint = {
 };
 
 type AiAnswer = {
-  suppressed?: boolean; minimum?: number; explanation?: string; understoodAs?: string; interpretedBy?: "rules" | "ai";
+  suppressed?: boolean; minimum?: number; explanation?: string; understoodAs?: string; interpretedQuestion?: string; interpretedBy?: "rules" | "ai";
   minimumGroupSize?: number; dominanceLimit?: number; calculationVersion?: string;
   suppressionCount?: number; suppressionReasons?: Partial<Record<SuppressionReason, number>>;
   caveats?: string[]; chart?: "line" | "bar" | "table";
@@ -329,7 +329,7 @@ export default function AdminStatistikPage() {
         {aiError && <Alert variant="destructive" className="print:break-inside-avoid"><AlertTitle>{aiError.title}</AlertTitle><AlertDescription><span className="block">{aiError.reason}</span>{aiError.suggestion && <span className="mt-1 block">Forslag: {aiError.suggestion}</span>}</AlertDescription></Alert>}
         {aiAnswer?.suppressed && <Alert className="print:break-inside-avoid"><ShieldCheck className="h-4 w-4" /><AlertTitle>Ikke nok data til et sikkert resultat</AlertTitle><AlertDescription>Det valgte udsnit indeholder færre end {aiAnswer.minimum ?? 3} forskellige personer. Prøv en længere periode, færre filtre eller en bredere produktionstype.</AlertDescription></Alert>}
         {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4 print:border-0 print:p-0">
-          <div className="space-y-1 text-sm"><p className="font-medium">Sådan blev spørgsmålet forstået</p><p>{aiAnswer.understoodAs}</p><p className="text-muted-foreground">{aiAnswer.explanation}</p></div>
+          <div className="space-y-1 text-sm"><p className="font-medium">Sådan blev spørgsmålet forstået</p><p className="font-semibold">{aiAnswer.interpretedQuestion ?? aiAnswer.understoodAs}</p>{aiAnswer.interpretedQuestion && <p className="text-muted-foreground">{aiAnswer.understoodAs}</p>}<p className="text-muted-foreground">{aiAnswer.explanation}</p></div>
           {aiAnswer.directAnswer && <Alert className="print:break-inside-avoid"><AlertTitle>{aiAnswer.directAnswer.shortAnswer}</AlertTitle><AlertDescription><span className="block">{aiAnswer.directAnswer.sentence}</span><span className="mt-1 block">{aiAnswer.directAnswer.explanation}</span></AlertDescription></Alert>}
           <p className="text-xs text-muted-foreground">
             Beregnet med mindst {aiAnswer.minimumGroupSize ?? aiAnswer.minimum ?? 3} personer pr. gruppe og dominansgrænse på {Math.round((aiAnswer.dominanceLimit ?? 0.8) * 100)} %. Beregningsversion: {aiAnswer.calculationVersion ?? "union-stats-v1"}.

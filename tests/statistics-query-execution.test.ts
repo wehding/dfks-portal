@@ -44,11 +44,26 @@ test("flere filterværdier uden sammenligning forbliver ét samlet udsnit", () =
 
 test("kanoniske producenter bliver separate segmenter", () => {
   const segments = buildStatisticsQuerySegments(plan({ compareBy: ["producer"], filters: { producerNames: ["A", "B"] } }), [
-    { id: "11111111-1111-1111-1111-111111111111", name: "Producent A" },
-    { id: "22222222-2222-2222-2222-222222222222", name: "Producent B" },
+    { ids: ["11111111-1111-1111-1111-111111111111"], name: "Producent A", scope: "group" },
+    { ids: ["22222222-2222-2222-2222-222222222222"], name: "Producent B", scope: "group" },
   ]);
   assert.deepEqual(segments.map(segment => segment.filters.producerIds), [
     ["11111111-1111-1111-1111-111111111111"], ["22222222-2222-2222-2222-222222222222"],
+  ]);
+});
+
+test("producentgrupper filtrerer på alle juridiske enheder i gruppen", () => {
+  const segments = buildStatisticsQuerySegments(plan({ filters: { producerNames: ["Nordisk Film"] } }), [
+    {
+      ids: ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"],
+      name: "Nordisk Film",
+      scope: "group",
+    },
+  ]);
+  assert.equal(segments.length, 1);
+  assert.deepEqual(segments[0].filters.producerIds, [
+    "11111111-1111-1111-1111-111111111111",
+    "22222222-2222-2222-2222-222222222222",
   ]);
 });
 

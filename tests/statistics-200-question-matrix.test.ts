@@ -39,9 +39,9 @@ type ExpectedQuestionResult = {
 
 const currentYear = new Date().getFullYear();
 const sampleProducers: ResolvedStatisticsProducer[] = [
-  { id: "11111111-1111-1111-1111-111111111111", name: "Producent Alpha" },
-  { id: "22222222-2222-2222-2222-222222222222", name: "Producent Beta" },
-  { id: "33333333-3333-3333-3333-333333333333", name: "Producent Gamma" },
+  { ids: ["11111111-1111-1111-1111-111111111111"], name: "Producent Alpha" , scope: "group" },
+  { ids: ["22222222-2222-2222-2222-222222222222"], name: "Producent Beta" , scope: "group" },
+  { ids: ["33333333-3333-3333-3333-333333333333"], name: "Producent Gamma" , scope: "group" },
 ];
 
 const questions: ExpectedQuestionResult[] = [];
