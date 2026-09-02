@@ -61,6 +61,8 @@ type OrganisationSettingsPayload = {
   statistics_work_regions: string[];
   onboarding_keywords: string[];
   contract_review_retention_months: number;
+  legacy_contract_declaration_enabled: boolean;
+  legacy_contract_cutoff_year: number | null;
   foreninglet_base_url?: string | null;
   foreninglet_username?: string | null;
   foreninglet_password?: string | null;
@@ -100,7 +102,7 @@ export async function getOrganisationSettings() {
   const db = createServiceClient();
   const { data, error } = await db
     .from("organisations")
-    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, member_work_invite_subject, member_work_invite_text, non_member_work_invite_subject, non_member_work_invite_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_minimum_group_size, statistics_dominance_limit, statistics_profile_config")
+    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, member_work_invite_subject, member_work_invite_text, non_member_work_invite_subject, non_member_work_invite_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_minimum_group_size, statistics_dominance_limit, statistics_profile_config, legacy_contract_declaration_enabled, legacy_contract_cutoff_year")
     .eq("id", orgId)
     .single();
 
@@ -146,6 +148,8 @@ export async function getOrganisationSettings() {
       : ["klip", "edit"],
     contract_review_retention_months: data.contract_review_retention_months ?? 24,
     contract_review_retention_updated_at: data.contract_review_retention_updated_at ?? null,
+    legacy_contract_declaration_enabled: Boolean(data.legacy_contract_declaration_enabled),
+    legacy_contract_cutoff_year: data.legacy_contract_cutoff_year == null ? null : Number(data.legacy_contract_cutoff_year),
     statistics_contract_scope: data.statistics_contract_scope === "validated_and_drafts" ? "validated_and_drafts" as const : "validated_only" as const,
     statistics_minimum_group_size: normalizeStatisticsMinimumGroupSize(data.statistics_minimum_group_size),
     statistics_dominance_limit: normalizeStatisticsDominanceLimit(data.statistics_dominance_limit),
@@ -176,6 +180,8 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const onboardingKeywords = normalizeRoles(payload.onboarding_keywords).map(keyword => keyword.toLowerCase());
   const replyToEmail = cleanOptionalString(payload.from_email);
   const retentionMonths = Number(payload.contract_review_retention_months);
+  const legacyDeclarationEnabled = Boolean(payload.legacy_contract_declaration_enabled);
+  const legacyCutoffYear = payload.legacy_contract_cutoff_year == null ? null : Number(payload.legacy_contract_cutoff_year);
   const statisticsContractScope = payload.statistics_contract_scope === "validated_and_drafts" ? "validated_and_drafts" : "validated_only";
   const rawStatisticsMinimumGroupSize = Number(payload.statistics_minimum_group_size);
   if (!Number.isInteger(rawStatisticsMinimumGroupSize)
@@ -207,6 +213,9 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   if (!defaultRoleLabel) throw new Error("Standardfaggruppen skal være en af organisationens faggrupper.");
   if (onboardingKeywords.length === 0) throw new Error("Der skal være mindst ét onboarding-søgeord.");
   if (!Number.isInteger(retentionMonths) || retentionMonths < 1 || retentionMonths > 120) throw new Error("Opbevaringsperioden skal være mellem 1 og 120 måneder.");
+  if (legacyDeclarationEnabled && (!Number.isInteger(legacyCutoffYear) || legacyCutoffYear! < 1888 || legacyCutoffYear! > 2200)) {
+    throw new Error("Skæringsåret skal være et firecifret år mellem 1888 og 2200.");
+  }
   if (replyToEmail) {
     try {
       normalizeSingleEmail(replyToEmail);
@@ -222,7 +231,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   }
 
   const { data: previousOrganisation, error: previousOrganisationError } = await db.from("organisations")
-    .select("statistics_minimum_group_size,statistics_dominance_limit")
+    .select("statistics_minimum_group_size,statistics_dominance_limit,legacy_contract_declaration_enabled,legacy_contract_cutoff_year")
     .eq("id", orgId)
     .single();
   if (previousOrganisationError) throw new Error(previousOrganisationError.message);
@@ -274,6 +283,8 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
       statistics_minimum_group_size: statisticsMinimumGroupSize,
       statistics_dominance_limit: statisticsDominanceLimit,
       statistics_profile_config: statisticsProfileConfig,
+      legacy_contract_declaration_enabled: legacyDeclarationEnabled,
+      legacy_contract_cutoff_year: legacyCutoffYear,
       updated_at: new Date().toISOString(),
     })
     .eq("id", orgId);
@@ -312,6 +323,25 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
         auditNote: "Ændring af statistikpolicy påvirker sløring og skal kunne forklares ved revision.",
       },
       changes: statisticsChanges,
+    });
+  }
+
+  if (legacyDeclarationEnabled !== Boolean(previousOrganisation.legacy_contract_declaration_enabled)
+    || legacyCutoffYear !== (previousOrganisation.legacy_contract_cutoff_year == null ? null : Number(previousOrganisation.legacy_contract_cutoff_year))) {
+    await recordAuditEvent({
+      context: { actorUserId: user?.id ?? null, actorOrgId: orgId, actorRole: "admin", source: "admin" },
+      action: "update",
+      entityType: "organisation_documentation_rule",
+      entityId: orgId,
+      entityLabel: longName,
+      orgIds: [orgId],
+      purposeCode: "legacy_work_documentation",
+      legalBasis: "administrative_policy",
+      dataCategories: ["rights_data"],
+      changes: [
+        { field: "enabled", old: Boolean(previousOrganisation.legacy_contract_declaration_enabled), new: legacyDeclarationEnabled },
+        { field: "cutoff_year", old: previousOrganisation.legacy_contract_cutoff_year ?? null, new: legacyCutoffYear },
+      ],
     });
   }
 
