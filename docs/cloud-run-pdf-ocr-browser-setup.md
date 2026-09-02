@@ -86,6 +86,12 @@ brugerstyret servicekonto med mindst mulige roller til build, Artifact Registry 
 deploy af den konkrete Cloud Run-service. Runtime-identiteten forbliver
 `dfks-pdf-worker`; den må ikke bruges som build-servicekonto.
 
+Cloud Build deployer den private HTTP-service og opdaterer derefter kun imagefeltet
+på `dfks-contract-document-backfill`. Begge peger dermed på det samme testede image
+med commit-SHA. Jobopdateringen starter ikke en kørsel og overskriver ikke joblets
+ressourcer, miljøvariabler eller retry-politik. Next.js/Vercel-deploymentet bygger
+eller deployer ikke OCR-containeren.
+
 ### 5. Opret privat Cloud Run-service
 
 Anbefalede indstillinger:
@@ -181,6 +187,45 @@ aktive direkte Vision-generation kan genskabes fra den uændrede original. En
 allerede slettet, maskeret afledning gendannes ikke; originalen er aldrig en
 slettekandidat. Slutrapporten skal vise udvalgte, erstattede, sprunget over,
 fejlede og afventende sletninger uden dokumentidentifikatorer eller persondata.
+
+### Recovery af historiske Word-kontrakter
+
+Denne recovery er adskilt fra DLP-erstatnings- og geometri-backfills. Den må ikke
+køres med `OCR_REPLACEMENT_ONLY`, `OCR_GEOMETRY_BACKFILL_RUN_ID` eller et
+tail-proof-manifest. Forudsætningerne er, at migrationerne for Word-recovery og
+originalvisning er anvendt, samt at både service og backfilljob peger på et image,
+der indeholder LibreOffice og runtime-smoketesten.
+
+1. Kontrollér aktiv service-revision og image-digest. Opdatér backfilljobbet til
+   samme digest uden at ændre eller starte servicen.
+2. Pause Scheduler, så recoveryen har en entydig driftsperiode.
+3. Kør `npm run recover:word-contracts -- --limit=500` som dry-run. Gem kun de
+   aggregerede antal i driftsjournalen.
+4. Køsæt først fire dokumenter:
+   `npm run recover:word-contracts -- --limit=4 --apply --confirm-worker-deployed`.
+5. Kør backfilljobbet med én task, parallelism 1, retries 0 og
+   `OCR_MAX_DOCUMENTS_PER_TASK=4`. Stopgrænserne sættes til første drifts- eller
+   kvalitetsfejl.
+6. Kontrollér, at alle fire er `completed`, og at originalvisnings-, processed- og
+   spatial-hash findes, før næste batch. Fortsæt med 25 og derefter resten; gentag
+   kvalitetsporten efter hver batch.
+7. En afsluttende dry-run skal finde nul kandidater. Alle recovery-generationer
+   skal være færdige, og kontrakterne skal stå `ready` med originalvisning,
+   normaliseret PDF og `google-vision-spatial-v3`.
+8. Sæt backfilljobbet tilbage i dokumenteret beredskabskonfiguration, genoptag
+   Scheduler og udløs én normal kontrolkørsel.
+
+Scriptet udelukker kilder med `review_disposition=retry_after_pipeline_fix`, så en
+færdig recovery ikke kan blokere senere batches. Databasefunktionen kontrollerer
+desuden kildehash, kontraktstatus, aktiv filsti og fravær af en nyere generation.
+Hver apply-kørsel registrerer ét append-only audit-event med sikre tællinger og
+berørte medlems-id'er. Rå dokumentdata, filstier og personnavne må ikke skrives i
+drifts- eller auditlogs.
+
+Ved fejl stoppes jobkørslen, Scheduler forbliver pauset, og ingen kilde eller
+original overskrives. En fejlet recovery-generation undersøges separat; operatøren
+må ikke nulstille eller omskrive historiske jobrækker. Worker-image kan rulles tilbage
+til den senest kendte digest, mens de immutable recovery-generationer bevares.
 
 ### 8. Opret Scheduler-job
 

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 
@@ -6,6 +6,10 @@ import {
   contractSourceFormatFromPath,
   detectContractSourceFormat,
 } from "../../cloud-run/contract-document-worker/source-format.mjs";
+import {
+  appendWordRecoveryAudit,
+  fetchWordRecoveryCandidates,
+} from "./recover-word-contract-jobs-lib.mjs";
 
 config({ path: ".env.local" });
 
@@ -30,13 +34,7 @@ function sha256(bytes) {
 }
 
 async function main() {
-  const { data, error } = await db.from("contract_document_jobs")
-    .select("id,original_storage_path")
-    .eq("status", "needs_review")
-    .eq("error_code", "invalid_pdf")
-    .order("created_at", { ascending: true })
-    .limit(limit);
-  if (error) throw error;
+  const candidates = await fetchWordRecoveryCandidates(db, limit);
 
   const result = {
     mode: apply ? "apply" : "dry-run",
@@ -48,8 +46,9 @@ async function main() {
     tooLarge: 0,
     skippedByFence: 0,
   };
+  const queuedContractIds = [];
 
-  for (const job of data ?? []) {
+  for (const job of candidates) {
     result.inspected += 1;
     const pathFormat = contractSourceFormatFromPath(job.original_storage_path);
     if (pathFormat !== "doc" && pathFormat !== "docx") {
@@ -92,6 +91,23 @@ async function main() {
       throw new Error("Recovery blev afvist af sikkerhedskontrollen");
     }
     result.queued += 1;
+    queuedContractIds.push(job.contract_id);
+  }
+
+  if (apply && result.queued > 0) {
+    await appendWordRecoveryAudit(db, {
+      contractIds: queuedContractIds,
+      correlationId: randomUUID(),
+      summary: {
+        inspected: result.inspected,
+        eligible: result.eligible,
+        queued: result.queued,
+        wrongExtension: result.wrongExtension,
+        signatureMismatch: result.signatureMismatch,
+        tooLarge: result.tooLarge,
+        skippedByFence: result.skippedByFence,
+      },
+    });
   }
 
   console.log(JSON.stringify(result, null, 2));
