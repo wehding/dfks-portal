@@ -35,6 +35,7 @@ type WorkCorrectionData = {
   title: string;
   type: string;
   year: number | null;
+  production_year?: number | null;
   duration_minutes: number | null;
   season_count?: number | null;
   episode_count: number | null;
@@ -134,6 +135,7 @@ const CORRECTABLE_KEYS: (keyof WorkCorrectionData)[] = [
   "title",
   "type",
   "year",
+  "production_year",
   "duration_minutes",
   "season_count",
   "episode_count",
@@ -384,6 +386,7 @@ function normalizeData(data: WorkCorrectionData): WorkCorrectionData {
     title: data.title.trim(),
     type: cleanWorkType(data.type),
     year: data.year,
+    production_year: data.production_year ?? null,
     duration_minutes: data.duration_minutes,
     season_count: data.season_count,
     episode_count: data.episode_count,

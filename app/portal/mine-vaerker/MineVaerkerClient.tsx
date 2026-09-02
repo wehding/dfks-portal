@@ -46,6 +46,7 @@ type Work = {
   title: string;
   type: string;
   year: number | null;
+  production_year?: number | null;
   duration_minutes: number | null;
   episode_count: number | null;
   parent_work_id?: string | null;
@@ -270,7 +271,7 @@ function parseSharePercent(value: string) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts: initialContracts, organisationShortName, defaultRoleLabel, coeditorWord, pageResult, initialQuery,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, legacyDeclarationRequiredWorkIds, legacyDeclaredWorkIds, legacyDeclarationTaskCount, contracts: initialContracts, organisationShortName, defaultRoleLabel, coeditorWord, pageResult, initialQuery,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
@@ -278,6 +279,9 @@ export default function MineVaerkerClient({
   rightsHolderId: string | null;
   dfiPersonId: number | null;
   contractedWorkIds: string[];
+  legacyDeclarationRequiredWorkIds: string[];
+  legacyDeclaredWorkIds: string[];
+  legacyDeclarationTaskCount: number;
   contracts: Contract[];
   organisationShortName: string;
   defaultRoleLabel: string;
@@ -289,6 +293,8 @@ export default function MineVaerkerClient({
   const [assignments, setAssignments] = useState(initialAssignments);
   const [allAssignments, setAllAssignments] = useState(initialAllAssignments);
   const [contracts, setContracts] = useState(initialContracts);
+  const legacyRequired = React.useMemo(() => new Set(legacyDeclarationRequiredWorkIds), [legacyDeclarationRequiredWorkIds]);
+  const legacyDeclared = React.useMemo(() => new Set(legacyDeclaredWorkIds), [legacyDeclaredWorkIds]);
 
   const broadcasterLogoMap = React.useMemo(() => {
     const map: Record<string, string> = {};
@@ -490,12 +496,14 @@ export default function MineVaerkerClient({
       const hasPending = (w.overview_pending_count ?? 0) > 0 || requests.some(request => request.status === "pending") || w.status === "til_godkendelse";
       const hasRejected = requests.some(request => request.status === "rejected");
       const hasContract = (w.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(w.id);
+      const documentationScopeIds = w.is_season_group ? w.child_work_ids ?? [] : [w.id];
+      const hasAlternativeDocumentation = documentationScopeIds.some(id => legacyRequired.has(id) || legacyDeclared.has(id));
       const missingData = !w.year || !w.type || !w.title?.trim();
       const missingEpisodes = isSeriesType(w.type) && w.episode_selection_status === "pending";
       if (statusFilter === "messages" && !hasUnread) return false;
       if (statusFilter === "pending" && !hasPending) return false;
       if (statusFilter === "rejected" && !hasRejected) return false;
-      if (statusFilter === "missingContract" && hasContract) return false;
+      if (statusFilter === "missingContract" && (hasContract || hasAlternativeDocumentation)) return false;
       if (statusFilter === "hasContract" && !hasContract) return false;
       if (statusFilter === "missingData" && !missingData) return false;
       if (statusFilter === "missingEpisodes" && !missingEpisodes) return false;
@@ -823,6 +831,10 @@ export default function MineVaerkerClient({
                 <span className="flex shrink-0 flex-col items-end gap-1">
                   {(ep.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(ep.id) ? (
                     <button type="button" className="text-xs font-medium text-foreground" onClick={() => openContractForWork(ep)}>Kontrakt tilknyttet</button>
+                  ) : legacyDeclared.has(ep.id) ? (
+                    <span className="text-xs font-medium text-emerald-700">{t("works.legacy.declared")}</span>
+                  ) : legacyRequired.has(ep.id) ? (
+                    <button type="button" className="text-xs font-medium text-amber-700 underline underline-offset-2" onClick={() => router.push("/portal/mine-vaerker?declaration=1")}>{t("works.legacy.required")}</button>
                   ) : (
                     <button type="button" className="text-xs font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractForWork(ep)}>Mangler kontrakt</button>
                   )}
@@ -879,7 +891,13 @@ export default function MineVaerkerClient({
 
   const totalWorks = assignments.reduce((sum, assignment) => sum + (assignment.works?.is_season_group ? assignment.works.episode_count ?? 0 : 1), 0);
   const withContract = assignments.reduce((sum, assignment) => sum + (assignment.works?.is_season_group ? assignment.works.overview_contract_count ?? 0 : contractedWorkIds.includes(assignment.works?.id ?? "") ? 1 : 0), 0);
-  const missingContract = Math.max(totalWorks - withContract, 0);
+  const declarationDocumentedOrPending = assignments.reduce((sum, assignment) => {
+    const work = assignment.works;
+    if (!work) return sum;
+    const scopeIds = work.is_season_group ? work.child_work_ids ?? [] : [work.id];
+    return sum + scopeIds.filter(id => legacyRequired.has(id) || legacyDeclared.has(id)).length;
+  }, 0);
+  const missingContract = Math.max(totalWorks - withContract - declarationDocumentedOrPending, 0);
 
 
 
@@ -1396,6 +1414,9 @@ export default function MineVaerkerClient({
           <Button type="button" size="sm" variant={statusFilter === "missingContract" ? "default" : "outline"} onClick={() => setStatusFilter(statusFilter === "missingContract" ? "all" : "missingContract")}>
             {t("works.quickMissingContract")}
           </Button>
+          {legacyDeclarationTaskCount > 0 && <Button type="button" size="sm" variant="outline" onClick={() => router.push("/portal/mine-vaerker?declaration=1")}>
+            Tro-og-love ({legacyDeclarationTaskCount})
+          </Button>}
           <Button type="button" size="sm" variant={statusFilter === "unresolvedShares" ? "default" : "outline"} onClick={() => setStatusFilter(statusFilter === "unresolvedShares" ? "all" : "unresolvedShares")}>
             {t("works.quickUnresolvedShares")}
           </Button>
@@ -1586,6 +1607,12 @@ export default function MineVaerkerClient({
           const broadcaster = getWorkBroadcaster(w);
           const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
           const isSeriesParent = Boolean(w.is_season_group);
+          const documentationScopeIds = w.is_season_group ? w.child_work_ids ?? [] : [w.id];
+          const needsLegacyDeclaration = documentationScopeIds.some(id => legacyRequired.has(id));
+          const declaredScopeCount = documentationScopeIds.filter(id => legacyDeclared.has(id)).length;
+          const undocumentedScopeCount = Math.max(documentationScopeIds.length - contractCount, 0);
+          const hasLegacyDeclaration = !needsLegacyDeclaration && declaredScopeCount > 0 && declaredScopeCount >= undocumentedScopeCount;
+          const needsYear = !hasAllContracts && !needsLegacyDeclaration && !hasLegacyDeclaration && w.year == null && w.production_year == null;
           const needsEpisodeSelection = w.episode_selection_status === "pending";
           const isExpanded = expandedSeries.has(w.id);
           const children = seriesEpisodes[w.id] ?? [];
@@ -1680,11 +1707,17 @@ export default function MineVaerkerClient({
               <button
                 type="button"
                 className="flex justify-end rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={e => { e.stopPropagation(); openContractForWork(w); }}
-                aria-label={hasAllContracts ? `Åbn kontrakt for ${w.title}` : `Upload kontrakt til ${w.title}`}
+                onClick={e => { e.stopPropagation(); if (needsLegacyDeclaration) router.push("/portal/mine-vaerker?declaration=1"); else openContractForWork(w); }}
+                aria-label={needsLegacyDeclaration ? `Bekræft ${w.title} på tro og love` : hasAllContracts ? `Åbn kontrakt for ${w.title}` : `Upload kontrakt til ${w.title}`}
               >
                 {hasAllContracts ? (
                   <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
+                ) : hasLegacyDeclaration ? (
+                  <Badge variant="outline" className={`${TAG_CLASS} border-emerald-300 text-emerald-700`}>{t("works.legacy.declared")}</Badge>
+                ) : needsLegacyDeclaration ? (
+                  <Badge variant="outline" className={`${TAG_CLASS} border-amber-300 text-amber-700`}>{t("works.legacy.required")}</Badge>
+                ) : needsYear ? (
+                  <Badge variant="outline" className={`${TAG_CLASS} border-amber-300 text-amber-700`}>{t("works.legacy.dateRequired")}</Badge>
                 ) : isSeriesParent && hasContract ? (
                   <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-blue-300 text-blue-700`}>Delvis</Badge>
                 ) : (
@@ -1736,11 +1769,17 @@ export default function MineVaerkerClient({
                     <button
                       type="button"
                       className="shrink-0 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={e => { e.stopPropagation(); openContractForWork(w); }}
-                      aria-label={hasAllContracts ? `Åbn kontrakt for ${w.title}` : `Upload kontrakt til ${w.title}`}
+                      onClick={e => { e.stopPropagation(); if (needsLegacyDeclaration) router.push("/portal/mine-vaerker?declaration=1"); else openContractForWork(w); }}
+                      aria-label={needsLegacyDeclaration ? `Bekræft ${w.title} på tro og love` : hasAllContracts ? `Åbn kontrakt for ${w.title}` : `Upload kontrakt til ${w.title}`}
                     >
                       {hasAllContracts ? (
                         <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
+                      ) : hasLegacyDeclaration ? (
+                        <Badge variant="outline" className={`${TAG_CLASS} border-emerald-300 text-emerald-700`}>{t("works.legacy.declared")}</Badge>
+                      ) : needsLegacyDeclaration ? (
+                        <Badge variant="outline" className={`${TAG_CLASS} border-amber-300 text-amber-700`}>{t("works.legacy.required")}</Badge>
+                      ) : needsYear ? (
+                        <Badge variant="outline" className={`${TAG_CLASS} border-amber-300 text-amber-700`}>{t("works.legacy.dateRequired")}</Badge>
                       ) : isSeriesParent && hasContract ? (
                         <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-blue-300 text-blue-700`}>Delvis</Badge>
                       ) : (
