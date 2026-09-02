@@ -27,7 +27,7 @@ export const CONTRACT_OWNER_ORIGIN_LABELS: Record<string, string> = {
   admin_manual: "Valgt af administrator",
   gmail_import: "Importeret fra Gmail",
   ai_suggestion: "Foreslået af AI",
-  historical_assignment: "Historisk tilknytning",
+  historical_assignment: "Tidligere registreret ejer",
   profile_merge: "Flyttet ved profilsammenlægning",
   unknown: "Ukendt oprindelse",
 };

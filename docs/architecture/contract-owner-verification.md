@@ -11,8 +11,9 @@ Denne beslutning gælder for alle kontraktversioner og alle uploadkilder.
 
 ## Roller
 
-- `superadmin`, `admin` og `org-admin` kan behandle ejerskabskontrollen i en
-  organisation, de har adgang til.
+- `superadmin`, `admin` og `org-admin` kan behandle ejerskab på fanen
+  **Ejerskab** i Rediger kontrakt og i en filtreret kø for en organisation,
+  de har adgang til.
 - `jurist` kan se den registrerede ejer som en skrivebeskyttet oplysning og
   bruge de almindelige juridiske medlemsmoduler, men kan ikke hente
   kandidater gennem ejerskabsfunktionen, se ejerskabskøen eller ændre ejeren.
@@ -54,7 +55,7 @@ forbliver kun synlige for medarbejdere.
 
 ## Evidens
 
-Ejerskabskontrollen skelner mellem:
+Ejerskabsfanen skelner mellem:
 
 - registreret ejer;
 - kandidat fundet i den rå AI-aflæsning;

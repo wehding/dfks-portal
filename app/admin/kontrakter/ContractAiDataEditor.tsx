@@ -21,6 +21,7 @@ import { SeasonStepper } from "@/components/works/season-stepper";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { ContractSourceBadge } from "@/components/contracts/contract-source-badge";
 import type { ContractFieldSource } from "@/lib/contract-workbench";
+import type { ContractEvidenceBbox, ContractEvidenceCoordinateSource } from "@/lib/contract-workbench";
 import type { SeriesEpisodeOption } from "@/lib/series-episodes";
 
 type FieldType = "text" | "number" | "bool" | "triState" | "signatureMethod" | "textarea" | "date";
@@ -34,6 +35,9 @@ export type ContractEvidenceActivation = {
   focusText?: string | null;
   clauseId?: string | null;
   page?: number | null;
+  bbox?: ContractEvidenceBbox | null;
+  coordinateSource?: ContractEvidenceCoordinateSource | null;
+  confidence?: number | null;
 };
 type SummaryData = {
   rights: { copydan: string; streaming: string; signature: string };

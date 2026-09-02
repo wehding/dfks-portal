@@ -6,7 +6,7 @@ import test from "node:test";
 const root = process.cwd();
 const source = (file: string) => fs.readFileSync(path.join(root, file), "utf8");
 
-test("ejerskabskontrol er et særskilt manager-modul", () => {
+test("ejerskab er et særskilt manager-modul integreret i kontrakteditoren", () => {
   const staff = source("lib/staff-access.ts");
   assert.match(staff, /contract_ownership: all \? FULL : NONE/);
   assert.doesNotMatch(staff, /contract_ownership:.*legal/);
@@ -162,10 +162,10 @@ test("jurist kan uploade uden at tildele ejer", () => {
 
 test("sletning uden kontraktsletning kræver først reassignment", () => {
   const users = source("app/api/admin/users/route.ts");
-  assert.match(users, /Flyt kontrakterne under Ejerskabskontrol/);
+  assert.match(users, /Ret ejeren på fanen Ejerskab/);
   assert.doesNotMatch(users, /update\(\{ rights_holder_id: null \}\)/);
   const holders = source("app/actions/rights-holder-admin.ts");
-  assert.match(holders, /Flyt dem under Ejerskabskontrol/);
+  assert.match(holders, /Ret ejeren på fanen Ejerskab/);
   assert.doesNotMatch(holders, /update\(\{ rights_holder_id: null \}\)/);
 });
 

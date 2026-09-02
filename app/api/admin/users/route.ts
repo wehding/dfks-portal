@@ -301,7 +301,7 @@ export async function PATCH(req: NextRequest) {
         if (contractError) return NextResponse.json({ error: "Kontrakttilknytningerne kunne ikke kontrolleres." }, { status: 500 })
         if ((ownedContracts ?? 0) > 0) {
             return NextResponse.json({
-                error: "Rettighedshaveren ejer fortsat kontrakter. Flyt kontrakterne under Ejerskabskontrol, før profilen slettes.",
+                error: "Rettighedshaveren ejer fortsat kontrakter. Ret ejeren på fanen Ejerskab i kontraktarkivet, før profilen slettes.",
             }, { status: 409 })
         }
         const { error: assignmentError } = await admin.from("work_assignments").delete().eq("rights_holder_id", recordId)

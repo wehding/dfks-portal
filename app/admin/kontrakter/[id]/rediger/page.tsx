@@ -10,7 +10,7 @@ export default async function ContractEditorPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string; queueId?: string; section?: string }>;
 }) {
   const [{ id }, query] = await Promise.all([params, searchParams]);
   const result = await fetchAdminContractEditorData(id);
@@ -18,5 +18,11 @@ export default async function ContractEditorPage({
     if (result.error === "Kontrakten blev ikke fundet" || result.error === "Ikke autoriseret") notFound();
     throw new Error(`Kontraktarbejdsfladen kunne ikke indlæses: ${result.error}`);
   }
-  return <ContractWorkbenchClient data={result as EditorData} returnTo={safeContractReturnTo(query.returnTo)} />;
+  return <ContractWorkbenchClient
+    key={id}
+    data={result as EditorData}
+    returnTo={safeContractReturnTo(query.returnTo)}
+    queueId={query.queueId ?? null}
+    initialSection={query.section ?? null}
+  />;
 }

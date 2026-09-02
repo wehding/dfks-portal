@@ -117,7 +117,7 @@ export async function permanentlyDeleteRightsHolders(
       if (ownersWithContracts.size > 0) {
         return {
           success: false,
-          error: "En eller flere rettighedshavere ejer fortsat kontrakter. Flyt dem under Ejerskabskontrol, før profilen slettes.",
+          error: "En eller flere rettighedshavere ejer fortsat kontrakter. Ret ejeren på fanen Ejerskab i kontraktarkivet, før profilen slettes.",
           deletedCount: 0,
           deletedContracts: 0,
           deletedWorks: 0,
@@ -128,7 +128,7 @@ export async function permanentlyDeleteRightsHolders(
             ...candidates.filter(holder => ownersWithContracts.has(holder.id)).map(holder => ({
               id: holder.id,
               name: holder.name,
-              reason: "Rettighedshaveren ejer fortsat kontrakter, som først skal flyttes under Ejerskabskontrol.",
+              reason: "Rettighedshaveren ejer fortsat kontrakter, som først skal flyttes på fanen Ejerskab i kontraktarkivet.",
             })),
           ],
         };

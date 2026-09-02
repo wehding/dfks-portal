@@ -489,7 +489,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     )
 
     return (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full" data-pdf-viewer>
             <div className="flex items-center gap-1 border-b px-2 py-1.5 shrink-0">
                 <Button variant="ghost" size="icon" className="h-7 w-7"
                     onClick={() => { setPageNumber(p => Math.max(1, p - 1)); setPageRendered(false) }}

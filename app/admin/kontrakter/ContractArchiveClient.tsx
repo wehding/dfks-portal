@@ -8,7 +8,7 @@ import Link from "next/link"
 import {
     Search, Trash2, Eye, Upload, FileText, Download,
     CheckCircle2, AlertCircle, Loader2, X, Pencil, MessageSquare,
-    AlertTriangle, Clock, Archive,
+    AlertTriangle, Clock, Archive, ListChecks,
 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
@@ -19,7 +19,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
 import { ValideringskøTab } from "@/components/admin/valideringskoe-tab"
-import { ContractOwnerVerificationTab } from "@/components/admin/contract-owner-verification-tab"
+import { createAdminContractWorkQueue } from "@/app/actions/admin-contract-work-queues"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ADMIN_CONTRACT_UPLOAD_ACCEPT } from "@/lib/contract-upload-format"
 import { CONTRACT_IMPORT_CONCURRENCY, validateContractImportFile } from "@/lib/contract-import"
@@ -94,6 +94,13 @@ type ContractRow = {
     ai_job_status?: string | null
     ai_job_error?: string | null
     import_status?: string | null
+    ownership_status?: string | null
+    ownership_origin?: string | null
+    ownership_reason_code?: string | null
+    ownership_revision?: number | null
+    ownership_assigned_rights_holder_id?: string | null
+    ownership_proposed_rights_holder_id?: string | null
+    ownership_proposed_rights_holder_name?: string | null
 }
 
 type ContractVersion = {
@@ -331,6 +338,10 @@ function ContractStatusBadges({ contract, compact = false }: { contract: Contrac
                     Mangler ejer
                 </Badge>
             )}
+            {contract.ownership_status === "pending" && contract.ownership_proposed_rights_holder_id ? <Badge variant="outline" className={`w-fit border-blue-300 bg-blue-50 font-normal text-blue-700 ${badgeClass}`}>Forslag klar</Badge> : null}
+            {contract.ownership_status === "conflict" ? <Badge variant="outline" className={`w-fit border-amber-300 bg-amber-50 font-normal text-amber-800 ${badgeClass}`}>Modstridende ejeroplysninger</Badge> : null}
+            {contract.ownership_status === "confirmed" ? <Badge variant="outline" className={`w-fit border-emerald-300 bg-emerald-50 font-normal text-emerald-800 ${badgeClass}`}>Ejer bekræftet</Badge> : null}
+            {contract.ownership_status === "corrected" ? <Badge variant="outline" className={`w-fit border-emerald-300 bg-emerald-50 font-normal text-emerald-800 ${badgeClass}`}>Ejer rettet</Badge> : null}
             {contract.import_status === "awaiting_episode_confirmation" && (
                 <Badge variant="outline" className={`w-fit border-amber-300 bg-amber-50 font-normal text-amber-800 ${badgeClass}`}>
                     Afventer bekræftelse af afsnit
@@ -407,6 +418,7 @@ function AdminKontrakterContent({
     const [search, setSearch] = useState(initialQuery?.search ?? "")
     const [filterStatus, setFilterStatus] = useState(initialQuery?.status ?? "all")
     const [filterType, setFilterType] = useState(initialQuery?.type ?? "all")
+    const [filterOwnership, setFilterOwnership] = useState(initialQuery?.ownership ?? "all")
     const [pageSize, setPageSize] = useState(initialQuery?.pageSize ?? 20)
     const [currentPage, setCurrentPage] = useState(initialQuery?.page ?? 1)
     const [totalCount, setTotalCount] = useState(initialResult?.success ? initialResult.totalCount ?? 0 : 0)
@@ -720,6 +732,7 @@ function AdminKontrakterContent({
                 search,
                 status: filterStatus,
                 type: filterType,
+                ownership: filterOwnership,
                 rightsHolderId: activeRh?.id ?? null,
                 sortKey,
                 sortDir,
@@ -753,7 +766,7 @@ function AdminKontrakterContent({
         } finally {
             if (requestId === loadRequestRef.current) setLoading(false)
         }
-    }, [activeRh?.id, currentPage, filterStatus, filterType, pageSize, search, sortDir, sortKey])
+    }, [activeRh?.id, currentPage, filterOwnership, filterStatus, filterType, pageSize, search, sortDir, sortKey])
 
     useEffect(() => {
         if (initialLoadConsumedRef.current) {
@@ -771,6 +784,7 @@ function AdminKontrakterContent({
             setOrDelete("q", search.trim(), "")
             setOrDelete("status", filterStatus, "all")
             setOrDelete("type", filterType, "all")
+            setOrDelete("ownership", filterOwnership, "all")
             setOrDelete("sort", sortKey, "status")
             setOrDelete("direction", sortDir, "asc")
             setOrDelete("pageSize", String(pageSize), "20")
@@ -779,12 +793,12 @@ function AdminKontrakterContent({
             if (next !== pageSearchParams.toString()) router.replace(next ? `/admin/kontrakter?${next}` : "/admin/kontrakter", { scroll: false })
         }, 300)
         return () => window.clearTimeout(timeout)
-    }, [currentPage, filterStatus, filterType, pageSearchParams, pageSize, router, search, sortDir, sortKey, view])
+    }, [currentPage, filterOwnership, filterStatus, filterType, pageSearchParams, pageSize, router, search, sortDir, sortKey, view])
 
     useEffect(() => {
         setCurrentPage(1)
         setSelectedIds([])
-    }, [activeRh?.id, filterStatus, filterType, pageSize, search, sortDir, sortKey])
+    }, [activeRh?.id, filterOwnership, filterStatus, filterType, pageSize, search, sortDir, sortKey])
 
     // ── Live AI-jobstatus ─────────────────────────────────────
     // Så længe kontrakter er i kø/behandling, poll deres jobstatus og opdatér
@@ -1047,12 +1061,35 @@ function AdminKontrakterContent({
 
     // ── Edit ──────────────────────────────────────────────────
 
-    const openEdit = (c: ContractRow) => {
+    const openEdit = (c: ContractRow, queueId?: string, section?: string) => {
         const params = new URLSearchParams(pageSearchParams.toString())
         params.delete("edit")
         if (!params.has("tab")) params.set("tab", "arkiv")
         const returnTo = `/admin/kontrakter?${params.toString()}`
-        router.push(`/admin/kontrakter/${c.id}/rediger?returnTo=${encodeURIComponent(returnTo)}`)
+        const editor = new URLSearchParams({ returnTo })
+        if (queueId) editor.set("queueId", queueId)
+        if (section) editor.set("section", section)
+        router.push(`/admin/kontrakter/${c.id}/rediger?${editor.toString()}`)
+    }
+
+    const openWorkQueue = async (kind: "filtered" | "selected" | "validation" | "ownership") => {
+        const result = await createAdminContractWorkQueue({
+            kind,
+            selectedContractIds: kind === "selected" ? selectedIds : undefined,
+            filters: {
+                search,
+                status: filterStatus,
+                type: filterType,
+                ownership: filterOwnership as AdminContractsPageParams["ownership"],
+                rightsHolderId: activeRh?.id ?? null,
+                sortKey,
+                sortDir,
+            },
+        })
+        if (!result.success) return toast.error(result.error)
+        if (!result.queueId || !result.firstContractId) return toast.error("Køen kunne ikke åbnes")
+        const first = contracts.find(item => item.id === result.firstContractId) ?? { id: result.firstContractId } as ContractRow
+        openEdit(first, result.queueId, kind === "ownership" ? "ownership" : kind === "validation" ? "approve" : undefined)
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1812,13 +1849,24 @@ function AdminKontrakterContent({
                         <SelectItem value="documentReady">Dokument klar</SelectItem>
                         <SelectItem value="documentNeedsReview">Dokument kræver kontrol</SelectItem>
                         <SelectItem value="documentFailed">Dokumentbehandling fejlede</SelectItem>
-                        <SelectItem value="missingOwner">Mangler ejer</SelectItem>
                         <SelectItem value="missingWork">Mangler værk</SelectItem>
                         <SelectItem value="valideret">Valideret</SelectItem>
                         <SelectItem value="arkiveret">Arkiveret</SelectItem>
                         <SelectItem value="beskeder">Beskeder</SelectItem>
                     </SelectContent>
                 </Select>
+                {canManageOwnership ? <Select value={filterOwnership} onValueChange={value => setFilterOwnership(value as typeof filterOwnership)}>
+                    <SelectTrigger className="w-full lg:w-[210px]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">Alle ejerskaber</SelectItem>
+                        <SelectItem value="missing">Mangler ejer</SelectItem>
+                        <SelectItem value="proposed">Forslag klar</SelectItem>
+                        <SelectItem value="review">Kræver manuel kontrol</SelectItem>
+                        <SelectItem value="conflict">Modstridende oplysninger</SelectItem>
+                        <SelectItem value="confirmed">Bekræftet ejer</SelectItem>
+                        <SelectItem value="corrected">Ejer rettet</SelectItem>
+                    </SelectContent>
+                </Select> : null}
                 <Select value={filterType} onValueChange={setFilterType}>
                     <SelectTrigger className="w-full lg:w-[160px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -1829,8 +1877,8 @@ function AdminKontrakterContent({
                 </Select>
                 <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
                 <ResetFiltersButton
-                    active={Boolean(search || filterStatus !== "all" || filterType !== "all" || activeRh)}
-                    onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20); setCurrentPage(1) }}
+                    active={Boolean(search || filterStatus !== "all" || filterType !== "all" || filterOwnership !== "all" || activeRh)}
+                    onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterOwnership("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20); setCurrentPage(1) }}
                 />
                 <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
                     <Search className="h-4 w-4" />
@@ -1868,6 +1916,14 @@ function AdminKontrakterContent({
             </div>
 
             <ListResultSummary filteredCount={totalCount} totalCount={totalAllCount} selectedCount={selectedIds.length} loading={loading} />
+
+            <div className="flex flex-wrap gap-2 rounded-lg border bg-muted/20 p-2" aria-label="Arbejdskøer">
+                <Button size="sm" variant="outline" className="gap-2" onClick={() => void openWorkQueue("filtered")} disabled={loading || totalCount === 0}><ListChecks className="h-4 w-4" />Åbn aktuel liste som kø</Button>
+                <Button size="sm" variant="outline" onClick={() => void openWorkQueue("validation")} disabled={loading}>Start valideringskø</Button>
+                {canManageOwnership ? <Button size="sm" variant="outline" onClick={() => void openWorkQueue("ownership")} disabled={loading}>Start ejerskabskø</Button> : null}
+                <Button size="sm" variant="outline" onClick={() => void openWorkQueue("selected")} disabled={selectedIds.length === 0}>Åbn valgte som kø</Button>
+                <p className="basis-full text-xs text-muted-foreground">Køen følger de aktuelle filtre og omfatter også resultater på andre sider.</p>
+            </div>
 
             {selectedIds.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
@@ -2440,8 +2496,8 @@ function AdminKontrakterContent({
                                     </div>
                                     {canManageOwnership && editContract?.id ? (
                                         <Button asChild variant="outline" size="sm" className="w-full">
-                                            <Link href={`/admin/kontrakter?tab=ejerskabskontrol&contractId=${encodeURIComponent(editContract.id)}`}>
-                                                Administrér under Ejerskabskontrol
+                                            <Link href={`/admin/kontrakter/${encodeURIComponent(editContract.id)}/rediger?section=ownership`}>
+                                                Åbn Ejerskab i Rediger kontrakt
                                             </Link>
                                         </Button>
                                     ) : null}
@@ -2913,43 +2969,35 @@ function AdminKontrakterPageInner({
     initialResult,
     initialQuery,
     canManageOwnership,
-    canRunOwnerBackfill,
 }: {
     initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
     initialQuery?: AdminContractsPageParams
     canManageOwnership: boolean
-    canRunOwnerBackfill: boolean
 }) {
     const router = useRouter()
     const searchParams = useSearchParams()
     const requestedTab = searchParams.get("tab")
     // This capability is resolved server-side from the active organisation and
     // module access. Client-side role names are never used as authorization.
-    type ContractArchiveTab = "arkiv" | "valideringskoe" | "ejerskabskontrol" | "upload"
+    type ContractArchiveTab = "arkiv" | "valideringskoe" | "upload"
     const initialTab: ContractArchiveTab = requestedTab === "valideringskoe"
         ? "valideringskoe"
-        : requestedTab === "ejerskabskontrol" && canManageOwnership
-            ? "ejerskabskontrol"
-            : requestedTab === "upload"
+        : requestedTab === "upload"
                 ? "upload"
                 : "arkiv"
     const [activeTab, setActiveTab] = useState<ContractArchiveTab>(initialTab)
     const [køCount, setKøCount] = useState<number>(0)
     const tabRefs = useRef<Partial<Record<ContractArchiveTab, HTMLButtonElement | null>>>({})
-    const visibleContractTabs: ContractArchiveTab[] = canManageOwnership
-        ? ["arkiv", "valideringskoe", "ejerskabskontrol", "upload"]
-        : ["arkiv", "valideringskoe", "upload"]
+    const visibleContractTabs: ContractArchiveTab[] = ["arkiv", "valideringskoe", "upload"]
 
     useEffect(() => {
         const nextTab: ContractArchiveTab = requestedTab === "valideringskoe"
             ? "valideringskoe"
-            : requestedTab === "ejerskabskontrol" && canManageOwnership
-                ? "ejerskabskontrol"
-                : requestedTab === "upload"
+            : requestedTab === "upload"
                     ? "upload"
                     : "arkiv"
         setActiveTab(current => current === nextTab ? current : nextTab)
-    }, [canManageOwnership, requestedTab])
+    }, [requestedTab])
 
     useEffect(() => {
         async function fetchKøCount() {
@@ -2972,7 +3020,7 @@ function AdminKontrakterPageInner({
         setActiveTab(nextTab)
         const next = new URLSearchParams(searchParams.toString())
         next.set("tab", nextTab)
-        if (nextTab !== "ejerskabskontrol") next.delete("contractId")
+        next.delete("contractId")
         router.replace(`/admin/kontrakter?${next.toString()}`, { scroll: false })
     }
 
@@ -3041,27 +3089,6 @@ function AdminKontrakterPageInner({
                         </span>
                     )}
                 </button>
-                {canManageOwnership ?
-                    <button
-                        ref={node => { tabRefs.current.ejerskabskontrol = node }}
-                        id="contract-ownership-tab"
-                        type="button"
-                        role="tab"
-                        aria-controls="contract-ownership-panel"
-                        aria-selected={activeTab === "ejerskabskontrol"}
-                        tabIndex={activeTab === "ejerskabskontrol" ? 0 : -1}
-                        onClick={() => changeTab("ejerskabskontrol")}
-                        onKeyDown={event => handleTabKeyDown(event, "ejerskabskontrol")}
-                        className={[
-                            "-mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                            activeTab === "ejerskabskontrol"
-                                ? "border-foreground text-foreground"
-                                : "border-transparent text-muted-foreground hover:text-foreground",
-                        ].join(" ")}
-                    >
-                        Ejerskabskontrol
-                    </button>
-                    : null}
                 <button
                     ref={node => { tabRefs.current.upload = node }}
                     id="contract-upload-tab"
@@ -3087,25 +3114,19 @@ function AdminKontrakterPageInner({
                     ? "contract-archive-panel"
                     : activeTab === "valideringskoe"
                         ? "contract-validation-queue-panel"
-                        : activeTab === "ejerskabskontrol"
-                            ? "contract-ownership-panel"
-                            : "contract-upload-panel"}
+                        : "contract-upload-panel"}
                 role="tabpanel"
                 aria-labelledby={activeTab === "arkiv"
                     ? "contract-archive-tab"
                     : activeTab === "valideringskoe"
                         ? "contract-validation-queue-tab"
-                        : activeTab === "ejerskabskontrol"
-                            ? "contract-ownership-tab"
-                            : "contract-upload-tab"}
+                        : "contract-upload-tab"}
             >
                 {activeTab === "arkiv"
                     ? <Suspense><AdminKontrakterContent view="archive" initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} /></Suspense>
                     : activeTab === "upload"
                         ? <Suspense><AdminKontrakterContent view="upload" canManageOwnership={canManageOwnership} /></Suspense>
-                        : activeTab === "ejerskabskontrol"
-                            ? <ContractOwnerVerificationTab initialContractId={searchParams.get("contractId")} canRunBackfill={canRunOwnerBackfill} />
-                            : <ValideringskøTab onAfventerCount={setKøCount} />
+                        : <ValideringskøTab onAfventerCount={setKøCount} />
                 }
             </div>
         </div>
@@ -3116,12 +3137,10 @@ export default function ContractArchiveClient({
     initialResult,
     initialQuery,
     canManageOwnership,
-    canRunOwnerBackfill,
 }: {
     initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
     initialQuery?: AdminContractsPageParams
     canManageOwnership: boolean
-    canRunOwnerBackfill: boolean
 }) {
-    return <Suspense><AdminKontrakterPageInner initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} canRunOwnerBackfill={canRunOwnerBackfill} /></Suspense>
+    return <Suspense><AdminKontrakterPageInner initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} /></Suspense>
 }
