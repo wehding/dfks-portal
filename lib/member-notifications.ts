@@ -17,6 +17,7 @@ export async function sendMemberNotification(params: {
   path: string;
   entityType?: string;
   entityId?: string;
+  forceEmail?: boolean;
 }) {
   const db = createServiceClient();
   const [{ data: holder }, { data: org }] = await Promise.all([
@@ -28,7 +29,7 @@ export async function sendMemberNotification(params: {
   const { data: existing } = await db.from("notification_deliveries").select("id,status").eq("org_id", params.orgId).eq("event_key", params.eventKey).maybeSingle();
   if (existing) return { ok: existing.status === "sent", skipped: true };
 
-  const enabled = params.category === "broadcast" ? holder.email_broadcast_enabled : holder.email_transactional_enabled;
+  const enabled = params.forceEmail === true || (params.category === "broadcast" ? holder.email_broadcast_enabled : holder.email_transactional_enabled);
   const { data: delivery, error: insertError } = await db.from("notification_deliveries").insert({
     org_id: params.orgId,
     rights_holder_id: params.rightsHolderId,

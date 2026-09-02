@@ -190,10 +190,12 @@ export function renderInvitationTemplate(template: string, values: {
   organisation: string;
   worksText: string;
   primaryWork: string;
+  invitationLink?: string;
 }) {
   return template
     .replaceAll("{navn}", values.name)
     .replaceAll("{organisation}", values.organisation)
     .replaceAll("{værker}", values.worksText)
-    .replaceAll("{værk}", values.primaryWork);
+    .replaceAll("{værk}", values.primaryWork)
+    .replaceAll("{invitationslink}", values.invitationLink ?? "");
 }
