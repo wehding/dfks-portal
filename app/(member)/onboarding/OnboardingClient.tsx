@@ -22,6 +22,7 @@ import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 import { seasonLookupMessage } from "@/lib/season-selection";
 import { LEGAL_DOCUMENT_TYPE_LABELS, PRIVACY_POLICY_URL, type LegalDocumentRecord } from "@/lib/legal-documents";
 import { SourcePictogram } from "@/components/source-pictogram";
+import { resolveOnboardingFirstStep } from "@/lib/onboarding-navigation";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -95,7 +96,7 @@ export default function OnboardingClient({
     { id: 5, title: t("onboarding.stepPrivacy"), icon: "🔒" },
     { id: 6, title: t("onboarding.stepConfirm"), icon: "✅" },
   ];
-  const firstStep = isRepeatOnboarding ? 5 : 1;
+  const firstStep = resolveOnboardingFirstStep(isRepeatOnboarding);
   const [step, setStep] = useState(firstStep);
   const [isSaving, setIsSaving] = useState(false);
   const isOrganisationMember = Boolean(rh?.is_member);
