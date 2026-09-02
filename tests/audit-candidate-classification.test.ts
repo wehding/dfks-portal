@@ -26,15 +26,15 @@ const candidates: Candidate[] = (registry.classificationGroups ?? []).flatMap(gr
   } as Candidate)),
 );
 
-test("alle 79 scannerfund har en entydig disposition", () => {
-  assert.equal(candidates.length, 79);
-  assert.equal(new Set(candidates.map(candidate => candidate.path)).size, 79);
+test("alle 80 scannerfund har en entydig disposition", () => {
+  assert.equal(candidates.length, 80);
+  assert.equal(new Set(candidates.map(candidate => candidate.path)).size, 80);
   assert.deepEqual(
     Object.fromEntries(["instrument", "delegate", "exclude"].map(disposition => [
       disposition,
       candidates.filter(candidate => candidate.disposition === disposition).length,
     ])),
-    { instrument: 67, delegate: 10, exclude: 2 },
+    { instrument: 68, delegate: 10, exclude: 2 },
   );
 });
 
