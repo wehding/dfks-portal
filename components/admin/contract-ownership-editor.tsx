@@ -11,10 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  contractOwnerOriginLabel,
-  contractOwnerStatusLabel,
-} from "@/lib/contract-owner-verification-ui";
+import { contractOwnerStatusLabel } from "@/lib/contract-owner-verification-ui";
 import type {
   ContractOwnerSummary,
   ContractOwnerVerificationDetail,
@@ -92,14 +89,13 @@ export function ContractOwnershipEditor({
 
   const proposedOwner = detail?.proposedRightsHolder ?? null;
   const assignedOwner = detail?.assignedRightsHolder ?? null;
-  const oneClickOwner = proposedOwner ?? assignedOwner;
-  const oneClickDecision = proposedOwner && proposedOwner.id !== assignedOwner?.id ? "reassign" : "confirm";
+  const oneClickOwner = proposedOwner;
   const confidence = detail?.documentEvidence?.spatialEvidence?.confidence
     ?? detail?.documentEvidence?.spatialAccuracy
     ?? null;
   const extractedName = detail?.aiEvidence?.extractedRightsHolderName ?? null;
   const sourceQuote = detail?.aiEvidence?.sourceQuote ?? null;
-  const canConfirm = Boolean(canManage && detail && oneClickOwner && !["confirmed", "corrected", "not_applicable", "blocked"].includes(detail.verification.status));
+  const canConfirm = Boolean(canManage && detail && proposedOwner && !["confirmed", "corrected", "not_applicable", "blocked"].includes(detail.verification.status));
 
   const sourceActivation = useMemo<ContractEvidenceActivation>(() => ({
     fieldKey: "ownership",
@@ -162,24 +158,30 @@ export function ContractOwnershipEditor({
   return <section className="p-3" aria-labelledby="ownership-heading">
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
       <div><h2 id="ownership-heading" className="font-semibold">Ejerskab</h2><p className="text-xs text-muted-foreground">Kontrollér navnet i kontrakten og godkend eller ret ejeren.</p></div>
-      <div className="flex flex-wrap gap-1"><Badge variant="outline">{contractOwnerStatusLabel(detail.verification.status)}</Badge><Badge variant="outline">{contractOwnerOriginLabel(detail.verification.assignmentOrigin)}</Badge></div>
+      <Badge variant="outline">{contractOwnerStatusLabel(detail.verification.status)}</Badge>
     </div>
     <dl className="rounded-md border px-3">
       <InfoRow label="Nuværende registrerede ejer">{assignedOwner?.name ?? "Mangler ejer"}</InfoRow>
-      <InfoRow label="Navn aflæst fra PDF'en"><button type="button" className="text-left font-medium underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onEvidenceActivate(sourceActivation)}>{extractedName ?? "Ikke aflæst"}</button>{sourceQuote ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{sourceQuote}</p> : null}</InfoRow>
-      <InfoRow label="Foreslået ejer">{proposedOwner?.name ?? "Intet særskilt forslag"}</InfoRow>
-      <InfoRow label="Tidligere registreret ejer">{detail.verification.assignmentOrigin === "historical_assignment" ? assignedOwner?.name ?? "Ingen" : "Ikke relevant"}</InfoRow>
-      <InfoRow label="Sikkerhed">{confidenceLabel(confidence)}</InfoRow>
-      <InfoRow label="Matchbegrundelse">{detail.verification.reasonCode ?? "Ingen begrundelse registreret"}</InfoRow>
-      <InfoRow label="Datakilde">{detail.aiEvidence ? `${detail.aiEvidence.provider ?? "AI"}${detail.aiEvidence.model ? ` · ${detail.aiEvidence.model}` : ""}` : "Ingen AI-kilde"}</InfoRow>
-      <InfoRow label="Manuel kontrol">{["pending", "conflict", "correction_proposed", "blocked"].includes(detail.verification.status) ? "Ja" : "Nej"}</InfoRow>
     </dl>
 
+    <details className="mt-3 rounded-md border bg-muted/10">
+      <summary className="cursor-pointer px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Vis ejerskabsgrundlag</summary>
+      <dl className="border-t px-3">
+        <InfoRow label="Navn aflæst fra PDF'en"><button type="button" className="text-left font-medium underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onEvidenceActivate(sourceActivation)}>{extractedName ?? "Ikke aflæst"}</button>{sourceQuote ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{sourceQuote}</p> : null}</InfoRow>
+        <InfoRow label="Foreslået ejer">{proposedOwner?.name ?? "Intet særskilt forslag"}</InfoRow>
+        <InfoRow label="Sikkerhed">{confidenceLabel(confidence)}</InfoRow>
+        <InfoRow label="Matchbegrundelse">{detail.verification.reasonCode ?? "Ingen begrundelse registreret"}</InfoRow>
+        <InfoRow label="Datakilde">{detail.aiEvidence ? `${detail.aiEvidence.provider ?? "AI"}${detail.aiEvidence.model ? ` · ${detail.aiEvidence.model}` : ""}` : "Ingen AI-kilde"}</InfoRow>
+        <InfoRow label="Manuel kontrol">{["pending", "conflict", "correction_proposed", "blocked"].includes(detail.verification.status) ? "Ja" : "Nej"}</InfoRow>
+      </dl>
+    </details>
+
     <div className="mt-3 flex flex-wrap gap-2">
-      <Button disabled={!canConfirm || saving} onClick={() => oneClickOwner && void applyOwner(oneClickOwner, false)}><CheckCircle2 className="h-4 w-4" />Godkend forslag</Button>
-      <Button disabled={!canConfirm || saving || !queueActive} onClick={() => oneClickOwner && void applyOwner(oneClickOwner, true)}><UserRoundCheck className="h-4 w-4" />Godkend og næste</Button>
+      {canConfirm && oneClickOwner ? <>
+        <Button disabled={saving} onClick={() => void applyOwner(oneClickOwner, false)}><CheckCircle2 className="h-4 w-4" />Godkend forslag</Button>
+        <Button disabled={saving || !queueActive} onClick={() => void applyOwner(oneClickOwner, true)}><UserRoundCheck className="h-4 w-4" />Godkend og næste</Button>
+      </> : null}
       <Button variant="outline" onClick={() => document.getElementById("ownership-search")?.focus()}>Ret ejer</Button>
-      {oneClickDecision === "confirm" && !proposedOwner ? <p className="w-full text-xs text-muted-foreground">Forslaget er den nuværende ejer. Godkendelse låser kontrollen fast.</p> : null}
     </div>
 
     <div className="mt-5 rounded-md border p-3">

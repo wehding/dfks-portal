@@ -156,10 +156,8 @@ function ContractDocumentBadges({ contract }: { contract: ContractRow }) {
             : state.processingTone === "success"
                 ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"
                 : ""
-    return <div className="flex flex-wrap gap-1">
-        {state.hasOriginal && <Badge variant="outline" className="text-[10px]">Original</Badge>}
-        <Badge variant="outline" className={`text-[10px] ${tone}`}>{state.processingLabel}</Badge>
-    </div>
+    if (!['warning', 'danger'].includes(state.processingTone)) return null
+    return <Badge variant="outline" className={`text-[10px] ${tone}`}>{state.processingLabel}</Badge>
 }
 
 type ContractComment = {
@@ -273,8 +271,9 @@ const AI_JOB_CLASS: Record<string, string> = {
     dead: "border-red-300 bg-red-50 text-red-700",
 }
 
+const AI_JOB_ATTENTION_STATES = new Set(["error", "blocked", "dead"])
+
 const WORK_LINK_CLASS = {
-    linked: "border-emerald-300 bg-emerald-50 text-emerald-700",
     missing: "border-red-300 bg-red-50 text-red-700",
 }
 
@@ -314,7 +313,7 @@ function ContractStatusBadges({ contract, compact = false }: { contract: Contrac
             <Badge className={`w-fit font-normal ${badgeClass} ${STATUS_CLASS[contract.status] ?? ""}`}>
                 {STATUS_LABELS[contract.status] ?? contract.status}
             </Badge>
-            {contract.ai_job_status && contract.ai_job_status !== "done" && (
+            {contract.ai_job_status && AI_JOB_ATTENTION_STATES.has(contract.ai_job_status) && (
                 <Badge
                     variant="outline"
                     title={contract.ai_job_error ?? undefined}
@@ -328,11 +327,9 @@ function ContractStatusBadges({ contract, compact = false }: { contract: Contrac
                     {hasMaterialWarning ? "Validering anbefalet · kontrollér advarsler" : "Validering anbefalet"}
                 </Badge>
             )}
-            {contract.status !== "valideret" && (
-                <Badge variant="outline" className={`w-fit font-normal ${badgeClass} ${hasContractWorkLink(contract) ? WORK_LINK_CLASS.linked : WORK_LINK_CLASS.missing}`}>
-                    {hasContractWorkLink(contract) ? "Værk tilknyttet" : "Mangler værk"}
-                </Badge>
-            )}
+            {contract.status !== "valideret" && !hasContractWorkLink(contract) ? (
+                <Badge variant="outline" className={`w-fit font-normal ${badgeClass} ${WORK_LINK_CLASS.missing}`}>Mangler værk</Badge>
+            ) : null}
             {isMissingOwner(contract) && (
                 <Badge variant="outline" className={`w-fit border-red-300 bg-red-50 font-normal text-red-700 ${badgeClass}`}>
                     Mangler ejer
@@ -340,8 +337,6 @@ function ContractStatusBadges({ contract, compact = false }: { contract: Contrac
             )}
             {contract.ownership_status === "pending" && contract.ownership_proposed_rights_holder_id ? <Badge variant="outline" className={`w-fit border-blue-300 bg-blue-50 font-normal text-blue-700 ${badgeClass}`}>Forslag klar</Badge> : null}
             {contract.ownership_status === "conflict" ? <Badge variant="outline" className={`w-fit border-amber-300 bg-amber-50 font-normal text-amber-800 ${badgeClass}`}>Modstridende ejeroplysninger</Badge> : null}
-            {contract.ownership_status === "confirmed" ? <Badge variant="outline" className={`w-fit border-emerald-300 bg-emerald-50 font-normal text-emerald-800 ${badgeClass}`}>Ejer bekræftet</Badge> : null}
-            {contract.ownership_status === "corrected" ? <Badge variant="outline" className={`w-fit border-emerald-300 bg-emerald-50 font-normal text-emerald-800 ${badgeClass}`}>Ejer rettet</Badge> : null}
             {contract.import_status === "awaiting_episode_confirmation" && (
                 <Badge variant="outline" className={`w-fit border-amber-300 bg-amber-50 font-normal text-amber-800 ${badgeClass}`}>
                     Afventer bekræftelse af afsnit

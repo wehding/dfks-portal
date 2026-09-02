@@ -153,6 +153,43 @@ export const CONTRACT_SOURCE_LABELS: Record<ContractFieldSource, string> = {
   unknown: "Ukendt kilde",
 };
 
+const CLAUSE_LEVEL_EVIDENCE_SOURCES = new Set([
+  "collectiveAgreement", "copydan", "svod", "royalty", "prolongation",
+  "creditedRoles", "hasCreditClause", "aiDataMiningClause", "futureRightsReservation",
+]);
+
+function expandedClauseBbox(layout: ContractLayout, clause: LayoutClause) {
+  if (!clause.pdfBbox) return null;
+  const startIndex = layout.clauses.findIndex(item => item.id === clause.id);
+  if (startIndex < 0) return clause.pdfBbox;
+
+  const boxes = [clause.pdfBbox];
+  let previous = clause;
+  for (const next of layout.clauses.slice(startIndex + 1, startIndex + 8)) {
+    if (next.page !== clause.page || !next.pdfBbox || next.numbered || next.bold) break;
+    const previousBox = previous.pdfBbox;
+    if (!previousBox) break;
+
+    // Ældre PDF-layouts kan have gemt hver linje som en selvstændig klausul.
+    // Kun en enkeltlinjet startboks må derfor udvides, og kun over linjer med
+    // samme venstrekant og almindelig linjeafstand. Et større afsnitsmellemrum
+    // afslutter markeringen, så næste juridiske bestemmelse ikke tages med.
+    const lineHeight = Math.max(previousBox.height, next.pdfBbox.height);
+    const verticalGap = previousBox.y - (next.pdfBbox.y + next.pdfBbox.height);
+    const leftAligned = Math.abs(next.pdfBbox.x - clause.pdfBbox.x) <= Math.max(24, clause.pdfBbox.width * 0.08);
+    const startsAsSingleLine = clause.pdfBbox.height <= Math.max(18, next.pdfBbox.height * 1.75);
+    if (!startsAsSingleLine || !leftAligned || verticalGap < -lineHeight || verticalGap > lineHeight * 2.1) break;
+    boxes.push(next.pdfBbox);
+    previous = next;
+  }
+
+  const left = Math.min(...boxes.map(box => box.x));
+  const bottom = Math.min(...boxes.map(box => box.y));
+  const right = Math.max(...boxes.map(box => box.x + box.width));
+  const top = Math.max(...boxes.map(box => box.y + box.height));
+  return { x: left, y: bottom, width: right - left, height: top - bottom };
+}
+
 export function fieldEvidence(
   fieldKey: string,
   sourceKey: string,
@@ -165,15 +202,25 @@ export function fieldEvidence(
   const clauseId = sources?.[`${sourceKey}_clause_id`] ?? null;
   const rawPage = sources?.[`${sourceKey}_page`] ?? null;
   const parsedPage = rawPage && Number.isFinite(Number(rawPage)) ? Number(rawPage) : null;
+  const clause = clauseId && layout ? layout.clauses.find(item => item.id === clauseId) ?? null : null;
+  // Juridiske kildehenvisninger skal vise hele den identificerede klausul og
+  // ikke kun den første OCR-linje. Korte identitetsfelter beholder den mere
+  // præcise ord-boks fra spatial OCR.
+  const legalClauseBbox = clause && layout && CLAUSE_LEVEL_EVIDENCE_SOURCES.has(sourceKey)
+    ? expandedClauseBbox(layout, clause)
+    : null;
+  const clauseBbox = legalClauseBbox
+    ? { ...legalClauseBbox, space: "pdf_bottom_left" as const }
+    : null;
   return {
     fieldKey,
     quote: stored?.quote ?? quote,
     clauseId,
-    clause: clauseId && layout ? layout.clauses.find(item => item.id === clauseId) ?? null : null,
+    clause,
     page: stored?.page ?? parsedPage,
-    bbox: stored?.bbox ?? null,
-    coordinateSource: stored?.coordinateSource ?? null,
-    confidence: stored?.confidence ?? null,
+    bbox: clauseBbox ?? stored?.bbox ?? null,
+    coordinateSource: clauseBbox ? "legacy_layout" : stored?.coordinateSource ?? null,
+    confidence: clauseBbox ? 0.9 : stored?.confidence ?? null,
   };
 }
 
