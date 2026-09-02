@@ -22,8 +22,8 @@ import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import { ContractSourceBadge } from "@/components/contracts/contract-source-badge";
 import { useAdminPageTitle } from "@/components/admin/admin-page-title";
 import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
-import { emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
-import type { ProductionCompanySelection } from "@/lib/production-companies";
+import { contractDataToManualWorkSeed, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
+import { extractedProductionCompanyNames, type ProductionCompanySelection } from "@/lib/production-companies";
 import { buildCompleteEpisodeOptions, mergeEpisodeOptionsByPriority, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 import { contractEpisodeNumbersFromLayout, contractEvidencePage, fieldEvidence, safeContractReturnTo, suggestLocalContractWork, type ContractDocumentVariant, type ContractFieldEvidence, type ContractFieldSource, type ContractValidationMissingField, type ContractWorkbenchData } from "@/lib/contract-workbench";
@@ -210,7 +210,19 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   const [selectedWorkResult, setSelectedWorkResult] = useState<UnifiedSearchWorkResult | null>(null);
   const [workTypeFilter, setWorkTypeFilter] = useState("all");
   const [manualWorkMode, setManualWorkMode] = useState(false);
-  const [manualWork, setManualWork] = useState<ManualWorkFormValue>(() => emptyManualWorkForm({ title: form.workingTitle, contract_id: contract.id }));
+  const extractedProducerNames = useMemo(() => extractedProductionCompanyNames(validationData), [validationData]);
+  const [manualWork, setManualWork] = useState<ManualWorkFormValue>(() => emptyManualWorkForm(contractDataToManualWorkSeed({
+    title: typeof validationData.workTitle === "string" ? validationData.workTitle : form.workingTitle,
+    category: typeof validationData.productionType === "string" ? validationData.productionType : null,
+    duration: typeof validationData.duration === "string" || typeof validationData.duration === "number" ? validationData.duration : null,
+    premiereDate: typeof validationData.premiereDate === "string" ? validationData.premiereDate : null,
+    premiereYear: typeof validationData.premiereYear === "string" || typeof validationData.premiereYear === "number" ? validationData.premiereYear : null,
+    productionCompany: data.producerSelections[0]?.canonicalName ?? extractedProductionCompanyNames(validationData)[0] ?? null,
+    director: typeof validationData.director === "string" ? validationData.director : null,
+    seasonNumber: typeof validationData.seasonNumber === "string" || typeof validationData.seasonNumber === "number" ? validationData.seasonNumber : form.seasonNumber,
+    episodes: form.episodeNumbers.map((number: number) => ({ number })),
+    contractId: contract.id,
+  })));
   const [episodeOptions, setEpisodeOptions] = useState<SeriesEpisodeOption[]>([]);
   const [episodesLoading, setEpisodesLoading] = useState(false);
   const [episodesError, setEpisodesError] = useState<string | null>(null);
@@ -240,13 +252,20 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     }
     if (implicitQueueRequestedRef.current) return;
     implicitQueueRequestedRef.current = true;
-    void createAdminContractWorkQueue({ kind: "filtered", filters: queueFiltersFromReturnTo(returnTo) }).then(result => {
+    const kind = initialSection === "ownership" && data.canManageOwnership ? "ownership" : "filtered";
+    void createAdminContractWorkQueue({ kind, filters: queueFiltersFromReturnTo(returnTo) }).then(result => {
       if (!result.success) return;
       if (!result.queueId) return;
       setQueueId(result.queueId);
       void loadQueue(result.queueId);
     });
-  }, [loadQueue, queueId, returnTo]);
+  }, [data.canManageOwnership, initialSection, loadQueue, queueId, returnTo]);
+
+  useEffect(() => {
+    if (queue?.kind !== "ownership" || !data.canManageOwnership || tab === "ownership") return;
+    setVisitedTabs(current => new Set(current).add("ownership"));
+    setTab("ownership");
+  }, [data.canManageOwnership, queue?.kind, tab]);
 
   useEffect(() => {
     if (splitLayout && mobileSourceView !== "closed") setMobileSourceView("closed");
@@ -721,7 +740,8 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs" onClick={() => router.push(safeContractReturnTo(returnTo))}><ArrowLeft className="h-3.5 w-3.5" />Tilbage</Button>
         <div className="hidden min-w-0 flex-1 md:block"><p className="truncate text-xs font-semibold">{form.workingTitle || linkedWork?.title || "Kontrakt"}</p><p className="truncate text-[10px] text-muted-foreground">{producerSelections[0]?.canonicalName ?? employer?.name ?? "Ingen producent"} · {holder?.full_name ?? "Ingen rettighedshaver"}</p></div>
         <Badge variant="outline" className="h-6 shrink-0 rounded-sm px-1.5 text-[10px]">{contract.status === "valideret" ? "Valideret" : contract.status === "arkiveret" ? "Afvist" : "Afventer validering"}</Badge>
-        <div className="flex h-8 shrink-0 items-center rounded-sm border bg-background" aria-label="Listenavigation">
+        {queue?.kind === "ownership" && <span className="shrink-0 text-[11px] font-semibold text-amber-800 dark:text-amber-200">Ejerskab afklaring</span>}
+        <div className="flex h-8 shrink-0 items-center rounded-sm border bg-background" aria-label={queue?.kind === "ownership" ? "Ejerskab afklaring" : "Listenavigation"}>
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7" disabled={queueLoading || !queue?.previousContractId} onClick={() => requestNavigate(queue?.previousContractId ?? null)} aria-label="Forrige kontrakt"><ChevronLeft className="h-4 w-4" /></Button>
           <Button type="button" variant="ghost" className="h-7 min-w-14 px-1.5 text-[10px]" disabled={queueLoading || !queue} onClick={() => setQueueSheetOpen(true)} aria-label="Vis kontrakter på listen">{queueLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : queue ? `${queue.position} / ${queue.total}` : "– / –"}</Button>
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7" disabled={queueLoading || !queue?.nextContractId} onClick={() => requestNavigate(queue?.nextContractId ?? null)} aria-label="Næste kontrakt"><ChevronRight className="h-4 w-4" /></Button>
@@ -747,7 +767,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
 
       <section data-testid="contract-data-pane" className={`${splitLayout || mobilePane === "data" ? "block" : "hidden"} relative z-10 min-h-0 min-w-0 bg-background ${splitLayout ? "overflow-y-auto" : ""}`}>
         <DocumentProcessingReviewCard review={documentReview} loading={documentReviewLoading} activeAction={documentReviewAction} statusMessage={documentReviewStatus} onAction={action => void handleDocumentReviewAction(action)} />
-        <div className="hidden flex-wrap items-center gap-1 border-b bg-muted/20 px-3 py-1 min-[1440px]:flex"><span className="mr-1 text-[10px] font-medium">Datakilde:</span>{(["contract", "agreement", "member", "work_archive", "dfi", "tmdb", "wikidata", "manual"] as ContractFieldSource[]).map(source => <ContractSourceBadge key={source} source={source} />)}</div>
+        <div className="hidden flex-wrap items-center gap-1 border-b bg-muted/20 px-3 py-1 min-[1440px]:flex"><span className="mr-1 text-[10px] font-medium">Datakilde:</span>{(["contract", "agreement", "member", "work_archive", "dfi", "tmdb", "wikidata", "manual", "stored"] as ContractFieldSource[]).map(source => <ContractSourceBadge key={source} source={source} />)}</div>
         <Tabs value={tab} onValueChange={changeTab} className="min-h-0 gap-0">
           <TabsList variant="line" className="sticky top-0 z-20 h-8 w-full justify-start overflow-x-auto rounded-none border-b bg-background px-2 py-0.5">
             {SECTIONS.filter(item => item.key !== "ownership" || data.canManageOwnership).map(item => <TabsTrigger key={item.key} value={item.key} className="h-7 flex-none px-2 py-1 text-xs font-medium">{item.label}{tabCounts[item.key] > 0 && <Badge className="ml-1 h-3.5 min-w-3.5 rounded-sm bg-amber-500 px-0.5 text-[8px] font-medium leading-none text-white">{tabCounts[item.key]}</Badge>}</TabsTrigger>)}
@@ -757,15 +777,15 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
             {missing.length > 0 && <div className="m-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"><span className="font-medium">{missing.length} mangler:</span> {missing.map(item => item.label).join(" · ")}</div>}
             <div className="divide-y">
               {baseRow({ key: "rightsHolder", label: "Rettighedshaver", sourceKey: "rightsHolderName", focusText: holder?.full_name ?? null, source: "unknown", missing: !contract.rights_holder_id, children: <div className="flex min-h-8 flex-col justify-center rounded-md border bg-muted/30 px-2 py-1"><span className="truncate text-sm font-medium">{holder?.full_name ?? "Ingen rettighedshaver tilknyttet"}</span>{data.canManageOwnership ? <button type="button" className="w-fit text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => changeTab("ownership")}>Åbn Ejerskab</button> : null}</div> })}
-              {baseRow({ key: "producer", label: "Producent", sourceKey: "employerName", focusText: producerSelections[0]?.canonicalName ?? (String(validationData.employerName ?? employer?.name ?? "") || null), source: producerSelections.length ? (producerSelections[0]?.employerId === contract.employer_id ? "contract" : "manual") : data.sources.employerName ? "contract" : "unknown", missing: !producerSelections.length, children: <ProductionCompanyPicker value={producerSelections} onChange={setProducerSelections} suggestedName={String(validationData.employerName ?? employer?.name ?? "")} canManageRegistry hideLabel compact /> })}
+              {baseRow({ key: "producer", label: "Producent", sourceKey: "employerName", focusText: producerSelections[0]?.canonicalName ?? (extractedProducerNames[0] || employer?.name || null), source: producerSelections.length ? (producerSelections[0]?.employerId === contract.employer_id ? "contract" : "manual") : data.sources.employerName ? "contract" : "unknown", missing: !producerSelections.length, children: <ProductionCompanyPicker value={producerSelections} onChange={setProducerSelections} suggestedNames={extractedProducerNames} canManageRegistry hideLabel compact /> })}
               {baseRow({ key: "work", label: "Tilknyttet værk", sourceKey: "workTitle", focusText: form.workingTitle || displayedWorkTitle, source: form.workId ? "work_archive" : data.sources.workTitle ? "contract" : "manual", missing: !form.workId && !selectedWorkResult && !manualWorkMode, children: <div className="space-y-1"><div className="flex min-h-8 items-center gap-1 rounded-md border px-2 text-xs"><span className="min-w-0 flex-1 truncate">{form.workId || selectedWorkResult ? displayedWorkLabel : `Arbejdstitel: ${form.workingTitle || "Ingen"}`}</span>{form.workId || selectedWorkResult ? <><Button size="sm" variant="ghost" className="h-7 shrink-0 px-1.5 text-xs" onClick={() => setWorkPickerOpen(open => !open)}>{workPickerOpen ? "Luk" : "Skift"}</Button><button type="button" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Fjern tilknyttet værk" onClick={() => { setForm(current => ({ ...current, workId: "" })); setSelectedWorkResult(null); setManualWorkMode(false); }}><X className="h-3.5 w-3.5" /></button></> : <Button size="sm" variant="ghost" className="h-7 shrink-0 px-1.5 text-xs" onClick={() => setWorkPickerOpen(open => !open)}>{workPickerOpen ? "Luk" : "Søg værk"}</Button>}</div>{localWorkSuggestion && !workPickerOpen && <button type="button" className="flex w-full items-center justify-between rounded-sm border border-emerald-300 bg-emerald-50 px-2 py-1 text-left text-xs text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" onClick={() => { setForm(current => ({ ...current, workId: localWorkSuggestion.id, seasonNumber: parseSeasonNumberFromTitle(current.workingTitle) ?? current.seasonNumber })); setWorkQuery(localWorkSuggestion.title); }}><span className="truncate">Foreslået: {localWorkSuggestion.title}{parseSeasonNumberFromTitle(form.workingTitle) ? ` · sæson ${parseSeasonNumberFromTitle(form.workingTitle)}` : ""}</span><span className="ml-2 shrink-0 font-medium">Tilknyt</span></button>}{workPickerOpen && <WorkSelectionPanel query={workQuery} onQueryChange={setWorkQuery} onSearch={() => void searchWorks()} isSearching={workSearching} hasSearched={workSearched} searchError={workError} results={workResults} selectedId={selectedWorkResult?.id} onSelect={result => void chooseWork(result)} typeFilter={workTypeFilter} onTypeFilterChange={setWorkTypeFilter} manualMode={manualWorkMode} onManualModeChange={setManualWorkMode} manualWork={manualWork} onManualWorkChange={setManualWork} locale="da" autoSelectManualProducer />}</div> })}
-              {baseRow({ key: "contractType", label: "Kontrakttype", sourceKey: "contractType", focusText: data.sources.contractType_focus, source: form.type !== contract.type ? "manual" : data.sources.contractType ? "contract" : "unknown", missing: !form.type, children: <Select value={form.type} onValueChange={type => setForm(current => ({ ...current, type }))}><SelectTrigger className="h-8 w-fit min-w-36 gap-2 text-xs" aria-label="Kontrakttype">{form.type === "leverandør" ? <Building2 className="h-3.5 w-3.5" /> : <BriefcaseBusiness className="h-3.5 w-3.5" />}<span>{form.type === "leverandør" ? "Leverandøraftale" : "A-løn"}</span></SelectTrigger><SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandøraftale</SelectItem></SelectContent></Select> })}
+              {baseRow({ key: "contractType", label: "Kontrakttype", sourceKey: "contractType", focusText: data.sources.contractType_focus, source: form.type !== contract.type ? "manual" : data.sources.contractType ? "contract" : contract.type ? "stored" : "unknown", missing: !form.type, children: <Select value={form.type} onValueChange={type => setForm(current => ({ ...current, type }))}><SelectTrigger className="h-8 w-fit min-w-36 gap-2 text-xs" aria-label="Kontrakttype">{form.type === "leverandør" ? <Building2 className="h-3.5 w-3.5" /> : <BriefcaseBusiness className="h-3.5 w-3.5" />}<span>{form.type === "leverandør" ? "Leverandøraftale" : "A-løn"}</span></SelectTrigger><SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandøraftale</SelectItem></SelectContent></Select> })}
               {baseRow({ key: "agreement", label: "Overenskomst", sourceKey: "collectiveAgreement", source: form.overenskomst === contract.overenskomst ? "contract" : "manual", missing: !form.overenskomst, children: <Select value={form.overenskomst} onValueChange={overenskomst => setForm(current => ({ ...current, overenskomst }))}><SelectTrigger className="h-8 w-fit min-w-36 text-xs"><Scale className="h-3.5 w-3.5" /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem><SelectItem value="faf">FAF (fiktion)</SelectItem><SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem><SelectItem value="dj">DJ</SelectItem><SelectItem value="metal">Metal</SelectItem><SelectItem value="ingen">Ingen</SelectItem></SelectContent></Select> })}
             </div>
             <div className="border-t">{renderEditor("approve", "approval")}</div>
             <div className="flex flex-wrap gap-2 border-t p-3"><Button onClick={() => void validate(false)} disabled={saving}><CheckCircle2 className="h-4 w-4" />Validér kontrakt</Button><Button variant="outline" onClick={() => void validate(true)} disabled={saving || !queue?.nextContractId}><CheckCircle2 className="h-4 w-4" />Validér og næste</Button></div>
           </TabsContent>
-          {data.canManageOwnership ? <TabsContent forceMount value="ownership" className="m-0 data-[state=inactive]:hidden">{visitedTabs.has("ownership") ? <ContractOwnershipEditor contractId={contract.id} canManage={data.canManageOwnership} queueActive={Boolean(queue?.nextContractId)} commandTrigger={ownershipCommand} onEvidenceActivate={setActive} onCompleted={handleOwnershipCompleted} /> : null}</TabsContent> : null}
+          {data.canManageOwnership ? <TabsContent forceMount value="ownership" className="m-0 data-[state=inactive]:hidden">{visitedTabs.has("ownership") ? <ContractOwnershipEditor contractId={contract.id} canManage={data.canManageOwnership} inOwnershipQueue={queue?.kind === "ownership"} hasNext={Boolean(queue?.nextContractId)} commandTrigger={ownershipCommand} onEvidenceActivate={setActive} onCompleted={handleOwnershipCompleted} /> : null}</TabsContent> : null}
           <TabsContent forceMount value="messages" className="m-0 p-3 data-[state=inactive]:hidden">
             {visitedTabs.has("messages") ? <MessageThread
               title="Beskeder"

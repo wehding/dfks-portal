@@ -33,6 +33,7 @@ export type ContractFieldSource =
   | "tmdb"
   | "wikidata"
   | "manual"
+  | "stored"
   | "unknown";
 
 export type ContractFieldEvidence = {
@@ -152,6 +153,7 @@ export const CONTRACT_SOURCE_LABELS: Record<ContractFieldSource, string> = {
   tmdb: "TMDB",
   wikidata: "Wikidata",
   manual: "Admin",
+  stored: "Registreret",
   unknown: "Ukendt kilde",
 };
 

@@ -29,9 +29,9 @@ test("kun organisationsadministratorer kan ændre ejerskab", () => {
 });
 
 test("editoren understøtter ét klik, næste og PDF-kilde", () => {
-  assert.match(ownership, /Godkend forslag/);
-  assert.match(ownership, /Godkend og næste/);
-  assert.match(ownership, /Ret og næste/);
+  assert.match(ownership, /Godkend ejerskab/);
+  assert.match(ownership, /Godkend ejerskab og gå til næste/);
+  assert.match(ownership, /Vælg ejer/);
   assert.match(ownership, /sourceKey: "rightsHolderName"/);
   assert.match(editor, /metaKey|ctrlKey/);
   assert.match(editor, /ArrowLeft/);
@@ -39,6 +39,8 @@ test("editoren understøtter ét klik, næste og PDF-kilde", () => {
   assert.match(ownership, /Vis ejerskabsgrundlag/);
   assert.doesNotMatch(ownership, /Tidligere registreret ejer/);
   assert.match(ownership, /canConfirm && oneClickOwner/);
+  assert.match(editor, /queue\?\.kind === "ownership"/);
+  assert.match(editor, /Ejerskab afklaring/);
 });
 
 test("status og oprindelse har forståelige danske etiketter", () => {
@@ -59,4 +61,11 @@ test("kontrakttypen viser kun den valgte type med ikon og tekst", () => {
   assert.match(editor, /<SelectValue/);
   assert.match(editor, /<SelectItem value="a-løn">A-løn<\/SelectItem>/);
   assert.match(editor, /<SelectItem value="leverandør">Leverandøraftale<\/SelectItem>/);
+  assert.match(editor, /contract\.type \? "stored" : "unknown"/);
+});
+
+test("producentforslag og manuel værksoprettelse genbruger de aflæste kontraktdata", () => {
+  assert.match(editor, /extractedProductionCompanyNames\(validationData\)/);
+  assert.match(editor, /suggestedNames=\{extractedProducerNames\}/);
+  assert.match(editor, /contractDataToManualWorkSeed/);
 });
