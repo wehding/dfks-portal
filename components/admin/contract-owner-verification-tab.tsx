@@ -14,6 +14,7 @@ import {
   searchEligibleContractOwners,
 } from "@/app/actions/contract-owner-verifications";
 import { ListResultSummary } from "@/components/list-result-summary";
+import { ContractOwnerBackfillPanel } from "@/components/admin/contract-owner-backfill-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -99,7 +100,7 @@ function coordinateSourceLabel(source: string) {
   return labels[source] ?? source;
 }
 
-export function ContractOwnerVerificationTab({ initialContractId }: { initialContractId?: string | null }) {
+export function ContractOwnerVerificationTab({ initialContractId, canRunBackfill = false }: { initialContractId?: string | null; canRunBackfill?: boolean }) {
   const searchParams = useSearchParams();
   const [items, setItems] = useState<ContractOwnerVerificationListItem[]>([]);
   const [page, setPage] = useState(1);
@@ -381,6 +382,7 @@ export function ContractOwnerVerificationTab({ initialContractId }: { initialCon
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return <div className="space-y-4">
+    {canRunBackfill ? <ContractOwnerBackfillPanel /> : null}
     <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
       <div className="flex items-start gap-2"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" /><div><p className="font-semibold">Kontrollér kontraktens rettighedshaver</p><p>AI og importkilder vises kun som forslag. Et ejerskifte sker først efter en bevidst administratorbeslutning og bliver auditlogget.</p></div></div>
     </div>

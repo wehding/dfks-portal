@@ -2913,10 +2913,12 @@ function AdminKontrakterPageInner({
     initialResult,
     initialQuery,
     canManageOwnership,
+    canRunOwnerBackfill,
 }: {
     initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
     initialQuery?: AdminContractsPageParams
     canManageOwnership: boolean
+    canRunOwnerBackfill: boolean
 }) {
     const router = useRouter()
     const searchParams = useSearchParams()
@@ -3102,7 +3104,7 @@ function AdminKontrakterPageInner({
                     : activeTab === "upload"
                         ? <Suspense><AdminKontrakterContent view="upload" canManageOwnership={canManageOwnership} /></Suspense>
                         : activeTab === "ejerskabskontrol"
-                            ? <ContractOwnerVerificationTab initialContractId={searchParams.get("contractId")} />
+                            ? <ContractOwnerVerificationTab initialContractId={searchParams.get("contractId")} canRunBackfill={canRunOwnerBackfill} />
                             : <ValideringskøTab onAfventerCount={setKøCount} />
                 }
             </div>
@@ -3114,10 +3116,12 @@ export default function ContractArchiveClient({
     initialResult,
     initialQuery,
     canManageOwnership,
+    canRunOwnerBackfill,
 }: {
     initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
     initialQuery?: AdminContractsPageParams
     canManageOwnership: boolean
+    canRunOwnerBackfill: boolean
 }) {
-    return <Suspense><AdminKontrakterPageInner initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} /></Suspense>
+    return <Suspense><AdminKontrakterPageInner initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} canRunOwnerBackfill={canRunOwnerBackfill} /></Suspense>
 }
