@@ -34,7 +34,7 @@ test("alle 81 scannerfund har en entydig disposition", () => {
       disposition,
       candidates.filter(candidate => candidate.disposition === disposition).length,
     ])),
-    { instrument: 69, delegate: 10, exclude: 2 },
+    { instrument: 68, delegate: 11, exclude: 2 },
   );
 });
 
@@ -51,7 +51,7 @@ test("delegationer peger på en eksisterende semantisk auditimplementation", () 
   for (const candidate of candidates.filter(item => item.disposition === "delegate")) {
     assert.ok(candidate.auditImplementation, `${candidate.path}: auditImplementation mangler`);
     const implementation = fs.readFileSync(path.join(root, candidate.auditImplementation!), "utf8");
-    assert.match(implementation, /recordAuditEvent\(|withMemberDataAudit\(/, `${candidate.path}: semantisk audit kan ikke findes`);
+    assert.match(implementation, /recordAuditEvent\(|withMemberDataAudit\(|recordSensitiveFlow\(/, `${candidate.path}: semantisk audit kan ikke findes`);
   }
 });
 

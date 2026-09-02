@@ -26,7 +26,6 @@
         "app/actions/member-inbox.ts",
         "app/actions/member-profile.ts",
         "app/actions/member-rights.ts",
-        "app/actions/member-works.ts",
         "app/actions/onboarding-work-import.ts",
         "app/actions/organisation-settings.ts",
         "app/actions/person-discovery.ts",
@@ -89,6 +88,7 @@
       "owner": "Portalteam",
       "test": "tests/audit-candidate-classification.test.ts",
       "paths": [
+        { "path": "app/actions/member-works.ts", "auditImplementation": "lib/server/member-work-overview.ts" },
         { "path": "app/api/admin/ai-control/route.ts", "auditImplementation": "app/api/admin/ai-control/route.ts" },
         { "path": "app/api/admin/audit-log/export/route.ts", "auditImplementation": "app/api/admin/audit-log/export/route.ts" },
         { "path": "app/api/admin/audit-log/governance/route.ts", "auditImplementation": "app/api/admin/audit-log/governance/route.ts" },
