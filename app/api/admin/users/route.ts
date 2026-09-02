@@ -295,8 +295,15 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ error: "Rettighedshaveren har fået en organisationstilknytning og skal slettes fra Rettighedshavere" }, { status: 409 })
         }
 
-        const { error: contractError } = await admin.from("contracts").update({ rights_holder_id: null }).eq("rights_holder_id", recordId)
-        if (contractError) return NextResponse.json({ error: "Kontrakttilknytningerne kunne ikke frigives." }, { status: 500 })
+        const { count: ownedContracts, error: contractError } = await admin.from("contracts")
+            .select("id", { count: "exact", head: true })
+            .eq("rights_holder_id", recordId)
+        if (contractError) return NextResponse.json({ error: "Kontrakttilknytningerne kunne ikke kontrolleres." }, { status: 500 })
+        if ((ownedContracts ?? 0) > 0) {
+            return NextResponse.json({
+                error: "Rettighedshaveren ejer fortsat kontrakter. Flyt kontrakterne under Ejerskabskontrol, før profilen slettes.",
+            }, { status: 409 })
+        }
         const { error: assignmentError } = await admin.from("work_assignments").delete().eq("rights_holder_id", recordId)
         if (assignmentError) return NextResponse.json({ error: "Værkstilknytningerne kunne ikke fjernes." }, { status: 500 })
         const { error: deleteHolderError } = await admin.from("rettighedshavere").delete().eq("id", recordId)

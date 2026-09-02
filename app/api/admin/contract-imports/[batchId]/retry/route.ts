@@ -1,10 +1,9 @@
 import { after, NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { processPendingContractJobs } from "@/lib/server/contract-import-processor";
 import { CONTRACT_IMPORT_PROMPT_VERSION, CONTRACT_IMPORT_SCHEMA_VERSION } from "@/lib/contract-import-job";
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
+import { requireContractImportWriteAccess } from "@/lib/server/contract-import-access";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -12,9 +11,9 @@ export const maxDuration = 300;
 type RetryMode = "resume" | "rematch" | "reanalyze";
 
 export async function POST(request: NextRequest, context: { params: Promise<{ batchId: string }> }) {
-  const session = await createClient();
-  const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin"]);
-  if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const auth = await requireContractImportWriteAccess();
+  if (!auth) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const { caller } = auth;
   const { batchId } = await context.params;
   const body = await request.json().catch(() => ({})) as { itemIds?: unknown; mode?: unknown };
   const mode: RetryMode | null = body.mode === "resume" || body.mode === "rematch" || body.mode === "reanalyze" ? body.mode : null;

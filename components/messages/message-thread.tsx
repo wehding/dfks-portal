@@ -12,6 +12,8 @@ export type MessageThreadRole = "member" | "admin"
 export type MessageThreadMessage = {
   id: string
   authorRole: MessageThreadRole
+  /** Explicit historical participant label when a contract changed owner. */
+  authorLabel?: string | null
   message: string
   createdAt: string
   memberReadAt?: string | null
@@ -143,7 +145,7 @@ export function MessageThread({
                 } ${unread ? "border-blue-500 shadow-sm" : "border-transparent"}`}
               >
                 <div className={`mb-1 flex flex-wrap items-center gap-2 text-xs ${own ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
-                  <span className="font-medium">{own ? t("messages.you") : roleLabel(message.authorRole, resolvedMemberLabel, adminLabel)}</span>
+                  <span className="font-medium">{own ? t("messages.you") : message.authorLabel ?? roleLabel(message.authorRole, resolvedMemberLabel, adminLabel)}</span>
                   <span>{new Date(message.createdAt).toLocaleString("da-DK")}</span>
                   {unread && <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] text-white">{t("common.new")}</span>}
                 </div>

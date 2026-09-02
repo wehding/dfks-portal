@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
+import { requireContractImportWriteAccess } from "@/lib/server/contract-import-access";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +15,9 @@ function decodeCursor(value: string | null) {
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ batchId: string }> }) {
-  const session = await createClient();
-  const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin"]);
-  if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const auth = await requireContractImportWriteAccess();
+  if (!auth) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const { caller } = auth;
   const { batchId } = await context.params;
   const limit = Math.min(100, Math.max(1, Number(request.nextUrl.searchParams.get("limit")) || 50));
   const cursor = decodeCursor(request.nextUrl.searchParams.get("cursor"));
@@ -30,7 +29,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ bat
   if (!batch.data) return NextResponse.json({ error: "Importen blev ikke fundet" }, { status: 404 });
 
   let query = db.from("contract_import_items")
-    .select("id,original_file_name,status,contract_id,ai_job_id,owner_match_score,work_match_score,producer_match_score,possible_duplicate_of,error_code,error_message,attempts,next_attempt_at,created_at,contract_ai_jobs(provider,model,stage,status,usage_run_id,input_tokens,output_tokens,chunk_count)")
+    // Ownership suggestions are handled exclusively by the manager-only
+    // ownership queue and must not leak through the ordinary import detail.
+    .select("id,original_file_name,status,contract_id,ai_job_id,work_match_score,producer_match_score,possible_duplicate_of,error_code,error_message,attempts,next_attempt_at,created_at,contract_ai_jobs(provider,model,stage,status,usage_run_id,input_tokens,output_tokens,chunk_count)")
     .eq("batch_id", batchId).eq("org_id", caller.orgId)
     .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(limit + 1);
   if (cursor) query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);

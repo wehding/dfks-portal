@@ -106,6 +106,35 @@ export async function permanentlyDeleteRightsHolders(
     let deletedContracts = 0;
     let deletedWorks = 0;
 
+    if (!options.deleteContracts) {
+      const ownedContracts = await db.from("contracts")
+        .select("rights_holder_id")
+        .in("rights_holder_id", holderIds)
+        .eq("org_id", admin.orgId)
+        .limit(1000);
+      if (ownedContracts.error) throw new Error(ownedContracts.error.message);
+      const ownersWithContracts = new Set((ownedContracts.data ?? []).map(row => row.rights_holder_id));
+      if (ownersWithContracts.size > 0) {
+        return {
+          success: false,
+          error: "En eller flere rettighedshavere ejer fortsat kontrakter. Flyt dem under Ejerskabskontrol, før profilen slettes.",
+          deletedCount: 0,
+          deletedContracts: 0,
+          deletedWorks: 0,
+          deletedUsers: 0,
+          authDeleteFailures: [] as string[],
+          blocked: [
+            ...blocked,
+            ...candidates.filter(holder => ownersWithContracts.has(holder.id)).map(holder => ({
+              id: holder.id,
+              name: holder.name,
+              reason: "Rettighedshaveren ejer fortsat kontrakter, som først skal flyttes under Ejerskabskontrol.",
+            })),
+          ],
+        };
+      }
+    }
+
     if (options.deleteContracts) {
       const { count, error } = await db
         .from("contracts")
@@ -114,13 +143,6 @@ export async function permanentlyDeleteRightsHolders(
         .eq("org_id", admin.orgId);
       if (error) throw new Error(error.message);
       deletedContracts = count ?? 0;
-    } else {
-      const { error } = await db
-        .from("contracts")
-        .update({ rights_holder_id: null })
-        .in("rights_holder_id", holderIds)
-        .eq("org_id", admin.orgId);
-      if (error) throw new Error(error.message);
     }
 
     if (options.deleteUnsharedWorks) {

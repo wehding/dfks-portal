@@ -422,9 +422,15 @@ begin
     null, null, true
   );
   if deferred_contract.id is null
-    or exists (select 1 from public.contract_document_jobs where contract_id = deferred_contract.id)
+    or not exists (
+      select 1 from public.contract_document_jobs
+      where contract_id = deferred_contract.id
+        and original_storage_path = deferred_upload_intent.storage_path
+        and status = 'queued'
+        and downstream_ai_policy = 'reanalyze'
+    )
     or exists (select 1 from public.contract_ai_jobs where contract_id = deferred_contract.id) then
-    raise exception 'Upload commit regression: deferred non-PDF flow changed behavior';
+    raise exception 'Upload commit regression: DOCX bypassed the document worker or queued AI too early';
   end if;
   select * into finalization_claim
   from public.claim_member_uploaded_contract_finalization(

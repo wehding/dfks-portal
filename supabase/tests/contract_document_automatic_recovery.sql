@@ -114,6 +114,8 @@ begin
   end if;
   insert into public.user_org_roles(user_id, org_id, role)
   values (actor_id, test_org, 'admin');
+  insert into public.org_affiliations(org_id, rights_holder_id, is_member, valid_from)
+  values (test_org, rights_holder_id, true, current_date);
 
   insert into public.contracts(
     id, org_id, rights_holder_id, type, status, pdf_url,

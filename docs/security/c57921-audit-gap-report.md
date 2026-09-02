@@ -1,13 +1,13 @@
 # Audit-gaprapport
 
-Genereret for registry-review 2026-09-01 fra schema version 3. Tilstand: reporting.
+Genereret for registry-review 2026-09-02 fra schema version 3. Tilstand: reporting.
 
 ## Resultat
 
-- Registrerede flows: 26
+- Registrerede flows: 27
 - Registrerede dataflows: 1
 - Dokumenterede udeladelser: 2
-- Automatisk fundne følsomme kandidater: 102
+- Automatisk fundne følsomme kandidater: 103
 - Rapporterede fund: 0
 - Strukturelle fejl: 0
 

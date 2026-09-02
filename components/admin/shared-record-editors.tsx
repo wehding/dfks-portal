@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Archive, ExternalLink, Film, FileText, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { archiveAdminWorks, createAdminWork, deleteAdminWorkPermanently, fetchAdminRightsHolders, fetchAdminWorkDetail, linkAdminContractToWork, searchAdminUnlinkedContracts, updateAdminWorkData } from "@/app/actions/work-management";
@@ -400,19 +401,29 @@ function WorkAutocomplete({ options, value, onChange }: { options: WorkOption[];
 
 type ContractEditorForm = {
   type: string; overenskomst: string; status: string; contractDate: string; startDate: string; endDate: string;
-  rightsHolderId: string; workId: string; workingTitle: string; seasonNumber: string; episodeNumbers: string;
+  workId: string; workingTitle: string; seasonNumber: string; episodeNumbers: string;
 };
 
-type ContractComment = { id: string; author_role: "admin" | "member"; message: string; created_at: string; member_read_at?: string | null; admin_read_at?: string | null };
+type ContractComment = {
+  id: string;
+  author_role: "admin" | "member";
+  message: string;
+  created_at: string;
+  member_read_at?: string | null;
+  admin_read_at?: string | null;
+  member_rights_holder_id?: string | null;
+  participant_name?: string | null;
+};
 
 type ContractEditorPayload = {
   contract: {
     id: string; type: string | null; overenskomst: string | null; status: string | null; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null;
     rights_holder_id: string | null; work_id: string | null; working_title: string | null; season_number: number | null; episode_numbers: number[] | null;
+    rettighedshavere?: { full_name?: string | null } | Array<{ full_name?: string | null }> | null;
     contract_comments?: ContractComment[];
     contract_attachments?: Array<{ id: string; title?: string | null; ai_status?: string | null }>;
   };
-  rightsHolders: Array<{ id: string; full_name: string }>;
+  canManageOwnership: boolean;
   works: WorkOption[];
   producerSelections: ProductionCompanySelection[];
 };
@@ -449,7 +460,7 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
       const nextForm: ContractEditorForm = {
         type: contract.type ?? "a-løn", overenskomst: contract.overenskomst ?? "ingen", status: contract.status ?? "kladde",
         contractDate: contract.contract_date ?? "", startDate: contract.start_date ?? "", endDate: contract.end_date ?? "",
-        rightsHolderId: contract.rights_holder_id ?? "", workId: contract.work_id ?? "", workingTitle: contract.working_title ?? "",
+        workId: contract.work_id ?? "", workingTitle: contract.working_title ?? "",
         seasonNumber: contract.season_number?.toString() ?? "", episodeNumbers: (contract.episode_numbers ?? []).join(", "),
       };
       setPayload(data);
@@ -512,7 +523,7 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
       const result = await updateAdminContract(contractId, {
         type: form.type, overenskomst: form.overenskomst === "ingen" ? null : form.overenskomst, status: form.status,
         contract_date: form.contractDate || null, start_date: form.startDate || null, end_date: form.endDate || null,
-        employer_id: producers[0]?.employerId ?? null, rights_holder_id: form.rightsHolderId || null, work_id: workId,
+        employer_id: producers[0]?.employerId ?? null, work_id: workId,
         working_title: form.workingTitle.trim() || null, season_number: nullableNumber(form.seasonNumber), episode_numbers: episodeNumbers.length ? episodeNumbers : null,
         producer_selections: producers,
       });
@@ -558,7 +569,7 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
     if (!form?.workId) return toast.error("Forbind kontrakten med et værk før validering");
     setSaving(true);
     try {
-      const saved = await updateAdminContract(contractId, { status: "valideret", work_id: form.workId, rights_holder_id: form.rightsHolderId || null });
+      const saved = await updateAdminContract(contractId, { status: "valideret", work_id: form.workId });
       if (!saved.success) throw new Error(saved.error ?? "Kontrakten kunne ikke gemmes");
       const result = await validateAdminContracts([contractId]);
       if (!result.success) throw new Error(result.error ?? "Kontrakten kunne ikke valideres");
@@ -579,6 +590,9 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
   const messages: MessageThreadMessage[] = (payload?.contract.contract_comments ?? []).map(comment => ({
     id: comment.id,
     authorRole: comment.author_role,
+    authorLabel: comment.author_role === "member"
+      ? comment.participant_name ?? "Historisk medlem (ukendt)"
+      : null,
     message: comment.message,
     createdAt: comment.created_at,
     memberReadAt: comment.member_read_at,
@@ -599,6 +613,9 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
 
   if (loading || !form || !payload) return <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Henter kontraktdata…</div>;
 
+  const holderRelation = payload.contract.rettighedshavere;
+  const currentHolder = Array.isArray(holderRelation) ? holderRelation[0] : holderRelation;
+
   return <div className="flex min-h-0 flex-1 flex-col">
     <div className="flex-1 space-y-4 overflow-y-auto px-4 pb-6 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/20 p-3">
@@ -612,7 +629,18 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
       </div>
       <FormSection title="Produktion og parter">
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">
-          <div className="min-w-0 space-y-1.5"><Label>Rettighedshaver</Label><RightsHolderAutocomplete options={payload.rightsHolders} value={form.rightsHolderId} onChange={value => update("rightsHolderId", value)} /></div>
+          <div className="min-w-0 space-y-1.5">
+            <Label>Rettighedshaver</Label>
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+              <p className="font-medium">{currentHolder?.full_name ?? "Ingen rettighedshaver tilknyttet"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Ejeren kan ikke ændres i den almindelige kontrakteditor.</p>
+            </div>
+            {payload.canManageOwnership ? <Button asChild type="button" variant="outline" size="sm" className="w-full">
+              <Link href={`/admin/kontrakter?tab=ejerskabskontrol&contractId=${encodeURIComponent(contractId)}`}>
+                Administrér under Ejerskabskontrol
+              </Link>
+            </Button> : null}
+          </div>
           <div className="min-w-0 space-y-1.5"><ProductionCompanyPicker value={producers} onChange={setProducers} label="Producent" canManageRegistry /></div>
         </div>
       </FormSection>

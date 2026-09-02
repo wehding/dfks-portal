@@ -20,6 +20,7 @@ export async function getContractImportStatesForOrg(
       .order("created_at", { ascending: false }),
     db.from("contract_validations")
       .select("contract_id,extracted_data")
+      .eq("org_id", orgId)
       .in("contract_id", ids)
       .not("extracted_data", "is", null)
       .neq("extracted_data", "{}"),
