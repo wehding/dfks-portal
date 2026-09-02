@@ -20,6 +20,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { useI18n } from "@/lib/i18n"
 import { getMemberStatisticsProfile, updateMemberStatisticsProfile, updateSensitiveMemberProfile } from "@/app/actions/member-profile"
 import { MemberDriveConnections } from "@/components/portal/member-drive-connections"
+import { SourcePictogram } from "@/components/source-pictogram"
 
 interface ProfileData {
     id: string
@@ -563,7 +564,7 @@ export default function MinProfilPage() {
                                         className={`flex items-center gap-2 rounded-md border bg-background p-2 text-left text-xs ${selectedPortraitUrl === url ? "border-foreground ring-1 ring-foreground" : ""}`}
                                     >
                                         <Image src={url} alt="" width={40} height={48} unoptimized className="h-12 w-10 rounded object-cover" />
-                                        <span className="font-medium">{candidate.source.toUpperCase()}</span>
+                                        <SourcePictogram source={candidate.source} />
                                     </button>
                                 ))}
                             </div>

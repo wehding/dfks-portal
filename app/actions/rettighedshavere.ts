@@ -11,6 +11,8 @@ import { decryptRettighedshaver } from "@/lib/encryption";
 import { isMissingGenderColumn } from "@/lib/rights-holder-gender";
 import type { RettighedshaverWithAffiliation } from "@/lib/db/rettighedshavere";
 import { recordAuditEvent } from "@/lib/audit-log-server";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
+import { postgrestIlikePattern } from "@/lib/postgrest-search";
 
 export type AdminRightsHolderListItem = RettighedshaverWithAffiliation & {
   organisation_names: string[];
@@ -148,25 +150,45 @@ export async function getAdminRightsHolderProfile(id: string, orgId: string): Pr
   };
 }
 
-export async function getAdminRightsHolders(options: { offset?: number; limit?: number } = {}) {
+export async function getAdminRightsHolders(options: {
+  offset?: number;
+  limit?: number;
+  search?: string;
+  includeSummary?: boolean;
+} = {}) {
   const supabase = await createClient();
   const caller = await assertAdminRole(supabase, ADMIN_ROLES);
   if (!caller) throw new Error("Du har ikke adgang til rettighedshaverlisten.");
 
   const db = createServiceClient();
   const canSeeAllOrganisations = caller.role === "superadmin";
-  const holdersQuery = canSeeAllOrganisations
-    ? db.from("rettighedshavere").select(`${ADMIN_RIGHTS_HOLDER_FIELDS}, org_affiliations(*)`)
+  const pattern = postgrestIlikePattern(options.search ?? "");
+  const memberNumberMatches = pattern
+    ? await (canSeeAllOrganisations
+        ? db.from("org_affiliations").select("rights_holder_id").ilike("member_no", pattern).limit(500)
+        : db.from("org_affiliations").select("rights_holder_id").eq("org_id", caller.orgId).ilike("member_no", pattern).limit(500))
+    : { data: [], error: null };
+  if (memberNumberMatches.error) throw new Error(memberNumberMatches.error.message);
+  const memberNumberHolderIds = [...new Set((memberNumberMatches.data ?? []).map(row => row.rights_holder_id as string))];
+
+  let holdersQuery = canSeeAllOrganisations
+    ? db.from("rettighedshavere").select(`${ADMIN_RIGHTS_HOLDER_FIELDS}, org_affiliations(*)`, { count: "exact" })
     : db
         .from("rettighedshavere")
-        .select(`${ADMIN_RIGHTS_HOLDER_FIELDS}, org_affiliations!inner(*)`)
+        .select(`${ADMIN_RIGHTS_HOLDER_FIELDS}, org_affiliations!inner(*)`, { count: "exact" })
         .eq("org_affiliations.org_id", caller.orgId);
+  if (pattern) {
+    const memberNumberFilter = memberNumberHolderIds.length ? `,id.in.(${memberNumberHolderIds.join(",")})` : "";
+    holdersQuery = holdersQuery.or(`full_name.ilike.${pattern},email.ilike.${pattern},phone.ilike.${pattern}${memberNumberFilter}`);
+  }
   const offset = Math.max(0, options.offset ?? 0);
   const limit = Math.min(200, Math.max(25, options.limit ?? 100));
-  const { data: holderPage, error: holdersError } = await holdersQuery.order("full_name").range(offset, offset + limit);
+  const { data: holderPage, error: holdersError, count: filteredCount } = await holdersQuery.order("full_name").range(offset, offset + limit);
   if (holdersError) throw new Error(holdersError.message);
-  const hasMore = (holderPage?.length ?? 0) > limit;
   const holderRows = (holderPage ?? []).slice(0, limit);
+  const hasMore = filteredCount != null
+    ? offset + holderRows.length < filteredCount
+    : (holderPage?.length ?? 0) > limit;
 
   const createSummaryQuery = () => canSeeAllOrganisations
     ? db.from("rettighedshavere").select("id", { count: "exact", head: true }).is("archived_at", null)
@@ -175,11 +197,14 @@ export async function getAdminRightsHolders(options: { offset?: number; limit?: 
         .select("id, org_affiliations!inner(org_id)", { count: "exact", head: true })
         .eq("org_affiliations.org_id", caller.orgId)
         .is("archived_at", null);
-  const [totalResult, invitedResult, onboardingResult] = await Promise.all([
-    createSummaryQuery(),
-    createSummaryQuery().not("user_id", "is", null),
-    createSummaryQuery().not("onboarding_completed_at", "is", null),
-  ]);
+  const includeSummary = options.includeSummary !== false;
+  const [totalResult, invitedResult, onboardingResult] = includeSummary
+    ? await Promise.all([
+        createSummaryQuery(),
+        createSummaryQuery().not("user_id", "is", null),
+        createSummaryQuery().not("onboarding_completed_at", "is", null),
+      ])
+    : [{ count: null, error: null }, { count: null, error: null }, { count: null, error: null }];
   const summaryError = totalResult.error ?? invitedResult.error ?? onboardingResult.error;
   if (summaryError) throw new Error(summaryError.message);
 
@@ -233,17 +258,33 @@ export async function getAdminRightsHolders(options: { offset?: number; limit?: 
     counts.allContractsValidated = statuses.length > 0 && statuses.every(status => ["valideret", "validated", "arkiveret"].includes(status));
   }
 
+  if (pattern) {
+    await recordSensitiveFlow({
+      actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+      action: "search",
+      component: "admin.rights-holders.list-search",
+      entityType: "rettighedshavere",
+      targetMemberUuids: rows.map(holder => holder.id),
+      orgIds: canSeeAllOrganisations ? orgIds : [caller.orgId],
+      purposeCode: "member_administration",
+      legalBasis: "GDPR Art. 6(1)(c)/(f), Art. 9(2)(d)",
+      dataCategories: ["identity_data", "contact_data", "union_membership_data"],
+      counts: { results: rows.length, totalMatches: filteredCount ?? rows.length },
+    });
+  }
+
   return {
     rows,
     countsByRightsHolder,
     orgId: caller.orgId,
     canSeeAllOrganisations,
     hasMore,
-    summary: {
+    filteredCount: filteredCount ?? rows.length,
+    summary: includeSummary ? {
       total: totalResult.count ?? 0,
       invited: invitedResult.count ?? 0,
       onboardingCompleted: onboardingResult.count ?? 0,
-    },
+    } : null,
   };
 }
 

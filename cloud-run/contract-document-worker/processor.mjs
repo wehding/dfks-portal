@@ -7,10 +7,14 @@ import {
   createGoogleOcrClient,
   GoogleOcrOperationalError,
   readGoogleConfig,
-} from "./google-secure-api.mjs";
+} from "./google-vision-api.mjs";
 import { MAX_SPATIAL_GZIP_BYTES } from "./resource-limits.mjs";
 import { detectContractSourceFormat } from "./source-format.mjs";
 import { processPdfSpatially, sha256 } from "./spatial-ocr.mjs";
+import {
+  readTailBlankProofManifestFile,
+  TailBlankProofError,
+} from "./tail-blank-proof.mjs";
 
 const REQUIRED_ENV = ["PORTAL_BASE_URL", "OCR_CLOUD_RUN_AUDIENCE", "SUPABASE_URL", "SUPABASE_ANON_KEY", "GOOGLE_CLOUD_PROJECT"];
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -24,15 +28,7 @@ export const OCR_QUALITY_DIAGNOSTIC_CODES = Object.freeze({
   spatialQuality: "ocr_spatial_quality",
   orientationUncertain: "orientation_uncertain",
   pageGeometryUnavailable: "page_geometry_unavailable",
-  dlpResponseTooLarge: "dlp_response_too_large",
-  dlpLocationInvalid: "dlp_location_invalid",
-  dlpLocationOutOfBounds: "dlp_location_out_of_bounds",
-  dlpLocationMissing: "dlp_location_missing",
-  dlpRedactedImageMissing: "dlp_redacted_image_missing",
-  dlpRedactedImageInvalid: "dlp_redacted_image_invalid",
-  dlpRedactionNotApplied: "dlp_redaction_not_applied",
-  dlpImageDimensionsChanged: "dlp_image_dimensions_changed",
-  dlpCanonicalImageInvalid: "dlp_canonical_image_invalid",
+  visionPageInvalid: "vision_page_invalid",
   documentTextLimitExceeded: "document_text_limit_exceeded",
   processedFileTooLarge: "processed_file_too_large",
   spatialArtifactTooLarge: "spatial_artifact_too_large",
@@ -44,18 +40,8 @@ const DOCUMENT_CLASSIFICATION_SET = new Set(["native_text", "image_only", "mixed
 const DOCUMENT_GOOGLE_ERROR_CODES = new Set([
   "document_page_limit_exceeded",
   "document_raster_budget_exceeded",
-  "dlp_request_too_large",
-  "dlp_too_many_locations",
   OCR_QUALITY_DIAGNOSTIC_CODES.pageGeometryUnavailable,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpResponseTooLarge,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationInvalid,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationOutOfBounds,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationMissing,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpRedactedImageMissing,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpRedactedImageInvalid,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpRedactionNotApplied,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpImageDimensionsChanged,
-  OCR_QUALITY_DIAGNOSTIC_CODES.dlpCanonicalImageInvalid,
+  OCR_QUALITY_DIAGNOSTIC_CODES.visionPageInvalid,
   "vision_page_too_large",
   "vision_request_too_large",
   OCR_QUALITY_DIAGNOSTIC_CODES.documentTextLimitExceeded,
@@ -87,6 +73,25 @@ function requireDocumentClassification(value) {
     throw new FatalProcessingError("invalid_document_classification");
   }
   return value;
+}
+
+export function sanitiseAffectedPageNumbers(value, pageCount) {
+  const maximum = Number.isSafeInteger(pageCount) && pageCount >= 1
+    ? Math.min(pageCount, 200)
+    : 0;
+  if (!Array.isArray(value) || maximum === 0) return [];
+  return [...new Set(value.filter((entry) => (
+    Number.isSafeInteger(entry) && entry >= 1 && entry <= maximum
+  )))].sort((left, right) => left - right);
+}
+
+export function buildReviewDetails(code, pageNumbers, pageCount) {
+  const safePages = sanitiseAffectedPageNumbers(pageNumbers, pageCount);
+  if (!OCR_QUALITY_DIAGNOSTIC_CODE_SET.has(code) || safePages.length === 0) return null;
+  return {
+    schemaVersion: 1,
+    reasons: [{ code, pageNumbers: safePages }],
+  };
 }
 
 export function parseProcessingDeadlineSeconds(value) {
@@ -162,6 +167,22 @@ export function readRuntimeConfig(env = process.env) {
   if (env.NODE_ENV === "production" && tempRoot !== "/mnt/ramdisk") {
     throw new FatalProcessingError("invalid_temporary_storage_configuration");
   }
+  if (env.OCR_REPLACEMENT_ONLY != null
+    && env.OCR_REPLACEMENT_ONLY !== ""
+    && env.OCR_REPLACEMENT_ONLY !== "true"
+    && env.OCR_REPLACEMENT_ONLY !== "false") {
+    throw new FatalProcessingError("invalid_replacement_only_configuration");
+  }
+  const geometryBackfillRunId = env.OCR_GEOMETRY_BACKFILL_RUN_ID?.trim() || null;
+  if (geometryBackfillRunId != null
+    && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      geometryBackfillRunId,
+    )) {
+    throw new FatalProcessingError("invalid_geometry_backfill_configuration");
+  }
+  if (geometryBackfillRunId != null && env.OCR_REPLACEMENT_ONLY === "true") {
+    throw new FatalProcessingError("conflicting_backfill_configuration");
+  }
   return {
     portalBaseUrl,
     audience: env.OCR_CLOUD_RUN_AUDIENCE,
@@ -172,6 +193,8 @@ export function readRuntimeConfig(env = process.env) {
     tempRoot,
     maxBytes: MAX_BYTES,
     processingDeadlineMs: parseProcessingDeadlineSeconds(env.OCR_PROCESSING_DEADLINE_SECONDS) * 1000,
+    replacementOnly: env.OCR_REPLACEMENT_ONLY === "true",
+    geometryBackfillRunId,
   };
 }
 
@@ -618,7 +641,7 @@ function safeDocumentError(error) {
 }
 
 export function safeGoogleErrorCode(value) {
-  if (SAFE_GOOGLE_ERROR_CODES.has(value) || /^(?:google|dlp|vision)_api_[1-5][0-9]{2}$/.test(value)) {
+  if (SAFE_GOOGLE_ERROR_CODES.has(value) || /^(?:google|vision)_api_[1-5][0-9]{2}$/.test(value)) {
     return value;
   }
   return "google_ocr_service_failed";
@@ -630,7 +653,29 @@ function isDocumentGoogleError(value) {
 
 export function createProcessor(options = {}) {
   const env = options.env ?? process.env;
+  const executionMode = options.executionMode ?? "service";
+  if (executionMode !== "service" && executionMode !== "backfill") {
+    throw new FatalProcessingError("invalid_execution_mode");
+  }
   const config = options.config ?? readRuntimeConfig(env);
+  const tailBlankProofPath = env.OCR_TAIL_BLANK_PROOF_FILE?.trim() || null;
+  if (tailBlankProofPath != null && executionMode !== "backfill") {
+    throw new FatalProcessingError("tail_blank_proof_forbidden");
+  }
+  let tailBlankProofManifest = null;
+  if (tailBlankProofPath != null) {
+    try {
+      tailBlankProofManifest = readTailBlankProofManifestFile(tailBlankProofPath, {
+        executionMode,
+        expectedRunId: config.geometryBackfillRunId,
+      });
+    } catch (error) {
+      if (error instanceof TailBlankProofError) {
+        throw new FatalProcessingError(error.code, { cause: error });
+      }
+      throw error;
+    }
+  }
   const fetchImpl = options.fetchImpl ?? fetch;
   const commandRunner = options.commandRunner ?? runCommand;
   const identityTokenProvider = options.identityTokenProvider
@@ -654,11 +699,19 @@ export function createProcessor(options = {}) {
   const now = options.now ?? Date.now;
 
   return async function processOne() {
+    const claimHeaders = config.geometryBackfillRunId
+      ? { "X-DFKS-OCR-Geometry-Backfill-Run": config.geometryBackfillRunId }
+      : config.replacementOnly
+        ? { "X-DFKS-OCR-Replacement-Only": "1" }
+        : undefined;
     const claim = await portalRequest(
       config,
       identityTokenProvider,
       "/api/internal/document-processing/claim",
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: claimHeaders,
+      },
       fetchImpl,
     );
     if (claim.status === 204) return { outcome: "empty" };
@@ -674,6 +727,10 @@ export function createProcessor(options = {}) {
     const processingSignal = processingAbortController?.signal;
     let workDir;
     let heartbeat;
+    // Preserve a previously verified source hash across every terminal
+    // callback. Once this run has downloaded and verified the immutable
+    // original, replace it with the freshly calculated value.
+    let originalSha256 = job.expectedOriginalSha256 ?? null;
     const completionOptions = {
       assertHealthy: () => heartbeat?.assertHealthy(),
     };
@@ -723,9 +780,9 @@ export function createProcessor(options = {}) {
       }
       const input = await readResponseWithLimit(source, byteLimit, processingSignal);
       assertProcessingHealthy();
-      const originalSha256 = sha256(input);
+      const downloadedOriginalSha256 = sha256(input);
       if (job.expectedOriginalSha256 != null
-        && originalSha256 !== job.expectedOriginalSha256) {
+        && downloadedOriginalSha256 !== job.expectedOriginalSha256) {
         throw new DocumentProcessingError(
           "original_sha256_mismatch",
           "needs_review",
@@ -761,11 +818,17 @@ export function createProcessor(options = {}) {
           maxBytes: byteLimit,
         });
       }
+      originalSha256 = downloadedOriginalSha256;
       const result = await spatialProcessor({
         inputPath, outputPath, geometryPath, workDir, commandRunner, googleClient,
         assertLeaseHealthy: assertProcessingHealthy,
+        forceOcr: sourceFormat !== "pdf"
+          || config.replacementOnly === true
+          || config.geometryBackfillRunId != null,
+        geometryBackfillRunId: config.geometryBackfillRunId,
+        originalSha256,
+        tailBlankProofManifest,
         signal: processingSignal,
-        forceOcr: sourceFormat !== "pdf",
       });
       assertProcessingHealthy();
       const originalView = sourceFormat === "pdf"
@@ -788,14 +851,20 @@ export function createProcessor(options = {}) {
         nativePageCount: result.nativePageCount,
         ocrPageCount: result.ocrPageCount,
         unreadablePageCount: result.unreadablePageCount,
-        redactionCounts: result.redactionCounts ?? {},
-        redactionProfile: result.redactionProfile ?? null,
+        processingProfile: result.processingProfile ?? null,
         spatialSchemaVersion: result.spatialSchemaVersion ?? null,
+        ...(result.spatialVerificationProfile ? {
+          spatialVerificationProfile: result.spatialVerificationProfile,
+        } : {}),
         spatialAccuracyScore: result.spatial?.score ?? null,
         spatialMedianIou: result.spatial?.medianIou ?? null,
         spatialCenterInsideRatio: result.spatial?.centerInsideRatio ?? null,
         originalSha256,
       };
+      const affectedPageNumbers = sanitiseAffectedPageNumbers(
+        result.affectedPageNumbers,
+        result.pageCount,
+      );
       if (result.status === "not_required") {
         await sendCompletion(config, identityTokenProvider, { ...completion, status: "not_required" }, fetchImpl, completionOptions);
         return { outcome: "completed" };
@@ -806,17 +875,27 @@ export function createProcessor(options = {}) {
           : result.unreadablePageCount > 0
             ? OCR_QUALITY_DIAGNOSTIC_CODES.unreadablePage
             : OCR_QUALITY_DIAGNOSTIC_CODES.spatialQuality;
+        const reviewDetails = buildReviewDetails(
+          diagnosticCode,
+          affectedPageNumbers,
+          result.pageCount,
+        );
         await sendCompletion(config, identityTokenProvider, {
           ...completion,
           status: "needs_review",
           errorCode: diagnosticCode,
+          ...(reviewDetails ? { reviewDetails } : {}),
           safeErrorMessage: result.orientationQualityFailed === true
             ? "Mindst én sides orientering kunne ikke bestemmes sikkert. Kontrollér scanningens retning."
             : result.unreadablePageCount > 0
               ? "Mindst én side gav ikke læsbar tekst. Kontrollér scanningens kvalitet."
               : "Tekstlagets placering bestod ikke den geometriske kvalitetskontrol.",
         }, fetchImpl, completionOptions);
-        return { outcome: "needs_review", diagnosticCode };
+        return {
+          outcome: "needs_review",
+          diagnosticCode,
+          ...(reviewDetails ? { reviewDetails } : {}),
+        };
       }
 
       const output = await readLocalArtifactWithinLimit(
@@ -902,6 +981,7 @@ export function createProcessor(options = {}) {
         await sendCompletion(config, identityTokenProvider, {
           jobId: job.jobId,
           leaseToken: job.leaseToken,
+          originalSha256,
           status: documentError ? "needs_review" : "failed",
           errorCode,
           safeErrorMessage: documentError
@@ -917,6 +997,7 @@ export function createProcessor(options = {}) {
       await sendCompletion(config, identityTokenProvider, {
         jobId: job.jobId,
         leaseToken: job.leaseToken,
+        originalSha256,
         status: documentError.status,
         errorCode: documentError.code,
         safeErrorMessage: documentError.safeMessage,

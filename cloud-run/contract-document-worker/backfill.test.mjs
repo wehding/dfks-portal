@@ -180,14 +180,14 @@ test("fem sammenhængende OCR-kvalitetsproblemer stopper fuld backfill", async (
   assert.equal(calls, 5);
 });
 
-test("fem sammenhængende DLP-sikkerhedsafvisninger stopper fuld backfill", async () => {
+test("fem sammenhængende Vision-sideafvisninger stopper fuld backfill", async () => {
   let calls = 0;
   await assert.rejects(() => runBackfill({
     processOneFn: async () => {
       calls += 1;
       return {
         outcome: "needs_review",
-        diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationMissing,
+        diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.visionPageInvalid,
       };
     },
     log() {},

@@ -73,6 +73,7 @@ jobs:
             node --test \
               tests/contract-ai-generation-fence-concurrency.test.mjs \
               tests/contract-document-concurrent-claims.test.mjs \
+              tests/contract-document-geometry-backfill-concurrency.test.mjs \
               tests/contract-upload-intent-cleanup-race.test.mjs \
               tests/member-contract-upload-finalization-race.test.mjs \
               tests/member-contract-upload-rollback-race.test.mjs

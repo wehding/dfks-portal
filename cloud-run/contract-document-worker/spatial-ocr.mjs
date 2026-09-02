@@ -1,16 +1,27 @@
 import { createHash } from "node:crypto";
 import { gzip } from "node:zlib";
 import { promisify } from "node:util";
-import { open, readFile, stat, writeFile } from "node:fs/promises";
+import { open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import sharp from "sharp";
 
 import {
   GoogleOcrOperationalError,
-  isDlpRequestBodyWithinLimit,
-  MAX_DLP_IMAGE_BYTES,
-} from "./google-secure-api.mjs";
+  MAX_VISION_IMAGE_BYTES,
+} from "./google-vision-api.mjs";
 import { resolveDocumentResourceLimits } from "./resource-limits.mjs";
+import {
+  hasSparseTailBlankConsensus,
+  isSparseTailEdgeArtifactCandidate,
+  recoverSparseTailTextFromVariants,
+  recoverTailOrientationFromVariants,
+  TAIL_RASTER_EDGE_MARGIN_RATIO,
+} from "./tail-page-recovery.mjs";
+import {
+  authoriseTailBlankProof,
+  hasTailBlankProofCandidate,
+  tailBlankRecoveryMarker,
+} from "./tail-blank-proof.mjs";
 
 const gzipAsync = promisify(gzip);
 const MIN_NATIVE_CHARS = 160;
@@ -26,7 +37,7 @@ const MIN_SPARSE_NATIVE_WORDLIKE_RATIO = 0.8;
 const FULL_PAGE_RASTER_COVERAGE = 0.72;
 const MIN_RASTER_TILE_PIXELS = 64 * 64;
 // A page is exempted from the unreadable-page gate only when it is almost
-// completely white, contains no extracted/OCR text and has no DLP redaction.
+// completely white and contains no extracted or OCR text.
 // The limits deliberately reject sparse signatures, initials and faint text.
 const MAX_BLANK_NON_WHITE_RATIO = 0.003;
 const MAX_BLANK_DARK_RATIO = 0.0015;
@@ -41,14 +52,85 @@ const MAX_EXACT_ASSIGNMENT_WORDS_PER_GROUP = 128;
 // many repeated tokens cannot monopolise the worker. The deterministic
 // reading-order fallback preserves fail-closed spatial verification.
 const MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE = 2_000_000;
-const DLP_RENDER_PROFILES = Object.freeze([
+// Existing v3 artefacts were verified with the original three-token matcher.
+// They have no persisted profile and must remain reproducible at audit time.
+// Every later profile is immutable: v2 remains the exact bounded matcher that
+// produced historical artefacts, while v3 adds one narrowly-scoped Poppler
+// 22.12 horizontal-scaling tolerance for short, high-confidence tokens.
+export const LEGACY_SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-legacy-v1";
+export const V2_SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v2-poppler22.12";
+export const SPATIAL_VERIFICATION_PROFILE = "dfks-spatial-verification-v3-short-token-width-poppler22.12";
+export const ALLOWED_SPATIAL_VERIFICATION_PROFILES = Object.freeze([
+  V2_SPATIAL_VERIFICATION_PROFILE,
+  SPATIAL_VERIFICATION_PROFILE,
+]);
+const SPATIAL_MATCHER_CONFIG = Object.freeze({
+  [LEGACY_SPATIAL_VERIFICATION_PROFILE]: Object.freeze({
+    maxJoinedTokens: 3,
+    maxJoinedTokenChars: null,
+    requireJoinedTokenGeometry: false,
+    allowShortTokenHorizontalScaling: false,
+  }),
+  [V2_SPATIAL_VERIFICATION_PROFILE]: Object.freeze({
+    maxJoinedTokens: 8,
+    maxJoinedTokenChars: 96,
+    requireJoinedTokenGeometry: true,
+    allowShortTokenHorizontalScaling: false,
+  }),
+  [SPATIAL_VERIFICATION_PROFILE]: Object.freeze({
+    maxJoinedTokens: 8,
+    maxJoinedTokenChars: 96,
+    requireJoinedTokenGeometry: true,
+    allowShortTokenHorizontalScaling: true,
+  }),
+});
+const MIN_JOINED_TOKEN_VERTICAL_OVERLAP_RATIO = 0.5;
+const MAX_JOINED_TOKEN_GAP_HEIGHT_RATIO = 1.5;
+// A hash-bound 150-token artefact showed eleven one-to-four-character tokens
+// with exact text, confidence 0.948-0.979 and correct centres/heights, while
+// Poppler 22.12 widened only their horizontal bbox (IoU 0.46-0.71). These
+// limits recognise only that representation artefact; the ordinary 0.75 IoU
+// gate and every text-matching rule remain unchanged.
+const MAX_HORIZONTAL_SCALE_TOKEN_LENGTH = 4;
+const MIN_HORIZONTAL_SCALE_VISION_CONFIDENCE = 0.9;
+const MIN_HORIZONTAL_SCALE_IOU = 0.45;
+const MIN_HORIZONTAL_SCALE_VERTICAL_OVERLAP_RATIO = 0.9;
+const MIN_HORIZONTAL_SCALE_HEIGHT_RATIO = 0.9;
+const MAX_HORIZONTAL_SCALE_VERTICAL_CENTER_DELTA_RATIO = 0.05;
+const MAX_HORIZONTAL_SCALE_HORIZONTAL_CENTER_DELTA_RATIO = 0.3;
+const MAX_HORIZONTAL_SCALE_WIDTH_RATIO = 2.2;
+const MIN_HORIZONTAL_SCALE_NEIGHBOUR_IOU = 0.75;
+const MIN_HORIZONTAL_SCALE_NEIGHBOUR_LINE_OVERLAP_RATIO = 0.8;
+const MAX_HORIZONTAL_SCALE_NEIGHBOUR_GAP_HEIGHT_RATIO = 4;
+const MAX_HORIZONTAL_SCALE_NEIGHBOUR_CANDIDATES = 16;
+const MAX_HORIZONTAL_SCALE_ASSIGNMENT_GROUP_SIZE = MAX_EXACT_ASSIGNMENT_WORDS_PER_GROUP;
+const MIN_HORIZONTAL_SCALE_PAGE_WORDS = 50;
+const MAX_HORIZONTAL_SCALE_TOKENS_PER_PAGE = 12;
+const MAX_HORIZONTAL_SCALE_TOKEN_RATIO_PER_PAGE = 0.08;
+const MIN_HORIZONTAL_SCALE_ORDINARY_PLACEMENT_RATIO = 0.9;
+const MIN_HORIZONTAL_SCALE_PAGE_MEDIAN_IOU = 0.95;
+const MAX_UNREADABLE_RECOVERY_PAGES = 4;
+const MAX_ORIENTATION_RECOVERY_PAGES = 4;
+const MIN_ORIENTATION_RECOVERY_VARIANTS = 2;
+const MIN_UNREADABLE_RECOVERY_WORDS = 3;
+const MIN_UNREADABLE_RECOVERY_CHARS = 12;
+const MIN_UNREADABLE_RECOVERY_CONFIDENCE = 0.75;
+const MIN_UNREADABLE_RECOVERY_WORD_IOU = 0.65;
+const MIN_UNREADABLE_RECOVERY_MEDIAN_IOU = 0.85;
+const MAX_UNREADABLE_RECOVERY_CENTER_DISTANCE_RATIO = 0.01;
+export const VISION_RENDER_PROFILES = Object.freeze([
   { dpi: 300, quality: 95 },
   { dpi: 275, quality: 90 },
   { dpi: 250, quality: 88 },
   { dpi: 225, quality: 86 },
   { dpi: 200, quality: 85 },
 ]);
-const MAX_RENDERED_PAGE_PIXELS = 40_000_000;
+export const MAX_RENDERED_PAGE_PIXELS = 40_000_000;
+const MIN_SPATIAL_TEXT_CHARS = 120;
+const SPATIAL_OVERLAY_FALLBACK_PROFILES = Object.freeze([
+  "font-metrics-v1",
+  "axis-aligned-font-metrics-v1",
+]);
 
 export async function readTextArtifactWithinLimit(path, maxBytes) {
   let handle;
@@ -94,6 +176,17 @@ export function enforceVisionWordLimits(pages, resourceLimits) {
   return totalWords;
 }
 
+export function hasIndependentReadableOcrPage(pages, pageCount) {
+  return Array.isArray(pages) && pages.some((page) => (
+    Array.isArray(page?.words)
+      && page.words.length > 0
+      && !isSparseTailEdgeArtifactCandidate(page, {
+        pageNumber: page.pageNumber,
+        pageCount,
+      })
+  ));
+}
+
 function serializeSpatialGeometry(geometry, maxBytes) {
   const json = JSON.stringify(geometry);
   if (Buffer.byteLength(json) > maxBytes) {
@@ -116,6 +209,49 @@ export function renderedPixelCount(pageSize, dpi) {
   if (!pageSize) return Number.POSITIVE_INFINITY;
   return Math.ceil(pageSize.widthPoints * dpi / 72)
     * Math.ceil(pageSize.heightPoints * dpi / 72);
+}
+
+export async function renderVisionSourceRaster({
+  inputPath,
+  pageNumber,
+  pageSize,
+  outputPrefix,
+  runCommand,
+}) {
+  for (const profile of VISION_RENDER_PROFILES) {
+    if (renderedPixelCount(pageSize, profile.dpi) > MAX_RENDERED_PAGE_PIXELS) continue;
+    await runCommand("pdftoppm", [
+      "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
+      "-jpeg", "-jpegopt", `quality=${profile.quality}`, "-r", String(profile.dpi),
+      "-gray", inputPath, outputPrefix,
+    ], 120_000);
+    const candidatePath = `${outputPrefix}.jpg`;
+    const candidateInfo = await stat(candidatePath);
+    if (candidateInfo.size > MAX_VISION_IMAGE_BYTES) continue;
+    return readFile(candidatePath);
+  }
+  throw new GoogleOcrOperationalError("vision_page_too_large");
+}
+
+export async function renderTailRecoveryRaster({
+  inputPath,
+  pageNumber,
+  sourceWidth,
+  sourceHeight,
+  outputPrefix,
+  runCommand,
+}) {
+  await runCommand("pdftoppm", [
+    "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
+    "-jpeg", "-jpegopt", "quality=96",
+    "-scale-to-x", String(sourceWidth),
+    "-scale-to-y", String(sourceHeight),
+    inputPath, outputPrefix,
+  ], 120_000);
+  const recoveryPath = `${outputPrefix}.jpg`;
+  const recoveryInfo = await stat(recoveryPath);
+  if (recoveryInfo.size < 1 || recoveryInfo.size > MAX_VISION_IMAGE_BYTES) return null;
+  return readFile(recoveryPath);
 }
 
 export function sha256(bytes) {
@@ -211,7 +347,7 @@ export function classifyRasterBlankness({
   };
 }
 
-async function inspectRasterBlankness(imageBytes) {
+export async function inspectRasterBlankness(imageBytes) {
   try {
     const { data, info } = await sharp(imageBytes, {
       failOn: "warning",
@@ -223,20 +359,51 @@ async function inspectRasterBlankness(imageBytes) {
     const blockRows = Math.ceil(info.height / BLANK_INSPECTION_BLOCK_SIZE);
     const localNonWhite = new Uint32Array(blockColumns * blockRows);
     const localDark = new Uint32Array(blockColumns * blockRows);
+    const edgeMarginX = Math.max(1, Math.floor(info.width * TAIL_RASTER_EDGE_MARGIN_RATIO));
+    const edgeMarginY = Math.max(1, Math.floor(info.height * TAIL_RASTER_EDGE_MARGIN_RATIO));
+    const interiorWidth = info.width - edgeMarginX * 2;
+    const interiorHeight = info.height - edgeMarginY * 2;
+    if (!(interiorWidth > 0) || !(interiorHeight > 0)) throw new Error("invalid_interior");
+    const interiorBlockColumns = Math.ceil(interiorWidth / BLANK_INSPECTION_BLOCK_SIZE);
+    const interiorBlockRows = Math.ceil(interiorHeight / BLANK_INSPECTION_BLOCK_SIZE);
+    const interiorLocalNonWhite = new Uint32Array(interiorBlockColumns * interiorBlockRows);
+    const interiorLocalDark = new Uint32Array(interiorBlockColumns * interiorBlockRows);
     let sum = 0;
     let squaresSum = 0;
-    for (let offset = 0; offset < data.length; offset += 1) {
-      const value = data[offset];
-      histogram[value] += 1;
-      sum += value;
-      squaresSum += value * value;
-      if (value < 245) {
-        const x = offset % info.width;
-        const y = Math.floor(offset / info.width);
-        const block = Math.floor(y / BLANK_INSPECTION_BLOCK_SIZE) * blockColumns
-          + Math.floor(x / BLANK_INSPECTION_BLOCK_SIZE);
-        localNonWhite[block] += 1;
-        if (value < 200) localDark[block] += 1;
+    let interiorPixels = 0;
+    let interiorNonWhite = 0;
+    let interiorDark = 0;
+    let interiorSum = 0;
+    let interiorSquaresSum = 0;
+    for (let y = 0; y < info.height; y += 1) {
+      const rowOffset = y * info.width;
+      for (let x = 0; x < info.width; x += 1) {
+        const value = data[rowOffset + x];
+        histogram[value] += 1;
+        sum += value;
+        squaresSum += value * value;
+        const inInterior = x >= edgeMarginX && x < info.width - edgeMarginX
+          && y >= edgeMarginY && y < info.height - edgeMarginY;
+        if (inInterior) {
+          interiorPixels += 1;
+          interiorSum += value;
+          interiorSquaresSum += value * value;
+        }
+        if (value < 245) {
+          const block = Math.floor(y / BLANK_INSPECTION_BLOCK_SIZE) * blockColumns
+            + Math.floor(x / BLANK_INSPECTION_BLOCK_SIZE);
+          localNonWhite[block] += 1;
+          if (value < 200) localDark[block] += 1;
+          if (inInterior) {
+            interiorNonWhite += 1;
+            if (value < 200) interiorDark += 1;
+            const interiorBlock = Math.floor((y - edgeMarginY) / BLANK_INSPECTION_BLOCK_SIZE)
+              * interiorBlockColumns
+              + Math.floor((x - edgeMarginX) / BLANK_INSPECTION_BLOCK_SIZE);
+            interiorLocalNonWhite[interiorBlock] += 1;
+            if (value < 200) interiorLocalDark[interiorBlock] += 1;
+          }
+        }
       }
     }
     const mean = data.length ? sum / data.length : Number.NaN;
@@ -255,6 +422,31 @@ async function inspectRasterBlankness(imageBytes) {
         maxLocalDarkRatio = Math.max(maxLocalDarkRatio, localDark[block] / blockPixels);
       }
     }
+    let maxInteriorLocalNonWhiteRatio = 0;
+    let maxInteriorLocalDarkRatio = 0;
+    for (let blockY = 0; blockY < interiorBlockRows; blockY += 1) {
+      for (let blockX = 0; blockX < interiorBlockColumns; blockX += 1) {
+        const block = blockY * interiorBlockColumns + blockX;
+        const blockWidth = Math.min(BLANK_INSPECTION_BLOCK_SIZE,
+          interiorWidth - blockX * BLANK_INSPECTION_BLOCK_SIZE);
+        const blockHeight = Math.min(BLANK_INSPECTION_BLOCK_SIZE,
+          interiorHeight - blockY * BLANK_INSPECTION_BLOCK_SIZE);
+        const blockPixels = blockWidth * blockHeight;
+        maxInteriorLocalNonWhiteRatio = Math.max(
+          maxInteriorLocalNonWhiteRatio,
+          interiorLocalNonWhite[block] / blockPixels,
+        );
+        maxInteriorLocalDarkRatio = Math.max(
+          maxInteriorLocalDarkRatio,
+          interiorLocalDark[block] / blockPixels,
+        );
+      }
+    }
+    const interiorMean = interiorSum / interiorPixels;
+    const interiorVariance = Math.max(
+      0,
+      interiorSquaresSum / interiorPixels - interiorMean * interiorMean,
+    );
     const classification = classifyRasterBlankness({
       histogram,
       mean,
@@ -266,10 +458,42 @@ async function inspectRasterBlankness(imageBytes) {
       ...classification,
       width: Number(info.width || 0),
       height: Number(info.height || 0),
+      mean,
+      stdev: Math.sqrt(variance),
+      maxLocalNonWhiteRatio,
+      maxLocalDarkRatio,
+      edgeMarginXRatio: edgeMarginX / info.width,
+      edgeMarginYRatio: edgeMarginY / info.height,
+      interiorCoverageRatio: interiorPixels / data.length,
+      interiorNonWhiteRatio: interiorNonWhite / interiorPixels,
+      interiorDarkRatio: interiorDark / interiorPixels,
+      interiorMean,
+      interiorStdev: Math.sqrt(interiorVariance),
+      maxInteriorLocalNonWhiteRatio,
+      maxInteriorLocalDarkRatio,
     };
   } catch {
     // A decode/statistics error can never turn a page into a trusted blank.
-    return { blank: false, nonWhiteRatio: 1, darkRatio: 1, width: 0, height: 0 };
+    return {
+      blank: false,
+      nonWhiteRatio: 1,
+      darkRatio: 1,
+      width: 0,
+      height: 0,
+      mean: 0,
+      stdev: Number.POSITIVE_INFINITY,
+      maxLocalNonWhiteRatio: 1,
+      maxLocalDarkRatio: 1,
+      edgeMarginXRatio: 1,
+      edgeMarginYRatio: 1,
+      interiorCoverageRatio: 0,
+      interiorNonWhiteRatio: 1,
+      interiorDarkRatio: 1,
+      interiorMean: 0,
+      interiorStdev: Number.POSITIVE_INFINITY,
+      maxInteriorLocalNonWhiteRatio: 1,
+      maxInteriorLocalDarkRatio: 1,
+    };
   }
 }
 
@@ -277,6 +501,21 @@ export function classifyOcrDocument(pageStates) {
   return pageStates.every((page) => page.classification === "image_only")
     ? "image_only"
     : "mixed";
+}
+
+export function completionPageCounts(pageStates, forceOcr = false) {
+  const sourceNativePageCount = pageStates
+    .filter((page) => page.classification === "native_text").length;
+  // Forced Vision rebuilds every source page from a Vision response. This is
+  // also true for mixed PDFs, so completion evidence must count every page as
+  // OCR-processed rather than retaining the source document's classification.
+  if (forceOcr) {
+    return { nativePageCount: 0, ocrPageCount: pageStates.length };
+  }
+  return {
+    nativePageCount: sourceNativePageCount,
+    ocrPageCount: pageStates.length - sourceNativePageCount,
+  };
 }
 
 export function parsePdfImagesList(value) {
@@ -328,7 +567,7 @@ export function pageRasterEvidence(images, pageSize) {
     coverage = Math.max(0, Math.min(1, coverage));
     // Scanners may encode one page as many small image tiles. Ignoring every
     // tile below 50k pixels can make a scanned page with a hidden OCR layer
-    // look native and bypass DLP/Vision. The bounded pdfimages inventory keeps
+    // look native and bypass Vision. The bounded pdfimages inventory keeps
     // this aggregation finite; over-counting overlapping tiles fails safely
     // toward OCR rather than skipping it.
     if (image.width * image.height >= MIN_RASTER_TILE_PIXELS) {
@@ -465,6 +704,18 @@ export function detectPhysicalOrientation(page) {
   };
 }
 
+/**
+ * Resolve every page exclusively from its own Vision geometry. Neighboring
+ * pages are intentionally not allowed to promote an ambiguous page: the
+ * established >= 0.70 confidence and local evidence gate remains unchanged.
+ */
+export function resolvePhysicalOrientations(pages) {
+  return new Map((pages ?? []).map((page) => [
+    page.pageNumber,
+    detectPhysicalOrientation(page),
+  ]));
+}
+
 function transformPoint(point, correctionDegrees, sourceWidth, sourceHeight) {
   const x = Number(point.x);
   const y = Number(point.y);
@@ -494,23 +745,57 @@ export function correctPageOrientation(page, correctionDegrees) {
   };
 }
 
-function correctRedactionRegion(region, correctionDegrees, sourceWidth, sourceHeight) {
-  const correction = normaliseDegrees(correctionDegrees);
-  if (correction === 0) return { ...region };
-  const corners = [
-    { x: region.left, y: region.top },
-    { x: region.left + region.width, y: region.top },
-    { x: region.left + region.width, y: region.top + region.height },
-    { x: region.left, y: region.top + region.height },
-  ].map((point) => transformPoint(point, correction, sourceWidth, sourceHeight));
-  const xs = corners.map((point) => point.x);
-  const ys = corners.map((point) => point.y);
+/**
+ * Persist only the documented v3 page schema. Recovery profiles, retry
+ * rotations and other in-memory decision evidence must never leak into the
+ * long-lived geometry artifact.
+ */
+export function canonicaliseSpatialGeometryPage(page, correctionDegrees) {
+  const corrected = correctPageOrientation(page, correctionDegrees);
   return {
-    ...region,
-    left: Math.min(...xs),
-    top: Math.min(...ys),
-    width: Math.max(...xs) - Math.min(...xs),
-    height: Math.max(...ys) - Math.min(...ys),
+    pageNumber: corrected.pageNumber,
+    sourceImageWidth: corrected.sourceImageWidth,
+    sourceImageHeight: corrected.sourceImageHeight,
+    imageWidth: corrected.imageWidth,
+    imageHeight: corrected.imageHeight,
+    orientationCorrection: corrected.orientationCorrection,
+    words: corrected.words.map((word) => ({
+      text: String(word.text ?? ""),
+      confidence: Number(word.confidence) || 0,
+      vertices: word.vertices.map((point) => ({
+        x: Number(point.x),
+        y: Number(point.y),
+      })),
+    })),
+  };
+}
+
+/**
+ * Undo the deterministic clockwise raster rotation used by the Vision retry.
+ * The returned word polygons are expressed in the original, canonical source
+ * raster. A retry transform is correlation metadata, never authorization.
+ */
+export function mapOrientationVariantToCanonical(page, transform) {
+  const rotationDegrees = normaliseDegrees(Number(transform?.rotationDegrees));
+  const canonicalWidth = Number(transform?.canonicalWidth);
+  const canonicalHeight = Number(transform?.canonicalHeight);
+  if (!Number.isSafeInteger(Number(transform?.rotationDegrees))
+    || ![0, 90, 180, 270].includes(rotationDegrees)
+    || !(canonicalWidth > 0) || !(canonicalHeight > 0)
+    || transform?.pageNumber !== page?.pageNumber) {
+    throw new Error("invalid_orientation_variant_transform");
+  }
+  const corrected = correctPageOrientation(page, rotationDegrees);
+  if (Math.abs(corrected.imageWidth - canonicalWidth) > 1
+    || Math.abs(corrected.imageHeight - canonicalHeight) > 1) {
+    throw new Error("orientation_variant_dimension_mismatch");
+  }
+  return {
+    pageNumber: page.pageNumber,
+    imageWidth: canonicalWidth,
+    imageHeight: canonicalHeight,
+    words: corrected.words,
+    recoveryRotationDegrees: rotationDegrees,
   };
 }
 
@@ -599,6 +884,64 @@ function polygonCenter(polygon) {
     x: center.x + point.x / polygon.length,
     y: center.y + point.y / polygon.length,
   }), { x: 0, y: 0 });
+}
+
+/**
+ * Accept an unreadable-page retry only when the colour and contrast/grayscale
+ * Vision responses independently produce the same normalized token stream and
+ * tightly overlapping geometry. The colour response is retained unchanged;
+ * agreement is a safety gate, not a geometry-merging heuristic.
+ */
+export function recoverUnreadablePageFromVariants(variantPages) {
+  if (!Array.isArray(variantPages) || variantPages.length !== 2) return null;
+  const [colour, contrastGray] = variantPages;
+  if (colour?.pageNumber !== contrastGray?.pageNumber
+    || !(colour?.imageWidth > 0) || !(colour?.imageHeight > 0)
+    || Math.abs(colour.imageWidth - contrastGray.imageWidth) > 1
+    || Math.abs(colour.imageHeight - contrastGray.imageHeight) > 1) return null;
+  const colourWords = Array.isArray(colour.words) ? colour.words : [];
+  const grayWords = Array.isArray(contrastGray.words) ? contrastGray.words : [];
+  if (colourWords.length < MIN_UNREADABLE_RECOVERY_WORDS
+    || colourWords.length !== grayWords.length) return null;
+  const colourTokens = colourWords.map((word) => normaliseWord(String(word.text ?? "")));
+  const grayTokens = grayWords.map((word) => normaliseWord(String(word.text ?? "")));
+  if (colourTokens.some((token) => !token)
+    || colourTokens.join("\u001f") !== grayTokens.join("\u001f")
+    || colourTokens.reduce((total, token) => total + token.length, 0) < MIN_UNREADABLE_RECOVERY_CHARS) {
+    return null;
+  }
+  const colourConfidence = median(colourWords.map((word) => Number(word.confidence) || 0));
+  const grayConfidence = median(grayWords.map((word) => Number(word.confidence) || 0));
+  if (colourConfidence < MIN_UNREADABLE_RECOVERY_CONFIDENCE
+    || grayConfidence < MIN_UNREADABLE_RECOVERY_CONFIDENCE) return null;
+
+  const pageDiagonal = Math.hypot(colour.imageWidth, colour.imageHeight);
+  const maximumCenterDistance = Math.max(2,
+    pageDiagonal * MAX_UNREADABLE_RECOVERY_CENTER_DISTANCE_RATIO);
+  const overlaps = [];
+  for (let index = 0; index < colourWords.length; index += 1) {
+    const colourVertices = colourWords[index]?.vertices;
+    const grayVertices = grayWords[index]?.vertices;
+    if (!Array.isArray(colourVertices) || colourVertices.length !== 4
+      || !Array.isArray(grayVertices) || grayVertices.length !== 4) return null;
+    const colourBox = axisBox(colourVertices, 1, 1);
+    const grayBox = axisBox(grayVertices, 1, 1);
+    const overlap = intersectionOverUnion(colourBox, grayBox);
+    const colourCenter = boxCenter(colourBox);
+    const grayCenter = boxCenter(grayBox);
+    const centerDistance = Math.hypot(
+      colourCenter.x - grayCenter.x,
+      colourCenter.y - grayCenter.y,
+    );
+    if (overlap < MIN_UNREADABLE_RECOVERY_WORD_IOU
+      || centerDistance > maximumCenterDistance) return null;
+    overlaps.push(overlap);
+  }
+  if (median(overlaps) < MIN_UNREADABLE_RECOVERY_MEDIAN_IOU) return null;
+  return {
+    ...colour,
+    recoveryProfile: "vision-colour-contrast-consensus-v1",
+  };
 }
 
 // Minimum-cost rectangular assignment (Hungarian algorithm). Matching all
@@ -704,6 +1047,236 @@ function assignEqualWords(expected, actual, pageDiagonal, exactAssignmentBudget)
   ));
 }
 
+function unionAxisBoxes(boxes) {
+  return {
+    xMin: Math.min(...boxes.map((box) => box.xMin)),
+    yMin: Math.min(...boxes.map((box) => box.yMin)),
+    xMax: Math.max(...boxes.map((box) => box.xMax)),
+    yMax: Math.max(...boxes.map((box) => box.yMax)),
+  };
+}
+
+function verticallyOverlap(first, second) {
+  const overlap = Math.max(0, Math.min(first.yMax, second.yMax)
+    - Math.max(first.yMin, second.yMin));
+  const minimumHeight = Math.min(first.yMax - first.yMin, second.yMax - second.yMin);
+  return minimumHeight > 0 && overlap / minimumHeight >= MIN_JOINED_TOKEN_VERTICAL_OVERLAP_RATIO;
+}
+
+function geometricallyAdjacent(previous, next) {
+  if (!verticallyOverlap(previous, next)) return false;
+  const previousCenter = boxCenter(previous);
+  const nextCenter = boxCenter(next);
+  if (!(nextCenter.x > previousCenter.x)) return false;
+  const minimumHeight = Math.min(previous.yMax - previous.yMin, next.yMax - next.yMin);
+  const maximumGap = Math.max(2, minimumHeight * MAX_JOINED_TOKEN_GAP_HEIGHT_RATIO);
+  return next.xMin - previous.xMax <= maximumGap;
+}
+
+function centersAlignedForGeometry(target, actualBox, polygon = null) {
+  const actualCenter = boxCenter(actualBox);
+  const expectedCenter = polygon ? polygonCenter(polygon) : boxCenter(target);
+  return polygon
+    ? pointInPolygonInclusive(actualCenter, polygon)
+      || pointInAxisBoxInclusive(expectedCenter, actualBox)
+    : pointInAxisBoxInclusive(actualCenter, target)
+      || pointInAxisBoxInclusive(expectedCenter, actualBox);
+}
+
+function boxCenterDistance(first, second) {
+  const firstCenter = boxCenter(first);
+  const secondCenter = boxCenter(second);
+  return Math.hypot(firstCenter.x - secondCenter.x, firstCenter.y - secondCenter.y);
+}
+
+function isStrictlyClosest(selectedDistance, alternatives) {
+  if (!alternatives.length) return true;
+  const closestAlternative = Math.min(...alternatives);
+  // A half-pixel margin rejects geometrically indistinguishable duplicate
+  // assignments while tolerating only the deterministic sub-pixel rounding
+  // already present in the PDF/Vision coordinate conversion.
+  return selectedDistance + 0.5 <= closestAlternative;
+}
+
+function assignmentIsMutuallyUnique(match, expectedGroup, actualGroup) {
+  if (expectedGroup.length !== actualGroup.length) return false;
+  const selectedDistance = boxCenterDistance(match.expected.target, match.actual.box);
+  const competingActualDistances = actualGroup
+    .filter((entry) => entry !== match.actual)
+    .map((entry) => boxCenterDistance(match.expected.target, entry.box));
+  const competingExpectedDistances = expectedGroup
+    .filter((entry) => entry !== match.expected)
+    .map((entry) => boxCenterDistance(entry.target, match.actual.box));
+  return isStrictlyClosest(selectedDistance, competingActualDistances)
+    && isStrictlyClosest(selectedDistance, competingExpectedDistances);
+}
+
+function sameLineNeighbour(first, second) {
+  const firstHeight = first.yMax - first.yMin;
+  const secondHeight = second.yMax - second.yMin;
+  if (!(firstHeight > 0) || !(secondHeight > 0)) return false;
+  const overlap = Math.max(0,
+    Math.min(first.yMax, second.yMax) - Math.max(first.yMin, second.yMin));
+  const minimumHeight = Math.min(firstHeight, secondHeight);
+  if (overlap / minimumHeight < MIN_HORIZONTAL_SCALE_NEIGHBOUR_LINE_OVERLAP_RATIO) {
+    return false;
+  }
+  const gap = Math.max(0,
+    Math.max(first.xMin, second.xMin) - Math.min(first.xMax, second.xMax));
+  return gap <= Math.max(firstHeight, secondHeight)
+    * MAX_HORIZONTAL_SCALE_NEIGHBOUR_GAP_HEIGHT_RATIO;
+}
+
+function reliableDirectAnchor(match) {
+  return match.assignmentUnique === true
+    && match.expected.normalized === match.actual.normalized
+    && intersectionOverUnion(match.expected.target, match.actual.box)
+      >= MIN_HORIZONTAL_SCALE_NEIGHBOUR_IOU
+    && centersAlignedForGeometry(
+      match.expected.target,
+      match.actual.box,
+      match.expected.polygon,
+    );
+}
+
+function directMatchesAreNeighbours(first, second) {
+  if (!sameLineNeighbour(first.expected.target, second.expected.target)
+    || !sameLineNeighbour(first.actual.box, second.actual.box)) return false;
+  const expectedDirection = Math.sign(
+    boxCenter(second.expected.target).x - boxCenter(first.expected.target).x,
+  );
+  const actualDirection = Math.sign(
+    boxCenter(second.actual.box).x - boxCenter(first.actual.box).x,
+  );
+  return expectedDirection !== 0 && expectedDirection === actualDirection;
+}
+
+function horizontalScaleNeighbourMatches(directMatches) {
+  const matchesWithAnchor = new Set();
+  const ordered = [...directMatches].sort((left, right) => {
+    const leftCenter = boxCenter(left.expected.target);
+    const rightCenter = boxCenter(right.expected.target);
+    return leftCenter.y - rightCenter.y || leftCenter.x - rightCenter.x;
+  });
+  for (let index = 0; index < ordered.length; index += 1) {
+    const match = ordered[index];
+    for (let distance = 1;
+      distance <= MAX_HORIZONTAL_SCALE_NEIGHBOUR_CANDIDATES;
+      distance += 1) {
+      for (const candidateIndex of [index - distance, index + distance]) {
+        const candidate = ordered[candidateIndex];
+        if (!candidate || !directMatchesAreNeighbours(match, candidate)) continue;
+        if (reliableDirectAnchor(candidate)) matchesWithAnchor.add(match);
+        if (reliableDirectAnchor(match)) matchesWithAnchor.add(candidate);
+      }
+    }
+  }
+  return matchesWithAnchor;
+}
+
+function shortTokenHorizontalScalePlacement({
+  expectedParts,
+  actualParts,
+  target,
+  actualBox,
+  centersAligned,
+  hasReliableNeighbour,
+  assignmentUnique,
+  iou,
+  matcherConfig,
+}) {
+  if (!matcherConfig.allowShortTokenHorizontalScaling
+    || !centersAligned
+    || !hasReliableNeighbour
+    || !assignmentUnique
+    || iou < MIN_HORIZONTAL_SCALE_IOU
+    || iou >= 0.75
+    || expectedParts.length !== 1
+    || actualParts.length !== 1) return false;
+
+  const [expected] = expectedParts;
+  const [actual] = actualParts;
+  // The existing matcher has already required exact normalised text. Keep the
+  // equality explicit here so the spatial exception can never become a second
+  // or fuzzier text-matching path.
+  if (!expected.normalized
+    || expected.normalized !== actual.normalized
+    || expected.normalized.length > MAX_HORIZONTAL_SCALE_TOKEN_LENGTH) return false;
+
+  const confidence = Number(expected.expected?.confidence);
+  if (!Number.isFinite(confidence)
+    || confidence < MIN_HORIZONTAL_SCALE_VISION_CONFIDENCE
+    || confidence > 1) return false;
+
+  const targetWidth = target.xMax - target.xMin;
+  const actualWidth = actualBox.xMax - actualBox.xMin;
+  const targetHeight = target.yMax - target.yMin;
+  const actualHeight = actualBox.yMax - actualBox.yMin;
+  if (!(targetWidth > 0) || !(actualWidth > 0)
+    || !(targetHeight > 0) || !(actualHeight > 0)) return false;
+
+  const verticalOverlap = Math.max(0,
+    Math.min(target.yMax, actualBox.yMax) - Math.max(target.yMin, actualBox.yMin));
+  const maximumHeight = Math.max(targetHeight, actualHeight);
+  const minimumHeight = Math.min(targetHeight, actualHeight);
+  const heightRatio = minimumHeight / maximumHeight;
+  const verticalOverlapRatio = verticalOverlap / maximumHeight;
+  const verticalCenterDelta = Math.abs(
+    boxCenter(target).y - boxCenter(actualBox).y,
+  ) / maximumHeight;
+  const widthRatio = Math.max(targetWidth, actualWidth) / Math.min(targetWidth, actualWidth);
+  const horizontalCenterDelta = Math.abs(
+    boxCenter(target).x - boxCenter(actualBox).x,
+  ) / Math.max(targetWidth, actualWidth);
+
+  return verticalOverlapRatio >= MIN_HORIZONTAL_SCALE_VERTICAL_OVERLAP_RATIO
+    && heightRatio >= MIN_HORIZONTAL_SCALE_HEIGHT_RATIO
+    && verticalCenterDelta <= MAX_HORIZONTAL_SCALE_VERTICAL_CENTER_DELTA_RATIO
+    && horizontalCenterDelta <= MAX_HORIZONTAL_SCALE_HORIZONTAL_CENTER_DELTA_RATIO
+    && widthRatio <= MAX_HORIZONTAL_SCALE_WIDTH_RATIO;
+}
+
+function adjacentTokenWindows(items, used, boxKey, matcherConfig) {
+  const windowsByText = new Map();
+  for (let start = 0; start < items.length; start += 1) {
+    if (used.has(items[start])) continue;
+    let text = items[start].normalized;
+    for (let length = 2; length <= matcherConfig.maxJoinedTokens; length += 1) {
+      const end = start + length;
+      const part = items[end - 1];
+      if (!part || used.has(part)) break;
+      if (matcherConfig.requireJoinedTokenGeometry
+        && !geometricallyAdjacent(items[end - 2][boxKey], part[boxKey])) break;
+      text += part.normalized;
+      if (!text) continue;
+      if (matcherConfig.maxJoinedTokenChars != null
+        && text.length > matcherConfig.maxJoinedTokenChars) break;
+      const parts = items.slice(start, end);
+      const window = { parts, box: unionAxisBoxes(parts.map((item) => item[boxKey])) };
+      const candidates = windowsByText.get(text) ?? [];
+      candidates.push(window);
+      windowsByText.set(text, candidates);
+    }
+  }
+  return windowsByText;
+}
+
+function closestUnusedWindow(singleBox, windows, used) {
+  const singleCenter = boxCenter(singleBox);
+  let selected = null;
+  let selectedDistance = Number.POSITIVE_INFINITY;
+  for (const window of windows ?? []) {
+    if (window.parts.some((part) => used.has(part))) continue;
+    const center = boxCenter(window.box);
+    const distance = Math.hypot(singleCenter.x - center.x, singleCenter.y - center.y);
+    if (distance < selectedDistance) {
+      selected = window;
+      selectedDistance = distance;
+    }
+  }
+  return selected;
+}
+
 function median(values) {
   if (!values.length) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -711,7 +1284,99 @@ function median(values) {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-export function computeSpatialAccuracy(geometryPages, extractedPages) {
+function orientationConsensusWords(page, correctionDegrees) {
+  const upright = correctPageOrientation(page, correctionDegrees);
+  return (upright.words ?? [])
+    .map((word) => ({
+      token: normaliseWord(String(word?.text ?? "")),
+      box: axisBox(word?.vertices ?? [], 1, 1),
+    }))
+    .filter((word) => word.token && Object.values(word.box).every(Number.isFinite))
+    .sort((left, right) => {
+      const leftCenter = boxCenter(left.box);
+      const rightCenter = boxCenter(right.box);
+      return leftCenter.y - rightCenter.y
+        || leftCenter.x - rightCenter.x
+        || left.token.localeCompare(right.token, "da-DK");
+    });
+}
+
+function orientationVariantsAgree(reference, candidate, correctionDegrees) {
+  const referenceWords = orientationConsensusWords(reference, correctionDegrees);
+  const candidateWords = orientationConsensusWords(candidate, correctionDegrees);
+  if (!referenceWords.length || referenceWords.length !== candidateWords.length) return false;
+  const pageDiagonal = Math.hypot(reference.imageWidth, reference.imageHeight);
+  const maximumCenterDistance = Math.max(2,
+    pageDiagonal * MAX_UNREADABLE_RECOVERY_CENTER_DISTANCE_RATIO);
+  const overlaps = [];
+  for (let index = 0; index < referenceWords.length; index += 1) {
+    if (referenceWords[index].token !== candidateWords[index].token) return false;
+    const overlap = intersectionOverUnion(referenceWords[index].box, candidateWords[index].box);
+    const referenceCenter = boxCenter(referenceWords[index].box);
+    const candidateCenter = boxCenter(candidateWords[index].box);
+    if (overlap < MIN_UNREADABLE_RECOVERY_WORD_IOU
+      || Math.hypot(
+        referenceCenter.x - candidateCenter.x,
+        referenceCenter.y - candidateCenter.y,
+      ) > maximumCenterDistance) return false;
+    overlaps.push(overlap);
+  }
+  return median(overlaps) >= MIN_UNREADABLE_RECOVERY_MEDIAN_IOU;
+}
+
+/**
+ * Accept a formerly ambiguous orientation only when at least two distinct
+ * cardinal retry rasters independently pass the unchanged local orientation
+ * gate (>= 0.70 plus its existing evidence requirement), infer exactly the
+ * same canonical correction and return exactly the same normalized word
+ * multiset. Any decisive conflict remains manual review.
+ */
+export function recoverOrientationPageFromVariants(variantPages) {
+  if (!Array.isArray(variantPages) || variantPages.length !== 4) return null;
+  const reliable = [];
+  const seenRotations = new Set();
+  for (const page of variantPages) {
+    if (!Number.isSafeInteger(page?.recoveryRotationDegrees)
+      || seenRotations.has(page.recoveryRotationDegrees)) return null;
+    seenRotations.add(page.recoveryRotationDegrees);
+    const orientation = detectPhysicalOrientation(page);
+    if (!orientation.reliable) continue;
+    if (!orientationConsensusWords(page, orientation.correctionDegrees).length) continue;
+    reliable.push({ page, orientation });
+  }
+  if (reliable.length < MIN_ORIENTATION_RECOVERY_VARIANTS) return null;
+  const correction = reliable[0].orientation.correctionDegrees;
+  if (reliable.some((candidate) => candidate.orientation.correctionDegrees !== correction)) return null;
+  const selected = [...reliable].sort((left, right) => (
+    right.orientation.acceptedWords - left.orientation.acceptedWords
+      || right.orientation.confidence - left.orientation.confidence
+      || left.page.recoveryRotationDegrees - right.page.recoveryRotationDegrees
+  ))[0];
+  if (reliable.some((candidate) => !orientationVariantsAgree(
+    selected.page,
+    candidate.page,
+    correction,
+  ))) return null;
+  return {
+    ...selected.page,
+    recoveryProfile: "vision-cardinal-orientation-consensus-v1",
+  };
+}
+
+function sanitisePageNumbers(values, pageCount) {
+  const maximum = Number.isSafeInteger(pageCount) && pageCount > 0 ? pageCount : 0;
+  return [...new Set((values ?? []).filter((value) => (
+    Number.isSafeInteger(value) && value >= 1 && value <= maximum
+  )))].sort((left, right) => left - right);
+}
+
+export function computeSpatialAccuracy(
+  geometryPages,
+  extractedPages,
+  verificationProfile = SPATIAL_VERIFICATION_PROFILE,
+) {
+  const matcherConfig = SPATIAL_MATCHER_CONFIG[verificationProfile];
+  if (!matcherConfig) throw new Error("invalid_spatial_verification_profile");
   let expectedWords = 0;
   let matchedWords = 0;
   let passed = 0;
@@ -723,27 +1388,69 @@ export function computeSpatialAccuracy(geometryPages, extractedPages) {
     const scaleX = canMeasurePage ? actualPage.width / geometry.imageWidth : 0;
     const scaleY = canMeasurePage ? actualPage.height / geometry.imageHeight : 0;
     const expectedGroups = new Map();
+    const expectedEntries = [];
+    let pageExpectedWords = 0;
     for (const expected of geometry.words) {
       const normalized = normaliseWord(expected.text);
       if (!normalized) continue;
-      expectedWords += 1;
+      pageExpectedWords += 1;
       if (!canMeasurePage) continue;
       const target = axisBox(expected.vertices, scaleX, scaleY);
+      const polygon = expected.vertices.map((vertex) => ({
+        x: vertex.x * scaleX, y: vertex.y * scaleY,
+      }));
+      const entry = { expected, target, polygon, normalized };
+      expectedEntries.push(entry);
       const group = expectedGroups.get(normalized) ?? [];
-      group.push({ expected, target });
+      group.push(entry);
       expectedGroups.set(normalized, group);
     }
+    expectedWords += pageExpectedWords;
     if (!canMeasurePage) continue;
     const actualGroups = new Map();
+    const actualEntries = [];
     for (const candidate of actualPage.words) {
       const normalized = normaliseWord(candidate.text);
       if (!normalized) continue;
+      const entry = { candidate, box: candidate, normalized };
+      actualEntries.push(entry);
       const group = actualGroups.get(normalized) ?? [];
-      group.push({ candidate, box: candidate });
+      group.push(entry);
       actualGroups.set(normalized, group);
     }
     const pageDiagonal = Math.hypot(actualPage.width, actualPage.height);
     const exactAssignmentBudget = { remaining: MAX_EXACT_ASSIGNMENT_WORK_PER_PAGE };
+    const usedExpected = new Set();
+    const usedActual = new Set();
+    const pageMatches = [];
+    const recordMatch = ({
+      expectedParts,
+      actualParts,
+      target,
+      actualBox,
+      polygon = null,
+      hasReliableNeighbour = false,
+      assignmentUnique = false,
+    }) => {
+      const weight = expectedParts.length;
+      const iou = intersectionOverUnion(target, actualBox);
+      const centersAligned = centersAlignedForGeometry(target, actualBox, polygon);
+      const acceptedShortTokenHorizontalScale = shortTokenHorizontalScalePlacement({
+        expectedParts,
+        actualParts,
+        target,
+        actualBox,
+        centersAligned,
+        hasReliableNeighbour,
+        assignmentUnique,
+        iou,
+        matcherConfig,
+      });
+      pageMatches.push({ weight, iou, centersAligned, acceptedShortTokenHorizontalScale });
+      for (const part of expectedParts) usedExpected.add(part);
+      for (const part of actualParts) usedActual.add(part);
+    };
+    const directMatches = [];
     for (const [normalized, expectedGroup] of expectedGroups) {
       const actualGroup = actualGroups.get(normalized) ?? [];
       for (const match of assignEqualWords(
@@ -752,26 +1459,112 @@ export function computeSpatialAccuracy(geometryPages, extractedPages) {
         pageDiagonal,
         exactAssignmentBudget,
       )) {
-        const best = {
-          candidate: match.actual.candidate,
-          iou: intersectionOverUnion(match.expected.target, match.actual.box),
-        };
-        matchedWords += 1;
-        ious.push(best.iou);
-        const center = {
-          x: (best.candidate.xMin + best.candidate.xMax) / 2,
-          y: (best.candidate.yMin + best.candidate.yMax) / 2,
-        };
-        const polygon = match.expected.expected.vertices.map((vertex) => ({
-          x: vertex.x * scaleX, y: vertex.y * scaleY,
-        }));
-        // Poppler and Vision may round opposite sides of a slanted word box.
-        // Requiring either box's centre to be contained in the other is robust
-        // to that representation difference without relaxing the 0.75 IoU gate.
-        const centersAligned = pointInPolygonInclusive(center, polygon)
-          || pointInAxisBoxInclusive(polygonCenter(polygon), best.candidate);
-        if (centersAligned) centerInside += 1;
-        if (centersAligned && best.iou >= 0.75) passed += 1;
+        directMatches.push({
+          ...match,
+          assignmentUnique: matcherConfig.allowShortTokenHorizontalScaling
+            && expectedGroup.length <= MAX_HORIZONTAL_SCALE_ASSIGNMENT_GROUP_SIZE
+            && actualGroup.length <= MAX_HORIZONTAL_SCALE_ASSIGNMENT_GROUP_SIZE
+            && assignmentIsMutuallyUnique(match, expectedGroup, actualGroup),
+        });
+      }
+    }
+    const directMatchesWithReliableNeighbour = matcherConfig.allowShortTokenHorizontalScaling
+      ? horizontalScaleNeighbourMatches(directMatches)
+      : new Set();
+    for (const match of directMatches) {
+      // Poppler and Vision may round opposite sides of a slanted word box.
+      // Requiring either box's centre to be contained in the other is robust
+      // to that representation difference. Profile v3 additionally recognises
+      // a bounded horizontal scaling artefact, but only beside a reliable word
+      // on the same line; v2 keeps the exact original 0.75 IoU behaviour.
+      recordMatch({
+        expectedParts: [match.expected],
+        actualParts: [match.actual],
+        target: match.expected.target,
+        actualBox: match.actual.box,
+        polygon: match.expected.polygon,
+        assignmentUnique: match.assignmentUnique,
+        hasReliableNeighbour: directMatchesWithReliableNeighbour.has(match),
+      });
+    }
+
+    // PDF text extractors may split a Vision token at a hyphen/ligature or join
+    // adjacent Vision tokens. Reconcile only bounded 1:n or n:1 sequences under
+    // the artefact's fixed matcher profile. Text must still match exactly, and
+    // the unchanged centre/IoU gates verify the union box.
+    const actualWindows = adjacentTokenWindows(
+      actualEntries,
+      usedActual,
+      "box",
+      matcherConfig,
+    );
+    for (const expected of expectedEntries) {
+      if (usedExpected.has(expected)) continue;
+      const window = closestUnusedWindow(
+        expected.target,
+        actualWindows.get(expected.normalized),
+        usedActual,
+      );
+      if (!window) continue;
+      recordMatch({
+        expectedParts: [expected],
+        actualParts: window.parts,
+        target: expected.target,
+        actualBox: window.box,
+        polygon: expected.polygon,
+      });
+    }
+    const expectedWindows = adjacentTokenWindows(
+      expectedEntries,
+      usedExpected,
+      "target",
+      matcherConfig,
+    );
+    for (const actual of actualEntries) {
+      if (usedActual.has(actual)) continue;
+      const window = closestUnusedWindow(
+        actual.box,
+        expectedWindows.get(actual.normalized),
+        usedExpected,
+      );
+      if (!window) continue;
+      recordMatch({
+        expectedParts: window.parts,
+        actualParts: [actual],
+        target: window.box,
+        actualBox: actual.box,
+      });
+    }
+    const pageMatchedWords = pageMatches.reduce((sum, match) => sum + match.weight, 0);
+    const pageCenterInside = pageMatches.reduce((sum, match) => (
+      sum + (match.centersAligned ? match.weight : 0)
+    ), 0);
+    const pageOrdinaryPlacedWords = pageMatches.reduce((sum, match) => (
+      sum + (match.centersAligned && match.iou >= 0.75 ? match.weight : 0)
+    ), 0);
+    const pageHorizontalScaleTokens = pageMatches.reduce((sum, match) => (
+      sum + (match.acceptedShortTokenHorizontalScale ? match.weight : 0)
+    ), 0);
+    const pageIous = pageMatches.flatMap((match) => Array(match.weight).fill(match.iou));
+    const pageAllowsHorizontalScale = matcherConfig.allowShortTokenHorizontalScaling
+      && pageExpectedWords >= MIN_HORIZONTAL_SCALE_PAGE_WORDS
+      && pageMatchedWords === pageExpectedWords
+      && pageCenterInside === pageMatchedWords
+      && median(pageIous) >= MIN_HORIZONTAL_SCALE_PAGE_MEDIAN_IOU
+      && pageOrdinaryPlacedWords / Math.max(pageMatchedWords, 1)
+        >= MIN_HORIZONTAL_SCALE_ORDINARY_PLACEMENT_RATIO
+      && pageHorizontalScaleTokens > 0
+      && pageHorizontalScaleTokens <= MAX_HORIZONTAL_SCALE_TOKENS_PER_PAGE
+      && pageHorizontalScaleTokens / Math.max(pageMatchedWords, 1)
+        <= MAX_HORIZONTAL_SCALE_TOKEN_RATIO_PER_PAGE;
+    matchedWords += pageMatchedWords;
+    centerInside += pageCenterInside;
+    ious.push(...pageIous);
+    for (const match of pageMatches) {
+      if (match.centersAligned
+        && (match.iou >= 0.75
+          || (pageAllowsHorizontalScale && match.acceptedShortTokenHorizontalScale))) {
+        passed += match.weight;
       }
     }
   }
@@ -799,6 +1592,49 @@ export function computeSpatialAccuracy(geometryPages, extractedPages) {
   };
 }
 
+async function auditSpatialOverlay({
+  outputPath,
+  artifactLabel,
+  workDir,
+  runCommand,
+  limits,
+  geometryPages,
+  assertProcessingHealthy,
+}) {
+  const bboxPath = join(workDir, `${artifactLabel}-bbox.html`);
+  const textPath = join(workDir, `${artifactLabel}-text.txt`);
+  try {
+    await runCommand(
+      "pdftotext",
+      ["-cropbox", "-bbox-layout", outputPath, bboxPath],
+      120_000,
+    );
+    const extractedPages = parsePdftotextBbox(await readTextArtifactWithinLimit(
+      bboxPath,
+      limits.maxPdfBboxBytes,
+    ));
+    assertProcessingHealthy();
+    const spatial = computeSpatialAccuracy(geometryPages, extractedPages);
+    await runCommand("pdftotext", [outputPath, textPath], 120_000);
+    const finalText = await readTextArtifactWithinLimit(textPath, limits.maxPdfTextBytes);
+    assertProcessingHealthy();
+    const textCharCount = finalText.replace(/\s/g, "").length;
+    return {
+      extractedPages,
+      spatial,
+      textCharCount,
+      passed: spatial.passed && textCharCount >= MIN_SPATIAL_TEXT_CHARS,
+    };
+  } finally {
+    // Extracted text is sensitive and only needed for this in-memory gate.
+    // Remove it immediately rather than waiting for whole-workdir cleanup.
+    await Promise.all([
+      rm(bboxPath, { force: true }),
+      rm(textPath, { force: true }),
+    ]);
+  }
+}
+
 export async function processPdfSpatially({
   inputPath,
   outputPath,
@@ -807,9 +1643,12 @@ export async function processPdfSpatially({
   commandRunner,
   googleClient,
   assertLeaseHealthy = () => {},
+  forceOcr = false,
+  geometryBackfillRunId = null,
+  originalSha256 = null,
+  tailBlankProofManifest = null,
   resourceLimits,
   signal,
-  forceOcr = false,
 }) {
   const assertProcessingHealthy = () => {
     if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("processing_aborted");
@@ -876,30 +1715,30 @@ export async function processPdfSpatially({
   }
 
   // These counters describe mutually exclusive source-page classes. A mixed
-  // document is deliberately sent through DLP/Vision for every page before
+  // document is deliberately sent through Vision for every page before
   // rebuilding the safe derivative, but a native source page must not then
   // count as both native and OCR-required in completion evidence.
-  const nativePageCount = pageStates.filter((page) => page.classification === "native_text").length;
+  const sourceNativePageCount = pageStates
+    .filter((page) => page.classification === "native_text").length;
   const pagesNeedingOcr = pageStates.filter((page) => page.classification !== "native_text");
   if (pagesNeedingOcr.length === 0 && !forceOcr) {
     return {
       status: "not_required",
       classification: "native_text",
       pageCount,
-      nativePageCount,
+      nativePageCount: sourceNativePageCount,
       ocrPageCount: 0,
       unreadablePageCount: 0,
       orientationCorrections: [],
       textCharCount: pageStates.reduce((total, page) => total + page.chars, 0),
     };
   }
-  const completionNativePageCount = forceOcr ? 0 : nativePageCount;
-  const completionOcrPageCount = forceOcr ? pageCount : pageCount - nativePageCount;
+  const { nativePageCount, ocrPageCount } = completionPageCounts(pageStates, forceOcr);
   const ocrDocumentClassification = classifyOcrDocument(pageStates);
 
-  // A document that needs OCR is rebuilt consistently from DLP-redacted pages.
-  // Processing every page prevents a mixed PDF from retaining unredacted native
-  // pages next to redacted scan pages in the derivative.
+  // A document that needs OCR is rebuilt consistently from the raw page rasters.
+  // Processing every page keeps a mixed document's geometry and text layer on
+  // one deterministic representation.
   const pagesForOcr = [];
   let retainedRasterBytes = 0;
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
@@ -907,25 +1746,13 @@ export async function processPdfSpatially({
     const prefix = join(workDir, `page-${pageNumber}`);
     const pageSize = pageStates[pageNumber - 1]?.pageSize;
     if (!pageSize) throw new GoogleOcrOperationalError("page_geometry_unavailable");
-    let imageBytes = null;
-    for (const profile of DLP_RENDER_PROFILES) {
-      assertProcessingHealthy();
-      if (renderedPixelCount(pageSize, profile.dpi) > MAX_RENDERED_PAGE_PIXELS) continue;
-      await runCommand("pdftoppm", [
-        "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", "-cropbox",
-        "-jpeg", "-jpegopt", `quality=${profile.quality}`, "-r", String(profile.dpi),
-        "-gray", inputPath, prefix,
-      ], 120_000);
-      const candidatePath = `${prefix}.jpg`;
-      const candidateInfo = await stat(candidatePath);
-      if (candidateInfo.size > MAX_DLP_IMAGE_BYTES) continue;
-      const candidate = await readFile(candidatePath);
-      if (isDlpRequestBodyWithinLimit(candidate)) {
-        imageBytes = candidate;
-        break;
-      }
-    }
-    if (!imageBytes) throw new GoogleOcrOperationalError("dlp_request_too_large");
+    const imageBytes = await renderVisionSourceRaster({
+      inputPath,
+      pageNumber,
+      pageSize,
+      outputPrefix: prefix,
+      runCommand,
+    });
     retainedRasterBytes += imageBytes.length;
     if (retainedRasterBytes > limits.maxDocumentRasterBytes) {
       throw new GoogleOcrOperationalError("document_raster_budget_exceeded");
@@ -936,11 +1763,11 @@ export async function processPdfSpatially({
   assertProcessingHealthy();
   const {
     responses,
-    redactionCounts,
-    redactionRegions,
-    redactedPages,
+    sourcePages,
     visionPageTransforms,
-  } = await googleClient.redactAndAnnotate(
+    retainedRasterBytes: retainedGoogleRasterBytes,
+    retainedVisionResponseBytes,
+  } = await googleClient.annotateDocument(
     pagesForOcr,
     { assertHealthy: assertProcessingHealthy, resourceLimits: limits, signal },
   );
@@ -956,89 +1783,300 @@ export async function processPdfSpatially({
       transformByPage.get(pageNumber),
     );
   });
-  enforceVisionWordLimits(rawGeometryPages, limits);
-  const redactedPageByNumber = new Map((redactedPages ?? []).map((page) => [page.pageNumber, page]));
-  const redactionPageNumbers = new Set((redactionRegions ?? []).map((region) => region.pageNumber));
+  const initialVisionWordCount = enforceVisionWordLimits(rawGeometryPages, limits);
+  let retainedRecoveryRasterBytes = Number.isSafeInteger(retainedGoogleRasterBytes)
+    ? retainedGoogleRasterBytes
+    : retainedRasterBytes;
+  let retainedRecoveryResponseBytes = Number.isSafeInteger(retainedVisionResponseBytes)
+    ? retainedVisionResponseBytes
+    : 0;
+  let retainedRetryWordCount = 0;
+  const sourcePageByNumber = new Map((sourcePages ?? []).map((page) => [page.pageNumber, page]));
   const blankPageNumbers = new Set();
-  const hasReadableVisionPage = rawGeometryPages.some((page) => page.words.length > 0);
+  const verifiedBlankCandidates = new Map();
+  const blankInspectionByPage = new Map();
+  const tailBlankRecoveryMarkers = new Map();
+  const hasProofCandidate = (pageNumber) => hasTailBlankProofCandidate(
+    tailBlankProofManifest,
+    {
+      runId: geometryBackfillRunId,
+      originalSha256,
+      pageNumber,
+      pageCount,
+    },
+  );
   // A completely blank document is still rejected. Within an otherwise
   // readable document, however, a verified blank page is preserved in its
   // original position without being mistaken for an OCR failure.
-  if (hasReadableVisionPage) {
-    for (const page of rawGeometryPages) {
-      if (page.words.length > 0 || redactionPageNumbers.has(page.pageNumber)) continue;
-      const pageState = pageStates[page.pageNumber - 1];
-      const redactedPage = redactedPageByNumber.get(page.pageNumber);
-      if (!pageState || pageState.chars > 0 || !redactedPage?.imageBytes) continue;
-      const inspection = await inspectRasterBlankness(redactedPage.imageBytes);
-      assertProcessingHealthy();
-      if (!inspection.blank || !(inspection.width > 0) || !(inspection.height > 0)) continue;
-      blankPageNumbers.add(page.pageNumber);
+  for (const page of rawGeometryPages) {
+    const edgeArtifactCandidate = hasProofCandidate(page.pageNumber)
+      && isSparseTailEdgeArtifactCandidate(page, {
+        pageNumber: page.pageNumber,
+        pageCount,
+      });
+    if (page.words.length > 0 && !edgeArtifactCandidate) continue;
+    const pageState = pageStates[page.pageNumber - 1];
+    const sourcePage = sourcePageByNumber.get(page.pageNumber);
+    if (!pageState || pageState.chars > 0 || !sourcePage?.imageBytes) continue;
+    const inspection = await inspectRasterBlankness(sourcePage.imageBytes);
+    assertProcessingHealthy();
+    blankInspectionByPage.set(page.pageNumber, inspection);
+    if (page.words.length > 0
+      || !inspection.blank || !(inspection.width > 0) || !(inspection.height > 0)) continue;
+    verifiedBlankCandidates.set(page.pageNumber, inspection);
+  }
+  const promoteVerifiedBlankCandidates = () => {
+    if (!hasIndependentReadableOcrPage(rawGeometryPages, pageCount)) return;
+    for (const [pageNumber, inspection] of verifiedBlankCandidates) {
+      const page = rawGeometryPages.find((candidate) => candidate.pageNumber === pageNumber);
+      if (!page || (page.words.length > 0 && !isSparseTailEdgeArtifactCandidate(page, {
+        pageNumber,
+        pageCount,
+      })) || (page.words.length > 0 && !hasProofCandidate(pageNumber))) continue;
+      blankPageNumbers.add(pageNumber);
+      page.words = [];
       page.imageWidth = inspection.width;
       page.imageHeight = inspection.height;
     }
+  };
+  promoteVerifiedBlankCandidates();
+
+  const recoveryCandidates = rawGeometryPages.filter((page) => (
+    (page.words.length === 0 && !verifiedBlankCandidates.has(page.pageNumber))
+      || (hasProofCandidate(page.pageNumber)
+        && isSparseTailEdgeArtifactCandidate(page, {
+          pageNumber: page.pageNumber,
+          pageCount,
+        }))
+  ));
+  if (recoveryCandidates.length > 0
+    && recoveryCandidates.length <= MAX_UNREADABLE_RECOVERY_PAGES
+    && typeof googleClient.annotateUnreadablePageVariants === "function") {
+    for (const page of recoveryCandidates) {
+      assertProcessingHealthy();
+      const sourceTransform = transformByPage.get(page.pageNumber);
+      if (!(sourceTransform?.sourceWidth > 0) || !(sourceTransform?.sourceHeight > 0)) continue;
+      const recoveryPrefix = join(workDir, `recovery-colour-${page.pageNumber}`);
+      const recoveryImageBytes = await renderTailRecoveryRaster({
+        inputPath,
+        pageNumber: page.pageNumber,
+        sourceWidth: sourceTransform.sourceWidth,
+        sourceHeight: sourceTransform.sourceHeight,
+        outputPrefix: recoveryPrefix,
+        runCommand,
+      });
+      const remainingRasterBytes = limits.maxDocumentTotalRasterBytes - retainedRecoveryRasterBytes;
+      const remainingResponseBytes = limits.maxVisionResponseBytesTotal
+        - retainedRecoveryResponseBytes;
+      if (!recoveryImageBytes
+        || recoveryImageBytes.length >= remainingRasterBytes || remainingResponseBytes < 1) continue;
+      const retry = await googleClient.annotateUnreadablePageVariants({
+        pageNumber: page.pageNumber,
+        imageBytes: recoveryImageBytes,
+      }, {
+        assertHealthy: assertProcessingHealthy,
+        resourceLimits: limits,
+        signal,
+        maxAdditionalRasterBytes: remainingRasterBytes - recoveryImageBytes.length,
+        maxAdditionalResponseBytes: remainingResponseBytes,
+      });
+      retainedRecoveryRasterBytes += recoveryImageBytes.length
+        + Number(retry.retainedRasterBytes || 0);
+      retainedRecoveryResponseBytes += Number(retry.retainedVisionResponseBytes || 0);
+      const recoveredVariants = (retry.variants ?? []).map((variant) => {
+        const retryPage = mapVisionPageToCanonical(
+          extractVisionPage(variant.response, page.pageNumber),
+          variant.transform,
+        );
+        if (Math.abs(retryPage.imageWidth - page.imageWidth) <= 1
+          && Math.abs(retryPage.imageHeight - page.imageHeight) <= 1) return retryPage;
+        return mapVisionPageToCanonical(retryPage, {
+          pageNumber: page.pageNumber,
+          sourceWidth: page.imageWidth,
+          sourceHeight: page.imageHeight,
+          visionWidth: retryPage.imageWidth,
+          visionHeight: retryPage.imageHeight,
+        });
+      });
+      let retryWordCount = 0;
+      for (const variantPage of recoveredVariants) {
+        retryWordCount += enforceVisionWordLimits([variantPage], limits);
+      }
+      if (initialVisionWordCount + retainedRetryWordCount + retryWordCount
+        > limits.maxVisionWordsTotal) {
+        throw new GoogleOcrOperationalError("vision_word_limit_exceeded");
+      }
+      retainedRetryWordCount += retryWordCount;
+      const recovered = recoverUnreadablePageFromVariants(recoveredVariants.slice(0, 2))
+        ?? recoverSparseTailTextFromVariants(recoveredVariants, {
+          pageNumber: page.pageNumber,
+          pageCount,
+        });
+      if (recovered) {
+        rawGeometryPages[page.pageNumber - 1] = recovered;
+        continue;
+      }
+      const sourceEvidence = blankInspectionByPage.get(page.pageNumber);
+      const recoveryEvidence = await inspectRasterBlankness(recoveryImageBytes);
+      assertProcessingHealthy();
+      const proofToken = authoriseTailBlankProof(tailBlankProofManifest, {
+        runId: geometryBackfillRunId,
+        originalSha256,
+        pageNumber: page.pageNumber,
+        pageCount,
+        sourceRasterBytes: sourcePageByNumber.get(page.pageNumber)?.imageBytes,
+        recoveryRasterBytes: recoveryImageBytes,
+      });
+      const recoveryMarker = tailBlankRecoveryMarker(proofToken);
+      if (recoveryMarker && hasSparseTailBlankConsensus({
+        pageNumber: page.pageNumber,
+        pageCount,
+        variantPages: recoveredVariants,
+        sourceEvidence,
+        recoveryEvidence,
+        proofToken,
+      })) {
+        tailBlankRecoveryMarkers.set(page.pageNumber, recoveryMarker);
+        verifiedBlankCandidates.set(page.pageNumber, {
+          ...sourceEvidence,
+          width: page.imageWidth,
+          height: page.imageHeight,
+        });
+      }
+    }
+    enforceVisionWordLimits(rawGeometryPages, limits);
+    // A page verified as blank before recovery remains only a candidate until
+    // another page has independently produced readable OCR. Re-evaluate that
+    // document-level condition after all bounded retries.
+    promoteVerifiedBlankCandidates();
   }
-  const orientationByPage = new Map(rawGeometryPages.map((page) => [
-    page.pageNumber, detectPhysicalOrientation(page),
-  ]));
+
+  const sparseTailOrientationByPage = new Map();
+  let orientationByPage = resolvePhysicalOrientations(rawGeometryPages);
+  const orientationRecoveryCandidates = rawGeometryPages.filter((page) => (
+    page.words.length > 0 && !orientationByPage.get(page.pageNumber).reliable
+  ));
+  if (orientationRecoveryCandidates.length > 0
+    && orientationRecoveryCandidates.length <= MAX_ORIENTATION_RECOVERY_PAGES
+    && typeof googleClient.annotateOrientationPageVariants === "function") {
+    for (const page of orientationRecoveryCandidates) {
+      assertProcessingHealthy();
+      const sourcePage = sourcePageByNumber.get(page.pageNumber);
+      const remainingRasterBytes = limits.maxDocumentTotalRasterBytes
+        - retainedRecoveryRasterBytes;
+      const remainingResponseBytes = limits.maxVisionResponseBytesTotal
+        - retainedRecoveryResponseBytes;
+      if (!sourcePage?.imageBytes || remainingRasterBytes < 1 || remainingResponseBytes < 1) continue;
+      const retry = await googleClient.annotateOrientationPageVariants({
+        pageNumber: page.pageNumber,
+        imageBytes: sourcePage.imageBytes,
+      }, {
+        assertHealthy: assertProcessingHealthy,
+        resourceLimits: limits,
+        signal,
+        maxAdditionalRasterBytes: remainingRasterBytes,
+        maxAdditionalResponseBytes: remainingResponseBytes,
+      });
+      retainedRecoveryRasterBytes += Number(retry.retainedRasterBytes || 0);
+      retainedRecoveryResponseBytes += Number(retry.retainedVisionResponseBytes || 0);
+      const recoveredVariants = (retry.variants ?? []).map((variant) => (
+        mapOrientationVariantToCanonical(
+          mapVisionPageToCanonical(
+            extractVisionPage(variant.response, page.pageNumber),
+            variant.transform,
+          ),
+          variant.transform,
+        )
+      ));
+      let retryWordCount = 0;
+      for (const variantPage of recoveredVariants) {
+        retryWordCount += enforceVisionWordLimits([variantPage], limits);
+      }
+      if (initialVisionWordCount + retainedRetryWordCount + retryWordCount
+        > limits.maxVisionWordsTotal) {
+        throw new GoogleOcrOperationalError("vision_word_limit_exceeded");
+      }
+      retainedRetryWordCount += retryWordCount;
+      const recovered = recoverOrientationPageFromVariants(recoveredVariants);
+      if (recovered) {
+        rawGeometryPages[page.pageNumber - 1] = recovered;
+        continue;
+      }
+      const sparseRecovery = recoverTailOrientationFromVariants(recoveredVariants, {
+        pageNumber: page.pageNumber,
+        pageCount,
+        originalPage: page,
+      });
+      if (sparseRecovery) {
+        rawGeometryPages[page.pageNumber - 1] = sparseRecovery.page;
+        sparseTailOrientationByPage.set(page.pageNumber, sparseRecovery.orientation);
+      }
+    }
+    enforceVisionWordLimits(rawGeometryPages, limits);
+    orientationByPage = resolvePhysicalOrientations(rawGeometryPages);
+    for (const [pageNumber, orientation] of sparseTailOrientationByPage) {
+      orientationByPage.set(pageNumber, orientation);
+    }
+  }
   const orientationCorrections = rawGeometryPages
     .map((page) => ({ page: page.pageNumber, degrees: orientationByPage.get(page.pageNumber).correctionDegrees }))
     .filter((entry) => entry.degrees !== 0);
-  const orientationUncertainPageCount = rawGeometryPages.filter((page) => (
-    page.words.length > 0 && !orientationByPage.get(page.pageNumber).reliable
-  )).length;
+  const orientationUncertainPageNumbers = sanitisePageNumbers(
+    rawGeometryPages.filter((page) => (
+      page.words.length > 0 && !orientationByPage.get(page.pageNumber).reliable
+    )).map((page) => page.pageNumber),
+    pageCount,
+  );
+  const orientationUncertainPageCount = orientationUncertainPageNumbers.length;
   const blankPageCount = blankPageNumbers.size;
-  const unreadablePageCount = rawGeometryPages.filter((page) => (
-    page.words.length === 0 && !blankPageNumbers.has(page.pageNumber)
-  )).length;
+  const unreadablePageNumbers = sanitisePageNumbers(
+    rawGeometryPages.filter((page) => (
+      page.words.length === 0 && !blankPageNumbers.has(page.pageNumber)
+    )).map((page) => page.pageNumber),
+    pageCount,
+  );
+  const unreadablePageCount = unreadablePageNumbers.length;
   if (unreadablePageCount > 0) {
     return {
       status: "needs_review", classification: "unreadable", pageCount,
-      nativePageCount: completionNativePageCount,
-      ocrPageCount: completionOcrPageCount,
-      unreadablePageCount, redactionCounts,
+      nativePageCount,
+      ocrPageCount,
+      unreadablePageCount,
       orientationCorrections,
       orientationUncertainPageCount,
+      affectedPageNumbers: unreadablePageNumbers,
       blankPageCount,
-      redactionProfile: "dfks-contract-redaction-v1",
-      spatialSchemaVersion: "google-vision-spatial-v2",
+      processingProfile: "google-vision-direct-v1",
+      spatialSchemaVersion: "google-vision-spatial-v3",
+      spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
     };
   }
   if (orientationUncertainPageCount > 0) {
     return {
       status: "needs_review", classification: ocrDocumentClassification, pageCount,
-      nativePageCount: completionNativePageCount,
-      ocrPageCount: completionOcrPageCount,
+      nativePageCount,
+      ocrPageCount,
       unreadablePageCount,
-      redactionCounts,
       orientationCorrections,
       orientationUncertainPageCount,
+      affectedPageNumbers: orientationUncertainPageNumbers,
       blankPageCount,
       orientationQualityFailed: true,
-      redactionProfile: "dfks-contract-redaction-v1",
-      spatialSchemaVersion: "google-vision-spatial-v2",
+      processingProfile: "google-vision-direct-v1",
+      spatialSchemaVersion: "google-vision-spatial-v3",
+      spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
     };
   }
 
   const geometryPages = rawGeometryPages.map((page) => {
     const orientation = orientationByPage.get(page.pageNumber);
-    return correctPageOrientation(page, orientation.correctionDegrees);
+    return canonicaliseSpatialGeometryPage(page, orientation.correctionDegrees);
   });
-  const correctedRedactionRegions = (redactionRegions ?? []).map((region) => {
-    const page = rawGeometryPages.find((candidate) => candidate.pageNumber === region.pageNumber);
-    const orientation = orientationByPage.get(region.pageNumber);
-    if (!page || !orientation?.reliable) return { ...region };
-    return correctRedactionRegion(
-      region, orientation.correctionDegrees, page.imageWidth, page.imageHeight,
-    );
-  });
-
   const geometry = {
-    schemaVersion: "google-vision-spatial-v2",
+    schemaVersion: "google-vision-spatial-v3",
     engine: "google-vision-document-text-detection",
-    redactionEngine: "google-sensitive-data-protection-image-redact",
-    redactionProfile: "dfks-contract-redaction-v1",
-    redactions: correctedRedactionRegions,
+    processingProfile: "google-vision-direct-v1",
+    spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
     pages: geometryPages,
   };
   const plainGeometryPath = join(workDir, "vision-geometry.json");
@@ -1048,9 +2086,9 @@ export async function processPdfSpatially({
     { mode: 0o600 },
   );
   assertProcessingHealthy();
-  for (const page of redactedPages) {
-    const sourcePath = join(workDir, `redacted-source-${page.pageNumber}.jpg`);
-    const outputImagePath = join(workDir, `redacted-${page.pageNumber}.png`);
+  for (const page of sourcePages) {
+    const sourcePath = join(workDir, `ocr-source-${page.pageNumber}.jpg`);
+    const outputImagePath = join(workDir, `ocr-page-${page.pageNumber}.png`);
     const orientation = orientationByPage.get(page.pageNumber);
     await writeFile(sourcePath, page.imageBytes, { mode: 0o600 });
     await runCommand("python3", [
@@ -1063,25 +2101,87 @@ export async function processPdfSpatially({
   }
   await runCommand("python3", [
     join(process.cwd(), "vision_overlay.py"), inputPath, plainGeometryPath, workDir, outputPath,
+    String(25 * 1024 * 1024),
   ], 180_000);
+  let selectedOverlayProfile = "primary-v1";
+  let overlayAudit = await auditSpatialOverlay({
+    outputPath,
+    artifactLabel: "output-primary",
+    workDir,
+    runCommand,
+    limits,
+    geometryPages,
+    assertProcessingHealthy,
+  });
 
-  const bboxPath = join(workDir, "output-bbox.html");
-  await runCommand("pdftotext", ["-cropbox", "-bbox-layout", outputPath, bboxPath], 120_000);
-  const extractedPages = parsePdftotextBbox(await readTextArtifactWithinLimit(
-    bboxPath,
-    limits.maxPdfBboxBytes,
-  ));
-  assertProcessingHealthy();
-  const spatial = computeSpatialAccuracy(geometryPages, extractedPages);
-  const finalTextPath = join(workDir, "output-text.txt");
-  await runCommand("pdftotext", [outputPath, finalTextPath], 120_000);
-  const finalText = await readTextArtifactWithinLimit(finalTextPath, limits.maxPdfTextBytes);
-  assertProcessingHealthy();
-  const textCharCount = finalText.replace(/\s/g, "").length;
+  // Keep the established output as the primary candidate. Only if its full,
+  // unchanged text/spatial audit fails do we try a small fixed candidate set,
+  // built from the exact same Vision response and canonical page rasters.
+  // Failed candidates are deleted immediately and can never reach Storage.
+  if (!overlayAudit.passed) {
+    for (const overlayProfile of SPATIAL_OVERLAY_FALLBACK_PROFILES) {
+      const candidatePath = join(workDir, `output-${overlayProfile}.pdf`);
+      let accepted = false;
+      try {
+        await runCommand("python3", [
+          join(process.cwd(), "vision_overlay.py"),
+          inputPath,
+          plainGeometryPath,
+          workDir,
+          candidatePath,
+          String(25 * 1024 * 1024),
+          overlayProfile,
+        ], 180_000);
+        const candidateAudit = await auditSpatialOverlay({
+          outputPath: candidatePath,
+          artifactLabel: `output-${overlayProfile}`,
+          workDir,
+          runCommand,
+          limits,
+          geometryPages,
+          assertProcessingHealthy,
+        });
+        if (candidateAudit.passed) {
+          await rename(candidatePath, outputPath);
+          assertProcessingHealthy();
+          selectedOverlayProfile = overlayProfile;
+          overlayAudit = candidateAudit;
+          accepted = true;
+          break;
+        }
+      } catch {
+        // A bounded optional candidate must never turn a correctly diagnosed
+        // primary needs_review result into a fatal document failure. Lease and
+        // deadline failures still propagate through this health assertion.
+        assertProcessingHealthy();
+      } finally {
+        if (!accepted) await rm(candidatePath, { force: true });
+      }
+    }
+  }
+
+  const { extractedPages, spatial, textCharCount } = overlayAudit;
+  const usedTailBlankRecoveryPages = [...tailBlankRecoveryMarkers.keys()]
+    .filter((pageNumber) => blankPageNumbers.has(pageNumber))
+    .sort((left, right) => left - right);
+  const firstTailBlankRecoveryMarker = usedTailBlankRecoveryPages.length > 0
+    ? tailBlankRecoveryMarkers.get(usedTailBlankRecoveryPages[0])
+    : null;
   // Persist the independently measured metrics only after the derivative has
   // been rebuilt and verified. The uploaded artefact therefore cannot claim
   // spatial success based solely on Vision's source geometry.
-  const verifiedGeometry = { ...geometry, spatialVerification: spatial };
+  const verifiedGeometry = {
+    ...geometry,
+    overlayProfile: selectedOverlayProfile,
+    spatialVerification: spatial,
+    ...(firstTailBlankRecoveryMarker ? {
+      tailBlankRecovery: {
+        profile: firstTailBlankRecoveryMarker.profile,
+        manifestDigest: firstTailBlankRecoveryMarker.manifestDigest,
+        pageNumbers: usedTailBlankRecoveryPages,
+      },
+    } : {}),
+  };
   const verifiedGeometryJson = serializeSpatialGeometry(
     verifiedGeometry,
     limits.maxSpatialJsonBytes,
@@ -1096,20 +2196,36 @@ export async function processPdfSpatially({
     { mode: 0o600 },
   );
   assertProcessingHealthy();
+  const spatialPassed = overlayAudit.passed;
+  let spatialPageNumbers = sanitisePageNumbers(
+    geometryPages.filter((page) => page.words.length > 0 && (
+      !spatial.passed
+        ? !computeSpatialAccuracy([page], extractedPages).passed
+        : textCharCount < 120
+    )).map((page) => page.pageNumber),
+    pageCount,
+  );
+  if (!spatialPassed && spatialPageNumbers.length === 0) {
+    spatialPageNumbers = sanitisePageNumbers(
+      geometryPages.filter((page) => page.words.length > 0).map((page) => page.pageNumber),
+      pageCount,
+    );
+  }
   return {
-    status: spatial.passed && textCharCount >= 120 ? "completed" : "needs_review",
+    status: spatialPassed ? "completed" : "needs_review",
     classification: ocrDocumentClassification,
     pageCount,
-    nativePageCount: completionNativePageCount,
-    ocrPageCount: completionOcrPageCount,
+    nativePageCount,
+    ocrPageCount,
     unreadablePageCount,
     blankPageCount,
     orientationCorrections,
     orientationUncertainPageCount,
-    redactionCounts,
-    redactionProfile: "dfks-contract-redaction-v1",
-    spatialSchemaVersion: "google-vision-spatial-v2",
+    processingProfile: "google-vision-direct-v1",
+    spatialSchemaVersion: "google-vision-spatial-v3",
+    spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
     spatial,
     textCharCount,
+    affectedPageNumbers: spatialPassed ? [] : spatialPageNumbers,
   };
 }

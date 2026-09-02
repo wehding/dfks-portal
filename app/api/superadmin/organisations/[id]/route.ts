@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 function getAdmin() {
     return createAdminClient(
@@ -38,5 +39,6 @@ export async function PATCH(
         .single()
 
     if (error) return NextResponse.json({ error: "Organisationen kunne ikke opdateres." }, { status: 500 })
+    await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "update", component: "superadmin.organisations.update", entityType: "organisations", entityId: id, orgIds: [id], purposeCode: "platform_administration", legalBasis: "GDPR Art. 6(1)(f), 24 og 32", dataCategories: ["organisation_data", "contact_data", "access_control_metadata"] })
     return NextResponse.json(data)
 }

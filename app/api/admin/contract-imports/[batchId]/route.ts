@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export const dynamic = "force-dynamic";
 
@@ -75,5 +76,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ bat
   const nextCursor = rows.length > limit && last
     ? Buffer.from(JSON.stringify({ createdAt: last.created_at, id: last.id })).toString("base64url")
     : null;
+  const contractIds = [...new Set(page.map(item => item.contract_id).filter((id): id is string => Boolean(id)))];
+  const { data: contracts } = contractIds.length ? await db.from("contracts").select("rights_holder_id").in("id", contractIds).eq("org_id", caller.orgId) : { data: [] };
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "read", component: "admin.contract-imports.batch", entityType: "contract_import_batches", entityId: batchId, targetMemberUuids: (contracts ?? []).map(item => item.rights_holder_id).filter((id): id is string => Boolean(id)), orgIds: [caller.orgId], purposeCode: "contract_import_review", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["contract_data", "document_data", "ai_analysis"], counts: { results: page.length } });
   return NextResponse.json({ batch: batch.data, items: page, nextCursor });
 }

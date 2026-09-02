@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertCircle, Clock3, FileText, ListTodo, MessageSquare, MonitorPlay, Upload } from "lucide-react";
+import { AlertCircle, CheckCircle2, Circle, Clock3, FileText, ListTodo, MessageSquare, MonitorPlay, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MemberInboxPanel } from "@/components/portal/member-inbox-panel";
 import { SalaryStatsCard, type SalaryStatPoint } from "@/components/portal/salary-stats-card";
@@ -28,13 +28,14 @@ type DashboardTaskOverview = {
 export async function DashboardTasksSection({ orgId, rightsHolderId, userId }: { orgId: string; rightsHolderId: string; userId: string }) {
   const timer = createListLoadTimer("member-dashboard-tasks");
   const db = createServiceClient();
-  const { data, error } = await db.rpc("get_member_dashboard_task_overview", {
-    p_org_id: orgId,
-    p_rights_holder_id: rightsHolderId,
-    p_user_id: userId,
-    p_preview_limit: 5,
-  });
-  if (error) return <DashboardSectionError title="Dine opgaver kunne ikke hentes" stage="first-row" />;
+  const [taskResult, holderResult, contractCountResult, validatedCountResult] = await Promise.all([
+    db.rpc("get_member_dashboard_task_overview", { p_org_id: orgId, p_rights_holder_id: rightsHolderId, p_user_id: userId, p_preview_limit: 5 }),
+    db.from("rettighedshavere").select("full_name,email,phone,address,dfi_person_id,tmdb_person_id").eq("id", rightsHolderId).maybeSingle(),
+    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).is("superseded_by_contract_id", null),
+    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).eq("status", "valideret").is("superseded_by_contract_id", null),
+  ]);
+  const { data, error } = taskResult;
+  if (error || holderResult.error || contractCountResult.error || validatedCountResult.error) return <DashboardSectionError title="Dine opgaver kunne ikke hentes" stage="first-row" />;
   const overview = ((Array.isArray(data) ? data[0] : data) ?? {}) as DashboardTaskOverview;
   timer.mark("queries");
   const worksWithoutContractCount = Number(overview.works_missing_contract_count ?? 0);
@@ -56,8 +57,25 @@ export async function DashboardTasksSection({ orgId, rightsHolderId, userId }: {
   const actionCount = (worksWithoutContractCount ? 1 : 0) + (contractsWithoutWorkCount ? 1 : 0)
     + (reviewWorkCount ? 1 : 0) + shareTaskCount + unreadContractCount;
   const waitingCount = Number(overview.pending_work_request_count ?? 0) + Number(overview.pending_screening_count ?? 0);
+  const holder = holderResult.data;
+  const checklist = [
+    { label: "Tjek profil og DFI", href: "/portal/min-profil", complete: Boolean(holder?.full_name?.trim() && holder.email?.trim() && holder.phone?.trim() && holder.address?.trim() && (holder.dfi_person_id || holder.tmdb_person_id)) },
+    { label: "Bekræft værker", href: "/portal/mine-vaerker?review=1", complete: reviewWorkCount === 0 },
+    { label: "Upload kontrakter", href: "/portal/mine-kontrakter?upload=true", complete: Number(contractCountResult.count ?? 0) > 0 },
+    { label: "Tjek rettigheder", href: "/portal/mine-kontrakter", complete: Number(validatedCountResult.count ?? 0) > 0 },
+  ];
+  const showChecklist = checklist.some(item => !item.complete);
   timer.finish({ actionCount, waitingCount });
   return <>
+    {showChecklist && <Card className="border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-950/20">
+      <CardHeader><CardTitle className="flex items-center gap-2"><ListTodo className="h-5 w-5" />Kom godt i gang</CardTitle></CardHeader>
+      <CardContent><ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{checklist.map((item, index) => <li key={item.label}>
+        <Link href={item.href} className="flex h-full items-start gap-2 rounded-md border bg-background p-3 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {item.complete ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
+          <span><span className="block text-xs text-muted-foreground">Trin {index + 1}</span><span className="font-medium">{item.label}</span></span>
+        </Link>
+      </li>)}</ol></CardContent>
+    </Card>}
     <div className="grid gap-6 lg:grid-cols-2">
       <DashboardCard title="Kræver handling" count={actionCount} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
       <DashboardCard title="Afventer DFKS" count={waitingCount} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />

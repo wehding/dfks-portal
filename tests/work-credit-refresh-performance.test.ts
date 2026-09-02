@@ -15,7 +15,7 @@ test("arbejdsandelsdialogen henter ikke hele rettighedshaverlisten", () => {
 });
 
 test("kildeopdatering erstatter kun den aktive sag", () => {
-  assert.match(wizard, /current\.map\(row => row\.id === refreshed\.id \? refreshed : row\)/);
+  assert.match(wizard, /setActive\(refreshed\)/);
   assert.doesNotMatch(wizard, /refreshAdminShareCaseCredits\(active\.id\)\.then\(load\)/);
   assert.match(actions, /case: await fetchAdminShareCase/);
 });
@@ -27,10 +27,12 @@ test("sæsonssager samler klippere fra seriens afsnit", () => {
   assert.match(evidence, /\.in\("work_id", assignmentWorkIds\)/);
 });
 
-test("klipper og arbejdsandel vises samlet i en kompakt dialog", () => {
+test("klipper, kilder, arbejdsandel og handlinger vises samlet i en kompakt række", () => {
   assert.match(wizard, /1\. Klippere og arbejdsandele/);
   assert.match(wizard, /Arbejdsandel i procent/);
-  assert.match(wizard, /grid grid-cols-2/);
+  assert.match(wizard, /grid-cols-\[minmax\(0,1fr\)_92px\]/);
+  assert.match(wizard, /Oplyst: \{participant\.proposed_percent != null/);
+  assert.match(wizard, />Fjern<\/Button>/);
   assert.match(wizard, /Forrige værk/);
   assert.match(wizard, /Spring til næste værk/);
   assert.doesNotMatch(wizard, /Portalens oplysninger samles med krediteringer/);
@@ -54,9 +56,12 @@ test("værkeditorerne samler registrerede medklippere under rettighedshavere", (
   assert.match(adminArchive, /replaceAssignments: !editingSeasonGroup/);
 });
 
-test("arbejdsandelsdialogen forbliver øverst ved sagsnavigation", () => {
-  assert.match(adminArchive, /top-\[max\(1rem,env\(safe-area-inset-top\)\)\]/);
-  assert.match(adminArchive, /translate-y-0/);
+test("arbejdsandelsfanen erstatter dialogen og bruger URL-navigation", () => {
+  const tab = readFileSync("components/admin/work-share-reconciliation-tab.tsx", "utf8");
+  assert.doesNotMatch(adminArchive, /shareTasksOpen/);
+  assert.match(adminArchive, /WorkShareReconciliationTab/);
+  assert.match(tab, /shareTask/);
+  assert.match(tab, /Tilbage til køen|works\.shareQueue\.back/);
 });
 
 test("ukendt medklipper bruger samme interne og eksterne krediteringsgrundlag", () => {

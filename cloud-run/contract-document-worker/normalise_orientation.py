@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rotate a DLP-redacted raster without adding metadata or lossy encoding."""
+"""Rotate an OCR source raster without adding metadata or lossy encoding."""
 
 import sys
 
@@ -31,8 +31,8 @@ def main():
         operation = TRANSPOSE[degrees]
         if operation is not None:
             image = image.transpose(operation)
-        # PNG is deliberate: the verified DLP pixels must not be altered by a
-        # second lossy JPEG encoding before the searchable PDF is assembled.
+        # PNG is deliberate: source pixels must not receive another lossy JPEG
+        # encoding before the searchable PDF is assembled.
         image.save(output_path, "PNG", optimize=False)
 
 

@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -100,6 +101,13 @@ export async function getSearchPublications(status?: SearchPublicationStatus): P
             fund_name: r.rights_funds?.name,
             period_label: r.rights_calculation_runs?.period_label,
         }))
+
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "search", component: "admin.rights_holder_search_publications", entityType: "rights_holder_search_publication",
+            purposeCode: "rights_holder_identification", legalBasis: "gdpr_art_6_1_f",
+            dataCategories: ["rights_data", "identity_data"], counts: { results: publications.length, filtered: Boolean(status) },
+        })
 
         return { success: true, publications }
     } catch (err) {

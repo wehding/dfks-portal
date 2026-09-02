@@ -14,11 +14,10 @@ service-account JSON-nøgler, og de samme IAM- og sikkerhedskrav gælder i begge
    upload-token, begrænset til én tilfældig outputsti for netop det pågældende job.
    Supabase-upload-tokenet er gyldigt i to timer, men kan ikke overskrive en allerede
    færdig upload. Ved et kontrolleret genforsøg slettes kun den afledte outputfil først.
-6. Cloud Run rasteriserer billedbaserede PDF'er i RAM og sender hver side til Google
-   Sensitive Data Protection `image:redact` i EU. Google maskerer CPR, personnavne og
-   bankdata inklusive IBAN og SWIFT i de faktiske pixels.
-7. Kun de maskerede sider sendes til Google Vision EU. En søgbar PDF genopbygges af
-   disse sider og Visions ordkoordinater, så kilder senere kan markeres præcist.
+6. Cloud Run rasteriserer billedbaserede PDF'er i RAM og sender de rå sider direkte
+   til Google Vision EU med `DOCUMENT_TEXT_DETECTION`.
+7. En søgbar PDF genopbygges af kildesiderne og Visions ordkoordinater, så kilder
+   senere kan markeres præcist. Tekst maskeres fortsat separat før AI-analyse.
 8. Den behandlede kopi og et privat geometrisk artefakt uploades til separate stier.
    Originalen overskrives aldrig.
 9. Først efter afsluttet behandling oprettes AI-jobbet. AI bruger den behandlede kopi.
@@ -60,15 +59,14 @@ I **APIs & Services → Library** aktiveres:
 - Artifact Registry API
 - Cloud Scheduler API
 - IAM Service Account Credentials API
-- Sensitive Data Protection (DLP) API
 - Cloud Vision API
 
 ### 3. Opret servicekonti
 
 I **IAM & Admin → Service Accounts**:
 
-- `dfks-pdf-worker`: identitet for selve containeren. Tildel kun de nødvendige roller
-  til at kalde Sensitive Data Protection og Vision. Kontoen får ingen Storage-adgang.
+- `dfks-pdf-worker`: identitet for selve containeren. Tildel kun den nødvendige rolle
+  til at kalde Vision. Kontoen får ingen Storage-adgang.
 - `dfks-pdf-scheduler`: må kun få `Cloud Run Invoker` på den konkrete service.
 
 Der oprettes ingen JSON-nøgler. Identitet leveres af Cloud Run og Scheduler.
@@ -116,8 +114,6 @@ Miljøvariabler:
 - `SUPABASE_ANON_KEY=<projektets offentlige anon/publishable key>`
 - `GOOGLE_CLOUD_PROJECT=dfks-portal`
 - `GOOGLE_VISION_LOCATION=eu`
-- `GOOGLE_DLP_LOCATION=europe` (DLP-ressource-id; endpointet er fortsat
-  `dlp.eu.rep.googleapis.com`)
 - `OCR_TMP_DIR=/mnt/ramdisk`
 
 Montér `/mnt/ramdisk` som en memory volume. Dokumentbytes må ikke skrives til et
@@ -142,6 +138,7 @@ højst tre i parallel, task-timeout 12 timer og ingen retries under piloten.
 
 Pilot:
 
+- `OCR_REPLACEMENT_ONLY=true` (kun det tidsbegrænsede DLP-erstatningsjob)
 - `OCR_MAX_DOCUMENTS_PER_TASK=4`
 - `OCR_MAX_CONSECUTIVE_FAILURES=1`
 - `OCR_MAX_CONSECUTIVE_QUALITY_FAILURES=1`
@@ -150,6 +147,7 @@ Pilot:
 
 Fuld backfill:
 
+- `OCR_REPLACEMENT_ONLY=true` (kun det tidsbegrænsede DLP-erstatningsjob)
 - `OCR_MAX_DOCUMENTS_PER_TASK=0`
 - `OCR_MAX_CONSECUTIVE_FAILURES=5`
 - `OCR_MAX_CONSECUTIVE_QUALITY_FAILURES=5`
@@ -160,6 +158,29 @@ Selv hvis pilotens kvalitetstærskel fejlagtigt sættes højere, håndhæver wor
 første-fejl-stop, når dokumentgrænsen er højst fire. I fuld backfill kan isolerede
 reviewdokumenter fortsætte, men fem sammenhængende kvalitetsfejl eller mere end
 50 % kvalitetsfejl i det rullende vindue stopper tasken med non-zero status.
+Replacement-only-claimet accepterer kun kølagte generationer med
+`replacement_of_job_id` og kan derfor ikke tømme den almindelige upload- eller
+recoverykø. Scheduler-servicen skal fortsat køre uden `OCR_REPLACEMENT_ONLY`.
+
+### Kontrolleret overgang fra DLP-OCR
+
+Overgangen er en klasse D-ændring. Databasemigration, Cloud Run-udrulning og
+produktionsbackfill kræver hver sin udtrykkelige driftsgodkendelse. Rækkefølgen er:
+
+1. anvend migrationen og udrul portal/API;
+2. udrul workeren og verificér en ny billedbaseret upload;
+3. kør `one-off:replace-dlp-ocr` med den oprindelige, integritetsbeskyttede
+   `OCR_BACKFILL_BASELINE_PATH` og pilotgrænsen på fire dokumenter;
+4. kontrollér aktive artefakter, koordinater, AI-genanalyse og afventende
+   sletninger, før en fuld baseline-kørsel godkendes;
+5. fjern først DLP-API, IAM og gammel miljøkonfiguration, når piloten og den nye
+   worker er verificeret.
+
+Promovering sker før sletning. Ved rollback pauses kølægning og worker, og den
+aktive direkte Vision-generation kan genskabes fra den uændrede original. En
+allerede slettet, maskeret afledning gendannes ikke; originalen er aldrig en
+slettekandidat. Slutrapporten skal vise udvalgte, erstattede, sprunget over,
+fejlede og afventende sletninger uden dokumentidentifikatorer eller persondata.
 
 ### 8. Opret Scheduler-job
 

@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 
-import { FatalProcessingError, processOne } from "./processor.mjs";
+import { createProcessor, FatalProcessingError } from "./processor.mjs";
+
+const processOne = createProcessor({ executionMode: "service" });
 
 createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {

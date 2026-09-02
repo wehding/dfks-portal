@@ -25,7 +25,39 @@ comment on column public.contracts.original_view_pdf_url is
 comment on column public.contract_document_jobs.original_view_storage_path is
   'Lease-beskyttet LibreOffice-PDF til visning af Word-originalens layout.';
 
-create or replace function public.finish_contract_document_job_v6(
+-- Word-konverteringsfejl er sikre, strukturerede kontrolårsager på linje med
+-- de eksisterende PDF-/Vision-fejl. Rå LibreOffice-output gemmes aldrig.
+create or replace function private.contract_document_review_error_code_valid(
+  p_error_code text
+)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select nullif(btrim(p_error_code), '') = any (array[
+    'processing_deadline_exceeded', 'invalid_download_origin', 'file_too_large',
+    'invalid_pdf', 'unsupported_document_format', 'source_format_mismatch',
+    'word_conversion_failed', 'converted_pdf_invalid', 'converted_file_too_large',
+    'original_view_upload_failed', 'original_sha256_mismatch', 'ocr_no_readable_text',
+    'ocr_unreadable_page', 'ocr_spatial_quality', 'orientation_uncertain',
+    'page_geometry_unavailable', 'document_page_limit_exceeded',
+    'document_raster_budget_exceeded', 'document_text_limit_exceeded',
+    'processed_file_too_large', 'spatial_artifact_too_large',
+    'dlp_request_too_large', 'dlp_too_many_locations', 'dlp_response_too_large',
+    'dlp_location_invalid', 'dlp_location_out_of_bounds', 'dlp_location_missing',
+    'dlp_redacted_image_missing', 'dlp_redacted_image_invalid',
+    'dlp_redaction_not_applied', 'dlp_image_dimensions_changed',
+    'dlp_canonical_image_invalid', 'vision_page_too_large', 'vision_page_invalid',
+    'vision_request_too_large', 'vision_response_too_large',
+    'vision_word_limit_exceeded', 'low_text_quality'
+  ]);
+$$;
+
+revoke all on function private.contract_document_review_error_code_valid(text)
+  from public, anon, authenticated, service_role;
+
+create or replace function public.finish_contract_document_job_v9(
   p_job_id uuid,
   p_lease_token uuid,
   p_status text,
@@ -38,18 +70,18 @@ create or replace function public.finish_contract_document_job_v6(
   p_native_page_count integer default 0,
   p_ocr_page_count integer default 0,
   p_unreadable_page_count integer default 0,
-  p_redaction_counts jsonb default '{}'::jsonb,
   p_spatial_accuracy_score numeric default null,
   p_spatial_median_iou numeric default null,
   p_spatial_center_inside_ratio numeric default null,
   p_original_sha256 text default null,
   p_processed_sha256 text default null,
   p_original_view_sha256 text default null,
-  p_redaction_profile text default null,
+  p_processing_profile text default null,
   p_spatial_schema_version text default null,
   p_spatial_sha256 text default null,
   p_error_code text default null,
-  p_safe_error_message text default null
+  p_safe_error_message text default null,
+  p_review_details jsonb default '{"schemaVersion":1,"reasons":[]}'::jsonb
 )
 returns public.contract_document_jobs
 language plpgsql
@@ -85,14 +117,14 @@ begin
   end if;
 
   select * into finished
-  from public.finish_contract_document_job_v5(
+  from public.finish_contract_document_job_v8(
     p_job_id, p_lease_token, p_status, p_document_classification, p_ocr_engine,
     p_orientation_corrections, p_ocr_applied, p_page_count, p_text_char_count,
     p_native_page_count, p_ocr_page_count, p_unreadable_page_count,
-    p_redaction_counts, p_spatial_accuracy_score, p_spatial_median_iou,
+    p_spatial_accuracy_score, p_spatial_median_iou,
     p_spatial_center_inside_ratio, p_original_sha256, p_processed_sha256,
-    p_redaction_profile, p_spatial_schema_version, p_spatial_sha256,
-    p_error_code, p_safe_error_message
+    p_processing_profile, p_spatial_schema_version, p_spatial_sha256,
+    p_error_code, p_safe_error_message, p_review_details
   );
 
   if p_status = 'completed' and active_job.original_view_storage_path is not null then
@@ -109,15 +141,15 @@ begin
 end;
 $$;
 
-revoke all on function public.finish_contract_document_job_v6(
+revoke all on function public.finish_contract_document_job_v9(
   uuid, uuid, text, text, text, jsonb, boolean, integer, integer, integer,
-  integer, integer, jsonb, numeric, numeric, numeric, text, text, text, text,
-  text, text, text, text
+  integer, integer, numeric, numeric, numeric, text, text, text, text, text,
+  text, text, text, jsonb
 ) from public, anon, authenticated;
-grant execute on function public.finish_contract_document_job_v6(
+grant execute on function public.finish_contract_document_job_v9(
   uuid, uuid, text, text, text, jsonb, boolean, integer, integer, integer,
-  integer, integer, jsonb, numeric, numeric, numeric, text, text, text, text,
-  text, text, text, text
+  integer, integer, numeric, numeric, numeric, text, text, text, text, text,
+  text, text, text, jsonb
 ) to service_role;
 
 create or replace function public.list_abandoned_contract_document_lease_artifacts(

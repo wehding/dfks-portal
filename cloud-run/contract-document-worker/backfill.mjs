@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import {
   FatalProcessingError,
   OCR_QUALITY_DIAGNOSTIC_CODES,
-  processOne,
+  createProcessor,
 } from "./processor.mjs";
 
 const MAX_REASONABLE_DOCUMENTS = 100_000;
@@ -13,6 +13,12 @@ const MIN_QUALITY_RATE_WINDOW = 10;
 const MAX_QUALITY_RATE_WINDOW = 100;
 const MAX_QUALITY_FAILURE_RATE_PERCENT = 50;
 const OCR_QUALITY_DIAGNOSTIC_CODE_SET = new Set(Object.values(OCR_QUALITY_DIAGNOSTIC_CODES));
+let defaultBackfillProcessor;
+
+function processOneBackfill() {
+  defaultBackfillProcessor ??= createProcessor({ executionMode: "backfill" });
+  return defaultBackfillProcessor();
+}
 
 export function parseDocumentLimit(value) {
   if (value == null || value === "" || value === "0") return 0;
@@ -72,7 +78,7 @@ function isOcrQualityFailure(result) {
 }
 
 export async function runBackfill(options = {}) {
-  const processOneFn = options.processOneFn ?? processOne;
+  const processOneFn = options.processOneFn ?? processOneBackfill;
   const maxDocuments = options.maxDocuments
     ?? parseDocumentLimit(process.env.OCR_MAX_DOCUMENTS_PER_TASK);
   const failureThreshold = options.failureThreshold

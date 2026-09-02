@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { truncate, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { GoogleOcrOperationalError } from "./google-secure-api.mjs";
+import { GoogleOcrOperationalError } from "./google-vision-api.mjs";
 import {
   createProcessor,
   FatalProcessingError,
@@ -13,9 +13,14 @@ import {
   readRuntimeConfig,
   runCommand,
   safeGoogleErrorCode,
+  sanitiseAffectedPageNumbers,
   startLeaseHeartbeat,
 } from "./processor.mjs";
-import { processPdfSpatially } from "./spatial-ocr.mjs";
+import {
+  processPdfSpatially,
+  SPATIAL_VERIFICATION_PROFILE,
+} from "./spatial-ocr.mjs";
+import { createTailBlankProofManifest } from "./tail-blank-proof.mjs";
 
 const config = {
   portalBaseUrl: "https://portal.example",
@@ -48,6 +53,12 @@ function claimJob(overrides = {}) {
   };
 }
 
+test("berørte sidenumre sorteres, deduplikeres og afgrænses til dokumentet", () => {
+  assert.deepEqual(sanitiseAffectedPageNumbers([3, 1, 3, 0, 5, "2", 2.5, 2], 3), [1, 2, 3]);
+  assert.deepEqual(sanitiseAffectedPageNumbers([1], 0), []);
+  assert.deepEqual(sanitiseAffectedPageNumbers("1", 3), []);
+});
+
 test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () => {
   const env = {
     NODE_ENV: "production",
@@ -62,6 +73,41 @@ test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () 
     && error.code === "invalid_temporary_storage_configuration"
   ));
   assert.equal(readRuntimeConfig({ ...env, OCR_TMP_DIR: "/mnt/ramdisk" }).tempRoot, "/mnt/ramdisk");
+  assert.equal(readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_REPLACEMENT_ONLY: "true",
+  }).replacementOnly, true);
+  assert.equal(readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_GEOMETRY_BACKFILL_RUN_ID: "33333333-3333-4333-8333-333333333333",
+  }).geometryBackfillRunId, "33333333-3333-4333-8333-333333333333");
+  assert.throws(() => readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_GEOMETRY_BACKFILL_RUN_ID: "not-a-run-id",
+  }), (error) => (
+    error instanceof FatalProcessingError
+    && error.code === "invalid_geometry_backfill_configuration"
+  ));
+  assert.throws(() => readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_REPLACEMENT_ONLY: "true",
+    OCR_GEOMETRY_BACKFILL_RUN_ID: "33333333-3333-4333-8333-333333333333",
+  }), (error) => (
+    error instanceof FatalProcessingError
+    && error.code === "conflicting_backfill_configuration"
+  ));
+  assert.throws(() => readRuntimeConfig({
+    ...env,
+    OCR_TMP_DIR: "/mnt/ramdisk",
+    OCR_REPLACEMENT_ONLY: "TRUE",
+  }), (error) => (
+    error instanceof FatalProcessingError
+    && error.code === "invalid_replacement_only_configuration"
+  ));
   assert.equal(parseProcessingDeadlineSeconds(undefined), 780);
   assert.equal(parseProcessingDeadlineSeconds("0"), 0);
   assert.equal(parseProcessingDeadlineSeconds("900"), 900);
@@ -69,6 +115,132 @@ test("produktion kræver eksplicit RAM-disk til midlertidige kontraktfiler", () 
     assert.throws(() => parseProcessingDeadlineSeconds(invalid), (error) => (
       error instanceof FatalProcessingError && error.code === "invalid_processing_deadline"
     ));
+  }
+});
+
+test("replacement-only worker markerer kun claim-kaldet eksplicit", async () => {
+  let claimHeaders;
+  const processor = createProcessor({
+    config: { ...config, replacementOnly: true },
+    identityTokenProvider: async () => "identity-secret",
+    googleClient: {},
+    fetchImpl: async (url, init) => {
+      assert.ok(String(url).endsWith("/claim"));
+      claimHeaders = init.headers;
+      return response(null, { status: 204 });
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "empty" });
+  assert.equal(claimHeaders["X-DFKS-OCR-Replacement-Only"], "1");
+  assert.equal(claimHeaders.Authorization, "Bearer identity-secret");
+});
+
+test("geometry-backfill worker afgrænser claim til det signerede run-id", async () => {
+  let claimHeaders;
+  const processor = createProcessor({
+    config: {
+      ...config,
+      replacementOnly: false,
+      geometryBackfillRunId: "33333333-3333-4333-8333-333333333333",
+    },
+    identityTokenProvider: async () => "identity-secret",
+    googleClient: {},
+    fetchImpl: async (url, init) => {
+      assert.ok(String(url).endsWith("/claim"));
+      claimHeaders = init.headers;
+      return response(null, { status: 204 });
+    },
+  });
+
+  assert.deepEqual(await processor(), { outcome: "empty" });
+  assert.equal(
+    claimHeaders["X-DFKS-OCR-Geometry-Backfill-Run"],
+    "33333333-3333-4333-8333-333333333333",
+  );
+  assert.equal(claimHeaders["X-DFKS-OCR-Replacement-Only"], undefined);
+  assert.equal(claimHeaders.Authorization, "Bearer identity-secret");
+});
+
+test("HTTP-service afviser et job-only blank-side-manifest før filen læses", () => {
+  assert.throws(() => createProcessor({
+    executionMode: "service",
+    env: { OCR_TAIL_BLANK_PROOF_FILE: "/private/does-not-exist.json" },
+    config: {
+      ...config,
+      geometryBackfillRunId: "33333333-3333-4333-8333-333333333333",
+    },
+    googleClient: {},
+  }), (error) => error instanceof FatalProcessingError
+    && error.code === "tail_blank_proof_forbidden");
+});
+
+test("backfill binder det private manifest til run og den verificerede original", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dfks-processor-tail-proof-"));
+  const proofPath = join(directory, "proof.json");
+  const runId = "33333333-3333-4333-8333-333333333333";
+  const original = Buffer.from("%PDF-1.7\nproof-bound-original");
+  const proof = createTailBlankProofManifest({
+    runId,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    entries: [{
+      originalSha256: "1".repeat(64),
+      pageNumber: 2,
+      pageCount: 2,
+      sourceRasterSha256: "2".repeat(64),
+      recoveryRasterSha256: "3".repeat(64),
+    }, ...[4, 5, 6, 7].map((digit, index) => ({
+      originalSha256: String(digit).repeat(64),
+      pageNumber: 3 + index,
+      pageCount: 3 + index,
+      sourceRasterSha256: String(digit + 1).repeat(64),
+      recoveryRasterSha256: String(digit + 2).repeat(64),
+    }))],
+  });
+  await writeFile(proofPath, JSON.stringify(proof), { mode: 0o400 });
+  let spatialOptions;
+  try {
+    const processor = createProcessor({
+      executionMode: "backfill",
+      env: { OCR_TAIL_BLANK_PROOF_FILE: proofPath },
+      config: { ...config, geometryBackfillRunId: runId, processingDeadlineMs: 0 },
+      identityTokenProvider: async () => "identity-secret",
+      googleClient: {},
+      leaseHeartbeatFactory: async () => ({ assertHealthy() {}, async stop() {} }),
+      spatialProcessor: async (options) => {
+        spatialOptions = options;
+        return {
+          status: "needs_review",
+          classification: "image_only",
+          pageCount: 2,
+          nativePageCount: 0,
+          ocrPageCount: 2,
+          unreadablePageCount: 1,
+          affectedPageNumbers: [2],
+        };
+      },
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value.endsWith("/claim")) {
+          return response(JSON.stringify(claimJob()), { status: 200 });
+        }
+        if (value.endsWith("/complete")) return response("{}", { status: 200 });
+        return response(original, { status: 200 }, value);
+      },
+    });
+    assert.deepEqual(await processor(), {
+      outcome: "needs_review",
+      diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.unreadablePage,
+      reviewDetails: {
+        schemaVersion: 1,
+        reasons: [{ code: OCR_QUALITY_DIAGNOSTIC_CODES.unreadablePage, pageNumbers: [2] }],
+      },
+    });
+    assert.equal(spatialOptions.geometryBackfillRunId, runId);
+    assert.equal(spatialOptions.originalSha256.length, 64);
+    assert.equal(spatialOptions.tailBlankProofManifest.manifestDigest, proof.manifestDigest);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -369,7 +541,7 @@ test("claim og dokument skal have samme filformat", async () => {
   assert.equal(completions[0].errorCode, "source_format_mismatch");
 });
 
-test("en genkørsel stopper før DLP og Vision, hvis originalens hash er ændret", async () => {
+test("en genkørsel stopper før Vision, hvis originalens hash er ændret", async () => {
   const completions = [];
   let spatialCalls = 0;
   const processor = createProcessor({
@@ -398,7 +570,7 @@ test("en genkørsel stopper før DLP og Vision, hvis originalens hash er ændret
   assert.equal(completions.length, 1);
   assert.equal(completions[0].status, "needs_review");
   assert.equal(completions[0].errorCode, "original_sha256_mismatch");
-  assert.equal("originalSha256" in completions[0], false);
+  assert.equal(completions[0].originalSha256, "0".repeat(64));
   assert.equal(JSON.stringify(completions[0]).includes("%PDF-"), false);
   assert.equal(JSON.stringify(completions[0]).includes("signed-secret"), false);
 });
@@ -416,6 +588,7 @@ test("OCR-kvalitetsfejl propagerer en sikker diagnose til backfill-stopreglen", 
       ocrPageCount: 1,
       unreadablePageCount: 1,
       textCharCount: 0,
+      affectedPageNumbers: [1, 1, 0, 2, "1"],
     }),
     fetchImpl: async (url, init) => {
       const value = String(url);
@@ -432,8 +605,63 @@ test("OCR-kvalitetsfejl propagerer en sikker diagnose til backfill-stopreglen", 
   assert.deepEqual(await processor(), {
     outcome: "needs_review",
     diagnosticCode: "ocr_unreadable_page",
+    reviewDetails: {
+      schemaVersion: 1,
+      reasons: [{ code: "ocr_unreadable_page", pageNumbers: [1] }],
+    },
   });
   assert.equal(completions[0].errorCode, "ocr_unreadable_page");
+  assert.deepEqual(completions[0].reviewDetails, {
+    schemaVersion: 1,
+    reasons: [{ code: "ocr_unreadable_page", pageNumbers: [1] }],
+  });
+  assert.equal("affectedPageNumbers" in completions[0], false);
+});
+
+test("spatial needs_review sender kun sikre måltal, schema og kanoniske sidenumre", async () => {
+  const completions = [];
+  const processor = createProcessor({
+    config,
+    identityTokenProvider: async () => "identity-secret",
+    spatialProcessor: async () => ({
+      status: "needs_review",
+      classification: "mixed",
+      pageCount: 2,
+      nativePageCount: 0,
+      ocrPageCount: 2,
+      unreadablePageCount: 0,
+      textCharCount: 4704,
+      processingProfile: "google-vision-direct-v1",
+      spatialSchemaVersion: "google-vision-spatial-v3",
+      spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
+      spatial: { score: 0.94, medianIou: 0.88, centerInsideRatio: 0.97 },
+      affectedPageNumbers: [2, 1, 2],
+    }),
+    fetchImpl: async (url, init) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/heartbeat")) return response("{}", { status: 200 });
+      if (value.endsWith("/complete")) {
+        completions.push(JSON.parse(init.body));
+        return response("{}", { status: 200 });
+      }
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+
+  assert.equal((await processor()).diagnosticCode, "ocr_spatial_quality");
+  assert.equal(completions[0].spatialAccuracyScore, 0.94);
+  assert.equal(completions[0].spatialMedianIou, 0.88);
+  assert.equal(completions[0].spatialCenterInsideRatio, 0.97);
+  assert.equal(completions[0].spatialSchemaVersion, "google-vision-spatial-v3");
+  assert.equal(completions[0].spatialVerificationProfile, SPATIAL_VERIFICATION_PROFILE);
+  assert.deepEqual(completions[0].reviewDetails, {
+    schemaVersion: 1,
+    reasons: [{ code: "ocr_spatial_quality", pageNumbers: [1, 2] }],
+  });
+  for (const forbidden of ["geometry", "vertices", "storagePath", "spatialPath", "ocrText"]) {
+    assert.equal(forbidden in completions[0], false);
+  }
 });
 
 test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
@@ -450,6 +678,7 @@ test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
       unreadablePageCount: 0,
       orientationCorrections: [{ page: 1, degrees: 270 }, { page: 3, degrees: 90 }],
       orientationQualityFailed: true,
+      affectedPageNumbers: [3, 2, 3, 4],
     }),
     fetchImpl: async (url, init) => {
       const value = String(url);
@@ -466,11 +695,20 @@ test("fysiske orienteringsrettelser sendes i completion-payload", async () => {
   assert.deepEqual(await processor(), {
     outcome: "needs_review",
     diagnosticCode: "orientation_uncertain",
+    reviewDetails: {
+      schemaVersion: 1,
+      reasons: [{ code: "orientation_uncertain", pageNumbers: [2, 3] }],
+    },
   });
   assert.deepEqual(completions[0].orientationCorrections, [
     { page: 1, degrees: 270 }, { page: 3, degrees: 90 },
   ]);
   assert.equal(completions[0].errorCode, "orientation_uncertain");
+  assert.deepEqual(completions[0].reviewDetails, {
+    schemaVersion: 1,
+    reasons: [{ code: "orientation_uncertain", pageNumbers: [2, 3] }],
+  });
+  assert.equal("affectedPageNumbers" in completions[0], false);
   assert.equal(completions[0].documentClassification, "image_only");
 });
 
@@ -734,7 +972,7 @@ test("dokumentrelateret Google OCR-fejl registreres og batchen kan fortsætte", 
     config,
     identityTokenProvider: async () => "identity-secret",
     storage: { from() { throw new Error("storage should not be reached"); } },
-    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_request_too_large"); },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("vision_page_too_large"); },
     fetchImpl: async (url, init) => {
       const value = String(url);
       if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
@@ -748,24 +986,23 @@ test("dokumentrelateret Google OCR-fejl registreres og batchen kan fortsætte", 
 
   assert.deepEqual(await processor(), {
     outcome: "needs_review",
-    diagnosticCode: "dlp_request_too_large",
+    diagnosticCode: "vision_page_too_large",
   });
-  assert.deepEqual(completions[0], {
-    jobId: claimJob().jobId,
-    leaseToken: claimJob().leaseToken,
-    status: "needs_review",
-    errorCode: "dlp_request_too_large",
-    safeErrorMessage: "Dokumentet kunne ikke sikkerhedsbehandles automatisk og kræver manuel kontrol.",
-  });
+  assert.equal(completions[0].jobId, claimJob().jobId);
+  assert.equal(completions[0].leaseToken, claimJob().leaseToken);
+  assert.equal(completions[0].status, "needs_review");
+  assert.equal(completions[0].errorCode, "vision_page_too_large");
+  assert.equal(completions[0].safeErrorMessage, "Dokumentet kunne ikke sikkerhedsbehandles automatisk og kræver manuel kontrol.");
+  assert.match(completions[0].originalSha256, /^[0-9a-f]{64}$/);
 });
 
-test("DLP-geometri der ikke kan sikkerhedsverificeres sendes til manuel kontrol", async () => {
+test("Vision-geometri der ikke kan sikkerhedsverificeres sendes til manuel kontrol", async () => {
   const completions = [];
   const processor = createProcessor({
     config,
     identityTokenProvider: async () => "identity-secret",
     storage: { from() { throw new Error("storage should not be reached"); } },
-    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_location_missing"); },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("vision_page_invalid"); },
     fetchImpl: async (url, init) => {
       const value = String(url);
       if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
@@ -778,10 +1015,10 @@ test("DLP-geometri der ikke kan sikkerhedsverificeres sendes til manuel kontrol"
   });
   assert.deepEqual(await processor(), {
     outcome: "needs_review",
-    diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationMissing,
+    diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.visionPageInvalid,
   });
   assert.equal(completions[0].status, "needs_review");
-  assert.equal(completions[0].errorCode, OCR_QUALITY_DIAGNOSTIC_CODES.dlpLocationMissing);
+  assert.equal(completions[0].errorCode, OCR_QUALITY_DIAGNOSTIC_CODES.visionPageInvalid);
 });
 
 test("Google IAM-fejl frigiver claim og stopper tasken", async () => {
@@ -790,7 +1027,7 @@ test("Google IAM-fejl frigiver claim og stopper tasken", async () => {
     config,
     identityTokenProvider: async () => "identity-secret",
     storage: { from() { throw new Error("storage should not be reached"); } },
-    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_api_403"); },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("vision_api_403"); },
     fetchImpl: async (url, init) => {
       const value = String(url);
       if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
@@ -803,16 +1040,16 @@ test("Google IAM-fejl frigiver claim og stopper tasken", async () => {
   });
 
   await assert.rejects(processor, (error) =>
-    error instanceof FatalProcessingError && error.code === "dlp_api_403");
+    error instanceof FatalProcessingError && error.code === "vision_api_403");
   assert.equal(completions.length, 1);
   assert.equal(completions[0].status, "failed");
-  assert.equal(completions[0].errorCode, "dlp_api_403");
+  assert.equal(completions[0].errorCode, "vision_api_403");
 });
 
 test("ugyldig Google-runtimekonfiguration stopper før claim med sikker kode", () => {
   assert.throws(() => createProcessor({
     config,
-    env: { GOOGLE_DLP_LOCATION: "eu" },
+    env: { GOOGLE_VISION_LOCATION: "us" },
     identityTokenProvider: async () => "identity-secret",
     storage: { from() { throw new Error("storage should not be reached"); } },
   }), (error) => error instanceof FatalProcessingError
@@ -824,7 +1061,7 @@ test("callbackfejl efter Google-fejl er fatal", async () => {
     config,
     identityTokenProvider: async () => "identity-secret",
     storage: { from() { throw new Error("storage should not be reached"); } },
-    spatialProcessor: async () => { throw new GoogleOcrOperationalError("dlp_location_missing"); },
+    spatialProcessor: async () => { throw new GoogleOcrOperationalError("vision_page_invalid"); },
     fetchImpl: async (url) => {
       const value = String(url);
       if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
@@ -840,9 +1077,9 @@ test("callbackfejl efter Google-fejl er fatal", async () => {
 test("ukendt Google-fejlkode bliver sanitiseret", () => {
   assert.equal(safeGoogleErrorCode("CPR 010101-1234"), "google_ocr_service_failed");
   assert.equal(safeGoogleErrorCode("google_api_503"), "google_api_503");
-  assert.equal(safeGoogleErrorCode("dlp_api_400"), "dlp_api_400");
+  assert.equal(safeGoogleErrorCode("dlp_api_400"), "google_ocr_service_failed");
   assert.equal(safeGoogleErrorCode("vision_api_503"), "vision_api_503");
-  assert.equal(safeGoogleErrorCode("dlp_location_missing"), "dlp_location_missing");
+  assert.equal(safeGoogleErrorCode("dlp_location_missing"), "google_ocr_service_failed");
 });
 
 test("fatal identitetsfejl stopper før claim", async () => {
@@ -873,10 +1110,11 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
       return {
         status: "completed", classification: "image_only", pageCount: 2,
         nativePageCount: 0, ocrPageCount: 2, unreadablePageCount: 0,
-        textCharCount: 300, redactionCounts: { DENMARK_CPR_NUMBER: 1 },
+        textCharCount: 300,
         spatial: { score: 0.99, medianIou: 0.9, centerInsideRatio: 1 },
-        redactionProfile: "dfks-contract-redaction-v1",
-        spatialSchemaVersion: "google-vision-spatial-v2",
+        processingProfile: "google-vision-direct-v1",
+        spatialSchemaVersion: "google-vision-spatial-v3",
+        spatialVerificationProfile: SPATIAL_VERIFICATION_PROFILE,
       };
     },
     fetchImpl: async (url, init) => {
@@ -919,8 +1157,9 @@ test("vellykket OCR uploader kun til jobbestemt derivat og afslutter completed",
   assert.deepEqual(events, ["spatial-complete", "upload-authorisation"]);
   assert.equal(completions[0].status, "completed");
   assert.equal(completions[0].pageCount, 2);
-  assert.equal(completions[0].redactionProfile, "dfks-contract-redaction-v1");
-  assert.equal(completions[0].spatialSchemaVersion, "google-vision-spatial-v2");
+  assert.equal(completions[0].processingProfile, "google-vision-direct-v1");
+  assert.equal(completions[0].spatialSchemaVersion, "google-vision-spatial-v3");
+  assert.equal(completions[0].spatialVerificationProfile, SPATIAL_VERIFICATION_PROFILE);
   assert.match(completions[0].originalSha256, /^[0-9a-f]{64}$/);
   assert.match(completions[0].processedSha256, /^[0-9a-f]{64}$/);
   assert.match(completions[0].spatialSha256, /^[0-9a-f]{64}$/);
@@ -970,6 +1209,7 @@ test("for stor behandlet PDF læses ikke i RAM og sendes til manuel kontrol", as
     diagnosticCode: OCR_QUALITY_DIAGNOSTIC_CODES.processedFileTooLarge,
   });
   assert.equal(result.completions[0].errorCode, "processed_file_too_large");
+  assert.match(result.completions[0].originalSha256, /^[0-9a-f]{64}$/);
   assert.equal(result.uploadAuthorisationCalled, false);
 });
 
@@ -1114,4 +1354,56 @@ test("native tekst ændrer ikke originalen og uploader intet derivat", async () 
   assert.equal(uploads.length, 0);
   assert.equal(completions[0].status, "not_required");
   assert.equal(completions[0].ocrApplied, false);
+});
+
+test("replacement-only sender native kilder gennem den tvungne OCR-port", async () => {
+  let forceOcr;
+  const processor = createProcessor({
+    config: { ...config, replacementOnly: true },
+    identityTokenProvider: async () => "identity-secret",
+    googleClient: {},
+    spatialProcessor: async (options) => {
+      forceOcr = options.forceOcr;
+      return {
+        status: "not_required", classification: "native_text", pageCount: 1,
+        nativePageCount: 1, ocrPageCount: 0, unreadablePageCount: 0, textCharCount: 500,
+      };
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) return response("{}", { status: 200 });
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+  assert.deepEqual(await processor(), { outcome: "completed" });
+  assert.equal(forceOcr, true);
+});
+
+test("geometry-backfill sender native kilder gennem den tvungne OCR-port", async () => {
+  let forceOcr;
+  const processor = createProcessor({
+    config: {
+      ...config,
+      replacementOnly: false,
+      geometryBackfillRunId: "33333333-3333-4333-8333-333333333333",
+    },
+    identityTokenProvider: async () => "identity-secret",
+    googleClient: {},
+    spatialProcessor: async (options) => {
+      forceOcr = options.forceOcr;
+      return {
+        status: "not_required", classification: "native_text", pageCount: 1,
+        nativePageCount: 1, ocrPageCount: 0, unreadablePageCount: 0, textCharCount: 500,
+      };
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/claim")) return response(JSON.stringify(claimJob()), { status: 200 });
+      if (value.endsWith("/complete")) return response("{}", { status: 200 });
+      return response(Buffer.from("%PDF-1.7\noriginal"), { status: 200 }, value);
+    },
+  });
+  assert.deepEqual(await processor(), { outcome: "completed" });
+  assert.equal(forceOcr, true);
 });

@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Fragment, type ReactNode } from "react"
 import Image from "next/image"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown, GitMerge } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -34,10 +34,11 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal } from "lucide-react"
 import { getDfksMemberImportPreview, getDfksMembersSyncStatus, importDfksMembersToRightsHolders, syncDfksMembers } from "@/app/actions/dfks-members"
-import { archiveRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHolders } from "@/app/actions/rights-holder-admin"
+import { archiveRightsHolders, mergeDuplicateRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHolders } from "@/app/actions/rights-holder-admin"
 import { ListSkeleton, TableSkeleton } from "@/components/ui/data-skeletons"
 import { RightsHolderRelations } from "@/components/admin/rights-holder-relations"
 import { ListResultSummary } from "@/components/list-result-summary"
+import { rightsHolderInvitationState, rightsHolderPortalAction } from "@/lib/admin-rights-holder-invitation"
 
 type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "inviteret" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
 type SortKey = "name" | "email" | "member_no" | "contracts" | "works" | "status" | "portal" | "validated"
@@ -144,6 +145,13 @@ function hasPortalAccess(rh: RettighedshaverWithAffiliation) {
     return Boolean(rh.user_id || rh.onboarding_completed_at)
 }
 
+function invitationStatus(rh: RettighedshaverWithAffiliation) {
+    const state = rightsHolderInvitationState(rh)
+    if (state === "active") return { state, label: "Aktiv" }
+    if (state === "invited") return { state, label: `Inviteret ${formatInvitationDate(rh.invite_sent_at)}` }
+    return { state: "not_invited" as const, label: "Ikke inviteret" }
+}
+
 const EMPTY_FORM = {
     full_name: "", email: "", phone: "", address: "", cpr_no: "", bank_account: "", member_no: "", is_member: false,
     gender: "", opt_out_statistics: false, send_invite: false,
@@ -163,10 +171,13 @@ export default function RettighedshavereAdminPage() {
     const [loading, setLoading] = useState(true)
     const [loadingMore, setLoadingMore] = useState(false)
     const loadAllPromiseRef = useRef<Promise<void> | null>(null)
+    const loadRequestRef = useRef(0)
+    const searchReadyRef = useRef(false)
+    const lastLoadedSearchRef = useRef<string | null>(null)
     const [expandedRightsHolderId, setExpandedRightsHolderId] = useState<string | null>(null)
     const [hasMore, setHasMore] = useState(false)
+    const [filteredResultCount, setFilteredResultCount] = useState(0)
     const [search, setSearch] = useState("")
-    useEffect(() => { setSearch(new URLSearchParams(window.location.search).get("search") ?? "") }, [])
     const [filter, setFilter] = useState<Filter>("alle")
     const [sortKey, setSortKey] = useState<SortKey>("name")
     const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
@@ -209,6 +220,10 @@ export default function RettighedshavereAdminPage() {
     const [deleteContracts, setDeleteContracts] = useState(false)
     const [deleteUnsharedWorks, setDeleteUnsharedWorks] = useState(true)
     const [deleteConfirmation, setDeleteConfirmation] = useState("")
+    const [mergeOpen, setMergeOpen] = useState(false)
+    const [mergePrimaryId, setMergePrimaryId] = useState("")
+    const [mergeConfirmation, setMergeConfirmation] = useState("")
+    const [merging, setMerging] = useState(false)
     const [importOpen, setImportOpen] = useState(false)
     const [importLoading, setImportLoading] = useState(false)
     const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([])
@@ -220,40 +235,58 @@ export default function RettighedshavereAdminPage() {
     const [importSortKey, setImportSortKey] = useState<ImportSortKey>("name")
     const [importSortDirection, setImportSortDirection] = useState<"asc" | "desc">("asc")
 
-    useEffect(() => {
-        void load().then(result => {
-            if (!result) return
-            void loadDfksMembers(result.orgId)
-            void refreshMemberSyncStatus()
-        })
-    }, [])
-
-    async function load() {
+    const load = useCallback(async (query: string, includeSummary = true) => {
+        const requestId = ++loadRequestRef.current
         setLoading(true)
         try {
-            const result = await getAdminRightsHolders()
+            const result = await getAdminRightsHolders({ search: query, includeSummary })
+            if (requestId !== loadRequestRef.current) return null
             setRows(result.rows)
             setCountsByRightsHolder(result.countsByRightsHolder)
             setOrgId(result.orgId)
             setCanSeeAllOrganisations(result.canSeeAllOrganisations)
             setHasMore(result.hasMore)
-            setRightsHolderSummary(result.summary)
+            setFilteredResultCount(result.filteredCount)
+            lastLoadedSearchRef.current = query
+            if (result.summary) setRightsHolderSummary(result.summary)
             return result
         } catch (error) {
             toast.error(errorMessage(error))
             return null
         } finally {
-            setLoading(false)
+            if (requestId === loadRequestRef.current) setLoading(false)
         }
-    }
+    }, [])
+
+    useEffect(() => {
+        const initialSearch = new URLSearchParams(window.location.search).get("search") ?? ""
+        setSearch(initialSearch)
+        void load(initialSearch, true).then(result => {
+            if (!result) return
+            void loadDfksMembers(result.orgId)
+            void refreshMemberSyncStatus()
+        }).finally(() => {
+            searchReadyRef.current = true
+        })
+    }, [load])
+
+    useEffect(() => {
+        if (!searchReadyRef.current) return
+        if (search.trim() === lastLoadedSearchRef.current) return
+        const timer = window.setTimeout(() => {
+            void load(search.trim(), false)
+        }, 300)
+        return () => window.clearTimeout(timer)
+    }, [load, search])
 
     async function loadMore() {
         setLoadingMore(true)
         try {
-            const result = await getAdminRightsHolders({ offset: rows.length, limit: 100 })
+            const result = await getAdminRightsHolders({ offset: rows.length, limit: 100, search: search.trim(), includeSummary: false })
             setRows(current => [...current, ...result.rows.filter(row => !current.some(existing => existing.id === row.id))])
             setCountsByRightsHolder(current => ({ ...current, ...result.countsByRightsHolder }))
             setHasMore(result.hasMore)
+            setFilteredResultCount(result.filteredCount)
         } catch (error) {
             toast.error(errorMessage(error))
         } finally { setLoadingMore(false) }
@@ -268,7 +301,7 @@ export default function RettighedshavereAdminPage() {
                 let accumulatedCounts = { ...countsByRightsHolder }
                 let more = hasMore
                 while (more) {
-                    const result = await getAdminRightsHolders({ offset: accumulatedRows.length, limit: 200 })
+                    const result = await getAdminRightsHolders({ offset: accumulatedRows.length, limit: 200, search: search.trim(), includeSummary: false })
                     accumulatedRows = [...accumulatedRows, ...result.rows.filter(row => !accumulatedRows.some(existing => existing.id === row.id))]
                     accumulatedCounts = { ...accumulatedCounts, ...result.countsByRightsHolder }
                     more = result.hasMore
@@ -372,7 +405,7 @@ export default function RettighedshavereAdminPage() {
         toast.success(`${result.created} oprettet, ${result.updated} opdateret, ${result.skipped} sprunget over`)
         setImportOpen(false)
         setSelectedImportIds(new Set())
-        await load()
+        await load(search.trim())
         await refreshMemberSyncStatus()
     }
 
@@ -494,6 +527,14 @@ export default function RettighedshavereAdminPage() {
             return result * direction
         })
     }, [rows, orgId, filter, search, countsByRightsHolder, sortKey, sortDirection, canSeeAllOrganisations])
+    const selectedMergeHolders = useMemo(
+        () => visible.filter(holder => selectedIds.has(holder.id)),
+        [visible, selectedIds],
+    )
+    const mergeHasConflictingUsers = selectedMergeHolders.length === 2
+        && Boolean(selectedMergeHolders[0].user_id)
+        && Boolean(selectedMergeHolders[1].user_id)
+        && selectedMergeHolders[0].user_id !== selectedMergeHolders[1].user_id
     const visibleIds = visible.map(rh => rh.id)
     const selectedVisibleCount = visibleIds.filter(id => selectedIds.has(id)).length
     const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
@@ -567,7 +608,7 @@ export default function RettighedshavereAdminPage() {
                 else if (json) toast.warning("Oprettet, men invitationsmailen kunne ikke sendes.")
             }
             setCreateSaving(false)
-            setCreateOpen(false); load()
+            setCreateOpen(false); void load(search.trim())
         } else {
             setCreateSaving(false)
             toast.error(result.error ?? "Kunne ikke oprette rettighedshaver")
@@ -622,7 +663,7 @@ export default function RettighedshavereAdminPage() {
         if (sent < targets.length) {
             toast.warning(`${targets.length - sent} adgangslink(s) blev ikke sendt${emailErrors[0] ? `: ${emailErrors[0]}` : "."}`)
         }
-        load()
+        void load(search.trim())
     }
 
     function handleArchiveSelected() {
@@ -644,7 +685,7 @@ export default function RettighedshavereAdminPage() {
             toast.warning(`${result.blocked.length} kunne ikke arkiveres: ${result.blocked.slice(0, 3).map(item => item.name).join(", ")}`)
         }
         setSelectedIds(new Set())
-        await load()
+        await load(search.trim())
     }
 
     async function handleRestoreSelected() {
@@ -658,7 +699,7 @@ export default function RettighedshavereAdminPage() {
         }
         toast.success(`${result.restoredCount} rettighedshaver(e) gendannet`)
         setSelectedIds(new Set())
-        await load()
+        await load(search.trim())
     }
 
     async function handlePermanentDeleteSelected() {
@@ -677,7 +718,31 @@ export default function RettighedshavereAdminPage() {
         setPermanentDeleteOpen(false)
         setDeleteConfirmation("")
         setSelectedIds(new Set())
-        await load()
+        await load(search.trim())
+    }
+
+    function openMergeSelected() {
+        if (selectedMergeHolders.length !== 2) return
+        setMergePrimaryId(selectedMergeHolders[0].id)
+        setMergeConfirmation("")
+        setMergeOpen(true)
+    }
+
+    async function handleMergeSelected() {
+        const duplicate = selectedMergeHolders.find(holder => holder.id !== mergePrimaryId)
+        if (!duplicate || mergeConfirmation !== "SAMMENLÆG") return
+        setMerging(true)
+        const result = await mergeDuplicateRightsHolders(mergePrimaryId, duplicate.id)
+        setMerging(false)
+        if (!result.success) {
+            toast.error(result.error)
+            return
+        }
+        toast.success("Rettighedshaverprofilerne er sammenlagt")
+        setMergeOpen(false)
+        setMergeConfirmation("")
+        setSelectedIds(new Set())
+        await load(search.trim())
     }
 
     function openEdit(rh: RettighedshaverWithAffiliation) {
@@ -754,7 +819,7 @@ export default function RettighedshavereAdminPage() {
         setEditSaving(false)
         toast.success("Gemt")
         setEditTarget(null)
-        load()
+        void load(search.trim())
     }
 
     async function handleOnboardingAction() {
@@ -772,7 +837,7 @@ export default function RettighedshavereAdminPage() {
         window.dispatchEvent(new Event("onboarding-requirement-changed"))
         setOnboardingAction(null)
         setEditTarget(null)
-        await load()
+        await load(search.trim())
     }
 
     async function toggleMember(rh: RettighedshaverWithAffiliation) {
@@ -782,7 +847,7 @@ export default function RettighedshavereAdminPage() {
         await setMemberStatus(rh.id, orgId, next, aff?.member_no ?? undefined)
         if (!next) await setAffiliationEnd(rh.id, orgId, new Date().toISOString().slice(0, 10))
         toast.success(next ? `${rh.full_name} er nu medlem` : `${rh.full_name} er udmeldt`)
-        load()
+        void load(search.trim())
     }
 
     async function handlePortalAction() {
@@ -891,7 +956,7 @@ export default function RettighedshavereAdminPage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <div className="relative w-full sm:max-w-xs">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg navn, email, telefon..." className="pl-8" value={search} onChange={e => { setSearch(e.target.value); if (e.target.value.trim() && hasMore) void loadAllRightsHolders() }} />
+                    <Input placeholder="Søg navn, email, telefon eller medlemsnummer..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
                     {search && <button type="button" aria-label="Ryd søgning" className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSearch("")}><X className="h-4 w-4" /></button>}
                 </div>
                 <Select value={filter} onValueChange={v => applyListFilter(v as Filter)}>
@@ -920,7 +985,7 @@ export default function RettighedshavereAdminPage() {
             </div>
 
             <ListResultSummary
-                filteredCount={visible.length}
+                filteredCount={filter === "alle" ? filteredResultCount : visible.length}
                 totalCount={Math.max(rightsHolderSummary.total, visible.length)}
                 selectedCount={selectedIds.size}
                 loading={loadingMore}
@@ -931,6 +996,11 @@ export default function RettighedshavereAdminPage() {
                     <div className="text-sm font-medium">{selectedIds.size} valgt</div>
                     <div className="flex flex-wrap gap-2">
                         <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
+                        {canSeeAllOrganisations && selectedIds.size === 2 && (
+                            <Button size="sm" variant="outline" onClick={openMergeSelected}>
+                                <GitMerge className="mr-1 h-4 w-4" />Sammenlæg dubletter
+                            </Button>
+                        )}
                         <Button size="sm" variant="outline" onClick={handleBulkSendInvitation} disabled={bulkSendingInvitations}>
                             {bulkSendingInvitations ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Mail className="mr-1 h-4 w-4" />}
                             Send invitation
@@ -962,7 +1032,6 @@ export default function RettighedshavereAdminPage() {
                     </MobileDataCard>
                 ) : visible.map(rh => {
                     const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
-                    const hasLogin = !!rh.user_id
                     const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
                     const relationsExpanded = expandedRightsHolderId === rh.id
                     return (
@@ -997,6 +1066,16 @@ export default function RettighedshavereAdminPage() {
                                                 ? <><UserX className="h-3.5 w-3.5 mr-2 text-amber-500" />Udmeld</>
                                                 : <><UserCheck className="h-3.5 w-3.5 mr-2 text-green-600" />Indmeld</>}
                                         </DropdownMenuItem>
+                                        {rh.email && !rh.onboarding_completed_at && (
+                                            <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: rh.invite_sent_at ? "reminder" : "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
+                                                <Mail className="mr-2 h-3.5 w-3.5" />{rh.invite_sent_at ? "Gensend velkomstmail" : "Send invitation"}
+                                            </DropdownMenuItem>
+                                        )}
+                                        {rh.email && rh.onboarding_completed_at && (
+                                            <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "login" }); setPortalLink(null); setPortalEmailStatus(null) }}>
+                                                <KeyRound className="mr-2 h-3.5 w-3.5" />Send loginlink
+                                            </DropdownMenuItem>
+                                        )}
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </div>
@@ -1016,9 +1095,14 @@ export default function RettighedshavereAdminPage() {
                                     </div>
                                 </MobileMetaRow>
                                 <MobileMetaRow label="Portaladgang">
-                                    {hasLogin
-                                        ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Aktiv</Badge>
-                                        : <span className="text-muted-foreground">Ingen adgang</span>}
+                                    {(() => {
+                                        const status = invitationStatus(rh)
+                                        return status.state === "active"
+                                            ? <Badge className="gap-1 bg-emerald-600 text-xs text-white"><LogIn className="h-3 w-3" />{status.label}</Badge>
+                                            : status.state === "invited"
+                                                ? <Badge variant="outline" className="border-amber-300 text-xs text-amber-700">{status.label}</Badge>
+                                                : <Badge variant="outline" className="text-xs text-muted-foreground">{status.label}</Badge>
+                                    })()}
                                 </MobileMetaRow>
                             </div>
                             {relationsExpanded && <div className="mt-4 border-t pt-3"><RightsHolderRelations rightsHolderId={rh.id} workCount={counts.works} contractCount={counts.contracts} /></div>}
@@ -1091,11 +1175,14 @@ export default function RettighedshavereAdminPage() {
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        {rh.onboarding_completed_at
-                                            ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Registreret</Badge>
-                                            : rh.invite_sent_at
-                                                ? <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Afventer</Badge>
-                                                : <span className="text-xs text-muted-foreground">Ikke inviteret</span>}
+                                            {(() => {
+                                                const status = invitationStatus(rh)
+                                                return status.state === "active"
+                                                    ? <Badge className="gap-1 bg-emerald-600 text-xs text-white"><LogIn className="h-3 w-3" />{status.label}</Badge>
+                                                    : status.state === "invited"
+                                                        ? <Badge variant="outline" className="border-amber-300 text-xs text-amber-700">{status.label}</Badge>
+                                                        : <Badge variant="outline" className="text-xs text-muted-foreground">{status.label}</Badge>
+                                            })()}
                                     </TableCell>
                                     <TableCell>
                                         {!hasLogin
@@ -1127,7 +1214,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await restoreRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver gendannet")
-                                                            if (orgId) load()
+                                                            if (orgId) void load(search.trim())
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke gendanne")
                                                         }
@@ -1136,12 +1223,12 @@ export default function RettighedshavereAdminPage() {
                                                     </DropdownMenuItem>
                                                 )}
                                                 <DropdownMenuSeparator />
-                                                {rh.email && !hasPortalAccess(rh) && (
-                                                    <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
-                                                        <Mail className="h-3.5 w-3.5 mr-2" />Send invitation
+                                                {rh.email && !rh.onboarding_completed_at && (
+                                                    <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: rh.invite_sent_at ? "reminder" : "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
+                                                        <Mail className="h-3.5 w-3.5 mr-2" />{rh.invite_sent_at ? "Gensend velkomstmail" : "Send invitation"}
                                                     </DropdownMenuItem>
                                                 )}
-                                                {rh.email && hasPortalAccess(rh) && (
+                                                {rh.email && rh.onboarding_completed_at && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "login" }); setPortalLink(null); setPortalEmailStatus(null) }}>
                                                         <KeyRound className="h-3.5 w-3.5 mr-2" />Send loginlink
                                                     </DropdownMenuItem>
@@ -1152,7 +1239,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await restoreRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver gendannet")
-                                                            if (orgId) load()
+                                                            if (orgId) void load(search.trim())
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke gendanne")
                                                         }
@@ -1164,7 +1251,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await archiveRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver arkiveret")
-                                                            if (orgId) load()
+                                                            if (orgId) void load(search.trim())
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke arkivere")
                                                         }
@@ -1247,9 +1334,11 @@ export default function RettighedshavereAdminPage() {
                                 <div>
                                     <h3 className="font-semibold">Portaladgang</h3>
                                     <p className="text-xs text-muted-foreground">
-                                        {hasPortalAccess(editTarget)
+                                        {editTarget.onboarding_completed_at
                                             ? "Send et nyt loginlink uden at oprette en ekstra bruger."
-                                            : "Send en invitation, så rettighedshaveren kan oprette sin adgang."}
+                                            : editTarget.invite_sent_at
+                                                ? `Invitation sendt ${formatInvitationDate(editTarget.invite_sent_at)}. Du kan gensende velkomstmailen med et nyt sikkert link.`
+                                                : "Send en invitation, så rettighedshaveren kan oprette sin adgang."}
                                     </p>
                                 </div>
                                 {(!editForm.email.trim() || editForm.email.trim() !== (editTarget.email ?? "").trim() || editForm.full_name.trim() !== editTarget.full_name.trim()) && (
@@ -1271,14 +1360,14 @@ export default function RettighedshavereAdminPage() {
                                         setPortalEmailStatus(null)
                                         setPortalAction({
                                             rh: editTarget,
-                                            type: hasPortalAccess(editTarget) ? "login" : "invite",
+                                            type: rightsHolderPortalAction(editTarget),
                                         })
                                     }}
                                 >
-                                    {hasPortalAccess(editTarget) ? <KeyRound className="mr-2 h-4 w-4" /> : <Mail className="mr-2 h-4 w-4" />}
-                                    {hasPortalAccess(editTarget)
+                                    {editTarget.onboarding_completed_at ? <KeyRound className="mr-2 h-4 w-4" /> : <Mail className="mr-2 h-4 w-4" />}
+                                    {editTarget.onboarding_completed_at
                                         ? "Send nyt loginlink"
-                                        : editTarget.invite_sent_at ? "Send ny invitation" : "Send invitation"}
+                                        : editTarget.invite_sent_at ? "Gensend velkomstmail" : "Send invitation"}
                                 </Button>
                                 {portalAction?.rh.id === editTarget.id && portalLink && (
                                     <p className="break-all rounded-md bg-muted px-3 py-2 text-xs">{portalLink}</p>
@@ -1703,19 +1792,68 @@ export default function RettighedshavereAdminPage() {
             </Dialog>
 
             {/* Portal adgang dialog */}
+            <Dialog open={mergeOpen} onOpenChange={open => { if (!open && !merging) setMergeOpen(false) }}>
+                <DialogContent className="max-w-xl">
+                    <DialogHeader>
+                        <DialogTitle>Sammenlæg dubletprofiler</DialogTitle>
+                        <DialogDescription>
+                            Vælg den profil, der skal bevares. Relationer og manglende oplysninger flyttes til den valgte profil; den anden profil slettes permanent.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        {selectedMergeHolders.map(holder => {
+                            const status = invitationStatus(holder)
+                            return (
+                                <label key={holder.id} className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${mergePrimaryId === holder.id ? "border-primary bg-primary/5" : ""}`}>
+                                    <input type="radio" name="merge-primary" value={holder.id} checked={mergePrimaryId === holder.id} onChange={() => setMergePrimaryId(holder.id)} className="mt-1" />
+                                    <span className="min-w-0">
+                                        <span className="block font-medium">{holder.full_name}</span>
+                                        <span className="block truncate text-sm text-muted-foreground">{holder.email ?? "Ingen e-mail"}</span>
+                                        <span className="block text-xs text-muted-foreground">{holder.organisation_names.join(", ") || "Ingen organisation"} · {status.label}</span>
+                                    </span>
+                                </label>
+                            )
+                        })}
+                        {mergeHasConflictingUsers ? (
+                                <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                                    Begge profiler har hver sin loginbruger. De kan ikke sammenlægges automatisk.
+                                </p>
+                            ) : null}
+                        <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                            Kontrakter, værker, medlemskaber og sikre relationer bevares. Sammenlægningen afvises uden ændringer ved modstridende login-, CPR-, bank-, person-id-, medlems-, arve-, økonomi- eller fordelingsdata.
+                        </div>
+                        <div className="space-y-1">
+                            <Label>Skriv SAMMENLÆG for at bekræfte</Label>
+                            <Input value={mergeConfirmation} onChange={event => setMergeConfirmation(event.target.value)} autoComplete="off" />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" disabled={merging} onClick={() => setMergeOpen(false)}>Annuller</Button>
+                        <Button
+                            variant="destructive"
+                            disabled={merging || mergeConfirmation !== "SAMMENLÆG" || mergeHasConflictingUsers}
+                            onClick={() => void handleMergeSelected()}
+                        >
+                            {merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Sammenlæg profiler
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             <Dialog open={!!portalAction} onOpenChange={open => { if (!open) { setPortalAction(null); setPortalLink(null); setPortalEmailStatus(null) } }}>
                 <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>
                             {portalAction?.type === "login"
                                 ? "Send loginlink"
-                                : portalAction?.type === "invite" || portalAction?.type === "reminder" ? "Inviter til portal" : "Nulstil password"}
+                                : portalAction?.type === "reminder" ? "Gensend velkomstmail" : portalAction?.type === "invite" ? "Inviter til portal" : "Nulstil password"}
                         </DialogTitle>
                         <DialogDescription>
                             {portalAction?.type === "login"
                                 ? `Send et nyt loginlink til ${portalAction.rh.full_name} (${portalAction.rh.email}). Personen kan vælge et nyt password og logge ind igen.`
                                 : portalAction?.type === "invite" || portalAction?.type === "reminder"
-                                ? `Send en invitation til ${portalAction.rh.full_name} (${portalAction.rh.email}). Hvis mailen ikke kan sendes, vises linket til manuel deling.`
+                                ? `${portalAction.type === "reminder" ? "Gensend velkomstmailen" : "Send en invitation"} til ${portalAction.rh.full_name} (${portalAction.rh.email}). Hvis mailen ikke kan sendes, vises linket til manuel deling.`
                                 : `Generér et nulstillingslink til ${portalAction?.rh.full_name}. Del linket med dem direkte.`}
                         </DialogDescription>
                         {(portalAction?.type === "invite" || portalAction?.type === "reminder") && portalAction.rh.invite_sent_at && !portalLink && (
@@ -1781,7 +1919,7 @@ export default function RettighedshavereAdminPage() {
                                 {portalLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                                 {portalAction?.type === "login"
                                     ? "Send loginlink"
-                                    : portalAction?.type === "invite" || portalAction?.type === "reminder" ? "Send invitation" : "Generér nulstillingslink"}
+                                    : portalAction?.type === "reminder" ? "Gensend velkomstmail" : portalAction?.type === "invite" ? "Send invitation" : "Generér nulstillingslink"}
                             </Button>
                         )}
                     </DialogFooter>

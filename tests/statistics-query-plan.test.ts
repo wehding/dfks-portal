@@ -115,12 +115,29 @@ test("antal A-løns- og leverandørkontrakter forveksles ikke med lønstatistik"
   const plan = predefinedStatisticsQueryPlan("Hvor mange A-løns- og leverandørkontrakter er der registreret pr. år?");
   assert.deepEqual(plan?.metrics, ["contract_count"]);
   assert.deepEqual(plan?.compareBy, ["contract_type"]);
+  assert.equal(plan?.chart, "bar");
 });
 
 test("flere produktive mål kan forespørges sammen", () => {
   const plan = predefinedStatisticsQueryPlan("Sammenlign pension og arbejdsuger for spillefilm og dokumentarfilm siden 2022.");
   assert.deepEqual(plan?.metrics, ["average_pension", "average_working_weeks"]);
   assert.deepEqual(plan?.compareBy, ["category"]);
+});
+
+test("pension for fiktion og dokumentar bliver to produktionstyper", () => {
+  const plan = predefinedStatisticsQueryPlan("Har pensionen udviklet sig for henholdsvis fiktion og dokumentar?");
+  assert.deepEqual(plan?.metrics, ["average_pension"]);
+  assert.deepEqual(plan?.filters.categories, ["feature", "documentary"]);
+  assert.deepEqual(plan?.compareBy, ["category"]);
+  assert.equal(plan?.chart, "line");
+});
+
+test("lønforskel for fiktion og dokumentar bliver to produktionstyper", () => {
+  const plan = predefinedStatisticsQueryPlan("løn forskel på fiktion og dokumentar over tid");
+  assert.deepEqual(plan?.metrics, ["median_monthly_salary"]);
+  assert.deepEqual(plan?.filters.categories, ["feature", "documentary"]);
+  assert.deepEqual(plan?.compareBy, ["category"]);
+  assert.equal(plan?.chart, "line");
 });
 
 test("rettighedsforbehold bliver selvstændige procentmål", () => {
@@ -154,8 +171,20 @@ test("queryplan accepterer ufarlige ældre modelvariationer", () => {
   assert.equal(plan.groupBy, "year");
 });
 
-test("navngivne producentspørgsmål overlades til registermatch via AI", () => {
-  assert.equal(predefinedStatisticsQueryPlan("Hvordan er lønnen hos producent Nordisk Film?"), null);
+test("navngivne producentspørgsmål sendes deterministisk til registermatch", () => {
+  const plan = predefinedStatisticsQueryPlan("Hvordan er lønnen hos producent Nordisk Film?");
+  assert.deepEqual(plan?.metrics, ["median_monthly_salary"]);
+  assert.deepEqual(plan?.filters.producerNames, ["Nordisk Film"]);
+  assert.deepEqual(plan?.compareBy, []);
+  assert.equal(plan?.chart, "line");
+});
+
+test("producentrangering bliver forstået som producentsammenligning", () => {
+  const plan = predefinedStatisticsQueryPlan("Hvilke producenter giver bedst løn?");
+  assert.deepEqual(plan?.metrics, ["median_monthly_salary"]);
+  assert.deepEqual(plan?.compareBy, ["producer"]);
+  assert.deepEqual(plan?.filters.producerNames, []);
+  assert.equal(plan?.chart, "bar");
 });
 
 test("almindelige danske formuleringer giver forventede sikre mål", () => {

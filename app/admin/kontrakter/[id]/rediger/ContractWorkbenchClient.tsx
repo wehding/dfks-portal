@@ -4,7 +4,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, BriefcaseBusiness, Building2, CheckCircle2, Download, Loader2, Save, Scale, Sparkles, X, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BriefcaseBusiness, Building2, CheckCircle2, Download, Loader2, Save, Scale, Sparkles, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { addAdminContractComment, fetchAdminContractsPage, getAdminContractSeriesEpisodeOptions, queueAdminContractAiExtraction, updateAdminContract } from "@/app/actions/member-contracts";
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management";
@@ -30,6 +30,7 @@ import { contractEpisodeNumbersFromLayout, contractEvidencePage, fieldEvidence, 
 import { CONTRACT_WORKBENCH_SPLIT_QUERY } from "@/lib/contract-workbench-responsive";
 import type { ContractValidationSectionKey } from "@/app/actions/member-contracts";
 import type { ContractEvidenceActivation } from "../../ContractAiDataEditor";
+import type { ContractDocumentReviewAction, ContractDocumentReviewData } from "@/lib/contract-document-review";
 
 const PdfViewer = dynamic(() => import("@/components/pdf-viewer").then(mod => mod.PdfViewer), { ssr: false });
 const ContractDocViewer = dynamic(() => import("../../ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false });
@@ -53,6 +54,31 @@ const SECTIONS: Array<{ key: string; label: string; section?: ContractValidation
   { key: "ids", label: "ID", section: "ids" },
   { key: "work", label: "Værksdata", section: "work" },
 ];
+
+function DocumentProcessingReviewCard({
+  review,
+  loading,
+  activeAction,
+  statusMessage,
+  onAction,
+}: {
+  review: ContractDocumentReviewData | null;
+  loading: boolean;
+  activeAction: ContractDocumentReviewAction | null;
+  statusMessage: string | null;
+  onAction: (action: ContractDocumentReviewAction) => void;
+}) {
+  if (!review && !statusMessage && !loading) return null;
+  return <div className="m-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" role="alert">
+    {review && <div className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><div className="min-w-0 flex-1"><p className="font-semibold">{review.title}</p><p>{review.reason}</p><p className="font-medium">{review.affectedPagesText}</p></div></div>}
+    {loading && <p className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" />Henter den seneste PDF-status…</p>}
+    {review && (review.canRetry || review.canRequestRescan) && <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {review.canRetry && <Button type="button" variant="outline" className="min-h-11 w-full" disabled={Boolean(activeAction)} onClick={() => onAction("retry")}>{activeAction === "retry" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Prøv igen</Button>}
+      {review.canRequestRescan && <Button type="button" variant="outline" className="min-h-11 w-full" disabled={Boolean(activeAction)} onClick={() => onAction("request_rescan")}>{activeAction === "request_rescan" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Markér: ny scanning nødvendig</Button>}
+    </div>}
+    {statusMessage && <p className="mt-2" aria-live="polite">{statusMessage}</p>}
+  </div>;
+}
 
 function relation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
@@ -118,6 +144,10 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
   const flushHandlersRef = useRef(new Map<string, () => Promise<boolean>>());
   const [visitedTabs, setVisitedTabs] = useState<Set<string>>(new Set(["approve"]));
   const [pdfResetToken, setPdfResetToken] = useState(0);
+  const [documentReview, setDocumentReview] = useState<ContractDocumentReviewData | null>(null);
+  const [documentReviewLoading, setDocumentReviewLoading] = useState(true);
+  const [documentReviewAction, setDocumentReviewAction] = useState<ContractDocumentReviewAction | null>(null);
+  const [documentReviewStatus, setDocumentReviewStatus] = useState<string | null>(null);
 
   const [workPickerOpen, setWorkPickerOpen] = useState(false);
   const [workQuery, setWorkQuery] = useState(form.workingTitle);
@@ -140,6 +170,47 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
   useEffect(() => {
     if (splitLayout && mobileSourceView !== "closed") setMobileSourceView("closed");
   }, [mobileSourceView, splitLayout]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`/api/admin/contracts/${contract.id}/document-processing`, {
+      cache: "no-store",
+      signal: controller.signal,
+    }).then(async response => {
+      const body = await response.json().catch(() => ({})) as { data?: ContractDocumentReviewData | null; error?: string };
+      if (!response.ok) throw new Error(body.error ?? "PDF-status kunne ikke hentes.");
+      setDocumentReview(body.data ?? null);
+    }).catch(error => {
+      if (!controller.signal.aborted) setDocumentReviewStatus(error instanceof Error ? error.message : "PDF-status kunne ikke hentes.");
+    }).finally(() => {
+      if (!controller.signal.aborted) setDocumentReviewLoading(false);
+    });
+    return () => controller.abort();
+  }, [contract.id]);
+
+  async function handleDocumentReviewAction(action: ContractDocumentReviewAction) {
+    if (documentReviewAction) return;
+    setDocumentReviewAction(action);
+    setDocumentReviewStatus(action === "retry" ? "Sætter PDF'en i kø…" : "Registrerer behovet for en ny scanning…");
+    try {
+      const response = await fetch(`/api/admin/contracts/${contract.id}/document-processing`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const body = await response.json().catch(() => ({})) as { accepted?: boolean; error?: string };
+      if (!response.ok || !body.accepted) throw new Error(body.error ?? "PDF-handlingen kunne ikke gennemføres.");
+      const refreshed = await fetch(`/api/admin/contracts/${contract.id}/document-processing`, { cache: "no-store" });
+      const refreshedBody = await refreshed.json().catch(() => ({})) as { data?: ContractDocumentReviewData | null };
+      if (refreshed.ok) setDocumentReview(refreshedBody.data ?? null);
+      setDocumentReviewStatus(action === "retry" ? "PDF'en er sat i kø til ny behandling." : "Behovet for en ny scanning er registreret.");
+      toast.success(action === "retry" ? "PDF'en er sat i kø" : "Ny scanning er registreret");
+    } catch (error) {
+      setDocumentReviewStatus(error instanceof Error ? error.message : "PDF-handlingen kunne ikke gennemføres.");
+    } finally {
+      setDocumentReviewAction(null);
+    }
+  }
 
   const selectedDocument = data.documents[variant] ?? data.documents.commented ?? data.documents.original;
   const documentUrl = selectedDocument?.url ?? null;
@@ -482,6 +553,7 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
       </section>
 
       <section data-testid="contract-data-pane" className={`${splitLayout || mobilePane === "data" ? "block" : "hidden"} relative z-10 min-h-0 min-w-0 bg-background ${splitLayout ? "overflow-y-auto" : ""}`}>
+        <DocumentProcessingReviewCard review={documentReview} loading={documentReviewLoading} activeAction={documentReviewAction} statusMessage={documentReviewStatus} onAction={action => void handleDocumentReviewAction(action)} />
         <div className="hidden flex-wrap items-center gap-1 border-b bg-muted/20 px-3 py-1 min-[1440px]:flex"><span className="mr-1 text-[10px] font-medium">Datakilde:</span>{(["contract", "agreement", "member", "work_archive", "dfi", "tmdb", "wikidata", "manual"] as ContractFieldSource[]).map(source => <ContractSourceBadge key={source} source={source} />)}</div>
         <Tabs value={tab} onValueChange={changeTab} className="min-h-0 gap-0">
           <TabsList variant="line" className="sticky top-0 z-20 h-8 w-full justify-start overflow-x-auto rounded-none border-b bg-background px-2 py-0.5">

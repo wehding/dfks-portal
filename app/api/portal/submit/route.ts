@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createContractReviewIntake, triggerContractReviewWorker } from "@/lib/contract-review-intake";
 import { resolveOrgId } from "@/lib/org";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const ALLOWED = [".pdf", ".doc", ".docx"];
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
   const orgId = await resolveOrgId(db, user.id);
   if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 });
   const { data: affiliation } = await db.from("org_affiliations")
-    .select("org_id,rettighedshavere!inner(user_id,full_name,email)")
+    .select("org_id,rettighedshavere!inner(id,user_id,full_name,email)")
     .eq("org_id", orgId)
     .eq("rettighedshavere.user_id", user.id)
     .maybeSingle();
@@ -48,6 +49,7 @@ export async function POST(request: NextRequest) {
         focus_areas: list(form?.get("focusAreas")), notes: form?.get("notes") || null,
       },
     });
+    await recordSensitiveFlow({ actor: { userId: user.id, orgId, role: "member", source: "portal" }, action: "import", component: "portal.contract-review.submit", entityType: "contract_reviews", entityId: intake.reviewId, targetMemberUuid: holder?.id ?? null, orgIds: [orgId], purposeCode: "contract_review", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["contract_data", "document_data", "salary_data", "union_membership_data"], counts: { duplicate: intake.duplicate } });
     // Portal- og Gmail-intake behandles altid af den samme ko. Det sikrer ens
     // retry, modelvalg, maskering og forbrugsregistrering. Kaldet foretages ogsa
     // ved en dublet, sa et eksisterende modent job kan blive genoptaget.

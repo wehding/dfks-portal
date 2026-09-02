@@ -2,10 +2,49 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CURRENT_SPATIAL_VERIFICATION_PROFILE,
   classifyDocumentCompletionFailure,
   isContractDocumentClassification,
   isIdempotentDocumentCompletionReplay,
+  isSpatialVerificationCompletionValid,
+  normaliseDocumentReviewDetails,
 } from "../lib/contract-document-completion";
+import {
+  SPATIAL_VERIFICATION_PROFILE,
+  V2_SPATIAL_VERIFICATION_PROFILE,
+} from "../cloud-run/contract-document-worker/spatial-ocr.mjs";
+
+test("worker og portal bruger samme faste spatial-verifikationsprofil", () => {
+  assert.equal(CURRENT_SPATIAL_VERIFICATION_PROFILE, SPATIAL_VERIFICATION_PROFILE);
+  assert.equal(isSpatialVerificationCompletionValid({
+    processingProfile: "google-vision-direct-v1",
+    spatialSchemaVersion: "google-vision-spatial-v3",
+    spatialVerificationProfile: CURRENT_SPATIAL_VERIFICATION_PROFILE,
+  }), true);
+  for (const spatialVerificationProfile of [
+    undefined,
+    null,
+    "dfks-spatial-verification-legacy-v1",
+    V2_SPATIAL_VERIFICATION_PROFILE,
+    "ukendt",
+  ] as const) {
+    assert.equal(isSpatialVerificationCompletionValid({
+      processingProfile: "google-vision-direct-v1",
+      spatialSchemaVersion: "google-vision-spatial-v3",
+      spatialVerificationProfile,
+    }), false);
+  }
+  assert.equal(isSpatialVerificationCompletionValid({
+    processingProfile: null,
+    spatialSchemaVersion: null,
+    spatialVerificationProfile: null,
+  }), true);
+  assert.equal(isSpatialVerificationCompletionValid({
+    processingProfile: null,
+    spatialSchemaVersion: null,
+    spatialVerificationProfile: CURRENT_SPATIAL_VERIFICATION_PROFILE,
+  }), false);
+});
 
 test("completion accepterer kun databasegodkendte dokumentklasser", () => {
   for (const value of ["native_text", "image_only", "mixed", "unreadable"]) {
@@ -81,4 +120,50 @@ test("databasefejl bliver til faste ufølsomme callbackkoder", () => {
     code: "completion_persistence_failed",
     status: 503,
   });
+});
+
+test("sidediagnostik gemmer kun sikre koder og gyldige sidenumre", () => {
+  assert.deepEqual(normaliseDocumentReviewDetails({
+    schemaVersion: 1,
+    reasons: [{
+      code: "ocr_unreadable_page",
+      pageNumbers: [7, 2, 7],
+    }],
+  }, 8), {
+    schemaVersion: 1,
+    reasons: [{ code: "ocr_unreadable_page", pageNumbers: [2, 7] }],
+  });
+  assert.deepEqual(normaliseDocumentReviewDetails(undefined, 8), {
+    schemaVersion: 1,
+    reasons: [],
+  });
+  assert.deepEqual(normaliseDocumentReviewDetails(undefined, 8, "dlp_request_too_large"), {
+    schemaVersion: 1,
+    reasons: [{ code: "dlp_request_too_large", pageNumbers: [] }],
+  });
+  assert.deepEqual(normaliseDocumentReviewDetails({
+    schemaVersion: 1,
+    reasons: [{ code: "ocr_unreadable_page", pageNumbers: [2] }],
+  }, 8, "ocr_unreadable_page"), {
+    schemaVersion: 1,
+    reasons: [{ code: "ocr_unreadable_page", pageNumbers: [2] }],
+  });
+});
+
+test("sidediagnostik afviser tekst, ukendte koder og sider uden for dokumentet", () => {
+  for (const invalid of [
+    { schemaVersion: 1, reasons: [{ code: "ocr_unreadable_page", pageNumbers: [0] }] },
+    { schemaVersion: 1, reasons: [{ code: "ocr_unreadable_page", pageNumbers: [9] }] },
+    { schemaVersion: 1, reasons: [{ code: "document_text", pageNumbers: [1] }] },
+    { schemaVersion: 1, reasons: [{ code: "ocr_unreadable_page", pageNumbers: [1], text: "hemmelig" }] },
+  ]) {
+    assert.throws(
+      () => normaliseDocumentReviewDetails(invalid, 8),
+      /invalid_document_review_details/,
+    );
+  }
+  assert.throws(
+    () => normaliseDocumentReviewDetails(undefined, 8, "ukendt_fejl"),
+    /invalid_document_review_details/,
+  );
 });

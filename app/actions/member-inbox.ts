@@ -12,6 +12,7 @@ import { addScreeningClaimComment, markScreeningClaimCommentsRead } from "@/app/
 import { addAdminWorkRequestComment, markWorkRequestCommentsRead } from "@/app/actions/work-management";
 import { calculateThreadResponseState } from "@/lib/admin-dashboard";
 import type { AdminMessageThread } from "@/lib/admin-message-threads";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 // De sammensatte tråd-id'er fra fetchMemberInbox/fetchAdminInbox: "contract-<uuid>" og
 // "screening-<uuid>" peger IKKE på member_message_threads. Denne helper afkoder kilden, så
@@ -246,6 +247,12 @@ export async function fetchMemberInbox() {
   });
 
   unifiedThreads.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  await recordSensitiveFlow({
+    actor: { userId: user.id, orgId, role: "member", source: "portal" }, action: "read",
+    component: "portal.member_inbox", entityType: "message_thread", targetMemberUuid: holder.id,
+    purposeCode: "member_communication", legalBasis: "gdpr_art_6_1_b",
+    dataCategories: ["message_data", "contract_data", "screening_data"], counts: { threads: unifiedThreads.length },
+  });
   return { success: true, threads: unifiedThreads };
 }
 

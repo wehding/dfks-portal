@@ -53,7 +53,7 @@ test("kontraktoprettelse og storage-oprydning kan ikke vinde samme upload-intent
       const inserted = await admin.query(
         `insert into public.rettighedshavere(user_id, full_name, email)
          values ($1, $2, $3) returning id`,
-        [actorId, "Upload cleanup race actor", `${actorId}@example.invalid`],
+        [actorId, `Upload cleanup race actor ${actorId}`, `${actorId}@example.invalid`],
       );
       rightsHolderId = inserted.rows[0].id;
     }
@@ -158,6 +158,10 @@ test("kontraktoprettelse og storage-oprydning kan ikke vinde samme upload-intent
       await admin.query(
         "delete from public.org_affiliations where org_id = $1 and rights_holder_id = $2",
         [organisationId, rightsHolderId],
+      ).catch(() => undefined);
+      await admin.query(
+        "delete from public.rettighedshavere where id = $1",
+        [rightsHolderId],
       ).catch(() => undefined);
     }
     await admin.query("delete from auth.users where id = $1", [actorId]).catch(() => undefined);

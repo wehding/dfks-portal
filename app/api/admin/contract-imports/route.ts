@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,7 @@ export async function GET(request: NextRequest) {
   const nextCursor = rows.length > limit && last
     ? Buffer.from(JSON.stringify({ createdAt: last.created_at, id: last.id })).toString("base64url")
     : null;
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "read", component: "admin.contract-imports.list", entityType: "contract_import_batches", orgIds: [caller.orgId], purposeCode: "contract_import_review", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["contract_data", "document_data"], counts: { results: batches.length } });
   return NextResponse.json({ batches, nextCursor });
 }
 
@@ -53,5 +55,6 @@ export async function POST(request: NextRequest) {
     discovered_count: discoveredCount,
   }).select("id,status,created_at").single();
   if (error || !data) return NextResponse.json({ error: "Importbatch kunne ikke oprettes" }, { status: 500 });
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "create", component: "admin.contract-imports.create", entityType: "contract_import_batches", entityId: data.id, orgIds: [caller.orgId], purposeCode: "contract_import", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["contract_data", "document_data"], counts: { discovered: discoveredCount } });
   return NextResponse.json({ batch: data });
 }

@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
 import { firstRelated } from "@/lib/supabase/relations"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -124,6 +125,13 @@ export async function getOrgPayoutThreshold(): Promise<{
             .single()
 
         if (error) throw error
+
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "read", component: "admin.rights_settlement_settings", entityType: "organisation", entityId: caller.orgId,
+            purposeCode: "rights_administration", legalBasis: "gdpr_art_6_1_f",
+            dataCategories: ["financial_data"],
+        })
 
         return {
             success: true,

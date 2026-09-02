@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireStaffModuleApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { validateRegistrationNumber } from "@/lib/production-companies";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 type LegalEntityInput = { id?: string; legalName?: string; registrationNumber?: string; address?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationStatus?: string; industryCode?: string; industryDescription?: string; companyType?: string; isPrimary?: boolean };
+
+async function auditProducerAccess(db: ReturnType<typeof createServiceClient>, auth: { userId: string; orgId: string; role: string }, id: string, component: string, action: "read" | "update") {
+  const { data: contracts } = await db.from("contracts").select("rights_holder_id").eq("org_id", auth.orgId).eq("employer_id", id);
+  await recordSensitiveFlow({ actor: { userId: auth.userId, orgId: auth.orgId, role: auth.role, source: "admin" }, action, component, entityType: "employers", entityId: id, targetMemberUuids: (contracts ?? []).map(contract => contract.rights_holder_id).filter((memberId): memberId is string => Boolean(memberId)), orgIds: [auth.orgId], purposeCode: "producer_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["company_data", "contact_data", "contract_data", "union_membership_data"] });
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireStaffModuleApi("producers", "read");
@@ -43,6 +49,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       };
     });
     const availableProducerTypes = (producerTypeResult.data ?? []).map(option => Array.isArray(option.producer_types) ? option.producer_types[0] : option.producer_types).filter(Boolean);
+    await auditProducerAccess(db, auth, id, "admin.producers.editor", "read");
     return NextResponse.json({
       data: {
         ...row,
@@ -57,6 +64,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (type === "legal_entities") {
     const result = await db.from("employer_legal_entities").select("id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at").eq("employer_id", id).is("archived_at", null).order("is_primary", { ascending: false }).order("legal_name");
     if (result.error) return NextResponse.json({ error: "Juridiske enheder kunne ikke hentes" }, { status: 500 });
+    await auditProducerAccess(db, auth, id, "admin.producers.legal-entities", "read");
     return NextResponse.json({ data: result.data ?? [] });
   }
   const result = type === "works"
@@ -67,9 +75,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       ? await db.from("works").select("id,title,type,year,status,created_at").eq("org_id", auth.orgId).eq("employer_id", id).order("created_at", { ascending: false })
       : await db.from("contracts").select("id,working_title,type,status,contract_date,created_at,rettighedshavere(full_name)").eq("org_id", auth.orgId).eq("employer_id", id).order("created_at", { ascending: false });
     if (fallback.error) return NextResponse.json({ error: "Detaljer kunne ikke hentes" }, { status: 500 });
+    await auditProducerAccess(db, auth, id, `admin.producers.${type}`, "read");
     return NextResponse.json({ data: fallback.data ?? [] });
   }
   if (result.error) return NextResponse.json({ error: "Detaljer kunne ikke hentes" }, { status: 500 });
+  await auditProducerAccess(db, auth, id, `admin.producers.${type}`, "read");
   return NextResponse.json({ data: result.data ?? [] });
 }
 
@@ -185,5 +195,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     actor_id: auth.userId,
   });
   if (typeResult.error) return NextResponse.json({ error: "Producenttyperne kunne ikke gemmes." }, { status: 409 });
+  await auditProducerAccess(db, auth, id, "admin.producers.update", "update");
   return NextResponse.json({ ok: true });
 }
