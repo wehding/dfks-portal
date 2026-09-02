@@ -71,6 +71,7 @@ import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import { normalizeCompanyName, type ExternalProductionCompany, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
 import { WorkShareReconciliationTab } from "@/components/admin/work-share-reconciliation-tab";
+import { LegacyWorkDeclarationStatus } from "@/components/admin/legacy-work-declaration-status";
 import { countAdminShareTasks, type fetchAdminShareQueue } from "@/app/actions/work-share-cases";
 import { normalizeWorkEditorRole, resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
@@ -189,6 +190,7 @@ type WorkRow = {
   title: string;
   type: string;
   year: number | null;
+  production_year?: number | null;
   duration_minutes: number | null;
   season_count: number | null;
   episode_count: number | null;
@@ -233,6 +235,7 @@ type WorkForm = {
   title: string;
   type: string;
   year: string;
+  production_year: string;
   duration_minutes: string;
   season_count: string;
   episode_count: string;
@@ -263,6 +266,7 @@ type AddWorkForm = {
   title: string;
   type: string;
   year: string;
+  production_year: string;
   duration_minutes: string;
   season_count: string;
   episode_count: string;
@@ -300,6 +304,7 @@ type AdminCreateWorkData = {
   title: string;
   type: string;
   year: number | null;
+  production_year: number | null;
   duration_minutes: number | null;
   season_count: number | null;
   episode_count: number | null;
@@ -560,6 +565,7 @@ function toForm(work: WorkRow): WorkForm {
     title: work.title ?? "",
     type: work.type ?? "",
     year: work.year?.toString() ?? "",
+    production_year: work.production_year?.toString() ?? "",
     duration_minutes: work.duration_minutes?.toString() ?? "",
     season_count: work.season_count?.toString() ?? "",
     episode_count: work.episode_count?.toString() ?? "",
@@ -690,6 +696,7 @@ function defaultAddForm(): AddWorkForm {
     title: "",
     type: "spillefilm",
     year: "",
+    production_year: "",
     duration_minutes: "",
     season_count: "",
     episode_count: "",
@@ -1440,6 +1447,7 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
           title: editForm.title,
           type: editForm.type,
           year: nullableNumber(editForm.year),
+          production_year: nullableNumber(editForm.production_year),
           duration_minutes: nullableNumber(editForm.duration_minutes),
           season_count: nullableNumber(editForm.season_count),
           episode_count: nullableNumber(editForm.episode_count),
@@ -1640,6 +1648,7 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
           title: editForm.title,
           type: editForm.type,
           year: nullableNumber(editForm.year),
+          production_year: nullableNumber(editForm.production_year),
           duration_minutes: nullableNumber(editForm.duration_minutes),
           season_count: nullableNumber(editForm.season_count),
           episode_count: nullableNumber(editForm.episode_count),
@@ -1962,6 +1971,7 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
         title: addForm.title,
         type: addForm.type,
         year: nullableNumber(addForm.year),
+        production_year: nullableNumber(addForm.production_year),
         duration_minutes: nullableNumber(addForm.duration_minutes),
         season_count: nullableNumber(addForm.season_count),
         episode_count: nullableNumber(addForm.episode_count),
@@ -2624,6 +2634,9 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                   </Button>
                 </div>
               </div>
+              <InfoPanel title="Tro-og-loveerklæringer">
+                <LegacyWorkDeclarationStatus workId={editing.parent_work_id ?? editing.id} />
+              </InfoPanel>
               <InfoPanel title="Kommentarer og requests">
                 {requests.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Ingen brugerkommentarer.</p>
@@ -2773,6 +2786,7 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                     <DiffField diff={activeDiffMap.year}>
                       <Field label="Premiereår" source={editForm.field_sources.year}><Input value={editForm.year} onChange={e => setEditForm({ ...editForm, year: e.target.value, field_sources: { ...editForm.field_sources, year: "manual" } })} /></Field>
                     </DiffField>
+                    <Field label="Produktionsår"><Input inputMode="numeric" value={editForm.production_year} onChange={e => setEditForm({ ...editForm, production_year: e.target.value.replace(/\D/g, "") })} /></Field>
                     <DiffField diff={activeDiffMap.duration_minutes}>
                       <Field label="Varighed"><Input value={editForm.duration_minutes} onChange={e => setEditForm({ ...editForm, duration_minutes: e.target.value })} /></Field>
                     </DiffField>
@@ -3333,6 +3347,7 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                     </Select>
                   </Field>
                   <Field label="Premiereår"><Input value={addForm.year} onChange={e => setAddForm({ ...addForm, year: e.target.value })} /></Field>
+                  <Field label="Produktionsår"><Input inputMode="numeric" value={addForm.production_year} onChange={e => setAddForm({ ...addForm, production_year: e.target.value.replace(/\D/g, "") })} /></Field>
                   <Field label="Varighed"><Input value={addForm.duration_minutes} onChange={e => setAddForm({ ...addForm, duration_minutes: e.target.value })} /></Field>
                   {addManualMode && addIsSeries && <>
                     <SeasonStepper value={Number(addSeasonNumber) || 1} onChange={season => { setAddSeasonNumber(String(season)); setAddSelectedEpisodes([]); }} />

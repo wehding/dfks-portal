@@ -3,6 +3,7 @@ export type SeasonGroupingRow = {
   title: string;
   type: string;
   year: number | null;
+  production_year?: number | null;
   poster_url?: string | null;
   status?: string | null;
   created_at?: string | null;
@@ -20,6 +21,7 @@ export type SeasonGroupingRow = {
     title: string;
     type?: string | null;
     year?: number | null;
+    production_year?: number | null;
     poster_url?: string | null;
   } | null;
 };
@@ -40,6 +42,7 @@ export type SeasonWorkGroup<T extends SeasonGroupingRow> = {
   title: string;
   type: string;
   year: number | null;
+  productionYear: number | null;
   posterUrl: string | null;
   episodeCount: number;
   workIds: string[];
@@ -114,7 +117,8 @@ export function groupWorksBySeason<T extends SeasonGroupingRow>(rows: T[]): Work
       seasonNumber,
       title: row.parent?.title || deriveSeriesTitle(row.title),
       type: row.parent?.type || row.type,
-      year: row.parent?.year ?? row.year,
+      year: row.year ?? row.parent?.year ?? null,
+      productionYear: row.production_year ?? row.parent?.production_year ?? null,
       posterUrl: row.parent?.poster_url ?? row.poster_url ?? null,
       episodeCount: 0,
       workIds: [row.id],
