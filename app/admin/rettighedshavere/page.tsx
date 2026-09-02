@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Fragment, type ReactNode } from "react"
 import Image from "next/image"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown, GitMerge } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal } from "lucide-react"
 import { getDfksMemberImportPreview, getDfksMembersSyncStatus, importDfksMembersToRightsHolders, syncDfksMembers } from "@/app/actions/dfks-members"
-import { archiveRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHolders } from "@/app/actions/rights-holder-admin"
+import { archiveRightsHolders, mergeDuplicateRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHolders } from "@/app/actions/rights-holder-admin"
 import { ListSkeleton, TableSkeleton } from "@/components/ui/data-skeletons"
 import { RightsHolderRelations } from "@/components/admin/rights-holder-relations"
 import { ListResultSummary } from "@/components/list-result-summary"
@@ -220,6 +220,10 @@ export default function RettighedshavereAdminPage() {
     const [deleteContracts, setDeleteContracts] = useState(false)
     const [deleteUnsharedWorks, setDeleteUnsharedWorks] = useState(true)
     const [deleteConfirmation, setDeleteConfirmation] = useState("")
+    const [mergeOpen, setMergeOpen] = useState(false)
+    const [mergePrimaryId, setMergePrimaryId] = useState("")
+    const [mergeConfirmation, setMergeConfirmation] = useState("")
+    const [merging, setMerging] = useState(false)
     const [importOpen, setImportOpen] = useState(false)
     const [importLoading, setImportLoading] = useState(false)
     const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([])
@@ -523,6 +527,14 @@ export default function RettighedshavereAdminPage() {
             return result * direction
         })
     }, [rows, orgId, filter, search, countsByRightsHolder, sortKey, sortDirection, canSeeAllOrganisations])
+    const selectedMergeHolders = useMemo(
+        () => visible.filter(holder => selectedIds.has(holder.id)),
+        [visible, selectedIds],
+    )
+    const mergeHasConflictingUsers = selectedMergeHolders.length === 2
+        && Boolean(selectedMergeHolders[0].user_id)
+        && Boolean(selectedMergeHolders[1].user_id)
+        && selectedMergeHolders[0].user_id !== selectedMergeHolders[1].user_id
     const visibleIds = visible.map(rh => rh.id)
     const selectedVisibleCount = visibleIds.filter(id => selectedIds.has(id)).length
     const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
@@ -705,6 +717,30 @@ export default function RettighedshavereAdminPage() {
         }
         setPermanentDeleteOpen(false)
         setDeleteConfirmation("")
+        setSelectedIds(new Set())
+        await load(search.trim())
+    }
+
+    function openMergeSelected() {
+        if (selectedMergeHolders.length !== 2) return
+        setMergePrimaryId(selectedMergeHolders[0].id)
+        setMergeConfirmation("")
+        setMergeOpen(true)
+    }
+
+    async function handleMergeSelected() {
+        const duplicate = selectedMergeHolders.find(holder => holder.id !== mergePrimaryId)
+        if (!duplicate || mergeConfirmation !== "SAMMENLÆG") return
+        setMerging(true)
+        const result = await mergeDuplicateRightsHolders(mergePrimaryId, duplicate.id)
+        setMerging(false)
+        if (!result.success) {
+            toast.error(result.error)
+            return
+        }
+        toast.success("Rettighedshaverprofilerne er sammenlagt")
+        setMergeOpen(false)
+        setMergeConfirmation("")
         setSelectedIds(new Set())
         await load(search.trim())
     }
@@ -960,6 +996,11 @@ export default function RettighedshavereAdminPage() {
                     <div className="text-sm font-medium">{selectedIds.size} valgt</div>
                     <div className="flex flex-wrap gap-2">
                         <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
+                        {canSeeAllOrganisations && selectedIds.size === 2 && (
+                            <Button size="sm" variant="outline" onClick={openMergeSelected}>
+                                <GitMerge className="mr-1 h-4 w-4" />Sammenlæg dubletter
+                            </Button>
+                        )}
                         <Button size="sm" variant="outline" onClick={handleBulkSendInvitation} disabled={bulkSendingInvitations}>
                             {bulkSendingInvitations ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Mail className="mr-1 h-4 w-4" />}
                             Send invitation
@@ -1751,6 +1792,55 @@ export default function RettighedshavereAdminPage() {
             </Dialog>
 
             {/* Portal adgang dialog */}
+            <Dialog open={mergeOpen} onOpenChange={open => { if (!open && !merging) setMergeOpen(false) }}>
+                <DialogContent className="max-w-xl">
+                    <DialogHeader>
+                        <DialogTitle>Sammenlæg dubletprofiler</DialogTitle>
+                        <DialogDescription>
+                            Vælg den profil, der skal bevares. Relationer og manglende oplysninger flyttes til den valgte profil; den anden profil slettes permanent.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        {selectedMergeHolders.map(holder => {
+                            const status = invitationStatus(holder)
+                            return (
+                                <label key={holder.id} className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${mergePrimaryId === holder.id ? "border-primary bg-primary/5" : ""}`}>
+                                    <input type="radio" name="merge-primary" value={holder.id} checked={mergePrimaryId === holder.id} onChange={() => setMergePrimaryId(holder.id)} className="mt-1" />
+                                    <span className="min-w-0">
+                                        <span className="block font-medium">{holder.full_name}</span>
+                                        <span className="block truncate text-sm text-muted-foreground">{holder.email ?? "Ingen e-mail"}</span>
+                                        <span className="block text-xs text-muted-foreground">{holder.organisation_names.join(", ") || "Ingen organisation"} · {status.label}</span>
+                                    </span>
+                                </label>
+                            )
+                        })}
+                        {mergeHasConflictingUsers ? (
+                                <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                                    Begge profiler har hver sin loginbruger. De kan ikke sammenlægges automatisk.
+                                </p>
+                            ) : null}
+                        <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                            Kontrakter, værker, medlemskaber og sikre relationer bevares. Sammenlægningen afvises uden ændringer ved modstridende login-, CPR-, bank-, person-id-, medlems-, arve-, økonomi- eller fordelingsdata.
+                        </div>
+                        <div className="space-y-1">
+                            <Label>Skriv SAMMENLÆG for at bekræfte</Label>
+                            <Input value={mergeConfirmation} onChange={event => setMergeConfirmation(event.target.value)} autoComplete="off" />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" disabled={merging} onClick={() => setMergeOpen(false)}>Annuller</Button>
+                        <Button
+                            variant="destructive"
+                            disabled={merging || mergeConfirmation !== "SAMMENLÆG" || mergeHasConflictingUsers}
+                            onClick={() => void handleMergeSelected()}
+                        >
+                            {merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Sammenlæg profiler
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             <Dialog open={!!portalAction} onOpenChange={open => { if (!open) { setPortalAction(null); setPortalLink(null); setPortalEmailStatus(null) } }}>
                 <DialogContent className="max-w-md">
                     <DialogHeader>
