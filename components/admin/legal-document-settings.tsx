@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
-import { FileText, Loader2, Save, Send } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Braces, ChevronDown, FileText, Loader2, Save, Send } from "lucide-react";
 import { toast } from "sonner";
 import { getOrganisationLegalDocuments, publishLegalDocumentVersion, saveLegalDocumentDraft } from "@/app/actions/legal-documents";
 import {
@@ -16,9 +16,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { BASIC_TEXT_PLACEHOLDERS, insertTextAtSelection, unknownBasicPlaceholders } from "@/lib/organisation-text-templates";
 
 type LegalDocumentSettingsRow = {
   documentType: LegalDocumentType;
@@ -50,6 +51,9 @@ export function LegalDocumentSettings() {
   const [audience, setAudience] = useState<LegalDocumentAudience>("member");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [activeField, setActiveField] = useState<"title" | "body">("body");
+  const titleRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   const selected = useMemo(
     () => rows.find(row => row.documentType === documentType && row.audience === audience) ?? null,
@@ -61,7 +65,8 @@ export function LegalDocumentSettings() {
   const activeHash = selected?.active.content_hash ?? "";
   const currentHash = editableSource?.content_hash ?? "";
   const hasChanges = !editableSource || title !== editableSource.title || body !== editableSource.body;
-  const publishDisabled = !body.trim() || (!hasChanges && currentHash === activeHash);
+  const unknownPlaceholders = unknownBasicPlaceholders(title, body);
+  const publishDisabled = !body.trim() || unknownPlaceholders.length > 0 || (!hasChanges && currentHash === activeHash);
 
   useEffect(() => {
     let active = true;
@@ -99,6 +104,7 @@ export function LegalDocumentSettings() {
   }
 
   function changeSelection(nextDocumentType: LegalDocumentType, nextAudience: LegalDocumentAudience) {
+    if (hasChanges && !window.confirm("Du har ændringer, der ikke er gemt. Vil du skifte tekst uden at gemme?")) return;
     setDocumentType(nextDocumentType);
     setAudience(nextAudience);
     const source = editorSource(rows, nextDocumentType, nextAudience);
@@ -106,6 +112,20 @@ export function LegalDocumentSettings() {
       setTitle(source.title);
       setBody(source.body);
     }
+  }
+
+  function insertPlaceholder(key: string) {
+    const token = `{${key}}`;
+    const ref = activeField === "title" ? titleRef : bodyRef;
+    const value = activeField === "title" ? title : body;
+    const element = ref.current;
+    const inserted = insertTextAtSelection(value, token, element?.selectionStart ?? value.length, element?.selectionEnd ?? value.length);
+    if (activeField === "title") setTitle(inserted.value);
+    else setBody(inserted.value);
+    requestAnimationFrame(() => {
+      ref.current?.focus();
+      ref.current?.setSelectionRange(inserted.cursor, inserted.cursor);
+    });
   }
 
   function saveDraft() {
@@ -145,20 +165,22 @@ export function LegalDocumentSettings() {
   }
 
   return (
-    <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <FileText className="h-4 w-4" />
-            Brugerrettigheder
-          </div>
+    <details open className="group rounded-lg border bg-card shadow-sm">
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-4 p-4 marker:hidden sm:p-5 [&::-webkit-details-marker]:hidden">
+        <div className="flex gap-3">
+          <FileText className="mt-0.5 h-5 w-5 text-muted-foreground" />
+          <div>
           <h2 className="text-base font-semibold">Brugerrettigheder og juridiske tekster</h2>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Rediger juridiske tekster. Onboardingtekster kræver ny godkendelse ved næste login; tro-og-loveerklæringen accepteres kun i opgaven for ældre værker.
           </p>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={saveDraft} disabled={!schemaReady || isPending || !body.trim() || !hasChanges}>
+        <ChevronDown className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="border-t p-4 sm:p-5">
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="outline" onClick={saveDraft} disabled={!schemaReady || isPending || !body.trim() || !hasChanges || unknownPlaceholders.length > 0}>
             {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Gem kladde
           </Button>
@@ -167,7 +189,6 @@ export function LegalDocumentSettings() {
             Publicér ny version
           </Button>
         </div>
-      </div>
 
       {!schemaReady && (
         <Alert className="mt-5" variant="destructive">
@@ -212,25 +233,27 @@ export function LegalDocumentSettings() {
         </div>
       )}
 
-      <div className="mt-5 grid gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="legal-document-title">Titel</Label>
-          <Input id="legal-document-title" value={title} onChange={event => setTitle(event.target.value)} />
+      <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_220px]">
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="legal-document-title">Titel</Label>
+            <Input ref={titleRef} id="legal-document-title" value={title} onFocus={() => setActiveField("title")} onSelect={() => setActiveField("title")} onChange={event => setTitle(event.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="legal-document-body">Tekst</Label>
+            <RichTextEditor id="legal-document-body" textareaRef={bodyRef} value={body} onFocus={() => setActiveField("body")} onSelect={() => setActiveField("body")} onChange={setBody} rows={18} className="min-h-[420px] text-sm leading-6" />
+            <p className="text-xs text-muted-foreground">Markér tekst og brug værktøjslinjen til formatering. Links kan skrives som fulde URL&apos;er, fx https://danskfilmklipperselskab.dk/privatlivspolitik/.</p>
+            {unknownPlaceholders.length > 0 && <p className="text-sm text-destructive">Ukendte dynamiske felter: {unknownPlaceholders.map(value => `{${value}}`).join(", ")}</p>}
+          </div>
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="legal-document-body">Tekst</Label>
-          <Textarea
-            id="legal-document-body"
-            value={body}
-            onChange={event => setBody(event.target.value)}
-            rows={18}
-            className="min-h-[420px] font-mono text-sm leading-6"
-          />
-          <p className="text-xs text-muted-foreground">
-            Brug almindelig tekst. Links kan skrives som fulde URL&apos;er, fx https://danskfilmklipperselskab.dk/privatlivspolitik/.
-          </p>
-        </div>
+        <aside className="h-fit rounded-md border bg-muted/20 p-3">
+          <div className="flex items-center gap-2 text-sm font-medium"><Braces className="h-4 w-4" />Indsæt dynamisk felt</div>
+          <div className="mt-3 flex flex-wrap gap-2 lg:flex-col lg:items-stretch">
+            {BASIC_TEXT_PLACEHOLDERS.map(key => <Button key={key} type="button" variant="ghost" size="sm" className="justify-start font-mono text-xs" onMouseDown={event => event.preventDefault()} onClick={() => insertPlaceholder(key)}>{`{${key}}`}</Button>)}
+          </div>
+        </aside>
       </div>
-    </section>
+      </div>
+    </details>
   );
 }

@@ -22,6 +22,7 @@ import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 import { seasonLookupMessage } from "@/lib/season-selection";
 import { LEGAL_DOCUMENT_TYPE_LABELS, PRIVACY_POLICY_URL, type LegalDocumentRecord } from "@/lib/legal-documents";
 import { SourcePictogram } from "@/components/source-pictogram";
+import { RichTextContent } from "@/components/ui/rich-text-content";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -1076,9 +1077,7 @@ export default function OnboardingClient({
                           <h3 style={{ margin: "0 0 8px", fontSize: "14px", fontWeight: 700, color: "var(--on-surface)" }}>
                             {LEGAL_DOCUMENT_TYPE_LABELS[document.document_type]}
                           </h3>
-                          <div style={{ whiteSpace: "pre-wrap", fontSize: "13px", lineHeight: 1.65, color: "var(--on-surface-variant)" }}>
-                            {document.body}
-                          </div>
+                          <RichTextContent value={document.body} className="text-[13px] leading-relaxed text-[var(--on-surface-variant)]" />
                         </section>
                       ))}
                     </div>

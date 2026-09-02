@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertCircle, CheckCircle2, Circle, Clock3, FileSignature, FileText, ListTodo, MessageSquare, MonitorPlay, Upload } from "lucide-react";
+import { AlertCircle, Clock3, Coins, FileSignature, FileText, ListTodo, MessageSquare, MonitorPlay, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MemberInboxPanel } from "@/components/portal/member-inbox-panel";
 import { SalaryStatsCard, type SalaryStatPoint } from "@/components/portal/salary-stats-card";
@@ -10,16 +10,17 @@ import { EXPERIENCE_GROUPS, experienceGroupAt, type ExperienceGroup } from "@/li
 import { normalizeStatisticsMinimumGroupSize } from "@/lib/statistics-privacy";
 import { medianWeeklySalary, memberSalaryBenchmark, salaryProductionGroup, type SalaryProductionGroup } from "@/lib/member-statistics";
 import { createListLoadTimer } from "@/lib/server/list-load-timing";
-import type { LegacyDeclarationTask } from "@/lib/work-documentation";
 
 type DashboardTaskOverview = {
-  works_missing_contract_count: number | string;
   contracts_missing_work_count: number | string;
   review_work_count: number | string;
   share_task_count: number | string;
   unread_contract_count: number | string;
   pending_work_request_count: number | string;
   pending_screening_count: number | string;
+  contract_required_work_count: number | string;
+  legacy_declaration_task_count: number | string;
+  economy_overview_viewed_at: string | null;
   share_tasks: Array<{ id: string; caseId: string; title: string | null }> | null;
   unread_contracts: Array<{ contractId: string; title: string | null }> | null;
   pending_work_requests: Array<{ id: string }> | null;
@@ -29,29 +30,28 @@ type DashboardTaskOverview = {
 export async function DashboardTasksSection({ orgId, rightsHolderId, userId }: { orgId: string; rightsHolderId: string; userId: string }) {
   const timer = createListLoadTimer("member-dashboard-tasks");
   const db = createServiceClient();
-  const [taskResult, holderResult, contractCountResult, validatedCountResult, declarationResult, contractRequiredResult] = await Promise.all([
-    db.rpc("get_member_dashboard_task_overview", { p_org_id: orgId, p_rights_holder_id: rightsHolderId, p_user_id: userId, p_preview_limit: 5 }),
-    db.from("rettighedshavere").select("full_name,email,phone,address,dfi_person_id,tmdb_person_id").eq("id", rightsHolderId).maybeSingle(),
-    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).is("superseded_by_contract_id", null),
-    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).eq("status", "valideret").is("superseded_by_contract_id", null),
-    db.rpc("list_member_legacy_declaration_tasks", { p_org_id: orgId, p_rights_holder_id: rightsHolderId }),
-    db.rpc("count_member_contract_required_works", { p_org_id: orgId, p_rights_holder_id: rightsHolderId }),
-  ]);
+  const taskResult = await db.rpc("get_member_dashboard_overview_v2", {
+    p_org_id: orgId,
+    p_rights_holder_id: rightsHolderId,
+    p_user_id: userId,
+    p_preview_limit: 5,
+  });
   const { data, error } = taskResult;
-  if (error || holderResult.error || contractCountResult.error || validatedCountResult.error || declarationResult.error || contractRequiredResult.error) return <DashboardSectionError title="Dine opgaver kunne ikke hentes" stage="first-row" />;
+  if (error) return <DashboardSectionError title="Dine opgaver kunne ikke hentes" stage="first-row" />;
   const overview = ((Array.isArray(data) ? data[0] : data) ?? {}) as DashboardTaskOverview;
   timer.mark("queries");
-  const declarationTaskCount = new Set(((declarationResult.data ?? []) as Array<{ root_work_id: LegacyDeclarationTask["rootWorkId"] }>).map(task => task.root_work_id)).size;
-  const worksWithoutContractCount = Number(contractRequiredResult.data ?? 0);
+  const declarationTaskCount = Number(overview.legacy_declaration_task_count ?? 0);
+  const worksWithoutContractCount = Number(overview.contract_required_work_count ?? 0);
   const contractsWithoutWorkCount = Number(overview.contracts_missing_work_count ?? 0);
   const reviewWorkCount = Number(overview.review_work_count ?? 0);
   const shareTaskCount = Number(overview.share_task_count ?? 0);
   const unreadContractCount = Number(overview.unread_contract_count ?? 0);
   const actionItems = [
     ...(declarationTaskCount ? [{ key: "legacy-declaration", href: "/portal/mine-vaerker?declaration=1", icon: FileSignature, title: `${declarationTaskCount} ældre ${declarationTaskCount === 1 ? "værk mangler" : "værker mangler"} tro-og-loveerklæring`, text: "Bekræft samlet de titler, du har arbejdet på." }] : []),
-    ...(worksWithoutContractCount ? [{ key: "works-missing-contract", href: "/portal/mine-kontrakter", icon: Upload, title: `${worksWithoutContractCount} værk${worksWithoutContractCount === 1 ? "" : "er"} mangler kontrakt`, text: "Gå til Mine kontrakter og upload kontrakterne." }] : []),
+    ...(worksWithoutContractCount ? [{ key: "works-missing-contract", href: "/portal/mine-kontrakter?upload=true", icon: Upload, title: "Upload kontrakter", text: `${worksWithoutContractCount} kontraktkrævende værk${worksWithoutContractCount === 1 ? "" : "er"} mangler en uploadet kontrakt.` }] : []),
     ...(contractsWithoutWorkCount ? [{ key: "contracts-missing-work", href: "/portal/mine-kontrakter", icon: FileText, title: `${contractsWithoutWorkCount} kontrakt${contractsWithoutWorkCount === 1 ? "" : "er"} uden værk tilknyttet`, text: "Gå til Mine kontrakter og tilknyt de korrekte værker." }] : []),
-    ...(reviewWorkCount ? [{ key: "work-review", href: "/portal/mine-vaerker?review=1", icon: ListTodo, title: `${reviewWorkCount} værk${reviewWorkCount === 1 ? "" : "er"} mangler gennemgang`, text: "Bekræft afsnit og eventuelle medklippere på dine værker." }] : []),
+    ...(reviewWorkCount ? [{ key: "work-review", href: "/portal/mine-vaerker?review=1", icon: ListTodo, title: "Bekræft værker", text: `${reviewWorkCount} værk${reviewWorkCount === 1 ? "" : "er"} mangler gennemgang af afsnit eller medklippere.` }] : []),
+    ...(!overview.economy_overview_viewed_at ? [{ key: "rights-overview", href: "/portal/okonomi", icon: Coins, title: "Tjek rettigheder", text: "Åbn Økonomi og se dine registrerede rettigheder og udbetalinger." }] : []),
     ...((overview.share_tasks ?? []).map(task => ({ key: `share-task-${task.id}`, href: `/portal/mine-vaerker?shareTask=${task.caseId}`, icon: ListTodo, title: task.title ?? "Arbejdsandel på et værk", text: "Du er angivet som medklipper. Angiv din egen foreløbige procent, eller oplys at du ikke arbejdede på værket." }))),
     ...((overview.unread_contracts ?? []).map(contract => ({ key: `message-${contract.contractId}`, href: `/portal/mine-kontrakter?contract=${contract.contractId}`, icon: MessageSquare, title: contract.title || "Ny kontraktbesked", text: "Læs det nye svar fra DFKS." }))),
   ];
@@ -60,27 +60,10 @@ export async function DashboardTasksSection({ orgId, rightsHolderId, userId }: {
     ...(overview.pending_screenings ?? []).map(claim => ({ key: `claim-${claim.id}`, href: `/portal/mine-visninger?claim=${claim.id}`, icon: MonitorPlay, title: claim.title || "Visningsindberetning", text: "Din indberetning afventer DFKS." })),
   ];
   const actionCount = (declarationTaskCount ? 1 : 0) + (worksWithoutContractCount ? 1 : 0) + (contractsWithoutWorkCount ? 1 : 0)
-    + (reviewWorkCount ? 1 : 0) + shareTaskCount + unreadContractCount;
+    + (reviewWorkCount ? 1 : 0) + (!overview.economy_overview_viewed_at ? 1 : 0) + shareTaskCount + unreadContractCount;
   const waitingCount = Number(overview.pending_work_request_count ?? 0) + Number(overview.pending_screening_count ?? 0);
-  const holder = holderResult.data;
-  const checklist = [
-    { label: "Tjek profil og DFI", href: "/portal/min-profil", complete: Boolean(holder?.full_name?.trim() && holder.email?.trim() && holder.phone?.trim() && holder.address?.trim() && (holder.dfi_person_id || holder.tmdb_person_id)) },
-    { label: "Bekræft værker", href: "/portal/mine-vaerker?review=1", complete: reviewWorkCount === 0 },
-    { label: "Upload kontrakter", href: "/portal/mine-kontrakter?upload=true", complete: Number(contractCountResult.count ?? 0) > 0 },
-    { label: "Tjek rettigheder", href: "/portal/mine-kontrakter", complete: Number(validatedCountResult.count ?? 0) > 0 },
-  ];
-  const showChecklist = checklist.some(item => !item.complete);
   timer.finish({ actionCount, waitingCount });
   return <>
-    {showChecklist && <Card className="border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-950/20">
-      <CardHeader><CardTitle className="flex items-center gap-2"><ListTodo className="h-5 w-5" />Kom godt i gang</CardTitle></CardHeader>
-      <CardContent><ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{checklist.map((item, index) => <li key={item.label}>
-        <Link href={item.href} className="flex h-full items-start gap-2 rounded-md border bg-background p-3 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          {item.complete ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
-          <span><span className="block text-xs text-muted-foreground">Trin {index + 1}</span><span className="font-medium">{item.label}</span></span>
-        </Link>
-      </li>)}</ol></CardContent>
-    </Card>}
     <div className="grid gap-6 lg:grid-cols-2">
       <DashboardCard title="Kræver handling" count={actionCount} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
       <DashboardCard title="Afventer DFKS" count={waitingCount} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />

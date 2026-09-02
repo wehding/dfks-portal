@@ -9,8 +9,8 @@ const uploadSource = fs.readFileSync("app/portal/mine-kontrakter/UploadDialog.ts
 test("Mine værker bruger totaler for hele medlemslisten", () => {
   assert.match(pageSource, /totalWorks: overview\.totalCount/);
   assert.match(pageSource, /p_status: "hasContract"/);
-  assert.match(pageSource, /count_member_contract_required_works/);
-  assert.match(pageSource, /get_member_dashboard_task_overview/);
+  assert.match(pageSource, /get_member_dashboard_overview_v2/);
+  assert.match(pageSource, /contract_required_work_count/);
   assert.doesNotMatch(clientSource, /const totalWorks = assignments\.reduce/);
 });
 

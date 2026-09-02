@@ -26,15 +26,15 @@ const candidates: Candidate[] = (registry.classificationGroups ?? []).flatMap(gr
   } as Candidate)),
 );
 
-test("alle 80 scannerfund har en entydig disposition", () => {
-  assert.equal(candidates.length, 80);
-  assert.equal(new Set(candidates.map(candidate => candidate.path)).size, 80);
+test("alle 81 scannerfund har en entydig disposition", () => {
+  assert.equal(candidates.length, 81);
+  assert.equal(new Set(candidates.map(candidate => candidate.path)).size, 81);
   assert.deepEqual(
     Object.fromEntries(["instrument", "delegate", "exclude"].map(disposition => [
       disposition,
       candidates.filter(candidate => candidate.disposition === disposition).length,
     ])),
-    { instrument: 68, delegate: 10, exclude: 2 },
+    { instrument: 68, delegate: 11, exclude: 2 },
   );
 });
 
@@ -51,7 +51,7 @@ test("delegationer peger på en eksisterende semantisk auditimplementation", () 
   for (const candidate of candidates.filter(item => item.disposition === "delegate")) {
     assert.ok(candidate.auditImplementation, `${candidate.path}: auditImplementation mangler`);
     const implementation = fs.readFileSync(path.join(root, candidate.auditImplementation!), "utf8");
-    assert.match(implementation, /recordAuditEvent\(|withMemberDataAudit\(/, `${candidate.path}: semantisk audit kan ikke findes`);
+    assert.match(implementation, /recordAuditEvent\(|withMemberDataAudit\(|recordSensitiveFlow\(/, `${candidate.path}: semantisk audit kan ikke findes`);
   }
 });
 

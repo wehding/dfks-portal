@@ -1,8 +1,8 @@
 export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchMemberWorkOverview } from "@/app/actions/member-works";
 import MineVaerkerClient from "./MineVaerkerClient";
 import type { Assignment, BroadcasterLogo } from "./MineVaerkerClient";
 import type { Contract } from "../mine-kontrakter/MineKontrakterClient";
@@ -11,13 +11,14 @@ import { memberOverviewItemsToAssignments } from "@/lib/member-work-overview";
 import type { MemberOverviewItem } from "@/lib/member-work-overview";
 import { normalizedPage, normalizedPageSize } from "@/lib/list-query";
 import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
-import { fetchLegacyDeclarationTasks } from "@/app/actions/legacy-work-declarations";
-import { LegacyDeclarationPanel } from "./LegacyDeclarationPanel";
+import { loadMemberWorkOverview } from "@/lib/server/member-work-overview";
+import { LegacyDeclarationSection } from "./LegacyDeclarationSection";
 
 type PageSearchParams = Promise<Record<string, string | string[] | undefined>>;
 const stringParam = (value: string | string[] | undefined, fallback = "") => Array.isArray(value) ? value[0] ?? fallback : value ?? fallback;
 
 type MemberDashboardTaskSummary = {
+  contract_required_work_count?: number | string;
   review_work_count?: number | string;
   share_task_count?: number | string;
   share_tasks?: Array<{ caseId?: string | null }> | null;
@@ -44,14 +45,17 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
     sortKey: stringParam(query.sort, "date"),
     sortDir: stringParam(query.direction, "desc") === "asc" ? "asc" as const : "desc" as const,
   };
-  const [rightsHolderResult, overview, broadcastersResult, legacyDeclarations, contractedOverview, contractRequiredResult, dashboardTaskResult] = await Promise.all([
+  const [rightsHolderResult, overview, broadcastersResult, contractedOverview, dashboardTaskResult] = await Promise.all([
     db.from("rettighedshavere")
       .select("id,full_name,dfi_person_id")
       .eq("id", context.rightsHolderId)
       .eq("user_id", context.userId)
       .maybeSingle(),
-    fetchMemberWorkOverview({
+    loadMemberWorkOverview({
+      orgId: context.orgId,
       rightsHolderId: context.rightsHolderId,
+      userId: context.userId,
+    }, {
       page,
       pageSize,
       search: initialQuery.search,
@@ -61,8 +65,7 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
       sortDir: initialQuery.sortDir,
     }),
     db.from("broadcasters").select("name,logo_path").order("name", { ascending: true }),
-    fetchLegacyDeclarationTasks(),
-    db.rpc("list_member_work_page", {
+    db.rpc("list_member_work_page_v2", {
       p_org_id: context.orgId,
       p_rights_holder_id: context.rightsHolderId,
       p_search: "",
@@ -73,11 +76,7 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
       p_page: 1,
       p_page_size: 1,
     }),
-    db.rpc("count_member_contract_required_works", {
-      p_org_id: context.orgId,
-      p_rights_holder_id: context.rightsHolderId,
-    }),
-    db.rpc("get_member_dashboard_task_overview", {
+    db.rpc("get_member_dashboard_overview_v2", {
       p_org_id: context.orgId,
       p_rights_holder_id: context.rightsHolderId,
       p_user_id: context.userId,
@@ -89,8 +88,8 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
   const rightsHolder = rightsHolderResult.data;
   if (!rightsHolder) redirect("/admin?notice=member-org-required");
   if (!overview.success) throw new Error(overview.error ?? "Mine værker kunne ikke indlæses.");
-  if (contractedOverview.error || contractRequiredResult.error || dashboardTaskResult.error) {
-    throw new Error(contractedOverview.error?.message ?? contractRequiredResult.error?.message ?? dashboardTaskResult.error?.message ?? "Oversigten kunne ikke beregnes.");
+  if (contractedOverview.error || dashboardTaskResult.error) {
+    throw new Error(contractedOverview.error?.message ?? dashboardTaskResult.error?.message ?? "Oversigten kunne ikke beregnes.");
   }
 
   const contractedRows = (contractedOverview.data ?? []) as Array<{ filtered_count?: number | string }>;
@@ -105,52 +104,41 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
     if (!work || (work.overview_contract_count ?? 0) < 1) return [];
     return work.is_season_group ? work.child_work_ids ?? [] : [work.id];
   }))];
-  const { data: activeDeclarationScopes, error: declarationScopeError } = await db.rpc("list_member_legacy_declared_scope_ids", {
-    p_org_id: context.orgId,
-    p_rights_holder_id: context.rightsHolderId,
-  });
-  if (declarationScopeError) throw new Error(declarationScopeError.message);
   timer.finish({ rowCount: assignments.length, contractCount: contractedWorkIds.length });
 
   return (
     <div className="space-y-6">
-      <LegacyDeclarationPanel
-        initialTasks={legacyDeclarations.tasks}
-        enabled={legacyDeclarations.enabled}
-        cutoffYear={legacyDeclarations.cutoffYear}
-        organisationName={legacyDeclarations.organisationName}
-        document={legacyDeclarations.document}
+      <Suspense fallback={null}><LegacyDeclarationSection /></Suspense>
+      <MineVaerkerClient
+        initialAssignments={assignments}
+        allAssignments={[]}
+        broadcasters={(broadcastersResult.data ?? []) as BroadcasterLogo[]}
+        rightsHolderId={rightsHolder.id}
+        dfiPersonId={rightsHolder.dfi_person_id ?? null}
+        contractedWorkIds={contractedWorkIds}
+        legacyDeclarationRequiredWorkIds={overview.legacyRequiredWorkIds ?? []}
+        legacyDeclaredWorkIds={overview.legacyDeclaredWorkIds ?? []}
+        summaryCounts={{
+          totalWorks: overview.totalCount ?? 0,
+          withContract: Number(contractedRows[0]?.filtered_count ?? 0),
+          missingContract: Number(dashboardSummary.contract_required_work_count ?? 0),
+          reviewWorks: Number(dashboardSummary.review_work_count ?? 0),
+          unresolvedShares: Number(dashboardSummary.share_task_count ?? 0),
+        }}
+        firstUnresolvedShareTaskId={firstShareTaskId}
+        contracts={[] as Contract[]}
+        organisationShortName={context.brand.short_name}
+        defaultRoleLabel={context.terminology.default_role_label}
+        coeditorWord={context.terminology.coeditor_word}
+        pageResult={{
+          page: overview.page ?? page,
+          pageSize: overview.pageSize ?? pageSize,
+          filteredCount: overview.filteredCount ?? assignments.length,
+          totalCount: overview.totalCount ?? assignments.length,
+          hasNextPage: overview.hasNextPage ?? false,
+        }}
+        initialQuery={initialQuery}
       />
-    <MineVaerkerClient
-      initialAssignments={assignments}
-      allAssignments={[]}
-      broadcasters={(broadcastersResult.data ?? []) as BroadcasterLogo[]}
-      rightsHolderId={rightsHolder.id}
-      dfiPersonId={rightsHolder.dfi_person_id ?? null}
-      contractedWorkIds={contractedWorkIds}
-      legacyDeclarationRequiredWorkIds={legacyDeclarations.tasks.flatMap(task => task.qualifyingScopeIds)}
-      legacyDeclaredWorkIds={((activeDeclarationScopes ?? []) as Array<{ work_id: string }>).map(row => row.work_id)}
-      summaryCounts={{
-        totalWorks: overview.totalCount ?? 0,
-        withContract: Number(contractedRows[0]?.filtered_count ?? 0),
-        missingContract: Number(contractRequiredResult.data ?? 0),
-        reviewWorks: Number(dashboardSummary.review_work_count ?? 0),
-        unresolvedShares: Number(dashboardSummary.share_task_count ?? 0),
-      }}
-      firstUnresolvedShareTaskId={firstShareTaskId}
-      contracts={[] as Contract[]}
-      organisationShortName={context.brand.short_name}
-      defaultRoleLabel={context.terminology.default_role_label}
-      coeditorWord={context.terminology.coeditor_word}
-      pageResult={{
-        page: overview.page ?? page,
-        pageSize: overview.pageSize ?? pageSize,
-        filteredCount: overview.filteredCount ?? assignments.length,
-        totalCount: overview.totalCount ?? assignments.length,
-        hasNextPage: overview.hasNextPage ?? false,
-      }}
-      initialQuery={initialQuery}
-    />
     </div>
   );
 }

@@ -901,7 +901,7 @@ export default function MineVaerkerClient({
 
 
 
-  const reloadAssignments = async () => {
+  const reloadAssignments = async ({ refreshReviews = false }: { refreshReviews?: boolean } = {}) => {
     if (!rightsHolderId) return;
     const overview = await fetchMemberWorkOverview({
       rightsHolderId,
@@ -918,7 +918,7 @@ export default function MineVaerkerClient({
       setSeriesEpisodes({});
       setSeriesErrors({});
       setExpandedSeries(new Set());
-      await loadCollaborationReviews();
+      if (refreshReviews) await loadCollaborationReviews();
     }
   };
 
@@ -1078,7 +1078,7 @@ export default function MineVaerkerClient({
       if (!result.success) throw new Error(result.error);
       setMsg({ type: "success", text: t(declined ? "works.shareTask.declined" : "works.shareTask.saved") });
       closeLinkedShareTask();
-      await reloadAssignments();
+      await reloadAssignments({ refreshReviews: true });
       setUnresolvedShareCount(count => Math.max(0, count - 1));
       setNextUnresolvedShareTaskId(null);
       router.refresh();
@@ -2406,7 +2406,7 @@ export default function MineVaerkerClient({
           onClose={() => { setIsAdding(false); setInitialManualWork(null); }}
           rightsHolderId={rightsHolderId}
           onWorkAdded={(message, success) => setMsg({ type: success ? "success" : "error", text: message })}
-          reloadAssignments={reloadAssignments}
+          reloadAssignments={() => reloadAssignments({ refreshReviews: true })}
           locale={locale}
           initialQuery={initialAddQuery}
           initialManualWork={initialManualWork}

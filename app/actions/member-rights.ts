@@ -88,6 +88,13 @@ export async function getMemberAllocations(): Promise<{
 
         await recordSensitiveFlow({ actor: { userId: user.id, orgId: context.orgId, role: "member", source: "portal" }, action: "read", component: "portal.rights.allocations", entityType: "rights_allocations", targetMemberUuid: context.rightsHolderId, orgIds: [context.orgId], purposeCode: "member_rights_overview", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"], counts: { results: allocations.length } })
 
+        const { error: viewedError } = await db.rpc("mark_member_economy_overview_viewed", {
+            p_org_id: context.orgId,
+            p_rights_holder_id: context.rightsHolderId,
+            p_user_id: user.id,
+        })
+        if (viewedError) throw viewedError
+
         return { success: true, allocations }
     } catch (err) {
         console.error("[member-rights] getMemberAllocations fejlede:", err)
