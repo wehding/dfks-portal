@@ -1,8 +1,8 @@
 export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchMemberWorkOverview } from "@/app/actions/member-works";
 import MineVaerkerClient from "./MineVaerkerClient";
 import type { Assignment, BroadcasterLogo } from "./MineVaerkerClient";
 import type { Contract } from "../mine-kontrakter/MineKontrakterClient";
@@ -11,8 +11,8 @@ import { memberOverviewItemsToAssignments } from "@/lib/member-work-overview";
 import type { MemberOverviewItem } from "@/lib/member-work-overview";
 import { normalizedPage, normalizedPageSize } from "@/lib/list-query";
 import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
-import { fetchLegacyDeclarationTasks } from "@/app/actions/legacy-work-declarations";
-import { LegacyDeclarationPanel } from "./LegacyDeclarationPanel";
+import { loadMemberWorkOverview } from "@/lib/server/member-work-overview";
+import { LegacyDeclarationSection } from "./LegacyDeclarationSection";
 
 type PageSearchParams = Promise<Record<string, string | string[] | undefined>>;
 const stringParam = (value: string | string[] | undefined, fallback = "") => Array.isArray(value) ? value[0] ?? fallback : value ?? fallback;
@@ -38,14 +38,17 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
     sortKey: stringParam(query.sort, "date"),
     sortDir: stringParam(query.direction, "desc") === "asc" ? "asc" as const : "desc" as const,
   };
-  const [rightsHolderResult, overview, broadcastersResult, legacyDeclarations] = await Promise.all([
+  const [rightsHolderResult, overview, broadcastersResult] = await Promise.all([
     db.from("rettighedshavere")
       .select("id,full_name,dfi_person_id")
       .eq("id", context.rightsHolderId)
       .eq("user_id", context.userId)
       .maybeSingle(),
-    fetchMemberWorkOverview({
+    loadMemberWorkOverview({
+      orgId: context.orgId,
       rightsHolderId: context.rightsHolderId,
+      userId: context.userId,
+    }, {
       page,
       pageSize,
       search: initialQuery.search,
@@ -55,7 +58,6 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
       sortDir: initialQuery.sortDir,
     }),
     db.from("broadcasters").select("name,logo_path").order("name", { ascending: true }),
-    fetchLegacyDeclarationTasks(),
   ]);
   timer.mark("page-data");
 
@@ -71,22 +73,11 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
     if (!work || (work.overview_contract_count ?? 0) < 1) return [];
     return work.is_season_group ? work.child_work_ids ?? [] : [work.id];
   }))];
-  const { data: activeDeclarationScopes, error: declarationScopeError } = await db.rpc("list_member_legacy_declared_scope_ids", {
-    p_org_id: context.orgId,
-    p_rights_holder_id: context.rightsHolderId,
-  });
-  if (declarationScopeError) throw new Error(declarationScopeError.message);
   timer.finish({ rowCount: assignments.length, contractCount: contractedWorkIds.length });
 
   return (
     <div className="space-y-6">
-      <LegacyDeclarationPanel
-        initialTasks={legacyDeclarations.tasks}
-        enabled={legacyDeclarations.enabled}
-        cutoffYear={legacyDeclarations.cutoffYear}
-        organisationName={legacyDeclarations.organisationName}
-        document={legacyDeclarations.document}
-      />
+      <Suspense fallback={null}><LegacyDeclarationSection /></Suspense>
     <MineVaerkerClient
       initialAssignments={assignments}
       allAssignments={[]}
@@ -94,9 +85,9 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
       rightsHolderId={rightsHolder.id}
       dfiPersonId={rightsHolder.dfi_person_id ?? null}
       contractedWorkIds={contractedWorkIds}
-      legacyDeclarationRequiredWorkIds={legacyDeclarations.tasks.flatMap(task => task.qualifyingScopeIds)}
-      legacyDeclaredWorkIds={((activeDeclarationScopes ?? []) as Array<{ work_id: string }>).map(row => row.work_id)}
-      legacyDeclarationTaskCount={legacyDeclarations.tasks.length}
+      legacyDeclarationRequiredWorkIds={overview.legacyRequiredWorkIds ?? []}
+      legacyDeclaredWorkIds={overview.legacyDeclaredWorkIds ?? []}
+      legacyDeclarationTaskCount={overview.legacyDeclarationTaskCount ?? 0}
       contracts={[] as Contract[]}
       organisationShortName={context.brand.short_name}
       defaultRoleLabel={context.terminology.default_role_label}

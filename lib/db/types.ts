@@ -99,6 +99,7 @@ export interface DbOrgAffiliation {
     statistics_participation_source: "member_default" | "member_reenrollment" | "onboarding_choice" | "non_member_onboarding_choice" | "profile_choice" | "non_member_profile_choice" | "admin_choice" | "legacy_migration" | null
     statistics_participation_updated_at: string | null
     statistics_participation_updated_by: string | null
+    economy_overview_viewed_at: string | null
     beta_tester_since: string | null
     beta_designated_by_user_id: string | null
     beta_last_invite_sent_at: string | null
