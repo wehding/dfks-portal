@@ -43,6 +43,8 @@ type FormState = {
   statistics_work_regions: string[];
   onboarding_keywords: string[];
   contract_review_retention_months: number;
+  legacy_contract_declaration_enabled: boolean;
+  legacy_contract_cutoff_year: number | null;
   foreninglet_base_url: string;
   foreninglet_username: string;
   foreninglet_password: string;
@@ -71,6 +73,8 @@ const emptyForm: FormState = {
   statistics_work_regions: [],
   onboarding_keywords: ["klip", "edit"],
   contract_review_retention_months: 24,
+  legacy_contract_declaration_enabled: false,
+  legacy_contract_cutoff_year: null,
   foreninglet_base_url: "https://foreninglet.dk/api/members",
   foreninglet_username: "",
   foreninglet_password: "",
@@ -132,6 +136,8 @@ export default function OrganisationSettingsPage() {
           statistics_work_regions: settings.statistics_work_regions,
           onboarding_keywords: settings.onboarding_keywords,
           contract_review_retention_months: settings.contract_review_retention_months,
+          legacy_contract_declaration_enabled: settings.legacy_contract_declaration_enabled,
+          legacy_contract_cutoff_year: settings.legacy_contract_cutoff_year,
           foreninglet_base_url: settings.foreninglet.base_url,
           foreninglet_username: "",
           foreninglet_password: "",
@@ -248,6 +254,8 @@ export default function OrganisationSettingsPage() {
           statistics_work_regions: form.statistics_work_regions,
           onboarding_keywords: form.onboarding_keywords,
           contract_review_retention_months: form.contract_review_retention_months,
+          legacy_contract_declaration_enabled: form.legacy_contract_declaration_enabled,
+          legacy_contract_cutoff_year: form.legacy_contract_cutoff_year,
           foreninglet_base_url: form.foreninglet_base_url || null,
           foreninglet_username: form.foreninglet_username || null,
           foreninglet_password: form.foreninglet_password || null,
@@ -441,6 +449,39 @@ export default function OrganisationSettingsPage() {
           <Input id="review-retention" type="number" min={1} max={120} value={form.contract_review_retention_months} onChange={event => setForm(current => ({ ...current, contract_review_retention_months: Number(event.target.value) }))} />
           <p className="text-xs text-muted-foreground">Standard er 24 måneder. Tilladte værdier er 1–120 måneder. Lange perioder øger mængden af persondata, organisationen opbevarer.</p>
         </div>
+      </SettingsSection>
+
+      <SettingsSection title="Dokumentationskrav" description="Indstillinger for tro-og-loveerklæring som dokumentation for ældre værker.">
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+          <div>
+            <Label htmlFor="legacy-declaration-enabled">Aktivér tro-og-loveordning</Label>
+            <p className="mt-1 text-xs text-muted-foreground">Ordningen er deaktiveret, indtil indstillingen gemmes aktivt.</p>
+          </div>
+          <Switch
+            id="legacy-declaration-enabled"
+            checked={form.legacy_contract_declaration_enabled}
+            onCheckedChange={checked => setForm(current => ({ ...current, legacy_contract_declaration_enabled: checked }))}
+          />
+        </div>
+        <div className="mt-4 max-w-xs space-y-2">
+          <Label htmlFor="legacy-declaration-cutoff">Skæringsår</Label>
+          <Input
+            id="legacy-declaration-cutoff"
+            type="number"
+            min={1888}
+            max={2200}
+            placeholder="2016"
+            value={form.legacy_contract_cutoff_year ?? ""}
+            onChange={event => setForm(current => ({
+              ...current,
+              legacy_contract_cutoff_year: event.target.value ? Number(event.target.value) : null,
+            }))}
+          />
+          <p className="text-xs text-muted-foreground">Ved 2016 kvalificerer 2015 og tidligere. 2016 kvalificerer ikke.</p>
+        </div>
+        <p className="mt-4 text-xs text-muted-foreground">
+          Erklæringsteksten redigeres og publiceres under fanen “Brugerrettigheder og juridiske tekster” som “Tro-og-love for ældre værker”. Publicering kræver ikke ny onboarding.
+        </p>
       </SettingsSection>
 
       <SettingsSection title="Statistikgrundlag" description="Vælg om kladder må indgå. Kladder kan indeholde ufuldstændige eller endnu ikke kontrollerede data.">

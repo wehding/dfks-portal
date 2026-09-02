@@ -30,6 +30,8 @@ export interface DbOrganisation {
     statistics_minimum_group_size: number
     statistics_dominance_limit: number
     statistics_low_sample_threshold: number
+    legacy_contract_declaration_enabled: boolean
+    legacy_contract_cutoff_year: number | null
 }
 
 export interface OrgBranding {
@@ -338,6 +340,7 @@ export interface DbWork {
     title: string
     type: string
     year: number | null
+    production_year: number | null
     duration_minutes: number | null
     episode_count: number | null
     season_count: number | null

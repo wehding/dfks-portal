@@ -140,7 +140,10 @@ export function LegalDocumentSettings() {
   }
 
   function publishVersion() {
-    const confirmed = window.confirm("Publicering opretter en ny aktiv version. Berørte brugere skal godkende teksterne igen ved næste login. Vil du fortsætte?");
+    const confirmationText = documentType === "legacy_work_declaration"
+      ? "Publicering opretter en ny aktiv erklæringsversion. Tidligere erklæringer bevarer den version, der blev accepteret. Vil du fortsætte?"
+      : "Publicering opretter en ny aktiv version. Berørte brugere skal godkende teksterne igen ved næste login. Vil du fortsætte?";
+    const confirmed = window.confirm(confirmationText);
     if (!confirmed) return;
     startTransition(async () => {
       try {
@@ -169,7 +172,7 @@ export function LegalDocumentSettings() {
           <div>
           <h2 className="text-base font-semibold">Brugerrettigheder og juridiske tekster</h2>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Rediger de tekster, brugerne accepterer i onboarding. Publicering af en ny version kræver ny godkendelse ved næste login for den valgte målgruppe.
+            Rediger juridiske tekster. Onboardingtekster kræver ny godkendelse ved næste login; tro-og-loveerklæringen accepteres kun i opgaven for ældre værker.
           </p>
           </div>
         </div>

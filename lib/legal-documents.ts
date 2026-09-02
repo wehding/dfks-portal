@@ -3,6 +3,14 @@ export const LEGAL_DOCUMENT_TYPES = [
   "terms_of_service",
   "ai_transparency_notice",
   "contract_analysis_notice",
+  "legacy_work_declaration",
+] as const;
+
+export const ONBOARDING_LEGAL_DOCUMENT_TYPES = [
+  "privacy_notice",
+  "terms_of_service",
+  "ai_transparency_notice",
+  "contract_analysis_notice",
 ] as const;
 
 export const LEGAL_DOCUMENT_AUDIENCES = ["member", "non_member"] as const;
@@ -27,6 +35,7 @@ export const LEGAL_DOCUMENT_TYPE_LABELS: Record<LegalDocumentType, string> = {
   terms_of_service: "Brugervilkår",
   ai_transparency_notice: "AI-transparens",
   contract_analysis_notice: "Kontraktanalyse",
+  legacy_work_declaration: "Tro-og-love for ældre værker",
 };
 
 export const LEGAL_DOCUMENT_AUDIENCE_LABELS: Record<LegalDocumentAudience, string> = {
@@ -117,6 +126,14 @@ Systemet foretager ingen automatiske afgørelser. Fundne passager fremhæves, s�
 
 Analysen bruges til at finde relevante kontraktpunkter og mulige risici. En faglig rådgiver eller administrator skal kunne verificere fundene, før de bruges som grundlag for rådgivning.`,
     },
+    legacy_work_declaration: {
+      title: "Tro-og-loveerklæring om arbejde på produktioner",
+      body: `Jeg erklærer på tro og love, at jeg personligt har arbejdet som {faggruppe} på de produktioner, jeg har valgt nedenfor, og at oplysningerne om min kreditering og deltagelse er korrekte.
+
+For produktioner før {skæringsår} kræver Copydan ikke, at dokumentationen for rettighedshaverens tilknytning nødvendigvis består af en kontrakt. {organisation} anvender derfor denne erklæring som dokumentation i behandlingen og den eventuelle fordeling af rettighedsmidler.
+
+Jeg er bekendt med, at {organisation} kan bede om supplerende dokumentation. Jeg forpligter mig til straks at rette oplysningerne, hvis de viser sig at være forkerte. Urigtige oplysninger kan medføre, at en udbetaling tilbageholdes, korrigeres eller kræves tilbagebetalt.`,
+    },
   },
   non_member: {
     privacy_notice: {
@@ -148,6 +165,14 @@ Systemet foretager ingen automatiske afgørelser. Fundne passager fremhæves, s�
       body: `Når du uploader en scannet kontrakt, behandler Google Vision i EU de rå sider for at udtrække søgbar tekst og koordinater. Derefter maskerer systemet CPR-nummer, bankoplysninger og andre oplagte personlige kontaktoplysninger, før teksten sendes til AI-kontraktanalysen.
 
 Du kan frivilligt vælge, om dine overordnede løn- og arbejdsvilkår må indgå i anonymiseret markedsstatistik. Hvis du vælger nej, bruges kontrakten kun som dokumentation for dine rettigheder og udbetalinger.`,
+    },
+    legacy_work_declaration: {
+      title: "Tro-og-loveerklæring om arbejde på produktioner",
+      body: `Jeg erklærer på tro og love, at jeg personligt har arbejdet som {faggruppe} på de produktioner, jeg har valgt nedenfor, og at oplysningerne om min kreditering og deltagelse er korrekte.
+
+For produktioner før {skæringsår} kræver Copydan ikke, at dokumentationen for rettighedshaverens tilknytning nødvendigvis består af en kontrakt. {organisation} anvender derfor denne erklæring som dokumentation i behandlingen og den eventuelle fordeling af rettighedsmidler.
+
+Jeg er bekendt med, at {organisation} kan bede om supplerende dokumentation. Jeg forpligter mig til straks at rette oplysningerne, hvis de viser sig at være forkerte. Urigtige oplysninger kan medføre, at en udbetaling tilbageholdes, korrigeres eller kræves tilbagebetalt.`,
     },
   },
 };

@@ -5,7 +5,7 @@ import type { createServiceClient } from "@/lib/supabase/service";
 import {
   DEFAULT_LEGAL_DOCUMENT_COPY,
   LEGAL_DOCUMENT_AUDIENCES,
-  LEGAL_DOCUMENT_TYPES,
+  ONBOARDING_LEGAL_DOCUMENT_TYPES,
   normalizeDanishLegalText,
   type LegalDocumentAudience,
   type LegalDocumentRecord,
@@ -73,7 +73,7 @@ export async function listCurrentLegalDocuments(
   if (error && error.code !== "42P01" && error.code !== "PGRST205") throw new Error(error.message);
   const rows = (data ?? []) as VersionRow[];
 
-  return LEGAL_DOCUMENT_TYPES.map(documentType => {
+  return ONBOARDING_LEGAL_DOCUMENT_TYPES.map(documentType => {
     const row = rows.find(candidate => candidate.document_type === documentType && candidate.audience === audience);
     return row ? normalizeVersionRow(row, documentType, audience) : fallbackDocument(documentType, audience);
   });

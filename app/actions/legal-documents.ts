@@ -246,12 +246,14 @@ export async function publishLegalDocumentVersion(input: {
     .neq("document_version_id", draft.id);
   if (supersedeError) throw new Error(supersedeError.message);
 
-  const { error: requirementError } = await db.rpc("require_legal_onboarding_for_audience", {
-    target_org_id: orgId,
-    target_audience: document.audience,
-    required_at: now,
-  });
-  if (requirementError) throw new Error(requirementError.message);
+  if (document.documentType !== "legacy_work_declaration") {
+    const { error: requirementError } = await db.rpc("require_legal_onboarding_for_audience", {
+      target_org_id: orgId,
+      target_audience: document.audience,
+      required_at: now,
+    });
+    if (requirementError) throw new Error(requirementError.message);
+  }
 
   await recordAuditEvent({
     context: { actorUserId: userId, actorOrgId: orgId, actorRole: "admin", source: "admin" },

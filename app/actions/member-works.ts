@@ -319,7 +319,7 @@ export async function fetchMemberWorkOverview(params: {
   }
   const [assignmentsResult, scopesResult] = await Promise.all([
     db.from("work_assignments")
-      .select("id, role, contract_id, episode_id, created_at, works!inner(id, title, type, year, duration_minutes, episode_count, parent_work_id, season_number, episode_number, status, poster_url, description)")
+      .select("id, role, contract_id, episode_id, created_at, works!inner(id, title, type, year, production_year, duration_minutes, episode_count, parent_work_id, season_number, episode_number, status, poster_url, description)")
       .eq("org_id", context.orgId)
       .eq("rights_holder_id", rightsHolder.id)
       .in("id", assignmentIds)
@@ -345,7 +345,7 @@ export async function fetchMemberWorkOverview(params: {
   const contractWorkIds = [...new Set([...workIds, ...parentIds])];
   const [parentsResult, contractsResult, requestsResult, unreadResult] = await Promise.all([
     parentIds.length
-      ? db.from("works").select("id,title,type,year,poster_url").in("id", parentIds)
+      ? db.from("works").select("id,title,type,year,production_year,poster_url").in("id", parentIds)
       : Promise.resolve({ data: [], error: null }),
     contractWorkIds.length
       ? db.from("contracts").select("id,work_id,season_number,episode_numbers").eq("org_id", context.orgId).eq("rights_holder_id", rightsHolder.id).in("work_id", contractWorkIds)
@@ -431,6 +431,7 @@ export async function fetchMemberWorkOverview(params: {
       title: parent.title,
       type: parent.type ?? parentAssignment.works?.type ?? "tv-serie",
       year: parent.year,
+      productionYear: parent.production_year ?? null,
       posterUrl: parent.poster_url,
       episodeCount: scope.episode_numbers.length,
       workIds: [],
