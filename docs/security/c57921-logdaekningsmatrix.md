@@ -18,6 +18,8 @@ Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-09-0
 
 | ID | Dataflow | Aktivitet | Livscyklus | Status | Kilder | Ekstern behandling | Destinationer | Originalhåndtering | Aktivering | Test | Ejer |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| FLOW-MEMBER-WORK-OVERVIEW | Pagineret medlemsoversigt over værker | PROC-RIGHTS-DISTRIBUTION | use | implemented | STORE-SUPABASE-DB |  | STORE-SUPABASE-DB | listefelter aggregeres server-side; kommentarer og fulde detaljer lazy-loades fortsat | Kræver migration før runtime-aktivering | tests/member-dashboard-overview.test.ts | Portalteam |
+| FLOW-MEMBER-ECONOMY-FIRST-VIEW | Vedvarende markering af første økonomioversigt | PROC-RIGHTS-DISTRIBUTION | use | implemented | STORE-SUPABASE-DB |  | STORE-SUPABASE-DB | audit-event registreres før den idempotente statusmarkering | Kræver migration før runtime-aktivering | tests/member-dashboard-overview.test.ts | Portalteam |
 | FLOW-VISION-V3-GEOMETRY-BACKFILL | Afgrænset Vision v3-geometri-backfill med immutable recovery | PROC-DOCUMENT-AI | analysis | implemented | STORE-SUPABASE-DB, STORE-SUPABASE-STORAGE | Google Vision EU via den private Cloud Run-worker | STORE-SUPABASE-DB, STORE-SUPABASE-STORAGE | originale storage-objekter og deres stier ændres aldrig; kun afledt PDF og v3-geometri promoveres efter integritetskontrol | Afventer produktionsmigration, Cloud Run-revision, pilot og godkendt kvalitetsport | tests/vision-v3-geometry-backfill-compliance.test.ts | AI-, sikkerheds- og portalteam |
 
 ## Registrerede flows
