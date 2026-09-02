@@ -7,11 +7,17 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import type { OrgBranding, OrgTerminology } from "@/lib/db/types";
 import { resolveDefaultRoleLabel } from "@/lib/branding";
 import { normalizeSingleEmail } from "@/lib/email/mime";
-import { validateWorkInvitationTemplate } from "@/lib/rights-holder-invitation-templates";
 import { getForeningLetIntegration, testForeningLetCredentials, upsertForeningLetIntegration } from "@/lib/org-integrations";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import type { FilterRule } from "@/lib/streaming-types";
-import { unknownBetaPlaceholders } from "@/lib/beta-test";
+import { unknownOrganisationPlaceholders, type OrganisationTextTemplateId } from "@/lib/organisation-text-templates";
+import {
+  MEMBER_WORK_INVITE_SUBJECT,
+  MEMBER_WORK_INVITE_TEXT,
+  NON_MEMBER_WORK_INVITE_SUBJECT,
+  NON_MEMBER_WORK_INVITE_TEXT,
+} from "@/lib/rights-holder-invitation-templates";
+import { DEFAULT_BETA_INVITE_SUBJECT, DEFAULT_BETA_INVITE_TEXT } from "@/lib/beta-test";
 import {
   DEFAULT_STATISTICS_DOMINANCE_LIMIT,
   MAX_STATISTICS_DOMINANCE_LIMIT,
@@ -36,16 +42,6 @@ type OrganisationSettingsPayload = {
   logo_url: string | null;
   primary_color: string;
   from_email: string | null;
-  invite_email_text: string | null;
-  invite_reminder_text: string | null;
-  beta_invite_subject: string | null;
-  beta_invite_text: string | null;
-  beta_default_duration_days: number;
-  member_work_invite_subject: string | null;
-  member_work_invite_text: string | null;
-  non_member_work_invite_subject: string | null;
-  non_member_work_invite_text: string | null;
-  welcome_message_text: string | null;
   coeditor_word: string;
   role_labels: string[];
   default_role_label: string;
@@ -102,23 +98,21 @@ async function currentAdminOrg() {
 export async function getOrganisationSettings() {
   const orgId = await currentAdminOrg();
   const db = createServiceClient();
-  const { data, error } = await db
-    .from("organisations")
-    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, beta_invite_subject, beta_invite_text, beta_default_duration_days, member_work_invite_subject, member_work_invite_text, non_member_work_invite_subject, non_member_work_invite_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_minimum_group_size, statistics_dominance_limit, statistics_profile_config")
-    .eq("id", orgId)
-    .single();
-
-  if (error || !data) throw new Error(error?.message ?? "Organisationen blev ikke fundet.");
-
-  const branding = (data.branding ?? {}) as OrgBranding;
-  const terminology = (data.terminology ?? {}) as OrgTerminology;
-
-  const foreninglet = await getForeningLetIntegration(db, orgId);
-  const [{ data: professionRows }, { data: producerRows }, { data: workRegionRows }] = await Promise.all([
+  const [organisationResult, foreninglet, { data: professionRows }, { data: producerRows }, { data: workRegionRows }] = await Promise.all([
+    db.from("organisations")
+      .select("id, name, logo_url, from_email, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_minimum_group_size, statistics_dominance_limit, statistics_profile_config")
+      .eq("id", orgId)
+      .single(),
+    getForeningLetIntegration(db, orgId),
     db.from("organisation_profession_types").select("display_order,profession_types(name)").eq("org_id", orgId).order("display_order"),
     db.from("organisation_producer_types").select("display_order,producer_types(name)").eq("org_id", orgId).order("display_order"),
     db.from("organisation_work_regions").select("name_da").eq("org_id", orgId).eq("active", true).order("display_order"),
   ]);
+  const { data, error } = organisationResult;
+  if (error || !data) throw new Error(error?.message ?? "Organisationen blev ikke fundet.");
+
+  const branding = (data.branding ?? {}) as OrgBranding;
+  const terminology = (data.terminology ?? {}) as OrgTerminology;
   const professionTypes = (professionRows ?? []).map(row => (row.profession_types as unknown as { name?: string } | null)?.name).filter((name): name is string => Boolean(name));
   const producerCategories = (producerRows ?? []).map(row => (row.producer_types as unknown as { name?: string } | null)?.name).filter((name): name is string => Boolean(name));
   const roleLabels = professionTypes.length ? professionTypes : terminology.role_labels?.length
@@ -130,16 +124,6 @@ export async function getOrganisationSettings() {
     name: data.name as string,
     logo_url: (data.logo_url as string | null) ?? null,
     from_email: (data.from_email as string | null) ?? null,
-    invite_email_text: (data.invite_email_text as string | null) ?? null,
-    invite_reminder_text: (data.invite_reminder_text as string | null) ?? null,
-    beta_invite_subject: (data.beta_invite_subject as string | null) ?? null,
-    beta_invite_text: (data.beta_invite_text as string | null) ?? null,
-    beta_default_duration_days: Number(data.beta_default_duration_days ?? 10),
-    member_work_invite_subject: (data.member_work_invite_subject as string | null) ?? null,
-    member_work_invite_text: (data.member_work_invite_text as string | null) ?? null,
-    non_member_work_invite_subject: (data.non_member_work_invite_subject as string | null) ?? null,
-    non_member_work_invite_text: (data.non_member_work_invite_text as string | null) ?? null,
-    welcome_message_text: (data.welcome_message_text as string | null) ?? null,
     short_name: branding.short_name ?? data.name,
     long_name: branding.long_name ?? data.name,
     primary_color: branding.primary_color ?? "#111827",
@@ -168,6 +152,92 @@ export async function getOrganisationSettings() {
   };
 }
 
+export async function getOrganisationTextSettings() {
+  const orgId = await currentAdminOrg();
+  const db = createServiceClient();
+  let { data, error } = await db
+    .from("organisations")
+    .select("invite_email_text,invite_reminder_text,beta_invite_subject,beta_invite_text,beta_default_duration_days,member_work_invite_subject,member_work_invite_text,non_member_work_invite_subject,non_member_work_invite_text,welcome_message_text")
+    .eq("id", orgId)
+    .single();
+  if (error && ["42703", "PGRST204"].includes(error.code) && error.message.includes("beta_invite")) {
+    const fallback = await db.from("organisations")
+      .select("invite_email_text,invite_reminder_text,member_work_invite_subject,member_work_invite_text,non_member_work_invite_subject,non_member_work_invite_text,welcome_message_text")
+      .eq("id", orgId)
+      .single();
+    data = fallback.data ? { ...fallback.data, beta_invite_subject: null, beta_invite_text: null, beta_default_duration_days: 10 } : null;
+    error = fallback.error;
+  }
+  if (error || !data) throw new Error(error?.message ?? "Tekstskabelonerne blev ikke fundet.");
+
+  return {
+    invite: { subject: null, body: data.invite_email_text ?? "", durationDays: null },
+    reminder: { subject: null, body: data.invite_reminder_text ?? "", durationDays: null },
+    beta_invite: { subject: data.beta_invite_subject ?? DEFAULT_BETA_INVITE_SUBJECT, body: data.beta_invite_text ?? DEFAULT_BETA_INVITE_TEXT, durationDays: Number(data.beta_default_duration_days ?? 10) },
+    member_work_invite: { subject: data.member_work_invite_subject ?? MEMBER_WORK_INVITE_SUBJECT, body: data.member_work_invite_text ?? MEMBER_WORK_INVITE_TEXT, durationDays: null },
+    non_member_work_invite: { subject: data.non_member_work_invite_subject ?? NON_MEMBER_WORK_INVITE_SUBJECT, body: data.non_member_work_invite_text ?? NON_MEMBER_WORK_INVITE_TEXT, durationDays: null },
+    welcome: { subject: null, body: data.welcome_message_text ?? "", durationDays: null },
+  };
+}
+
+export async function updateOrganisationTextTemplate(payload: {
+  templateId: OrganisationTextTemplateId;
+  subject: string | null;
+  body: string;
+  durationDays?: number | null;
+}) {
+  const orgId = await currentAdminOrg();
+  const db = createServiceClient();
+  const session = await createClient();
+  const { data: { user } } = await session.auth.getUser();
+  const subject = payload.subject == null ? null : payload.subject.trim().slice(0, 240);
+  const body = payload.body.trim().slice(0, 30_000);
+  if (subject?.includes("\n")) throw new Error("Emnet må kun fylde én linje.");
+  const unknown = unknownOrganisationPlaceholders(payload.templateId, subject ?? "", body);
+  if (unknown.length) throw new Error(`Ukendte pladsholdere: ${unknown.map(value => `{${value}}`).join(", ")}.`);
+
+  const update: Record<string, string | number | null> = { updated_at: new Date().toISOString() };
+  if (payload.templateId === "invite") update.invite_email_text = cleanOptionalString(body);
+  if (payload.templateId === "reminder") update.invite_reminder_text = cleanOptionalString(body);
+  if (payload.templateId === "welcome") update.welcome_message_text = cleanOptionalString(body);
+  if (payload.templateId === "member_work_invite") {
+    if (!subject || !body) throw new Error("Emne og tekst skal udfyldes.");
+    update.member_work_invite_subject = subject;
+    update.member_work_invite_text = body;
+  }
+  if (payload.templateId === "non_member_work_invite") {
+    if (!subject || !body) throw new Error("Emne og tekst skal udfyldes.");
+    update.non_member_work_invite_subject = subject;
+    update.non_member_work_invite_text = body;
+  }
+  if (payload.templateId === "beta_invite") {
+    const durationDays = Number(payload.durationDays);
+    if (!subject || !body) throw new Error("Emne og tekst skal udfyldes.");
+    if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 365) throw new Error("Betatestperioden skal være mellem 1 og 365 dage.");
+    update.beta_invite_subject = subject;
+    update.beta_invite_text = body;
+    update.beta_default_duration_days = durationDays;
+  }
+
+  const { error } = await db.from("organisations").update(update).eq("id", orgId);
+  if (error) throw new Error(error.message);
+  await recordAuditEvent({
+    context: { actorUserId: user?.id ?? null, actorOrgId: orgId, actorRole: "admin", source: "admin" },
+    action: "update",
+    entityType: "organisation_text_template",
+    entityId: orgId,
+    entityLabel: payload.templateId,
+    orgIds: [orgId],
+    purposeCode: "portal_communication_configuration",
+    legalBasis: "GDPR Art. 6(1)(f) og 9(2)(d)",
+    dataCategories: ["configuration_data"],
+    systemComponent: "admin.organisation.text-editor",
+    metadata: { templateId: payload.templateId },
+  });
+  revalidatePath("/admin/organisation");
+  return { success: true as const };
+}
+
 export async function updateOrganisationSettings(payload: OrganisationSettingsPayload) {
   const orgId = await currentAdminOrg();
   const db = createServiceClient();
@@ -183,7 +253,6 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const onboardingKeywords = normalizeRoles(payload.onboarding_keywords).map(keyword => keyword.toLowerCase());
   const replyToEmail = cleanOptionalString(payload.from_email);
   const retentionMonths = Number(payload.contract_review_retention_months);
-  const betaDurationDays = Number(payload.beta_default_duration_days);
   const statisticsContractScope = payload.statistics_contract_scope === "validated_and_drafts" ? "validated_and_drafts" : "validated_only";
   const rawStatisticsMinimumGroupSize = Number(payload.statistics_minimum_group_size);
   if (!Number.isInteger(rawStatisticsMinimumGroupSize)
@@ -215,21 +284,12 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   if (!defaultRoleLabel) throw new Error("Standardfaggruppen skal være en af organisationens faggrupper.");
   if (onboardingKeywords.length === 0) throw new Error("Der skal være mindst ét onboarding-søgeord.");
   if (!Number.isInteger(retentionMonths) || retentionMonths < 1 || retentionMonths > 120) throw new Error("Opbevaringsperioden skal være mellem 1 og 120 måneder.");
-  if (!Number.isInteger(betaDurationDays) || betaDurationDays < 1 || betaDurationDays > 365) throw new Error("Betatestperioden skal være mellem 1 og 365 dage.");
-  const unknownPlaceholders = unknownBetaPlaceholders(payload.beta_invite_subject ?? "", payload.beta_invite_text ?? "");
-  if (unknownPlaceholders.length) throw new Error(`Ukendte pladsholdere i betainvitationen: ${unknownPlaceholders.map(value => `{${value}}`).join(", ")}.`);
   if (replyToEmail) {
     try {
       normalizeSingleEmail(replyToEmail);
     } catch {
       throw new Error("Svaradressen skal være én gyldig e-mailadresse uden afsendernavn.");
     }
-  }
-  for (const [subject, body] of [
-    [payload.member_work_invite_subject, payload.member_work_invite_text],
-    [payload.non_member_work_invite_subject, payload.non_member_work_invite_text],
-  ] as const) {
-    if (subject || body) validateWorkInvitationTemplate(subject ?? "", body ?? "");
   }
 
   const { data: previousOrganisation, error: previousOrganisationError } = await db.from("organisations")
@@ -269,16 +329,6 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
       name: longName,
       logo_url: cleanOptionalString(payload.logo_url),
       from_email: replyToEmail,
-      invite_email_text: cleanOptionalString(payload.invite_email_text),
-      invite_reminder_text: cleanOptionalString(payload.invite_reminder_text),
-      beta_invite_subject: cleanOptionalString(payload.beta_invite_subject),
-      beta_invite_text: cleanOptionalString(payload.beta_invite_text),
-      beta_default_duration_days: betaDurationDays,
-      member_work_invite_subject: cleanOptionalString(payload.member_work_invite_subject),
-      member_work_invite_text: cleanOptionalString(payload.member_work_invite_text),
-      non_member_work_invite_subject: cleanOptionalString(payload.non_member_work_invite_subject),
-      non_member_work_invite_text: cleanOptionalString(payload.non_member_work_invite_text),
-      welcome_message_text: cleanOptionalString(payload.welcome_message_text),
       branding,
       terminology,
       contract_review_retention_months: retentionMonths,

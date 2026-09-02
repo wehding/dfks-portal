@@ -5,7 +5,7 @@ Du er inviteret til at betateste {organisation}s portal fra {startdato} til {slu
 
 Brug invitationslinket nedenfor for at oprette eller åbne din adgang.`;
 
-export const BETA_INVITE_PLACEHOLDERS = ["navn", "organisation", "startdato", "slutdato", "invitationslink"] as const;
+export const BETA_INVITE_PLACEHOLDERS = ["navn", "organisation", "værk", "værker", "startdato", "slutdato", "invitationslink"] as const;
 
 export function todayInCopenhagen(now = new Date()): string {
   return new Intl.DateTimeFormat("sv-SE", {
@@ -47,6 +47,8 @@ export function renderBetaInviteTemplate(template: string, values: {
   startDate: string;
   endDate: string;
   invitationLink?: string;
+  primaryWork?: string;
+  worksText?: string;
 }): string {
   const replacements: Record<string, string> = {
     navn: values.name,
@@ -54,6 +56,8 @@ export function renderBetaInviteTemplate(template: string, values: {
     startdato: formatBetaDate(values.startDate),
     slutdato: formatBetaDate(values.endDate),
     invitationslink: values.invitationLink ?? "",
+    værk: values.primaryWork ?? "dit værk",
+    værker: values.worksText ?? "dine værker",
   };
   return template.replace(/\{([^{}]+)\}/g, (placeholder, key: string) => replacements[key] ?? placeholder);
 }

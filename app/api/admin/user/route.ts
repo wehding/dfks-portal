@@ -302,19 +302,19 @@ export async function POST(req: NextRequest) {
             const workBodyTemplate = isMember
                 ? ((org as { member_work_invite_text?: string | null } | null)?.member_work_invite_text ?? MEMBER_WORK_INVITE_TEXT)
                 : ((org as { non_member_work_invite_text?: string | null } | null)?.non_member_work_invite_text ?? NON_MEMBER_WORK_INVITE_TEXT)
-            const templateValues = { name: name || "", organisation: org?.name ?? brand.long_name, worksText, primaryWork: works[0]?.title ?? "et værk" }
             const accessType = invitationAccessType(existingAuthUser?.id)
             const inviteUrl = buildAccountAccessUrl(
                 siteUrl,
                 linkData.properties.hashed_token,
                 accessType,
             )
+            const templateValues = { name: name || "", organisation: org?.name ?? brand.long_name, worksText, primaryWork: works[0]?.title ?? "et værk", invitationLink: inviteUrl }
             const mail = await sendEmail({
                 to: email,
                 fromName: resolveEmailSenderName(orgForMail as never),
                 replyTo: resolveReplyToEmail(orgForMail as never),
                 subject: isBetaInvitation
-                    ? renderBetaInviteTemplate((org as { beta_invite_subject?: string | null } | null)?.beta_invite_subject ?? DEFAULT_BETA_INVITE_SUBJECT, { name: name || "", organisation: org?.name ?? brand.long_name, startDate: betaStartDate, endDate: effectiveBetaEndDate, invitationLink: inviteUrl })
+                    ? renderBetaInviteTemplate((org as { beta_invite_subject?: string | null } | null)?.beta_invite_subject ?? DEFAULT_BETA_INVITE_SUBJECT, { name: name || "", organisation: org?.name ?? brand.long_name, startDate: betaStartDate, endDate: effectiveBetaEndDate, invitationLink: inviteUrl, primaryWork: templateValues.primaryWork, worksText: templateValues.worksText })
                     : isWorkInvitation
                     ? renderInvitationTemplate(workSubjectTemplate, templateValues)
                     : body.action === "reminder"
@@ -326,12 +326,12 @@ export async function POST(req: NextRequest) {
                     orgName: brand.long_name,
                     primaryColor: brand.primary_color,
                     bodyText: isBetaInvitation
-                        ? renderBetaInviteTemplate((org as { beta_invite_text?: string | null } | null)?.beta_invite_text ?? DEFAULT_BETA_INVITE_TEXT, { name: name || "", organisation: org?.name ?? brand.long_name, startDate: betaStartDate, endDate: effectiveBetaEndDate, invitationLink: inviteUrl })
+                        ? renderBetaInviteTemplate((org as { beta_invite_text?: string | null } | null)?.beta_invite_text ?? DEFAULT_BETA_INVITE_TEXT, { name: name || "", organisation: org?.name ?? brand.long_name, startDate: betaStartDate, endDate: effectiveBetaEndDate, invitationLink: inviteUrl, primaryWork: templateValues.primaryWork, worksText: templateValues.worksText })
                         : isWorkInvitation
                         ? renderInvitationTemplate(workBodyTemplate, templateValues)
                         : body.action === "reminder"
-                        ? ((org as { invite_reminder_text?: string | null } | null)?.invite_reminder_text ?? null)
-                        : ((org as { invite_email_text?: string | null } | null)?.invite_email_text ?? null),
+                        ? renderInvitationTemplate(((org as { invite_reminder_text?: string | null } | null)?.invite_reminder_text ?? ""), templateValues) || null
+                        : renderInvitationTemplate(((org as { invite_email_text?: string | null } | null)?.invite_email_text ?? ""), templateValues) || null,
                     bodyIncludesGreeting: isWorkInvitation || isBetaInvitation,
                     variant: body.action === "reminder" ? "reminder" : "invite",
                     accessType,
