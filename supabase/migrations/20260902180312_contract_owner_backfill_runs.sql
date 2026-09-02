@@ -99,6 +99,7 @@ as $$
 $$;
 revoke all on function private.is_verified_superadmin(uuid, uuid)
   from public, anon, authenticated;
+grant execute on function private.is_verified_superadmin(uuid, uuid) to service_role;
 
 create or replace function private.normalized_owner_source_hash(p_value text)
 returns text
@@ -115,6 +116,7 @@ as $$
 $$;
 revoke all on function private.normalized_owner_source_hash(text)
   from public, anon, authenticated;
+grant execute on function private.normalized_owner_source_hash(text) to service_role;
 
 create or replace function private.contract_owner_backfill_manifest(p_run_id uuid)
 returns text
@@ -133,6 +135,7 @@ as $$
 $$;
 revoke all on function private.contract_owner_backfill_manifest(uuid)
   from public, anon, authenticated;
+grant execute on function private.contract_owner_backfill_manifest(uuid) to service_role;
 
 create or replace function public.finalize_contract_owner_backfill_preview(
   p_run_id uuid,

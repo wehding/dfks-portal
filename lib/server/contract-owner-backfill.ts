@@ -8,7 +8,6 @@ import type {
   ContractOwnerBackfillDisposition,
   ContractOwnerBackfillRun,
 } from "@/lib/contract-owner-backfill-types";
-import { matchRightsHolder } from "@/lib/server/contract-import-matching";
 
 type PreviewContractRow = {
   id: string;
@@ -67,20 +66,6 @@ function sha256(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-async function withConcurrency<T, R>(values: T[], limit: number, work: (value: T) => Promise<R>) {
-  const results = new Array<R>(values.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(limit, values.length) }, async () => {
-    while (cursor < values.length) {
-      const index = cursor;
-      cursor += 1;
-      results[index] = await work(values[index]);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
 export async function createContractOwnerBackfillPreview(
   db: SupabaseClient,
   caller: { userId: string; orgId: string },
@@ -113,10 +98,42 @@ export async function createContractOwnerBackfillPreview(
       const name = normalizedName(rawName);
       return name && verification?.revision ? { row, name, revision: Number(verification.revision) } : null;
     }).filter((value): value is { row: PreviewContractRow; name: string; revision: number } => Boolean(value));
+    const workIds = [...new Set(sourceRows.map(({ row }) => row.work_id).filter((id): id is string => Boolean(id)))];
+    const today = new Date().toISOString().slice(0, 10);
+    const [claimsResult, affiliationsResult, assignmentsResult] = await Promise.all([
+      db.from("rights_holder_name_claims").select("normalized_name,rights_holder_id,claim_type"),
+      db.from("org_affiliations").select("rights_holder_id").eq("org_id", caller.orgId)
+        .or(`valid_from.is.null,valid_from.lte.${today}`).or(`valid_to.is.null,valid_to.gte.${today}`),
+      workIds.length
+        ? db.from("work_assignments").select("work_id,rights_holder_id").in("work_id", workIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    const lookupError = claimsResult.error ?? affiliationsResult.error ?? assignmentsResult.error;
+    if (lookupError) throw new Error(lookupError.message);
+    const activeHolders = new Set((affiliationsResult.data ?? []).map(row => String(row.rights_holder_id)));
+    const claims = new Map((claimsResult.data ?? [])
+      .filter(claim => activeHolders.has(String(claim.rights_holder_id)))
+      .map(claim => [String(claim.normalized_name), {
+        rightsHolderId: String(claim.rights_holder_id),
+        claimType: String(claim.claim_type),
+      }]));
+    const creditedByWork = new Map<string, Set<string>>();
+    for (const assignment of assignmentsResult.data ?? []) {
+      const workId = String(assignment.work_id);
+      const holders = creditedByWork.get(workId) ?? new Set<string>();
+      holders.add(String(assignment.rights_holder_id));
+      creditedByWork.set(workId, holders);
+    }
 
-    const items = await withConcurrency(sourceRows, 6, async ({ row, name, revision }): Promise<PreviewItem> => {
-      const match = await matchRightsHolder(db, { orgId: caller.orgId, name, workId: row.work_id });
-      const proposedOwnerId = match.id;
+    const items = sourceRows.map(({ row, name, revision }): PreviewItem => {
+      const claim = claims.get(name) ?? null;
+      const credited = Boolean(claim && row.work_id && creditedByWork.get(row.work_id)?.has(claim.rightsHolderId));
+      const isCanonical = claim?.claimType === "canonical";
+      const safe = Boolean(claim && (isCanonical || credited));
+      const proposedOwnerId = safe ? claim?.rightsHolderId ?? null : null;
+      const score = claim ? Math.min(100, (isCanonical ? 92 : 88) + (credited ? 18 : 0)) : null;
+      const signals = [isCanonical ? "exact_primary_name" : claim ? "exact_credit_name" : null, credited ? "credited_on_work" : null]
+        .filter((signal): signal is string => Boolean(signal));
       const disposition: ContractOwnerBackfillDisposition = !proposedOwnerId
         ? "unresolved"
         : proposedOwnerId === row.rights_holder_id
@@ -134,8 +151,8 @@ export async function createContractOwnerBackfillPreview(
         expected_verification_revision: revision,
         expected_work_id: row.work_id,
         source_name_sha256: sha256(name),
-        match_score: match.score,
-        match_signals: match.evidence.map(evidence => evidence.signal).slice(0, 20),
+        match_score: score,
+        match_signals: signals,
         disposition,
         selected,
         status: disposition === "unresolved" ? "unresolved" : "previewed",

@@ -1,5 +1,5 @@
 begin;
-select plan(12);
+select plan(15);
 
 select has_table('public', 'contract_owner_backfill_runs', 'Backfill run ledger exists');
 select has_table('public', 'contract_owner_backfill_items', 'Backfill item ledger exists');
@@ -43,6 +43,18 @@ select ok(
 select ok(
   has_function_privilege('service_role', 'public.apply_contract_owner_backfill_item(uuid,uuid,uuid)', 'EXECUTE'),
   'Service role receives apply execution'
+);
+select ok(
+  has_function_privilege('service_role', 'private.is_verified_superadmin(uuid,uuid)', 'EXECUTE'),
+  'Service role can execute the private authorization helper used by public RPCs'
+);
+select ok(
+  has_function_privilege('service_role', 'private.normalized_owner_source_hash(text)', 'EXECUTE'),
+  'Service role can execute the private source-fence helper used by apply'
+);
+select ok(
+  has_function_privilege('service_role', 'private.contract_owner_backfill_manifest(uuid)', 'EXECUTE'),
+  'Service role can execute the private manifest helper used by approval'
 );
 
 select * from finish();

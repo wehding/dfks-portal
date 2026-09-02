@@ -24,6 +24,15 @@ test("preview stores hashes and categorical evidence instead of names", () => {
   assert.match(server, /source_name_sha256: sha256\(name\)/);
 });
 
+test("preview batches safe exact matching instead of issuing one query per contract", () => {
+  assert.match(server, /Promise\.all\(\[/);
+  assert.match(server, /rights_holder_name_claims/);
+  assert.match(server, /org_affiliations/);
+  assert.match(server, /work_assignments/);
+  assert.doesNotMatch(server, /matchRightsHolder\(/);
+  assert.match(server, /isCanonical \|\| credited/);
+});
+
 test("approval is manifest and revision fenced", () => {
   assert.match(migration, /approved_manifest_sha256 is distinct from locked_run\.manifest_sha256/);
   assert.match(migration, /run\.revision <> p_expected_revision/);
