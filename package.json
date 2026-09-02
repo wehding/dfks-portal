@@ -30,7 +30,8 @@
     "db:diff": "set -a && . ./.env.local && set +a && supabase db diff",
     "db:configure-contract-import-cron": "tsx scripts/configure-contract-import-cron.ts",
     "backfill:contract-evidence": "NODE_OPTIONS=--conditions=react-server tsx scripts/backfill-contract-field-evidence.ts",
-    "recover:word-contracts": "node scripts/one-off/recover-word-contract-jobs.mjs"
+    "recover:word-contracts": "node scripts/one-off/recover-word-contract-jobs.mjs",
+    "test:recover-word-contracts": "node --test scripts/one-off/recover-word-contract-jobs.test.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
