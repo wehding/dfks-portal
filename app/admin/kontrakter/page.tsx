@@ -27,6 +27,7 @@ export default async function AdminKontrakterPage({ searchParams }: { searchPara
     access?.canUseAdmin
     && access.modules?.contract_ownership?.read,
   );
+  const canRunOwnerBackfill = Boolean(access?.canUseAdmin && access.role === "superadmin");
   const requestedTab = value(query.tab, "arkiv");
   const supportedNonArchiveTab = requestedTab === "valideringskoe"
     || requestedTab === "upload"
@@ -38,5 +39,6 @@ export default async function AdminKontrakterPage({ searchParams }: { searchPara
     initialResult={initialResult}
     initialQuery={initialQuery}
     canManageOwnership={canManageOwnership}
+    canRunOwnerBackfill={canRunOwnerBackfill}
   />;
 }

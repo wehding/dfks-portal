@@ -4,10 +4,10 @@ Genereret for registry-review 2026-09-02 fra schema version 3. Tilstand: reporti
 
 ## Resultat
 
-- Registrerede flows: 27
+- Registrerede flows: 28
 - Registrerede dataflows: 1
 - Dokumenterede udeladelser: 2
-- Automatisk fundne følsomme kandidater: 103
+- Automatisk fundne følsomme kandidater: 104
 - Rapporterede fund: 0
 - Strukturelle fejl: 0
 
