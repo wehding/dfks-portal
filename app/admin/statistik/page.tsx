@@ -84,11 +84,16 @@ function hasVisibleStatisticRows(rows?: Array<{ suppressed?: boolean }>) {
   return (rows ?? []).some(row => !row.suppressed);
 }
 const querySuggestions = [
-  "Hvordan har medianlønnen for spillefilm og dokumentarfilm udviklet sig siden 2022?",
-  "Sammenlign gennemsnitslønnen for A-løn og leverandørkontrakter over alle år.",
-  "Sammenlign pension og arbejdsuger for spillefilm og dokumentarfilm siden 2022.",
-  "Hvor mange A-løns- og leverandørkontrakter er der registreret pr. år?",
-  "Hvordan har andelen med Copydan- og streamingforbehold udviklet sig over alle år sammenholdt med løn?",
+  "Er reallønnen faldet siden 2016?",
+  "Vis løn for fiktion og dokumentar siden 2016",
+  "Vis snitløn for A-løn og leverandør",
+  "Vis pension for A-løn og leverandør",
+  "Hvor mange kontrakter pr. år?",
+  "Vis Copydan og streaming siden 2016",
+  "Hvilke producenter giver bedst snitløn?",
+  "Vis lønkurve for producent Nordisk Film",
+  "Vis løn efter erfaring",
+  "Vis løn og arbejdsuger for spillefilm",
 ];
 const chartLabels: Record<CombinedChartType, string> = { table: "Tabel", grouped_bar: "Grupperet søjlediagram", line: "Linjediagram", area: "Arealdiagram", composed: "Kombineret diagram", indexed_line: "Indekseret linjediagram" };
 const selectableCharts: CombinedChartType[] = ["line", "grouped_bar", "area", "composed", "indexed_line", "table"];
@@ -317,7 +322,7 @@ export default function AdminStatistikPage() {
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">Spørg databasen, skriv fx: “Hvordan har gennemsnitslønnen udviklet sig siden 2022?”</p>
         <Textarea value={aiQuestion} onChange={event => setAiQuestion(event.target.value)} placeholder="Skriv et spørgsmål om de anonymiserede data…" />
-        <div className="flex flex-wrap gap-2">{querySuggestions.map(suggestion => <Button key={suggestion} type="button" size="sm" variant="outline" className="h-auto whitespace-normal text-left" onClick={() => void askStatistics(suggestion)} disabled={aiLoading}>{suggestion}</Button>)}</div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{querySuggestions.map(suggestion => <Button key={suggestion} type="button" size="sm" variant="outline" className="h-full min-h-10 w-full justify-start whitespace-normal px-3 py-2 text-left text-xs leading-snug sm:text-sm" onClick={() => void askStatistics(suggestion)} disabled={aiLoading}><span className="min-w-0 break-words">{suggestion}</span></Button>)}</div>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap"><Button className="w-full sm:w-auto" onClick={() => void askStatistics()} disabled={aiLoading || aiQuestion.trim().length < 5}>{aiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Undersøg</Button><Select value={selectedChart} onValueChange={value => setSelectedChart(value as "auto" | CombinedChartType)}><SelectTrigger className="w-full sm:w-64"><SelectValue placeholder="Resultatvisning" /></SelectTrigger><SelectContent><SelectItem value="auto">Resultatvisning: Automatisk</SelectItem>{selectableCharts.map(chart => <SelectItem key={chart} value={chart}>{chartLabels[chart]}</SelectItem>)}</SelectContent></Select></div>
         {aiError && <Alert variant="destructive"><AlertTitle>{aiError.title}</AlertTitle><AlertDescription><span className="block">{aiError.reason}</span>{aiError.suggestion && <span className="mt-1 block">Forslag: {aiError.suggestion}</span>}</AlertDescription></Alert>}
         {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Ikke nok data til et sikkert resultat</AlertTitle><AlertDescription>Det valgte udsnit indeholder færre end {aiAnswer.minimum ?? 3} forskellige personer. Prøv en længere periode, færre filtre eller en bredere produktionstype.</AlertDescription></Alert>}
