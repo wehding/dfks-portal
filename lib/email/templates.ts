@@ -1,3 +1,5 @@
+import { safeRichTextToHtml } from "@/lib/safe-rich-text";
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -33,13 +35,13 @@ export function inviteEmailHtml(params: {
       ? `Du har allerede en bruger til ${orgName}s portal. Brug knappen for at vælge en ny adgangskode og åbne din adgang.`
       : `Du er blevet inviteret til ${orgName}s portal. Klik på knappen for at oprette din adgang:`;
   const bodyText = params.bodyText?.trim() || defaultText;
-  const bodyHtml = escapeHtml(bodyText).replace(/\n/g, "<br>");
+  const bodyHtml = safeRichTextToHtml(bodyText);
   const actionLabel = params.accessType === "recovery" ? "Vælg ny adgangskode" : "Opret min adgang";
   return `
 <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 480px; margin: 0 auto; color: #111827;">
   <h2 style="color: ${color}; font-size: 20px;">Velkommen til ${safeOrgName}</h2>
   ${params.bodyIncludesGreeting ? "" : `<p>Hej ${safeName},</p>`}
-  <p>${bodyHtml}</p>
+  <div style="line-height: 1.55;">${bodyHtml}</div>
   <p style="margin: 24px 0;">
     <a href="${safeInviteUrl}" style="background: ${color}; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">${actionLabel}</a>
   </p>
@@ -62,12 +64,12 @@ export function memberNotificationEmailHtml(params: {
   const safeOrgName = escapeHtml(params.orgName);
   const safeSubject = escapeHtml(params.subject);
   const safeLink = escapeHtml(params.link);
-  const bodyHtml = escapeHtml(params.bodyText).replace(/\n/g, "<br>");
+  const bodyHtml = safeRichTextToHtml(params.bodyText);
   return `
 <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 520px; margin: 0 auto; color: #111827;">
   <h2 style="color: ${color}; font-size: 20px;">${safeSubject}</h2>
   <p>Hej ${safeName},</p>
-  <p>${bodyHtml}</p>
+  <div style="line-height: 1.55;">${bodyHtml}</div>
   <p style="margin: 24px 0;"><a href="${safeLink}" style="background: ${color}; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">Åbn ${safeOrgName}s portal</a></p>
   <p style="font-size: 13px; color: #6b7280;">Virker knappen ikke, kan du kopiere adressen:<br><span style="word-break: break-all;">${safeLink}</span></p>
 </div>`.trim();

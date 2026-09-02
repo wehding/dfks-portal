@@ -1,24 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { toast } from "sonner";
-import { AlertCircle, Building2, CheckCircle2, Copy, ImageIcon, Loader2, Plus, Save, Trash2, Upload, Wifi } from "lucide-react";
+import { AlertCircle, Building2, CheckCircle2, ChevronDown, Copy, ImageIcon, Loader2, Plus, Save, Trash2, Upload, Wifi } from "lucide-react";
 import { getOrganisationSettings, removeOrganisationLogo, testOrganisationForeningLetConnection, updateOrganisationSettings, uploadOrganisationLogo } from "@/app/actions/organisation-settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImportConnectionsSettings } from "@/components/admin/import-connections-settings";
-import { LegalDocumentSettings } from "@/components/admin/legal-document-settings";
-import {
-  MEMBER_WORK_INVITE_SUBJECT,
-  MEMBER_WORK_INVITE_TEXT,
-  NON_MEMBER_WORK_INVITE_SUBJECT,
-  NON_MEMBER_WORK_INVITE_TEXT,
-} from "@/lib/rights-holder-invitation-templates";
-import { renderInvitationTemplate } from "@/lib/work-share-reconciliation";
+
+const OrganisationTextEditor = dynamic(() => import("@/components/admin/organisation-text-editor"), {
+  loading: () => <section className="rounded-lg border bg-card p-5 text-sm text-muted-foreground shadow-sm"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Indlæser teksteditor...</section>,
+});
+const LegalDocumentSettings = dynamic(() => import("@/components/admin/legal-document-settings").then(module => module.LegalDocumentSettings), {
+  loading: () => <section className="rounded-lg border bg-card p-5 text-sm text-muted-foreground shadow-sm"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Indlæser juridiske tekster...</section>,
+});
 
 type FormState = {
   org_id: string;
@@ -27,13 +26,6 @@ type FormState = {
   logo_url: string;
   primary_color: string;
   from_email: string;
-  invite_email_text: string;
-  invite_reminder_text: string;
-  member_work_invite_subject: string;
-  member_work_invite_text: string;
-  non_member_work_invite_subject: string;
-  non_member_work_invite_text: string;
-  welcome_message_text: string;
   coeditor_word: string;
   role_labels: string[];
   default_role_label: string;
@@ -70,13 +62,6 @@ const emptyForm: FormState = {
   logo_url: "",
   primary_color: "#111827",
   from_email: "",
-  invite_email_text: "",
-  invite_reminder_text: "",
-  member_work_invite_subject: MEMBER_WORK_INVITE_SUBJECT,
-  member_work_invite_text: MEMBER_WORK_INVITE_TEXT,
-  non_member_work_invite_subject: NON_MEMBER_WORK_INVITE_SUBJECT,
-  non_member_work_invite_text: NON_MEMBER_WORK_INVITE_TEXT,
-  welcome_message_text: "",
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
   default_role_label: "Medskaber",
@@ -100,6 +85,21 @@ const emptyForm: FormState = {
   foreninglet_credential_source: "missing",
 };
 
+function SettingsSection({ title, description, children }: { title: string; description: string; children: ReactNode }) {
+  return (
+    <details open className="group rounded-lg border bg-card shadow-sm">
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-4 p-4 marker:hidden sm:p-5 [&::-webkit-details-marker]:hidden">
+        <div>
+          <h2 className="text-base font-semibold">{title}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        </div>
+        <ChevronDown className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="border-t p-4 sm:p-5">{children}</div>
+    </details>
+  );
+}
+
 export default function OrganisationSettingsPage() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [loading, setLoading] = useState(true);
@@ -110,6 +110,8 @@ export default function OrganisationSettingsPage() {
   const [savedStatisticsMinimum, setSavedStatisticsMinimum] = useState(5);
   const [savedStatisticsDominance, setSavedStatisticsDominance] = useState(0.8);
   const [activeTab, setActiveTab] = useState("organisation");
+  const [showTextEditor, setShowTextEditor] = useState(false);
+  const textEditorAnchor = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -123,13 +125,6 @@ export default function OrganisationSettingsPage() {
           logo_url: settings.logo_url ?? "",
           primary_color: settings.primary_color,
           from_email: settings.from_email ?? "",
-          invite_email_text: settings.invite_email_text ?? "",
-          invite_reminder_text: settings.invite_reminder_text ?? "",
-          member_work_invite_subject: settings.member_work_invite_subject ?? MEMBER_WORK_INVITE_SUBJECT,
-          member_work_invite_text: settings.member_work_invite_text ?? MEMBER_WORK_INVITE_TEXT,
-          non_member_work_invite_subject: settings.non_member_work_invite_subject ?? NON_MEMBER_WORK_INVITE_SUBJECT,
-          non_member_work_invite_text: settings.non_member_work_invite_text ?? NON_MEMBER_WORK_INVITE_TEXT,
-          welcome_message_text: settings.welcome_message_text ?? "",
           coeditor_word: settings.coeditor_word,
           role_labels: settings.role_labels,
           default_role_label: settings.default_role_label,
@@ -162,6 +157,24 @@ export default function OrganisationSettingsPage() {
       });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    const node = textEditorAnchor.current;
+    if (!node || showTextEditor) return;
+    if (!("IntersectionObserver" in window)) {
+      setShowTextEditor(true);
+      return;
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setShowTextEditor(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "500px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loading, showTextEditor]);
 
   const canSave = useMemo(() => {
     return form.short_name.trim() && form.long_name.trim() && form.coeditor_word.trim() && form.role_labels.some(role => role.trim());
@@ -228,13 +241,6 @@ export default function OrganisationSettingsPage() {
           logo_url: form.logo_url || null,
           primary_color: form.primary_color,
           from_email: form.from_email || null,
-          invite_email_text: form.invite_email_text || null,
-          invite_reminder_text: form.invite_reminder_text || null,
-          member_work_invite_subject: form.member_work_invite_subject || null,
-          member_work_invite_text: form.member_work_invite_text || null,
-          non_member_work_invite_subject: form.non_member_work_invite_subject || null,
-          non_member_work_invite_text: form.non_member_work_invite_text || null,
-          welcome_message_text: form.welcome_message_text || null,
           coeditor_word: form.coeditor_word,
           role_labels: form.role_labels,
           default_role_label: form.default_role_label,
@@ -325,7 +331,7 @@ export default function OrganisationSettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6" data-performance-route="organisation-settings" data-performance-ready="shell">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -355,12 +361,12 @@ export default function OrganisationSettingsPage() {
         </TabsList>
 
         <TabsContent value="organisation" className="space-y-6">
-          <ImportConnectionsSettings />
+          <SettingsSection title="Dataforbindelser" description="Forbindelser til eksterne datakilder og importtjenester.">
+            <ImportConnectionsSettings />
+          </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Branding</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Bruges i menu, portal og invitationsmails.</p>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+      <SettingsSection title="Branding" description="Bruges i menu, portal og invitationsmails.">
+        <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label>Kort navn</Label>
             <Input value={form.short_name} onChange={event => setForm(f => ({ ...f, short_name: event.target.value }))} placeholder="Kort navn" />
@@ -435,24 +441,18 @@ export default function OrganisationSettingsPage() {
             </div>
           </div>
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Opbevaring af kontraktgennemgange</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Afsluttede gennemgange soft-slettes først. Originalfil, mailreference og afledte AI-data slettes efter perioden. Juridisk hold stopper automatisk sletning.</p>
-        <div className="mt-4 max-w-xs space-y-2">
+      <SettingsSection title="Opbevaring af kontraktgennemgange" description="Afsluttede gennemgange soft-slettes først. Originalfil, mailreference og afledte AI-data slettes efter perioden. Juridisk hold stopper automatisk sletning.">
+        <div className="max-w-xs space-y-2">
           <Label htmlFor="review-retention">Opbevaringsperiode i måneder</Label>
           <Input id="review-retention" type="number" min={1} max={120} value={form.contract_review_retention_months} onChange={event => setForm(current => ({ ...current, contract_review_retention_months: Number(event.target.value) }))} />
           <p className="text-xs text-muted-foreground">Standard er 24 måneder. Tilladte værdier er 1–120 måneder. Lange perioder øger mængden af persondata, organisationen opbevarer.</p>
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Dokumentationskrav</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Tillad en publiceret tro-og-loveerklæring som dokumentation for værker før et bestemt år. Erklæringen erstatter ikke krav om afsnit, medklippere eller arbejdsandele.
-        </p>
-        <div className="mt-4 flex items-center justify-between gap-4 rounded-md border p-3">
+      <SettingsSection title="Dokumentationskrav" description="Indstillinger for tro-og-loveerklæring som dokumentation for ældre værker.">
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
           <div>
             <Label htmlFor="legacy-declaration-enabled">Aktivér tro-og-loveordning</Label>
             <p className="mt-1 text-xs text-muted-foreground">Ordningen er deaktiveret, indtil indstillingen gemmes aktivt.</p>
@@ -482,12 +482,10 @@ export default function OrganisationSettingsPage() {
         <p className="mt-4 text-xs text-muted-foreground">
           Erklæringsteksten redigeres og publiceres under fanen “Brugerrettigheder og juridiske tekster” som “Tro-og-love for ældre værker”. Publicering kræver ikke ny onboarding.
         </p>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Statistikgrundlag</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Vælg om kladder må indgå. Kladder kan indeholde ufuldstændige eller endnu ikke kontrollerede data.</p>
-        <div className="mt-4 max-w-md space-y-2">
+      <SettingsSection title="Statistikgrundlag" description="Vælg om kladder må indgå. Kladder kan indeholde ufuldstændige eller endnu ikke kontrollerede data.">
+        <div className="max-w-md space-y-2">
           <Label htmlFor="statistics-contract-scope">Kontrakter i statistik</Label>
           <select
             id="statistics-contract-scope"
@@ -559,82 +557,25 @@ export default function OrganisationSettingsPage() {
             <Button type="button" size="sm" variant="outline" onClick={() => setForm(current => ({ ...current, statistics_work_regions: [...current.statistics_work_regions, ""] }))}><Plus className="mr-2 h-4 w-4" />Tilføj område</Button>
           </div>}
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Invitationer</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Systemmails sendes gennem Google Workspace fra bestyrelsen@danskfilmklipperselskab.dk med organisationens navn som afsendernavn. Svar sendes til adressen nedenfor.</p>
-        <div className="mt-4 grid gap-4">
-          <div className="space-y-2">
-            <Label>Svaradresse (Reply-To)</Label>
-            <Input type="email" value={form.from_email} onChange={event => setForm(f => ({ ...f, from_email: event.target.value }))} placeholder="kontakt@organisation.dk" />
-          </div>
-          <div className="space-y-2">
-            <Label>Invitationstekst</Label>
-            <Textarea
-              value={form.invite_email_text}
-              onChange={event => setForm(f => ({ ...f, invite_email_text: event.target.value }))}
-              placeholder="Skriv den tekst, der skal stå over knappen i invitationsmailen."
-              rows={4}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Rykkertekst</Label>
-            <Textarea
-              value={form.invite_reminder_text}
-              onChange={event => setForm(f => ({ ...f, invite_reminder_text: event.target.value }))}
-              placeholder="Skriv den tekst, der skal bruges, når en invitation gensendes som rykker."
-              rows={4}
-            />
-          </div>
-          <div className="space-y-3 rounded-md border p-3">
-            <div>
-              <Label>Invitation til medlem med værksliste</Label>
-              <p className="mt-1 text-xs text-muted-foreground">Tilladte pladsholdere: {'{navn}'}, {'{værk}'}, {'{værker}'} og {'{organisation}'}.</p>
-            </div>
-            <Input aria-label="Emne til medlemsinvitation" value={form.member_work_invite_subject} onChange={event => setForm(current => ({ ...current, member_work_invite_subject: event.target.value }))} />
-            <Textarea rows={12} value={form.member_work_invite_text} onChange={event => setForm(current => ({ ...current, member_work_invite_text: event.target.value }))} />
-            <details className="rounded-md bg-muted/40 p-3 text-sm">
-              <summary className="cursor-pointer font-medium">Forhåndsvisning</summary>
-              <p className="mt-3 font-semibold">{renderInvitationTemplate(form.member_work_invite_subject, { name: "Anna Jensen", organisation: form.long_name || form.short_name || "Organisationen", worksText: "• Eksempelværk (2025)", primaryWork: "Eksempelværk" })}</p>
-              <p className="mt-2 whitespace-pre-line text-muted-foreground">{renderInvitationTemplate(form.member_work_invite_text, { name: "Anna Jensen", organisation: form.long_name || form.short_name || "Organisationen", worksText: "• Eksempelværk (2025)", primaryWork: "Eksempelværk" })}</p>
-            </details>
-          </div>
-          <div className="space-y-3 rounded-md border p-3">
-            <div>
-              <Label>Invitation til ikke-medlem med værksliste</Label>
-              <p className="mt-1 text-xs text-muted-foreground">Skabelonen forklarer, at kontrakter skal uploades som dokumentation for rettighedspengene.</p>
-            </div>
-            <Input aria-label="Emne til ikke-medlemsinvitation" value={form.non_member_work_invite_subject} onChange={event => setForm(current => ({ ...current, non_member_work_invite_subject: event.target.value }))} />
-            <Textarea rows={12} value={form.non_member_work_invite_text} onChange={event => setForm(current => ({ ...current, non_member_work_invite_text: event.target.value }))} />
-            <details className="rounded-md bg-muted/40 p-3 text-sm">
-              <summary className="cursor-pointer font-medium">Forhåndsvisning</summary>
-              <p className="mt-3 font-semibold">{renderInvitationTemplate(form.non_member_work_invite_subject, { name: "Bo Hansen", organisation: form.long_name || form.short_name || "Organisationen", worksText: "• Eksempelværk (2025)", primaryWork: "Eksempelværk" })}</p>
-              <p className="mt-2 whitespace-pre-line text-muted-foreground">{renderInvitationTemplate(form.non_member_work_invite_text, { name: "Bo Hansen", organisation: form.long_name || form.short_name || "Organisationen", worksText: "• Eksempelværk (2025)", primaryWork: "Eksempelværk" })}</p>
-            </details>
-          </div>
-          <div className="space-y-2">
-            <Label>Velkomstbesked</Label>
-            <p className="text-xs text-muted-foreground">
-              Lægges automatisk som første besked i nye medlemmers indbakke på Overblik.
-              Lades feltet stå tomt, oprettes ingen velkomstbesked.
-            </p>
-            <Textarea
-              value={form.welcome_message_text}
-              onChange={event => setForm(f => ({ ...f, welcome_message_text: event.target.value }))}
-              placeholder="Skriv velkomstbeskeden til nye medlemmer."
-              rows={8}
-            />
-          </div>
+      <SettingsSection title="Mailafsender" description="Systemmails sendes gennem Google Workspace med organisationens navn som afsendernavn.">
+        <div className="max-w-xl space-y-2">
+          <Label>Svaradresse (Reply-To)</Label>
+          <Input type="email" value={form.from_email} onChange={event => setForm(f => ({ ...f, from_email: event.target.value }))} placeholder="kontakt@organisation.dk" />
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Medlems-API</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Bruges til at hente medlemslisten fra den aktive organisations medlemssystem. Hver organisation skal have sit eget login; oplysningerne gemmes krypteret og vises ikke igen.
-        </p>
-        <div className={`mt-4 flex items-start gap-3 rounded-md border px-3 py-3 ${
+      <SettingsSection title="Redigerbare tekster" description="Vælg teksttype, formater indholdet og indsæt dynamiske felter ved markøren.">
+        <div ref={textEditorAnchor} className="min-h-40" data-organisation-text-editor-anchor>
+          {showTextEditor ? <OrganisationTextEditor organisationName={form.long_name || form.short_name || "Organisationen"} /> : (
+            <p className="text-sm text-muted-foreground">Teksteditoren indlæses, når du nærmer dig den.</p>
+          )}
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title="Medlems-API" description="Henter medlemslisten fra organisationens medlemssystem. Loginoplysninger gemmes krypteret og vises ikke igen.">
+        <div className={`flex items-start gap-3 rounded-md border px-3 py-3 ${
           !form.foreninglet_enabled
             ? "bg-muted/30"
             : form.foreninglet_has_credentials
@@ -705,14 +646,10 @@ export default function OrganisationSettingsPage() {
             </Button>
           </div>
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Fagord og roller</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Disse ord vises i værksflows, onboarding, hjælpetekster og relevante beskeder.
-        </p>
-        <div className="mt-4 space-y-4">
+      <SettingsSection title="Fagord og roller" description="Ord og roller, der vises i værksflows, onboarding, hjælpetekster og relevante beskeder.">
+        <div className="space-y-4">
           <div className="space-y-2">
             <Label>Ord for “medskaber”</Label>
             <Input value={form.coeditor_word} onChange={event => setForm(f => ({ ...f, coeditor_word: event.target.value }))} placeholder="medskaber" />
@@ -787,7 +724,7 @@ export default function OrganisationSettingsPage() {
             </Button>
           </div>
         </div>
-      </section>
+      </SettingsSection>
 
         </TabsContent>
 

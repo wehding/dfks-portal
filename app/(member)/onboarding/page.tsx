@@ -8,6 +8,8 @@ import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onbo
 import { resolvePostLoginDestination } from "@/lib/auth/post-login";
 import { listCurrentLegalDocuments } from "@/lib/server/legal-document-records";
 import { resolveOrgId } from "@/lib/org";
+import { renderOrganisationTemplate } from "@/lib/organisation-text-templates";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export default async function OnboardingPage() {
   const supabase = await createClient();
@@ -42,11 +44,12 @@ export default async function OnboardingPage() {
   } : null;
   const orgId = affiliation?.org_id as string | undefined;
   const audience = affiliation?.is_member ? "member" : "non_member";
-  const [{ data: organisation }, { data: professionRows }, { data: regionRows }, legalDocuments] = await Promise.all([
-    orgId ? service.from("organisations").select("terminology,statistics_profile_config").eq("id", orgId).maybeSingle() : Promise.resolve({ data: null }),
+  const [{ data: organisation }, { data: professionRows }, { data: regionRows }, legalDocuments, { data: workRows }] = await Promise.all([
+    orgId ? service.from("organisations").select("name,branding,terminology,statistics_profile_config").eq("id", orgId).maybeSingle() : Promise.resolve({ data: null }),
     orgId ? service.from("organisation_profession_types").select("profession_type_id,display_order,profession_types(name)").eq("org_id", orgId).order("display_order") : Promise.resolve({ data: [] }),
     orgId ? service.from("organisation_work_regions").select("code,name_da,name_en").eq("org_id", orgId).eq("active", true).order("display_order") : Promise.resolve({ data: [] }),
     orgId ? listCurrentLegalDocuments(service, orgId, audience) : Promise.resolve([]),
+    orgId && rh?.id ? service.from("work_assignments").select("works(title)").eq("org_id", orgId).eq("rights_holder_id", rh.id).limit(20) : Promise.resolve({ data: [] }),
   ]);
   const statisticsProfile = {
     config: {
@@ -60,6 +63,27 @@ export default async function OnboardingPage() {
     secondaryProfessionTypeIds: [],
   };
   const legalDocumentsReady = legalDocuments.length > 0 && legalDocuments.every(document => Boolean(document.id));
+  const workTitles = (workRows ?? []).map(row => (row.works as unknown as { title?: string } | null)?.title).filter((title): title is string => Boolean(title));
+  const organisationName = ((organisation?.branding as { long_name?: string } | null)?.long_name ?? organisation?.name ?? "Organisationen");
+  const renderedLegalDocuments = legalDocuments.map(document => ({
+    ...document,
+    title: renderOrganisationTemplate(document.title, { name: rh?.full_name ?? "medlem", organisation: organisationName, primaryWork: workTitles[0] ?? "dit værk", worksText: workTitles.length ? workTitles.join(", ") : "dine værker" }),
+    body: renderOrganisationTemplate(document.body, { name: rh?.full_name ?? "medlem", organisation: organisationName, primaryWork: workTitles[0] ?? "dit værk", worksText: workTitles.length ? workTitles.join(", ") : "dine værker" }),
+  }));
+  if (rh?.id && orgId) {
+    await recordSensitiveFlow({
+      actor: { userId: user.id, orgId, role: "member", source: "portal" },
+      action: "read",
+      component: "portal.onboarding.legal-texts",
+      entityType: "legal_document_versions",
+      targetMemberUuid: rh.id,
+      orgIds: [orgId],
+      purposeCode: "onboarding_and_legal_transparency",
+      legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)",
+      dataCategories: ["identity_data", "work_data", "union_membership_data"],
+      counts: { legalDocuments: renderedLegalDocuments.length, works: workTitles.length },
+    });
+  }
 
-  return <OnboardingClient rh={decryptRettighedshaver(profile)} user={user} statisticsProfile={statisticsProfile} legalDocuments={legalDocuments} legalDocumentsReady={legalDocumentsReady} isRepeatOnboarding={onboardingStatus === "reset_required"} />;
+  return <OnboardingClient rh={decryptRettighedshaver(profile)} user={user} statisticsProfile={statisticsProfile} legalDocuments={renderedLegalDocuments} legalDocumentsReady={legalDocumentsReady} isRepeatOnboarding={onboardingStatus === "reset_required"} />;
 }
