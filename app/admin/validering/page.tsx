@@ -1336,7 +1336,7 @@ setActiveField(fieldId)
                                                 placeholder="Klipperens navn som skrevet i kontrakten..."
                                             />
                                             <p className="mt-1 text-xs text-muted-foreground">
-                                                Feltet beskriver kontraktens tekst. Kontraktens ejer administreres under Ejerskabskontrol i Kontraktarkivet.
+                                                Feltet beskriver kontraktens tekst. Kontraktens ejer administreres på fanen Ejerskab i Rediger kontrakt.
                                             </p>
                                             </F>
                                         )}

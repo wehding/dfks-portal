@@ -38,6 +38,11 @@ import { requireMemberContext, requireOrgId } from "@/lib/org";
 import { getContractImportStatesForOrg } from "@/lib/server/contract-import-state";
 import { createListLoadTimer } from "@/lib/server/list-load-timing";
 import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
+import {
+  applyAdminContractFilters,
+  matchingAdminContractIds,
+  type AdminContractFilterParams,
+} from "@/lib/server/admin-contract-filtering";
 import type { ListPageResult } from "@/lib/list-query";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
 const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -254,15 +259,9 @@ async function contractValidationBlocker(
 
 type SeriesEpisodeWork = { id: string; title: string | null; season_number: number | null; episode_number: number | null; parent_work_id: string | null };
 
-export type AdminContractsPageParams = {
+export type AdminContractsPageParams = AdminContractFilterParams & {
   page?: number;
   pageSize?: number;
-  search?: string;
-  status?: string;
-  type?: string;
-  rightsHolderId?: string | null;
-  sortKey?: "production" | "rightsHolder" | "employer" | "type" | "overenskomst" | "period" | "status";
-  sortDir?: "asc" | "desc";
   includeLookups?: boolean;
   includeSummary?: boolean;
 };
@@ -270,20 +269,6 @@ export type AdminContractsPageParams = {
 function clampPageSize(value: number | undefined) {
   if (!value || Number.isNaN(value)) return 20;
   return Math.min(Math.max(Math.floor(value), 10), 200);
-}
-
-function normalizeSearch(value: string | undefined) {
-  return value?.trim().toLowerCase() ?? "";
-}
-
-function uniqueIds(values: Array<string | null | undefined>) {
-  return [...new Set(values.filter((value): value is string => Boolean(value)))];
-}
-
-function intersectIds(base: Set<string> | null, next: Iterable<string>) {
-  const nextSet = new Set(next);
-  if (!base) return nextSet;
-  return new Set([...base].filter(id => nextSet.has(id)));
 }
 
 function normalizeAdminContractLookups(results: any[] | null) {
@@ -316,135 +301,6 @@ async function fetchSeriesEpisodeWorks(
   if (error) return { episodeWorks: [], error: error.message };
   const episodeWorks = ((relatedWorks ?? []) as SeriesEpisodeWork[]).filter(item => item.episode_number != null || parseLocalEpisodeCode(item.title));
   return { episodeWorks, error: null };
-}
-
-async function matchingAdminContractIds(
-  db: ReturnType<typeof createServiceClient>,
-  orgId: string,
-  params: AdminContractsPageParams,
-) {
-  let ids: Set<string> | null = null;
-  const q = normalizeSearch(params.search);
-
-  if (q) {
-    const like = `%${q}%`;
-    const matches = new Set<string>();
-    if (isUuid(q)) {
-      const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).eq("id", q).limit(1);
-      if (error) throw new Error(error.message);
-      for (const row of data ?? []) matches.add(row.id);
-    }
-    const directColumns = ["working_title", "type", "overenskomst", "status", "document_processing_status"];
-    const directResults = await Promise.all(directColumns.map(column =>
-      db.from("contracts").select("id").eq("org_id", orgId).ilike(column, like).limit(5000)
-    ));
-    for (const result of directResults) {
-      if (result.error) throw new Error(result.error.message);
-      for (const row of result.data ?? []) matches.add(row.id);
-    }
-
-    const numeric = Number(q);
-    if (Number.isFinite(numeric)) {
-      const { data, error } = await db
-        .from("contracts")
-        .select("id")
-        .eq("org_id", orgId)
-        .or(`contract_date.ilike.%${numeric}%,start_date.ilike.%${numeric}%,end_date.ilike.%${numeric}%`)
-        .limit(5000);
-      if (error) throw new Error(error.message);
-      for (const row of data ?? []) matches.add(row.id);
-    }
-
-    const [{ data: holders, error: holdersError }, { data: employers, error: employersError }, { data: works, error: worksError }] = await Promise.all([
-      db.from("rettighedshavere").select("id").eq("org_id", orgId).ilike("full_name", like).limit(5000),
-      db.from("employers").select("id").eq("org_id", orgId).ilike("name", like).limit(5000),
-      db.from("works").select("id").eq("org_id", orgId).ilike("title", like).limit(5000),
-    ]);
-    if (holdersError) throw new Error(holdersError.message);
-    if (employersError) throw new Error(employersError.message);
-    if (worksError) throw new Error(worksError.message);
-
-    const holderIds = uniqueIds((holders ?? []).map(row => row.id));
-    const employerIds = uniqueIds((employers ?? []).map(row => row.id));
-    const workIds = uniqueIds((works ?? []).map(row => row.id));
-    const relationResults = await Promise.all([
-      holderIds.length ? db.from("contracts").select("id").eq("org_id", orgId).in("rights_holder_id", holderIds).limit(5000) : Promise.resolve({ data: [], error: null }),
-      employerIds.length ? db.from("contracts").select("id").eq("org_id", orgId).in("employer_id", employerIds).limit(5000) : Promise.resolve({ data: [], error: null }),
-      workIds.length ? db.from("contracts").select("id").eq("org_id", orgId).in("work_id", workIds).limit(5000) : Promise.resolve({ data: [], error: null }),
-    ]);
-    for (const result of relationResults) {
-      if (result.error) throw new Error(result.error.message);
-      for (const row of result.data ?? []) matches.add(row.id);
-    }
-
-    if (q.includes("mangler") && q.includes("værk")) {
-      const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("work_id", null).limit(5000);
-      if (error) throw new Error(error.message);
-      for (const row of data ?? []) matches.add(row.id);
-    }
-    if (q.includes("mangler") && (q.includes("ejer") || q.includes("rettighedshaver"))) {
-      const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("rights_holder_id", null).limit(5000);
-      if (error) throw new Error(error.message);
-      for (const row of data ?? []) matches.add(row.id);
-    }
-
-    ids = intersectIds(ids, matches);
-  }
-
-  if (params.rightsHolderId) {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).eq("rights_holder_id", params.rightsHolderId).limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  }
-
-  if (params.status === "beskeder") {
-    const { data, error } = await db
-      .from("contract_comments")
-      .select("contract_id")
-      .eq("author_role", "member")
-      .is("admin_read_at", null)
-      .limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.contract_id));
-  } else if (params.status === "missingOwner") {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("rights_holder_id", null).limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  } else if (params.status === "missingWork") {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("work_id", null).neq("status", "valideret").limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  } else if (params.status === "validationPending") {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).not("work_id", "is", null).not("rights_holder_id", "is", null).neq("status", "valideret").limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  } else if (params.status === "validationRecommended") {
-    const { data, error } = await db
-      .from("contract_validations")
-      .select("contract_id, has_credit_clause, has_overenskomst_incorporation")
-      .or("has_credit_clause.eq.false,has_overenskomst_incorporation.eq.false")
-      .limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.contract_id));
-  } else if (params.status === "documentProcessing") {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).in("document_processing_status", ["pending", "processing"]).limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  } else if (params.status === "documentReady") {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).in("document_processing_status", ["ready", "not_required"]).limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  } else if (params.status === "documentNeedsReview") {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).eq("document_processing_status", "needs_review").limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  } else if (params.status === "documentFailed") {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).eq("document_processing_status", "failed").limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  }
-
-  return ids;
 }
 
 export async function fetchAdminContractsPage(params: AdminContractsPageParams = {}) {
@@ -505,19 +361,17 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
     employers (name),
     rettighedshavere (full_name),
     works (id, title, type, poster_url),
-    contract_validations (has_credit_clause, has_overenskomst_incorporation)
+    contract_validations (has_credit_clause, has_overenskomst_incorporation),
+    contract_owner_verifications (
+      status, assignment_origin, reason_code, revision,
+      assigned_rights_holder_id, proposed_rights_holder_id,
+      proposed_rights_holder:rettighedshavere!contract_owner_verifications_proposed_rights_holder_id_fkey(full_name)
+    )
   `;
   let countQuery = db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null);
   let listQuery = db.from("contracts").select(selectFields).eq("org_id", orgId).is("superseded_by_contract_id", null);
-  const applyFilters = (query: any) => {
-    let next = query;
-    if (matchedIds) next = next.in("id", [...matchedIds]);
-    if (params.status && !["all", "beskeder", "missingOwner", "missingWork", "validationPending", "validationRecommended", "documentProcessing", "documentReady", "documentNeedsReview", "documentFailed"].includes(params.status)) next = next.eq("status", params.status);
-    if (params.type && params.type !== "all") next = next.eq("type", params.type);
-    return next;
-  };
-  countQuery = applyFilters(countQuery);
-  listQuery = applyFilters(listQuery);
+  countQuery = applyAdminContractFilters(countQuery, params, matchedIds);
+  listQuery = applyAdminContractFilters(listQuery, params, matchedIds);
 
   const ascending = params.sortDir !== "desc";
   if (params.sortKey === "rightsHolder") listQuery = listQuery.order("rights_holder_id", { ascending });
@@ -571,6 +425,8 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
   }
   const contracts = rawContracts.map(row => {
     const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations;
+    const ownership = Array.isArray(row.contract_owner_verifications) ? row.contract_owner_verifications[0] : row.contract_owner_verifications;
+    const proposedOwner = Array.isArray(ownership?.proposed_rights_holder) ? ownership.proposed_rights_holder[0] : ownership?.proposed_rights_holder;
     return {
       id: row.id,
       type: row.type,
@@ -590,6 +446,13 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
       employer_name: row.employers?.name ?? null,
       rights_holder_id: row.rights_holder_id ?? null,
       rights_holder_name: row.rettighedshavere?.full_name ?? null,
+      ownership_status: ownership?.status ?? null,
+      ownership_origin: ownership?.assignment_origin ?? null,
+      ownership_reason_code: ownership?.reason_code ?? null,
+      ownership_revision: ownership?.revision ?? null,
+      ownership_assigned_rights_holder_id: ownership?.assigned_rights_holder_id ?? null,
+      ownership_proposed_rights_holder_id: ownership?.proposed_rights_holder_id ?? null,
+      ownership_proposed_rights_holder_name: proposedOwner?.full_name ?? null,
       work_id: row.works?.id ?? null,
       working_title: row.working_title ?? null,
       work_title: row.works?.title ?? null,
@@ -2625,11 +2488,6 @@ export async function fetchAdminContractEditorData(contractId: string) {
     signedUrl(contract.original_view_pdf_url),
     signedUrl(contract.processed_pdf_url),
   ]);
-  await db.from("contract_comments")
-    .update({ admin_read_at: new Date().toISOString() })
-    .eq("contract_id", contractId)
-    .eq("author_role", "member")
-    .is("admin_read_at", null);
   const producerSelections: ProductionCompanySelection[] = producerResult.error
     ? (contract.employer_id && employer?.name ? [{ employerId: contract.employer_id, canonicalName: employer.name }] : [])
     : (producerResult.data ?? []).map(row => {
@@ -2837,8 +2695,11 @@ export async function markContractCommentsRead(contractId: string, viewerRole: "
 
   // Rollen bestemmes af HVILKEN side der kalder (admin vs portal), ikke af hvem
   // brugeren er — ellers fejler mark-læst når admin selv er rettighedshaveren.
+  let auditRole = "member";
   if (viewerRole === "admin") {
-    if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+    const staffRole = await staffRoleForOrg(db, user.id, contract.org_id);
+    if (!staffRole) return { success: false, error: "Ikke autoriseret" };
+    auditRole = staffRole;
   } else {
     const { data: rh } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
     if (!rh || rh.id !== contract.rights_holder_id) return { success: false, error: "Ikke autoriseret" };
@@ -2856,6 +2717,19 @@ export async function markContractCommentsRead(contractId: string, viewerRole: "
 
   const { error } = await query;
   if (error) return { success: false, error: error.message };
+
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: auditRole }, viewerRole === "admin" ? "admin" : "portal", "contracts.messages.read"),
+    action: "update",
+    entityType: "contract_comments",
+    entityId: contract.id,
+    entityLabel: "Beskedtråd markeret som læst",
+    targetMemberUuid: contract.rights_holder_id,
+    purposeCode: "contract_case_management",
+    legalBasis: viewerRole === "admin" ? "GDPR Art. 6(1)(c) og 6(1)(f)" : "GDPR Art. 6(1)(b)",
+    dataCategories: ["message_data", "contract_data"],
+    orgIds: [contract.org_id],
+  });
 
   revalidatePath("/portal/mine-kontrakter");
   revalidatePath("/admin/kontrakter");

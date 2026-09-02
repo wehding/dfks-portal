@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { norm, buildNeedles as resolveNeedles } from "@/lib/resolveAnker"
 import type { ContractLayout } from "@/lib/contract-layout"
 import { contractEvidencePage, evidenceBboxToViewportRect, type ContractEvidenceBbox, type ContractFieldEvidence, type PdfViewportDimensions } from "@/lib/contract-workbench"
-import { calculatePdfFitWidthScale } from "@/lib/contract-workbench-responsive"
+import { calculatePdfEvidenceScale, calculatePdfFitWidthScale } from "@/lib/contract-workbench-responsive"
 import "react-pdf/dist/Page/AnnotationLayer.css"
 import "react-pdf/dist/Page/TextLayer.css"
 
@@ -337,6 +337,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         : null
     const activeBbox: ContractEvidenceBbox | null = useMemo(() => activeEvidence?.bbox
         ?? (legacyBbox ? { ...legacyBbox, space: "pdf_bottom_left" } : null), [activeEvidence?.bbox, legacyBbox])
+    const activeBboxes = useMemo(() => activeEvidence?.bboxes?.length ? activeEvidence.bboxes : activeBbox ? [activeBbox] : [], [activeBbox, activeEvidence?.bboxes])
     const hasCoordinateBox = Boolean(activeBbox)
     // En verificeret koordinatboks er den autoritative markering. Tekstlaget
     // må ikke samtidig tegne ekstra bokse over de enkelte ord eller linjer.
@@ -352,10 +353,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     effectiveSectionHighlightsRef.current = effectiveSectionHighlights
 
     useEffect(() => {
-        if (hasPreciseFocus && !hasCoordinateBox) {
-            setFitMode("manual")
-            setScale(current => Math.max(current, 1.6))
-        }
+        if (activeHighlight && !hasCoordinateBox) setFitMode("width")
     }, [activeHighlight, hasCoordinateBox, hasPreciseFocus, preciseFocusText])
 
     const previousResetToken = useRef(resetViewToken)
@@ -406,9 +404,12 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         if (zoomedEvidence.current === key) return
         const boxWidth = activeBbox.space === "normalized_top_left" ? activeBbox.width * pageViewport.pdfWidth : activeBbox.width
         const boxHeight = activeBbox.space === "normalized_top_left" ? activeBbox.height * pageViewport.pdfHeight : activeBbox.height
-        const availableWidth = Math.max(200, containerRef.current.clientWidth * 0.82)
-        const availableHeight = Math.max(160, containerRef.current.clientHeight * 0.62)
-        const targetScale = Math.max(0.4, Math.min(2.2, availableWidth / Math.max(boxWidth, 1), availableHeight / Math.max(boxHeight, 1)))
+        const targetScale = calculatePdfEvidenceScale({
+            containerWidth: containerRef.current.clientWidth,
+            containerHeight: containerRef.current.clientHeight,
+            boxWidth,
+            boxHeight,
+        })
         zoomedEvidence.current = key
         setFitMode("manual")
         setScale(targetScale)
@@ -473,6 +474,25 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         return () => clearTimeout(timer)
     }, [highlights, effectiveActiveHighlight, effectiveSectionHighlights, pageNumber, pageRendered, activeClauseId, layout, effectivePreciseFocusText])
 
+    useEffect(() => {
+        if (!pageRendered || !activeBbox || !containerRef.current) return
+        const frame = requestAnimationFrame(() => {
+            const container = containerRef.current
+            const highlight = container?.querySelector<HTMLElement>('[data-coordinate-hl="active"]')
+            if (!container || !highlight) return
+            const containerRect = container.getBoundingClientRect()
+            const highlightRect = highlight.getBoundingClientRect()
+            const targetLeft = container.scrollLeft + highlightRect.left - containerRect.left - (container.clientWidth - highlightRect.width) / 2
+            const targetTop = container.scrollTop + highlightRect.top - containerRect.top - (container.clientHeight - highlightRect.height) / 2
+            container.scrollTo({
+                left: Math.max(0, Math.min(targetLeft, container.scrollWidth - container.clientWidth)),
+                top: Math.max(0, Math.min(targetTop, container.scrollHeight - container.clientHeight)),
+                behavior: "smooth",
+            })
+        })
+        return () => cancelAnimationFrame(frame)
+    }, [activeBbox, pageNumber, pageRendered, scale])
+
 
     if (error) {
         return (
@@ -489,7 +509,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     )
 
     return (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full" data-pdf-viewer>
             <div className="flex items-center gap-1 border-b px-2 py-1.5 shrink-0">
                 <Button variant="ghost" size="icon" className="h-7 w-7"
                     onClick={() => { setPageNumber(p => Math.max(1, p - 1)); setPageRendered(false) }}
@@ -512,16 +532,16 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                                 renderTextLayer={true} renderAnnotationLayer={false}
                                 onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
                             {/* Koordinatbaseret fallback — den aktive kilde markeres altid gult. */}
-                            {pageViewport && activeBbox && contractEvidencePage(activeEvidence) === pageNumber && (() => {
-                                const style = bboxToScreenStyle(activeBbox, pageViewport)
+                            {pageViewport && activeBboxes.length > 0 && contractEvidencePage(activeEvidence) === pageNumber && activeBboxes.map((box, index) => {
+                                const style = bboxToScreenStyle(box, pageViewport)
                                 return (
-                                    <div key={`${activeEvidence?.fieldKey ?? activeClauseId}-${pageNumber}`}
-                                        ref={(el) => { if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }) }}
-                                        style={{ ...style, background: "rgba(250,204,21,0.3)", border: "2px solid rgba(202,138,4,0.7)", borderRadius: 2, zIndex: 10 }}
+                                    <div key={`${activeEvidence?.fieldKey ?? activeClauseId}-${pageNumber}-${index}`}
+                                        data-coordinate-hl="active"
+                                        style={{ ...style, scrollMargin: 80, background: "rgba(250,204,21,0.3)", border: "2px solid rgba(202,138,4,0.7)", borderRadius: 2, zIndex: 10 }}
                                         title="Kilde i kontrakten"
                                     />
                                 )
-                            })()}
+                            })}
                         </div>
                     </Document>
                 </div>

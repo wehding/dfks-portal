@@ -17,6 +17,7 @@ export default async function AdminKontrakterPage({ searchParams }: { searchPara
     search: value(query.q, ""),
     status: value(query.status, "all"),
     type: value(query.type, "all"),
+    ownership: value(query.ownership, "all") as AdminContractsPageParams["ownership"],
     sortKey: value(query.sort, "status") as AdminContractsPageParams["sortKey"],
     sortDir: value(query.direction, "asc") === "desc" ? "desc" : "asc",
     includeLookups: false,
@@ -27,11 +28,9 @@ export default async function AdminKontrakterPage({ searchParams }: { searchPara
     access?.canUseAdmin
     && access.modules?.contract_ownership?.read,
   );
-  const canRunOwnerBackfill = Boolean(access?.canUseAdmin && access.role === "superadmin");
   const requestedTab = value(query.tab, "arkiv");
   const supportedNonArchiveTab = requestedTab === "valideringskoe"
-    || requestedTab === "upload"
-    || (requestedTab === "ejerskabskontrol" && canManageOwnership);
+    || requestedTab === "upload";
   const initialResult = supportedNonArchiveTab
     ? undefined
     : await fetchAdminContractsPage(initialQuery);
@@ -39,6 +38,5 @@ export default async function AdminKontrakterPage({ searchParams }: { searchPara
     initialResult={initialResult}
     initialQuery={initialQuery}
     canManageOwnership={canManageOwnership}
-    canRunOwnerBackfill={canRunOwnerBackfill}
   />;
 }

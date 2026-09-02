@@ -636,8 +636,8 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
               <p className="mt-1 text-xs text-muted-foreground">Ejeren kan ikke ændres i den almindelige kontrakteditor.</p>
             </div>
             {payload.canManageOwnership ? <Button asChild type="button" variant="outline" size="sm" className="w-full">
-              <Link href={`/admin/kontrakter?tab=ejerskabskontrol&contractId=${encodeURIComponent(contractId)}`}>
-                Administrér under Ejerskabskontrol
+              <Link href={`/admin/kontrakter/${encodeURIComponent(contractId)}/rediger?section=ownership`}>
+                Åbn Ejerskab i Rediger kontrakt
               </Link>
             </Button> : null}
           </div>

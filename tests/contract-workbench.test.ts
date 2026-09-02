@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { contractDocumentPresentation, contractEpisodeNumbersFromLayout, contractEvidencePage, contractSeriesBaseTitle, fieldEvidence, findContractTypeEvidence, pdfBboxToViewportRect, safeContractReturnTo, suggestLocalContractWork } from "../lib/contract-workbench";
-import { calculatePdfFitWidthScale, CONTRACT_WORKBENCH_SPLIT_MIN_WIDTH, usesContractWorkbenchSplitLayout } from "../lib/contract-workbench-responsive";
+import { calculatePdfEvidenceScale, calculatePdfFitWidthScale, CONTRACT_WORKBENCH_SPLIT_MIN_WIDTH, usesContractWorkbenchSplitLayout } from "../lib/contract-workbench-responsive";
 
 test("kontraktarbejdsfladen accepterer kun retur-URL'er i kontraktadministrationen", () => {
   assert.equal(
@@ -98,6 +98,51 @@ test("PDF-skalaen holder hele siden inden for dokumentkolonnens bredde", () => {
   assert.equal(calculatePdfFitWidthScale(632, 600), 1);
   assert.equal(calculatePdfFitWidthScale(332, 600), 0.5);
   assert.equal(calculatePdfFitWidthScale(120, 600), 0.26666666666666666);
+});
+
+test("PDF-kildefokus bevarer margen omkring teksten og undgår for kraftig zoom", () => {
+  assert.equal(calculatePdfEvidenceScale({ containerWidth: 900, containerHeight: 700, boxWidth: 80, boxHeight: 18 }), 1.35);
+  assert.ok(calculatePdfEvidenceScale({ containerWidth: 900, containerHeight: 700, boxWidth: 520, boxHeight: 110 }) < 1.2);
+  assert.equal(calculatePdfEvidenceScale({ containerWidth: 0, containerHeight: 700, boxWidth: 80, boxHeight: 18 }), 1);
+});
+
+test("juridiske kilder bruger hele klausulens boks frem for kun første OCR-linje", () => {
+  const evidence = fieldEvidence(
+    "copydan",
+    "copydan",
+    { copydan: "Copydan-forbehold", copydan_clause_id: "rights" },
+    {
+      type: "pdf",
+      pageCount: 1,
+      fragmentCount: 1,
+      clauses: [{ id: "rights", page: 1, text: "Hele Copydan-forbeholdet\nfortsætter på næste linje", bold: false, numbered: false, pdfBbox: { x: 40, y: 300, width: 510, height: 58 } }],
+    },
+    { copydan: { quote: "Copydan-forbehold", page: 1, bbox: { x: 0.1, y: 0.2, width: 0.2, height: 0.02, space: "normalized_top_left" }, coordinateSource: "spatial_v3", confidence: 0.98 } },
+  );
+  assert.deepEqual(evidence.bbox, { x: 40, y: 300, width: 510, height: 58, space: "pdf_bottom_left" });
+  assert.deepEqual(evidence.bboxes, [{ x: 40, y: 300, width: 510, height: 58, space: "pdf_bottom_left" }]);
+  assert.equal(evidence.coordinateSource, "legacy_layout");
+});
+
+test("juridiske kilder samler sammenhængende PDF-linjer og stopper ved næste afsnit", () => {
+  const evidence = fieldEvidence(
+    "copydan",
+    "copydan",
+    { copydan: "Copydan-forbehold", copydan_clause_id: "line-1" },
+    {
+      type: "pdf",
+      pageCount: 1,
+      fragmentCount: 4,
+      clauses: [
+        { id: "line-1", page: 1, text: "Første linje", bold: false, numbered: false, pdfBbox: { x: 70, y: 670, width: 450, height: 10 } },
+        { id: "line-2", page: 1, text: "Anden linje", bold: false, numbered: false, pdfBbox: { x: 71, y: 648, width: 451, height: 10 } },
+        { id: "line-3", page: 1, text: "Tredje linje", bold: false, numbered: false, pdfBbox: { x: 70, y: 626, width: 320, height: 10 } },
+        { id: "next", page: 1, text: "Næste afsnit", bold: false, numbered: false, pdfBbox: { x: 70, y: 570, width: 450, height: 10 } },
+      ],
+    },
+    { copydan: { quote: "Copydan-forbehold", page: 1, bbox: { x: 0.1, y: 0.2, width: 0.2, height: 0.02, space: "normalized_top_left" }, coordinateSource: "spatial_v3", confidence: 0.98 } },
+  );
+  assert.deepEqual(evidence.bbox, { x: 70, y: 626, width: 452, height: 54, space: "pdf_bottom_left" });
 });
 
 test("kontraktens sæsonangivelse fjernes kun fra det lokale værkmatch", () => {
