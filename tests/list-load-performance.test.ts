@@ -16,15 +16,20 @@ test("listetimer opdeler serverarbejdet i sikre målbare faser", async () => {
 test("Mine værker starter data på serveren og parallelt", async () => {
   const page = await source("app/portal/mine-vaerker/page.tsx");
   const action = await source("app/actions/member-works.ts");
+  const loader = await source("lib/server/member-work-overview.ts");
   const client = await source("app/portal/mine-vaerker/MineVaerkerClient.tsx");
   assert.doesNotMatch(page, /^\s*["']use client["']/);
   assert.match(page, /Promise\.all\(\[/);
-  assert.match(page, /fetchMemberWorkOverview/);
+  assert.match(page, /loadMemberWorkOverview/);
   assert.match(page, /getRequestAppAccessContext/);
   assert.doesNotMatch(page, /\.from\("contracts"\)/);
-  assert.match(action, /\[assignmentsResult, scopesResult\]\s*=\s*await Promise\.all/);
+  assert.match(loader, /list_member_work_overview_page/);
+  assert.doesNotMatch(loader, /\.from\(/);
+  assert.match(action, /return loadMemberWorkOverview/);
+  assert.doesNotMatch(action.slice(action.indexOf("export async function fetchMemberWorkOverview"), action.indexOf("export async function fetchMemberSeasonEpisodes")), /list_member_work_page|\.from\(/);
   assert.match(client, /fetchMemberContractsForWorks/);
   assert.match(client, /requestIdleCallback/);
+  assert.match(client, /refreshReviews = false/);
 });
 
 test("Mine kontrakter henter kontrakter og værkvalg i samme netværksrunde", async () => {
@@ -67,6 +72,7 @@ test("layouts løser adgang server-side og sprog genbruger serverens terminologi
 test("Mit overblik streamer opgaver før statistik og indbakke", async () => {
   const page = await source("app/portal/page.tsx");
   const sections = await source("components/portal/dashboard-sections.tsx");
+  const overviewMigration = await source("supabase/migrations/20260902211659_member_dashboard_and_work_overview.sql");
   const migration = await source("supabase/migrations/20260831143000_member_dashboard_performance.sql");
   const supplementFix = await source("supabase/migrations/20260831152652_fix_member_salary_supplements.sql");
   assert.match(page, /<Suspense[\s\S]*DashboardTasksSection/);
@@ -75,7 +81,11 @@ test("Mit overblik streamer opgaver før statistik og indbakke", async () => {
   assert.match(page, /DashboardInboxSection/);
   assert.match(sections, /member-dashboard-tasks/);
   assert.match(sections, /member-dashboard-statistics/);
-  assert.match(sections, /get_member_dashboard_task_overview/);
+  assert.match(sections, /get_member_dashboard_overview_v2/);
+  assert.doesNotMatch(sections, /Kom godt i gang|Tjek profil og DFI|Trin \{index/);
+  assert.match(sections, /href: "\/portal\/okonomi"/);
+  assert.match(overviewMigration, /count_member_contract_required_works/);
+  assert.match(overviewMigration, /economy_overview_viewed_at/);
   assert.match(sections, /get_member_salary_facts/);
   assert.match(migration, /create or replace function public\.get_member_dashboard_task_overview/);
   assert.match(migration, /create or replace function public\.get_member_salary_facts/);
