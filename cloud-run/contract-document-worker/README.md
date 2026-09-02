@@ -25,10 +25,24 @@ kun tidsbegrænset adgang til én inputfil og én outputsti ad gangen.
 HTTP-servicen og batchjobbet bruger begge `processor.mjs`, så sikkerhedskontroller og
 OCR-adfærd ikke kan drive fra hinanden.
 
+Workeren deployes uafhængigt af Next.js/Vercel med
+`cloudbuild.contract-document-worker.yaml`. Buildet kører containerens tests, bygger
+ét image mærket med commit-SHA, deployer den private HTTP-service og opdaterer kun
+image-referencen på det passive Cloud Run-backfilljob. Backfilljobbet startes aldrig
+automatisk af et deploy.
+
 Entrypoints:
 
 - `node server.mjs`: privat HTTP-service med `POST /run` (ét dokument) og `GET /health`.
 - `node backfill.mjs`: batchjob, der fortsætter til køen er tom eller taskens grænse nås.
+
+Historiske DOC/DOCX-filer køsættes separat med
+`npm run recover:word-contracts`. Scriptet er dry-run som standard, kontrollerer
+filendelse, binær signatur, størrelse og SHA-256 og springer kilder over, som allerede
+har fået en recovery-generation. `--apply` kræver den eksplicitte markering
+`--confirm-worker-deployed`. Hver apply-kørsel skriver ét samlet audit-event med
+antal, organisationer og berørte medlems-id'er, men uden filstier, titler eller
+dokumentindhold.
 
 `OCR_MAX_DOCUMENTS_PER_TASK` styrer batchgrænsen. `0` eller manglende værdi betyder
 hele den claimbare kø; et positivt heltal sætter et maksimum pr. task. Pilotkørslen
