@@ -2,8 +2,9 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { errorMessage } from "@/lib/error-message";
-import { useCallback, useEffect, useState, useMemo, Suspense, useRef } from "react"
+import { useCallback, useEffect, useState, useMemo, Suspense, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react"
 import dynamic from "next/dynamic"
+import Link from "next/link"
 import {
     Search, Trash2, Eye, Upload, FileText, Download,
     CheckCircle2, AlertCircle, Loader2, X, Pencil, MessageSquare,
@@ -11,17 +12,17 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
-import { addAdminContractComment, deleteAdminContractsPermanently, fetchAdminContractsPage, getContractSignedUrl, markContractCommentsRead, checkRightsHolderName, updateAdminContract, validateAdminContracts, type AdminContractsPageParams } from "@/app/actions/member-contracts"
+import { addAdminContractComment, deleteAdminContractsPermanently, fetchAdminContractsPage, getContractSignedUrl, markContractCommentsRead, updateAdminContract, validateAdminContracts, type AdminContractsPageParams } from "@/app/actions/member-contracts"
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management"
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
 import { ValideringskøTab } from "@/components/admin/valideringskoe-tab"
+import { ContractOwnerVerificationTab } from "@/components/admin/contract-owner-verification-tab"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ADMIN_CONTRACT_UPLOAD_ACCEPT } from "@/lib/contract-upload-format"
 import { CONTRACT_IMPORT_CONCURRENCY, validateContractImportFile } from "@/lib/contract-import"
-import { findOwnersForContracts } from "@/app/actions/contract-imports"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame, SummaryCard, SummaryGrid } from "@/components/responsive-data-view"
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread"
@@ -209,13 +210,6 @@ type WorkOption = { id: string; title: string; year: number | null; poster_url: 
 type SortKey = "production" | "rightsHolder" | "employer" | "type" | "overenskomst" | "period" | "status"
 
 type SortDir = "asc" | "desc"
-type NavneTjekResult = {
-    status: "match" | "delvist-match" | "ikke-fundet"
-    navnIKontrakt?: string
-    navnIRegister?: string
-    idIRegister?: string
-}
-
 type UploadItem = {
     file: File
     clientToken: string
@@ -389,7 +383,18 @@ function YearCountCard({ contracts, availableYears, currentYear }: {
     )
 }
 
-function AdminKontrakterContent({ view = "archive", initialResult, initialQuery }: { view?: "archive" | "upload"; initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>; initialQuery?: AdminContractsPageParams }) {
+function AdminKontrakterContent({
+    view = "archive",
+    initialResult,
+    initialQuery,
+    canManageOwnership,
+}: {
+    view?: "archive" | "upload"
+    initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
+    initialQuery?: AdminContractsPageParams
+    /** Server-derived capability. Backend routes repeat the same authorization. */
+    canManageOwnership: boolean
+}) {
     const { locale, t } = useI18n()
     const router = useRouter()
     const pageSearchParams = useSearchParams()
@@ -545,10 +550,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
         const initialSeason = result.season_hint ? String(result.season_hint) : "1"
         setAddSeason(initialSeason)
     }
-    const [editRightsHolderSearch, setEditRightsHolderSearch] = useState("")
     const [activeHighlight, setActiveHighlight] = useState<string | null>(null)
-    const [navneTjekResult, setNavneTjekResult] = useState<NavneTjekResult | null>(null)
-    const [navneTjekLoading, setNavneTjekLoading] = useState(false)
     const editDialogRef = useRef<HTMLDivElement>(null)
     const editDialogScrollRef = useRef<HTMLDivElement>(null)
     const flushAiEditorRef = useRef<(() => Promise<boolean>) | null>(null)
@@ -915,7 +917,9 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                     const formData = new FormData()
                     formData.set("file", updated[index].file)
                     formData.set("clientToken", updated[index].clientToken)
-                    if (updated.length === 1 && uploadRightsHolderId) formData.set("rightsHolderId", uploadRightsHolderId)
+                    if (canManageOwnership && updated.length === 1 && uploadRightsHolderId) {
+                        formData.set("rightsHolderId", uploadRightsHolderId)
+                    }
                     if (prefillWorkIdRef.current) formData.set("workId", prefillWorkIdRef.current)
                     const response = await fetch(`/api/admin/contract-imports/${batchJson.batch.id}/items`, { method: "POST", body: formData })
                     const json = await response.json()
@@ -1015,31 +1019,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             setSelectedIds([])
         } catch (err: unknown) {
             toast.error(err instanceof Error ? err.message : "Kunne ikke validere kontrakter")
-        } finally {
-            setSaving(false)
-        }
-    }
-
-    const handleFindOwners = async () => {
-        if (selectedIds.length === 0) return
-        setSaving(true)
-        try {
-            const result = await findOwnersForContracts(selectedIds)
-            if (!result.success) throw new Error(result.error)
-            const matchMap = new Map(result.matches.map(match => [match.contractId, match.rightsHolderId]))
-            setContracts(previous => previous.map(contract => {
-                const rightsHolderId = matchMap.get(contract.id)
-                if (!rightsHolderId) return contract
-                return {
-                    ...contract,
-                    rights_holder_id: rightsHolderId,
-                    rights_holder_name: rightsHolders.find(holder => holder.id === rightsHolderId)?.full_name ?? contract.rights_holder_name,
-                }
-            }))
-            if (result.matched) toast.success(`${result.matched} kontrakt${result.matched === 1 ? "" : "er"} blev koblet til en rettighedshaver`)
-            if (result.unresolved) toast.info(`${result.unresolved} kontrakt${result.unresolved === 1 ? "" : "er"} mangler fortsat ejer`)
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Ejersøgningen fejlede")
         } finally {
             setSaving(false)
         }
@@ -1171,15 +1150,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             })
         }
 
-        const rightsHolderName = detail.validation_data?.rightsHolderName as string | undefined
-        if (rightsHolderName) {
-            if (!row.rights_holder_id) setEditRightsHolderSearch(rightsHolderName)
-            setNavneTjekLoading(true)
-            checkRightsHolderName(rightsHolderName).then(res => {
-                if (res.success && res.result) setNavneTjekResult(res.result)
-                setNavneTjekLoading(false)
-            }).catch(() => setNavneTjekLoading(false))
-        }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1259,7 +1229,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             working_title: patch.working_title ?? prev.working_title,
         } : prev)
         if (!patch.work_id) setEditWorkSearch(patch.working_title ?? patch.work_title ?? "")
-        setEditRightsHolderSearch(patch.rights_holder_name ?? "")
     }
 
     const openNextValidationContract = (currentId: string) => {
@@ -1480,7 +1449,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                     end_date: editForm.end_date || null,
                     employer_id: editForm.employer_id || null,
                     producer_selections: editProducerSelections,
-                    rights_holder_id: editForm.rights_holder_id || null,
                     work_id: resolvedWorkId || null,
                     working_title: editForm.working_title || null,
                     season_number: saveSeasonNumber,
@@ -1489,7 +1457,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
             if (!updateResult.success) throw new Error(updateResult.error)
 
             const emp = employers.find(e => e.id === editForm.employer_id)
-            const rh = rightsHolders.find(r => r.id === editForm.rights_holder_id)
             setContracts(prev => prev.map(c => c.id === editContract.id ? {
                 ...c,
                 type: editForm.type,
@@ -1500,8 +1467,8 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                 end_date: editForm.end_date || null,
                 employer_id: editForm.employer_id || null,
                 employer_name: emp?.name ?? c.employer_name,
-                rights_holder_id: editForm.rights_holder_id || null,
-                rights_holder_name: rh?.full_name ?? c.rights_holder_name,
+                rights_holder_id: c.rights_holder_id,
+                rights_holder_name: c.rights_holder_name,
                 work_id: resolvedWorkId || null,
                 work_title: selectedWork?.title ?? (resolvedWorkId ? c.work_title : null),
                 work_poster_url: selectedWork?.poster_url ?? (resolvedWorkId ? c.work_poster_url : null),
@@ -1646,14 +1613,11 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     const uploadRightsHolderResults = uploadRightsHolderSearch.trim()
         ? rightsHolders.filter(r => r.full_name.toLowerCase().includes(uploadRightsHolderSearch.toLowerCase())).slice(0, 8)
         : rightsHolders.slice(0, 8)
-    const editRightsHolderResults = editRightsHolderSearch.trim()
-        ? rightsHolders.filter(r => r.full_name.toLowerCase().includes(editRightsHolderSearch.toLowerCase())).slice(0, 8)
-        : rightsHolders.slice(0, 8)
     const editPreviewContract = editContract && editForm ? {
         ...editContract,
         status: editForm.status,
         employer_id: editForm.employer_id || null,
-        rights_holder_id: editForm.rights_holder_id || null,
+        rights_holder_id: editContract.rights_holder_id,
         work_id: editForm.work_id || null,
         overenskomst: editForm.overenskomst === "ingen" ? null : editForm.overenskomst,
     } : editContract
@@ -1915,10 +1879,6 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                     <Button size="sm" variant="outline" className="gap-2" onClick={handleMarkSelectedMessagesRead} disabled={saving}>
                         <MessageSquare className="h-4 w-4" />
                         Besked læst
-                    </Button>
-                    <Button size="sm" variant="outline" className="gap-2" onClick={handleFindOwners} disabled={saving}>
-                        <Search className="h-4 w-4" />
-                        Find ejer
                     </Button>
                     <Button
                         size="sm"
@@ -2209,7 +2169,7 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                                     </div>
                                 </div>
                             )}
-                            {uploadItems.length === 1 && (
+                            {canManageOwnership && uploadItems.length === 1 && (
                                 <div className="space-y-2 pt-2 border-t">
                                     <Label className="text-xs font-semibold">Tilknyt rettighedshaver (valgfrit)</Label>
                                     <p className="text-[11px] text-muted-foreground">
@@ -2472,97 +2432,19 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
                             </div>
                             <div className="space-y-4 py-2 pr-1 md:h-full md:min-h-0 md:overflow-y-auto md:overscroll-contain">
                             <div className="grid gap-4 sm:grid-cols-2">
-                                <div className="space-y-1">
-                                    <div className="flex items-center justify-between">
-                                        <Label className="text-xs">Rettighedshaver</Label>
-                                        {!editForm.rights_holder_id && navneTjekLoading && <span className="text-[10px] text-muted-foreground animate-pulse">Tjekker register...</span>}
+                                <div className="space-y-2">
+                                    <Label className="text-xs">Rettighedshaver</Label>
+                                    <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                                        <p className="font-medium">{editContract?.rights_holder_name ?? "Ingen rettighedshaver tilknyttet"}</p>
+                                        <p className="mt-1 text-muted-foreground">Ejeren kan ikke ændres i den almindelige kontrakteditor.</p>
                                     </div>
-                                    <div className="space-y-2">
-                                        {editForm.rights_holder_id ? (
-                                            <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2 text-xs">
-                                                <span className="font-medium">{rightsHolders.find(r => r.id === editForm.rights_holder_id)?.full_name ?? editRightsHolderSearch}</span>
-                                                <Button
-                                                    type="button"
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    className="h-6 px-2 text-xs"
-                                                    onClick={() => {
-                                                        setEditForm(f => f && ({ ...f, rights_holder_id: "" }))
-                                                        setEditRightsHolderSearch("")
-                                                    }}
-                                                >
-                                                    Fjern
-                                                </Button>
-                                            </div>
-                                        ) : <>
-                                        {navneTjekResult && (
-                                            <div className={`p-2 rounded-md text-xs border ${
-                                                navneTjekResult.status === "match"
-                                                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                                                    : navneTjekResult.status === "delvist-match"
-                                                    ? "bg-amber-50 border-amber-200 text-amber-800"
-                                                    : "bg-rose-50 border-rose-200 text-rose-800"
-                                            }`}>
-                                                <div className="font-semibold mb-0.5">
-                                                    {navneTjekResult.status === "match" && "✓ Perfekt match fundet"}
-                                                    {navneTjekResult.status === "delvist-match" && "⚠ Delvist navnematch fundet"}
-                                                    {navneTjekResult.status === "ikke-fundet" && "✗ Navn ikke fundet i medlemsregister"}
-                                                </div>
-                                                <p className="text-[11px] leading-relaxed">
-                                                    {navneTjekResult.status === "match" && `Kontraktens "${navneTjekResult.navnIKontrakt}" matcher medlemsregisteret.`}
-                                                    {navneTjekResult.status === "delvist-match" && `Registeret har "${navneTjekResult.navnIRegister}" men kontrakten har "${navneTjekResult.navnIKontrakt}".`}
-                                                    {navneTjekResult.status === "ikke-fundet" && `"${navneTjekResult.navnIKontrakt}" kunne ikke findes i registeret.`}
-                                                </p>
-                                                {navneTjekResult.idIRegister && (
-                                                    <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        size="sm"
-                                                        className="mt-1.5 h-6 text-[10px]"
-                                                        onClick={() => {
-                                                            const idIRegister = navneTjekResult.idIRegister
-                                                            if (!idIRegister) return
-                                                            setEditForm(f => f && ({ ...f, rights_holder_id: idIRegister }))
-                                                            setEditRightsHolderSearch(navneTjekResult.navnIRegister ?? "")
-                                                        }}
-                                                    >
-                                                        Kobl til {navneTjekResult.navnIRegister}
-                                                    </Button>
-                                                )}
-                                            </div>
-                                        )}
-                                        <div className="relative">
-                                            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                                            <Input
-                                                className="h-8 pl-8 text-xs"
-                                                placeholder="Søg efter rettighedshaver..."
-                                                value={editRightsHolderSearch}
-                                                onChange={e => {
-                                                    const value = e.target.value
-                                                    setEditRightsHolderSearch(value)
-                                                }}
-                                            />
-                                        </div>
-                                        <div className="max-h-36 space-y-1 overflow-y-auto">
-                                                {editRightsHolderResults.map(holder => (
-                                                    <button
-                                                        key={holder.id}
-                                                        type="button"
-                                                        className="flex w-full items-center rounded-md border px-3 py-2 text-left text-xs hover:bg-muted"
-                                                        onClick={() => {
-                                                            setEditForm(f => f && ({ ...f, rights_holder_id: holder.id }))
-                                                            setEditRightsHolderSearch(holder.full_name)
-                                                        }}
-                                                    >
-                                                        {holder.full_name}
-                                                    </button>
-                                                ))}
-                                                {editRightsHolderSearch.trim() && editRightsHolderResults.length === 0 && (
-                                                    <p className="px-1 py-2 text-xs text-muted-foreground">Ingen rettighedshavere fundet.</p>
-                                                )}
-                                        </div>
-                                        </>}
-                                    </div>
+                                    {canManageOwnership && editContract?.id ? (
+                                        <Button asChild variant="outline" size="sm" className="w-full">
+                                            <Link href={`/admin/kontrakter?tab=ejerskabskontrol&contractId=${encodeURIComponent(editContract.id)}`}>
+                                                Administrér under Ejerskabskontrol
+                                            </Link>
+                                        </Button>
+                                    ) : null}
                                 </div>
                                 <div className="space-y-1 sm:col-span-2">
                                     <ProductionCompanyPicker
@@ -3027,12 +2909,45 @@ function AdminKontrakterContent({ view = "archive", initialResult, initialQuery 
     )
 }
 
-function AdminKontrakterPageInner({ initialResult, initialQuery }: { initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>; initialQuery?: AdminContractsPageParams }) {
+function AdminKontrakterPageInner({
+    initialResult,
+    initialQuery,
+    canManageOwnership,
+}: {
+    initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
+    initialQuery?: AdminContractsPageParams
+    canManageOwnership: boolean
+}) {
+    const router = useRouter()
     const searchParams = useSearchParams()
     const requestedTab = searchParams.get("tab")
-    const initialTab = requestedTab === "valideringskoe" ? "valideringskoe" : requestedTab === "upload" ? "upload" : "arkiv"
-    const [activeTab, setActiveTab] = useState<"arkiv" | "valideringskoe" | "upload">(initialTab)
+    // This capability is resolved server-side from the active organisation and
+    // module access. Client-side role names are never used as authorization.
+    type ContractArchiveTab = "arkiv" | "valideringskoe" | "ejerskabskontrol" | "upload"
+    const initialTab: ContractArchiveTab = requestedTab === "valideringskoe"
+        ? "valideringskoe"
+        : requestedTab === "ejerskabskontrol" && canManageOwnership
+            ? "ejerskabskontrol"
+            : requestedTab === "upload"
+                ? "upload"
+                : "arkiv"
+    const [activeTab, setActiveTab] = useState<ContractArchiveTab>(initialTab)
     const [køCount, setKøCount] = useState<number>(0)
+    const tabRefs = useRef<Partial<Record<ContractArchiveTab, HTMLButtonElement | null>>>({})
+    const visibleContractTabs: ContractArchiveTab[] = canManageOwnership
+        ? ["arkiv", "valideringskoe", "ejerskabskontrol", "upload"]
+        : ["arkiv", "valideringskoe", "upload"]
+
+    useEffect(() => {
+        const nextTab: ContractArchiveTab = requestedTab === "valideringskoe"
+            ? "valideringskoe"
+            : requestedTab === "ejerskabskontrol" && canManageOwnership
+                ? "ejerskabskontrol"
+                : requestedTab === "upload"
+                    ? "upload"
+                    : "arkiv"
+        setActiveTab(current => current === nextTab ? current : nextTab)
+    }, [canManageOwnership, requestedTab])
 
     useEffect(() => {
         async function fetchKøCount() {
@@ -3051,18 +2966,48 @@ function AdminKontrakterPageInner({ initialResult, initialQuery }: { initialResu
         void fetchKøCount()
     }, [])
 
+    const changeTab = (nextTab: ContractArchiveTab) => {
+        setActiveTab(nextTab)
+        const next = new URLSearchParams(searchParams.toString())
+        next.set("tab", nextTab)
+        if (nextTab !== "ejerskabskontrol") next.delete("contractId")
+        router.replace(`/admin/kontrakter?${next.toString()}`, { scroll: false })
+    }
+
+    const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, currentTab: ContractArchiveTab) => {
+        const currentIndex = visibleContractTabs.indexOf(currentTab)
+        if (currentIndex < 0) return
+        let nextIndex: number | null = null
+        if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % visibleContractTabs.length
+        else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + visibleContractTabs.length) % visibleContractTabs.length
+        else if (event.key === "Home") nextIndex = 0
+        else if (event.key === "End") nextIndex = visibleContractTabs.length - 1
+        if (nextIndex === null) return
+        event.preventDefault()
+        const nextTab = visibleContractTabs[nextIndex] ?? currentTab
+        changeTab(nextTab)
+        window.requestAnimationFrame(() => tabRefs.current[nextTab]?.focus())
+    }
+
     return (
         <div className="space-y-6">
             <PageHeader
                 title="Kontraktarkiv"
                 subtitle="Oversigt, upload og validering af kontrakter"
             />
-            <div className="flex gap-0 border-b">
+            <div className="flex gap-0 overflow-x-auto border-b" role="tablist" aria-label="Kontraktarkivets sektioner">
                 <button
+                    ref={node => { tabRefs.current.arkiv = node }}
+                    id="contract-archive-tab"
                     type="button"
-                    onClick={() => setActiveTab("arkiv")}
+                    role="tab"
+                    aria-controls="contract-archive-panel"
+                    aria-selected={activeTab === "arkiv"}
+                    tabIndex={activeTab === "arkiv" ? 0 : -1}
+                    onClick={() => changeTab("arkiv")}
+                    onKeyDown={event => handleTabKeyDown(event, "arkiv")}
                     className={[
-                        "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                        "-mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                         activeTab === "arkiv"
                             ? "border-foreground text-foreground"
                             : "border-transparent text-muted-foreground hover:text-foreground",
@@ -3071,10 +3016,17 @@ function AdminKontrakterPageInner({ initialResult, initialQuery }: { initialResu
                     Arkiv
                 </button>
                 <button
+                    ref={node => { tabRefs.current.valideringskoe = node }}
+                    id="contract-validation-queue-tab"
                     type="button"
-                    onClick={() => setActiveTab("valideringskoe")}
+                    role="tab"
+                    aria-controls="contract-validation-queue-panel"
+                    aria-selected={activeTab === "valideringskoe"}
+                    tabIndex={activeTab === "valideringskoe" ? 0 : -1}
+                    onClick={() => changeTab("valideringskoe")}
+                    onKeyDown={event => handleTabKeyDown(event, "valideringskoe")}
                     className={[
-                        "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                        "-mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                         activeTab === "valideringskoe"
                             ? "border-foreground text-foreground"
                             : "border-transparent text-muted-foreground hover:text-foreground",
@@ -3087,11 +3039,39 @@ function AdminKontrakterPageInner({ initialResult, initialQuery }: { initialResu
                         </span>
                     )}
                 </button>
+                {canManageOwnership ?
+                    <button
+                        ref={node => { tabRefs.current.ejerskabskontrol = node }}
+                        id="contract-ownership-tab"
+                        type="button"
+                        role="tab"
+                        aria-controls="contract-ownership-panel"
+                        aria-selected={activeTab === "ejerskabskontrol"}
+                        tabIndex={activeTab === "ejerskabskontrol" ? 0 : -1}
+                        onClick={() => changeTab("ejerskabskontrol")}
+                        onKeyDown={event => handleTabKeyDown(event, "ejerskabskontrol")}
+                        className={[
+                            "-mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                            activeTab === "ejerskabskontrol"
+                                ? "border-foreground text-foreground"
+                                : "border-transparent text-muted-foreground hover:text-foreground",
+                        ].join(" ")}
+                    >
+                        Ejerskabskontrol
+                    </button>
+                    : null}
                 <button
+                    ref={node => { tabRefs.current.upload = node }}
+                    id="contract-upload-tab"
                     type="button"
-                    onClick={() => setActiveTab("upload")}
+                    role="tab"
+                    aria-controls="contract-upload-panel"
+                    aria-selected={activeTab === "upload"}
+                    tabIndex={activeTab === "upload" ? 0 : -1}
+                    onClick={() => changeTab("upload")}
+                    onKeyDown={event => handleTabKeyDown(event, "upload")}
                     className={[
-                        "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                        "-mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                         activeTab === "upload"
                             ? "border-foreground text-foreground"
                             : "border-transparent text-muted-foreground hover:text-foreground",
@@ -3100,16 +3080,44 @@ function AdminKontrakterPageInner({ initialResult, initialQuery }: { initialResu
                     Kontraktupload
                 </button>
             </div>
-            {activeTab === "arkiv"
-                ? <Suspense><AdminKontrakterContent view="archive" initialResult={initialResult} initialQuery={initialQuery} /></Suspense>
-                : activeTab === "upload"
-                    ? <Suspense><AdminKontrakterContent view="upload" /></Suspense>
-                    : <ValideringskøTab onAfventerCount={setKøCount} />
-            }
+            <div
+                id={activeTab === "arkiv"
+                    ? "contract-archive-panel"
+                    : activeTab === "valideringskoe"
+                        ? "contract-validation-queue-panel"
+                        : activeTab === "ejerskabskontrol"
+                            ? "contract-ownership-panel"
+                            : "contract-upload-panel"}
+                role="tabpanel"
+                aria-labelledby={activeTab === "arkiv"
+                    ? "contract-archive-tab"
+                    : activeTab === "valideringskoe"
+                        ? "contract-validation-queue-tab"
+                        : activeTab === "ejerskabskontrol"
+                            ? "contract-ownership-tab"
+                            : "contract-upload-tab"}
+            >
+                {activeTab === "arkiv"
+                    ? <Suspense><AdminKontrakterContent view="archive" initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} /></Suspense>
+                    : activeTab === "upload"
+                        ? <Suspense><AdminKontrakterContent view="upload" canManageOwnership={canManageOwnership} /></Suspense>
+                        : activeTab === "ejerskabskontrol"
+                            ? <ContractOwnerVerificationTab initialContractId={searchParams.get("contractId")} />
+                            : <ValideringskøTab onAfventerCount={setKøCount} />
+                }
+            </div>
         </div>
     )
 }
 
-export default function ContractArchiveClient({ initialResult, initialQuery }: { initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>; initialQuery?: AdminContractsPageParams }) {
-    return <Suspense><AdminKontrakterPageInner initialResult={initialResult} initialQuery={initialQuery} /></Suspense>
+export default function ContractArchiveClient({
+    initialResult,
+    initialQuery,
+    canManageOwnership,
+}: {
+    initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
+    initialQuery?: AdminContractsPageParams
+    canManageOwnership: boolean
+}) {
+    return <Suspense><AdminKontrakterPageInner initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} /></Suspense>
 }

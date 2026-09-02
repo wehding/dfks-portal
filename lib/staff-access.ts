@@ -3,7 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { STAFF_ROLE_RANK, isStaffRole, type StaffRole } from "@/lib/admin-roles";
 
-export type StaffModule = "rights_holders" | "contracts" | "messages" | "contract_reviews" | "statistics" | "users" | "payouts" | "organisation" | "works" | "producers";
+export type StaffModule = "rights_holders" | "contracts" | "contract_ownership" | "messages" | "contract_reviews" | "statistics" | "users" | "payouts" | "organisation" | "works" | "producers";
 export type StaffOperation = "read" | "write" | "validate" | "delete";
 export type StaffModulePermission = Record<StaffOperation, boolean>;
 
@@ -19,6 +19,10 @@ export function staffModulePermissions(role: StaffRole): Record<StaffModule, Sta
   return {
     rights_holders: all ? FULL : legal ? WRITE : viewer ? READ : NONE,
     contracts: all ? FULL : legal ? WRITE : viewer ? READ : NONE,
+    // Contract ownership can change which member receives access, messages and
+    // ultimately payments. It is therefore deliberately narrower than the
+    // ordinary contract editor and never available to jurists or viewers.
+    contract_ownership: all ? FULL : NONE,
     messages: all ? FULL : legal ? WRITE : viewer ? READ : NONE,
     contract_reviews: all ? FULL : legal ? WRITE : viewer ? READ : NONE,
     statistics: all ? READ : NONE,

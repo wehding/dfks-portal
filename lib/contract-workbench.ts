@@ -88,7 +88,8 @@ export type ContractValidationMissingField = {
 
 export type ContractWorkbenchData<TContract = Record<string, unknown>> = {
   contract: TContract;
-  rightsHolders: Array<{ id: string; full_name: string }>;
+  /** Server-authoriseret. Må aldrig udledes alene af, hvad klienten viser. */
+  canManageOwnership?: boolean;
   works: Array<{
     id: string;
     title: string;

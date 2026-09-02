@@ -2,6 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase relation payloads are normalized at this client boundary. */
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowLeft, BriefcaseBusiness, Building2, CheckCircle2, Download, Loader2, Save, Scale, Sparkles, X, XCircle } from "lucide-react";
@@ -16,7 +17,6 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import { ContractSourceBadge } from "@/components/contracts/contract-source-badge";
@@ -121,7 +121,6 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
     contractDate: contract.contract_date ?? "",
     startDate: contract.start_date ?? "",
     endDate: contract.end_date ?? "",
-    rightsHolderId: contract.rights_holder_id ?? "",
     workId: contract.work_id ?? "",
     workingTitle: contract.working_title ?? linkedWork?.title ?? "",
     seasonNumber: contract.season_number ?? parseSeasonNumberFromTitle(contract.working_title ?? linkedWork?.title ?? "") ?? 1,
@@ -136,7 +135,6 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
   const [mobileSourceView, setMobileSourceView] = useState<"closed" | "preview" | "document">("closed");
   const [saving, setSaving] = useState(false);
   const [aiReading, setAiReading] = useState(false);
-  const [rightsHolderQuery, setRightsHolderQuery] = useState("");
   const [validateOpen, setValidateOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectMessage, setRejectMessage] = useState("");
@@ -227,16 +225,10 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
     () => form.workId || selectedWorkResult || manualWorkMode ? null : suggestLocalContractWork(form.workingTitle, data.works),
     [data.works, form.workId, form.workingTitle, manualWorkMode, selectedWorkResult],
   );
-  const rightsHolderSuggestions = useMemo(() => {
-    const query = rightsHolderQuery.trim().toLocaleLowerCase("da");
-    if (!query) return [];
-    return data.rightsHolders.filter(item => item.full_name.toLocaleLowerCase("da").includes(query)).slice(0, 8);
-  }, [data.rightsHolders, rightsHolderQuery]);
-
   const missingByTab = useMemo<Record<string, ContractValidationMissingField[]>>(() => {
     const result: Record<string, ContractValidationMissingField[]> = Object.fromEntries(SECTIONS.map(section => [section.key, []]));
     const add = (tab: string, key: string, label: string) => result[tab].push({ key, label, tab });
-    if (!form.rightsHolderId) add("approve", "rightsHolder", "Rettighedshaver");
+    if (!contract.rights_holder_id) add("approve", "rightsHolder", "Rettighedshaver");
     if (!producerSelections.length) add("approve", "producer", "Producent");
     if (!form.workId && !selectedWorkResult && !manualWorkMode) add("approve", "work", "Tilknyttet værk");
     if (!form.type) add("approve", "contractType", "Kontrakttype");
@@ -253,7 +245,7 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
     if (activeWork && !activeWork.dfi_id && !activeWork.tmdb_id && !activeWork.imdb_id) add("ids", "externalIds", "Eksternt værk-ID");
     if (!validationData.productionType && !validationData.director) add("work", "workDetails", "Produktionstype eller instruktør");
     return result;
-  }, [activeWork, form, isSeries, manualWorkMode, producerSelections.length, selectedWorkResult, validationData]);
+  }, [activeWork, contract.rights_holder_id, form, isSeries, manualWorkMode, producerSelections.length, selectedWorkResult, validationData]);
   const missing = missingByTab.approve;
   const allMissing = useMemo(() => Object.values(missingByTab).flat(), [missingByTab]);
   const tabCounts = useMemo(() => Object.fromEntries(Object.entries(missingByTab).map(([key, items]) => [key, items.length])), [missingByTab]);
@@ -394,7 +386,7 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
       return result.workId;
     }
     if (selectedWorkResult && !selectedWorkResult.local_id) {
-      const result = await createAndLinkWorkForContract({ contractId: contract.id, result: selectedWorkResult, seasonNumber: form.seasonNumber, selectedEpisodes: form.episodeNumbers, rightsHolderId: form.rightsHolderId, role: "Klipper" });
+      const result = await createAndLinkWorkForContract({ contractId: contract.id, result: selectedWorkResult, seasonNumber: form.seasonNumber, selectedEpisodes: form.episodeNumbers, rightsHolderId: contract.rights_holder_id, role: "Klipper" });
       if (!result.success || !result.workId) throw new Error(result.error ?? "Værket kunne ikke tilknyttes");
       return result.workId;
     }
@@ -417,7 +409,6 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
         end_date: form.endDate || null,
         employer_id: producerSelections[0]?.employerId ?? null,
         producer_selections: producerSelections,
-        rights_holder_id: form.rightsHolderId || null,
         work_id: workId,
         working_title: form.workingTitle || null,
         season_number: isSeries ? form.seasonNumber : null,
@@ -531,7 +522,7 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
     <header className="sticky top-0 z-30 border-b bg-background/95 px-2 py-1.5 backdrop-blur sm:px-3">
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 sm:flex-nowrap sm:overflow-x-auto">
         <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs" onClick={() => router.push(safeContractReturnTo(returnTo))}><ArrowLeft className="h-3.5 w-3.5" />Tilbage</Button>
-        <div className="hidden min-w-0 flex-1 md:block"><p className="truncate text-xs font-semibold">{form.workingTitle || linkedWork?.title || "Kontrakt"}</p><p className="truncate text-[10px] text-muted-foreground">{producerSelections[0]?.canonicalName ?? employer?.name ?? "Ingen producent"} · {data.rightsHolders.find(item => item.id === form.rightsHolderId)?.full_name ?? holder?.full_name ?? "Ingen rettighedshaver"}</p></div>
+        <div className="hidden min-w-0 flex-1 md:block"><p className="truncate text-xs font-semibold">{form.workingTitle || linkedWork?.title || "Kontrakt"}</p><p className="truncate text-[10px] text-muted-foreground">{producerSelections[0]?.canonicalName ?? employer?.name ?? "Ingen producent"} · {holder?.full_name ?? "Ingen rettighedshaver"}</p></div>
         <Badge variant="outline" className="h-6 shrink-0 rounded-sm px-1.5 text-[10px]">{contract.status === "valideret" ? "Valideret" : contract.status === "arkiveret" ? "Afvist" : "Afventer"}</Badge>
         <div className="flex shrink-0 rounded-sm border bg-muted/30 p-0.5">
           <Button size="sm" className="h-7 shrink-0 rounded-sm px-2 text-xs" variant={variant === "original" ? "secondary" : "ghost"} disabled={!data.documents.original?.url} onClick={() => setVariant("original")}>Original</Button>
@@ -563,7 +554,7 @@ export default function ContractWorkbenchClient({ data, returnTo }: { data: Edit
           <TabsContent forceMount value="approve" className="m-0 data-[state=inactive]:hidden">
             {missing.length > 0 && <div className="m-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"><span className="font-medium">{missing.length} mangler:</span> {missing.map(item => item.label).join(" · ")}</div>}
             <div className="divide-y">
-              {baseRow({ key: "rightsHolder", label: "Rettighedshaver", sourceKey: "rightsHolderName", focusText: data.rightsHolders.find(item => item.id === form.rightsHolderId)?.full_name ?? holder?.full_name ?? null, source: form.rightsHolderId === contract.rights_holder_id ? "contract" : "manual", missing: !form.rightsHolderId, children: form.rightsHolderId ? <div className="flex h-8 items-center gap-2 rounded-md border bg-background px-2 text-sm"><span className="min-w-0 flex-1 truncate">{data.rightsHolders.find(item => item.id === form.rightsHolderId)?.full_name ?? holder?.full_name ?? "Rettighedshaver"}</span><button type="button" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Fjern tilknyttet rettighedshaver" onClick={() => setForm(current => ({ ...current, rightsHolderId: "" }))}><X className="h-3.5 w-3.5" /></button></div> : <div className="relative"><Input className="h-8" value={rightsHolderQuery} onChange={event => setRightsHolderQuery(event.target.value)} placeholder="Søg efter rettighedshaver…" />{rightsHolderSuggestions.length > 0 && <div className="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-md border bg-popover p-1 shadow-md">{rightsHolderSuggestions.map(item => <button key={item.id} type="button" className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => { setForm(current => ({ ...current, rightsHolderId: item.id })); setRightsHolderQuery(""); }}>{item.full_name}</button>)}</div>}</div> })}
+              {baseRow({ key: "rightsHolder", label: "Rettighedshaver", sourceKey: "ownershipAssignment", focusText: holder?.full_name ?? null, source: "unknown", missing: !contract.rights_holder_id, children: <div className="flex min-h-8 flex-col justify-center rounded-md border bg-muted/30 px-2 py-1"><span className="truncate text-sm font-medium">{holder?.full_name ?? "Ingen rettighedshaver tilknyttet"}</span>{data.canManageOwnership ? <Link className="w-fit text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground" href={`/admin/kontrakter?tab=ejerskabskontrol&contractId=${encodeURIComponent(contract.id)}`}>Administrér under Ejerskabskontrol</Link> : null}</div> })}
               {baseRow({ key: "producer", label: "Producent", sourceKey: "employerName", focusText: producerSelections[0]?.canonicalName ?? (String(validationData.employerName ?? employer?.name ?? "") || null), source: producerSelections.length ? (producerSelections[0]?.employerId === contract.employer_id ? "contract" : "manual") : data.sources.employerName ? "contract" : "unknown", missing: !producerSelections.length, children: <ProductionCompanyPicker value={producerSelections} onChange={setProducerSelections} suggestedName={String(validationData.employerName ?? employer?.name ?? "")} canManageRegistry hideLabel compact /> })}
               {baseRow({ key: "work", label: "Tilknyttet værk", sourceKey: "workTitle", focusText: form.workingTitle || displayedWorkTitle, source: form.workId ? "work_archive" : data.sources.workTitle ? "contract" : "manual", missing: !form.workId && !selectedWorkResult && !manualWorkMode, children: <div className="space-y-1"><div className="flex min-h-8 items-center gap-1 rounded-md border px-2 text-xs"><span className="min-w-0 flex-1 truncate">{form.workId || selectedWorkResult ? displayedWorkLabel : `Arbejdstitel: ${form.workingTitle || "Ingen"}`}</span>{form.workId || selectedWorkResult ? <><Button size="sm" variant="ghost" className="h-7 shrink-0 px-1.5 text-xs" onClick={() => setWorkPickerOpen(open => !open)}>{workPickerOpen ? "Luk" : "Skift"}</Button><button type="button" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Fjern tilknyttet værk" onClick={() => { setForm(current => ({ ...current, workId: "" })); setSelectedWorkResult(null); setManualWorkMode(false); }}><X className="h-3.5 w-3.5" /></button></> : <Button size="sm" variant="ghost" className="h-7 shrink-0 px-1.5 text-xs" onClick={() => setWorkPickerOpen(open => !open)}>{workPickerOpen ? "Luk" : "Søg værk"}</Button>}</div>{localWorkSuggestion && !workPickerOpen && <button type="button" className="flex w-full items-center justify-between rounded-sm border border-emerald-300 bg-emerald-50 px-2 py-1 text-left text-xs text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" onClick={() => { setForm(current => ({ ...current, workId: localWorkSuggestion.id, seasonNumber: parseSeasonNumberFromTitle(current.workingTitle) ?? current.seasonNumber })); setWorkQuery(localWorkSuggestion.title); }}><span className="truncate">Foreslået: {localWorkSuggestion.title}{parseSeasonNumberFromTitle(form.workingTitle) ? ` · sæson ${parseSeasonNumberFromTitle(form.workingTitle)}` : ""}</span><span className="ml-2 shrink-0 font-medium">Tilknyt</span></button>}{workPickerOpen && <WorkSelectionPanel query={workQuery} onQueryChange={setWorkQuery} onSearch={() => void searchWorks()} isSearching={workSearching} hasSearched={workSearched} searchError={workError} results={workResults} selectedId={selectedWorkResult?.id} onSelect={result => void chooseWork(result)} typeFilter={workTypeFilter} onTypeFilterChange={setWorkTypeFilter} manualMode={manualWorkMode} onManualModeChange={setManualWorkMode} manualWork={manualWork} onManualWorkChange={setManualWork} locale="da" autoSelectManualProducer />}</div> })}
               {baseRow({ key: "contractType", label: "Kontrakttype", sourceKey: "contractType", focusText: data.sources.contractType_focus, source: form.type !== contract.type ? "manual" : data.sources.contractType ? "contract" : "unknown", missing: !form.type, children: <div className="inline-flex h-8 items-center rounded-md border bg-background p-0.5" role="group" aria-label="Kontrakttype"><button type="button" aria-label="A-løn" aria-pressed={form.type === "a-løn"} title="A-løn" onClick={() => setForm(current => ({ ...current, type: "a-løn" }))} className={`flex h-7 w-8 items-center justify-center rounded-sm transition-colors ${form.type === "a-løn" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}><BriefcaseBusiness className="h-4 w-4" /></button><button type="button" aria-label="Leverandør" aria-pressed={form.type === "leverandør"} title="Leverandør" onClick={() => setForm(current => ({ ...current, type: "leverandør" }))} className={`flex h-7 w-8 items-center justify-center rounded-sm transition-colors ${form.type === "leverandør" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}><Building2 className="h-4 w-4" /></button></div> })}

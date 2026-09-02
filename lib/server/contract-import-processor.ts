@@ -266,14 +266,16 @@ async function applyContractExtraction(admin: ServiceClient, job: ContractJob, e
     ? { id: existing.work_id, score: 100, evidence: [{ signal: "existing_manual_link", points: 100 }], version: CONTRACT_MATCH_VERSION, candidates: [] }
     : await matchSharedWork(admin, { title: extractedTitle, premiereYear: extractedYear, contractDate: timingDate, type });
   let workId: string | null = existing.work_id ?? workMatch.id;
-  let ownerMatch = existing.rights_holder_id
-    ? { id: existing.rights_holder_id, score: 100, evidence: [{ signal: "existing_manual_link", points: 100 }], version: CONTRACT_MATCH_VERSION, candidates: [] }
-    : await matchRightsHolder(admin, {
-      orgId: job.org_id,
-      name: extracted.rightsHolderName ? String(extracted.rightsHolderName) : null,
-      workId,
-    });
-  let rightsHolderId: string | null = existing.rights_holder_id ?? ownerMatch.id;
+  let ownerMatch = await matchRightsHolder(admin, {
+    orgId: job.org_id,
+    name: extracted.rightsHolderName ? String(extracted.rightsHolderName) : null,
+    workId,
+  });
+  // AI matching is evidence, never authority. Only the already assigned owner
+  // may influence contract/work relations until an administrator uses the
+  // revision-checked ownership review RPC.
+  const rightsHolderId: string | null = existing.rights_holder_id;
+  let ownerCandidateId: string | null = ownerMatch.id;
 
   if (!workId) {
     workMatch = await resolveContractImportWork(admin, {
@@ -282,7 +284,7 @@ async function applyContractExtraction(admin: ServiceClient, job: ContractJob, e
       year: extractedYear,
       contractDate: timingDate,
       type,
-      rightsHolderId,
+      rightsHolderId: rightsHolderId ?? ownerCandidateId,
       allowExternalCreate: true,
     });
     workId = workMatch.id;
@@ -291,13 +293,13 @@ async function applyContractExtraction(admin: ServiceClient, job: ContractJob, e
   // Et værk fundet via de eksterne kilder kan være det signal, der gør et
   // alternativt krediteringsnavn sikkert nok. Kør derfor ejermatchet én gang
   // mere med værkrelationen, men kun når første forsøg ikke valgte en ejer.
-  if (!rightsHolderId && workId) {
+  if (!ownerCandidateId && workId) {
     ownerMatch = await matchRightsHolder(admin, {
       orgId: job.org_id,
       name: extracted.rightsHolderName ? String(extracted.rightsHolderName) : null,
       workId,
     });
-    rightsHolderId = ownerMatch.id;
+    ownerCandidateId = ownerMatch.id;
   }
 
   let employerMatches: Awaited<ReturnType<typeof matchContractEmployers>> = { matches: [], candidates: [] };
@@ -361,7 +363,8 @@ async function applyContractExtraction(admin: ServiceClient, job: ContractJob, e
         startDate: merged.startDate ?? null,
         applyEndDate: !locked.has("endDate"),
         endDate: merged.endDate ?? null,
-        rightsHolderId,
+        rightsHolderId: null,
+        ownerSuggestionId: ownerCandidateId,
         workId,
         employerId: !existing.employer_id ? employerMatches.matches[0]?.id ?? null : null,
       },
@@ -526,7 +529,7 @@ export async function runDirectContractJob(input: { contractId: string; orgId?: 
   const contract = await query.maybeSingle();
   assertDatabase(contract, "Kontrakten kunne ikke hentes");
   if (!contract.data) throw new Error("Kontrakten blev ikke fundet");
-  if (contract.data.pdf_url?.toLowerCase().endsWith(".pdf")
+  if (["pdf", "doc", "docx"].includes(contract.data.pdf_url?.split("?")[0]?.split(".").pop()?.toLowerCase() ?? "")
     && !["ready", "not_required"].includes(contract.data.document_processing_status)) {
     throw new Error("PDF'en skal færdigbehandles, før AI-aflæsningen kan startes");
   }

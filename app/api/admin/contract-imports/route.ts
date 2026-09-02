@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
+import { requireContractImportWriteAccess } from "@/lib/server/contract-import-access";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +15,9 @@ function decodeCursor(value: string | null) {
 }
 
 export async function GET(request: NextRequest) {
-  const session = await createClient();
-  const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin"]);
-  if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const auth = await requireContractImportWriteAccess();
+  if (!auth) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const { caller } = auth;
   const limit = Math.min(100, Math.max(1, Number(request.nextUrl.searchParams.get("limit")) || 20));
   const cursor = decodeCursor(request.nextUrl.searchParams.get("cursor"));
   const db = createServiceClient();
@@ -39,9 +38,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const session = await createClient();
-  const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin"]);
-  if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const auth = await requireContractImportWriteAccess();
+  if (!auth) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const { caller } = auth;
   const body = await request.json().catch(() => ({})) as { source?: string; discoveredCount?: number };
   const allowedSources = new Set(["computer", "google_drive", "onedrive", "dropbox", "gmail", "api"]);
   const source = typeof body.source === "string" && allowedSources.has(body.source) ? body.source : "computer";

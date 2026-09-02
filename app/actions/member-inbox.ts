@@ -188,11 +188,25 @@ export async function fetchMemberInbox() {
 
   // 2. Kontraktkommentarer
   const { data: memberContracts } = await db.from("contracts")
-    .select("id,working_title,work_id,works(title),contract_comments(id,author_user_id,author_role,created_at,member_read_at)")
+    .select("id,working_title,work_id,works(title)")
     .eq("org_id", orgId).eq("rights_holder_id", holder.id);
-  
+  const memberContractIds = (memberContracts ?? []).map(contract => contract.id);
+  const { data: memberContractComments } = memberContractIds.length
+    ? await db.from("contract_comments")
+      .select("id,contract_id,author_user_id,author_role,created_at,member_read_at")
+      .in("contract_id", memberContractIds)
+      .eq("member_rights_holder_id", holder.id)
+      .order("created_at", { ascending: true })
+    : { data: [] as Array<{ id: string; contract_id: string; author_user_id: string | null; author_role: string; created_at: string; member_read_at: string | null }> };
+  const commentsByContract = new Map<string, typeof memberContractComments>();
+  for (const comment of memberContractComments ?? []) {
+    const comments = commentsByContract.get(comment.contract_id) ?? [];
+    comments.push(comment);
+    commentsByContract.set(comment.contract_id, comments);
+  }
+
   (memberContracts ?? []).forEach(c => {
-    const comments = (c.contract_comments ?? []) as any[];
+    const comments = commentsByContract.get(c.id) ?? [];
     if (!comments.length) return;
     const worksRel = (c as any).works;
     const workTitle = (Array.isArray(worksRel) ? worksRel[0]?.title : worksRel?.title) || c.working_title || "Kontrakt";
@@ -273,10 +287,16 @@ export async function fetchMemberInboxThread(threadId: string) {
   }
   if (ref.kind === "contract") {
     const { data: contract } = await db.from("contracts")
-      .select("contract_comments(id,author_role,message,created_at)")
+      .select("id")
       .eq("id", ref.id).eq("org_id", orgId).eq("rights_holder_id", holder.id).maybeSingle();
     if (!contract) return { success: false, error: "Kontrakttråden blev ikke fundet", messages: [] };
-    return { success: true, messages: (contract.contract_comments ?? []).map(message => ({ id: message.id, author_role: message.author_role, body: message.message, created_at: message.created_at })) };
+    const { data: comments, error } = await db.from("contract_comments")
+      .select("id,author_role,message,created_at")
+      .eq("contract_id", contract.id)
+      .eq("member_rights_holder_id", holder.id)
+      .order("created_at", { ascending: true });
+    if (error) return { success: false, error: "Kontrakttråden kunne ikke hentes", messages: [] };
+    return { success: true, messages: (comments ?? []).map(message => ({ id: message.id, author_role: message.author_role, body: message.message, created_at: message.created_at })) };
   }
   if (ref.kind === "screening") {
     const { data: claim } = await db.from("screening_claims")
@@ -327,11 +347,30 @@ export async function fetchAdminInbox() {
 
   // Kontraktkommentarer for admin
   const { data: adminContracts } = await db.from("contracts")
-    .select("id,working_title,rights_holder_id,rettighedshavere(full_name,email),contract_comments(id,author_user_id,author_role,message,created_at,admin_read_at)")
+    .select("id,working_title,rights_holder_id,rettighedshavere(full_name,email)")
     .eq("org_id", orgId);
+  const activeContractIds = (adminContracts ?? []).map(contract => contract.id);
+  const activeHolderIds = [...new Set((adminContracts ?? [])
+    .map(contract => contract.rights_holder_id)
+    .filter((id): id is string => Boolean(id)))];
+  const { data: activeContractComments } = activeContractIds.length && activeHolderIds.length
+    ? await db.from("contract_comments")
+      .select("id,contract_id,member_rights_holder_id,author_user_id,author_role,message,created_at,admin_read_at")
+      .in("contract_id", activeContractIds)
+      .in("member_rights_holder_id", activeHolderIds)
+      .order("created_at", { ascending: true })
+    : { data: [] as Array<{ id: string; contract_id: string; member_rights_holder_id: string | null; author_user_id: string | null; author_role: string; message: string; created_at: string; admin_read_at: string | null }> };
+  const activeCommentsByContract = new Map<string, typeof activeContractComments>();
+  const activeOwnerByContract = new Map((adminContracts ?? []).map(contract => [contract.id, contract.rights_holder_id]));
+  for (const comment of activeContractComments ?? []) {
+    if (comment.member_rights_holder_id !== activeOwnerByContract.get(comment.contract_id)) continue;
+    const comments = activeCommentsByContract.get(comment.contract_id) ?? [];
+    comments.push(comment);
+    activeCommentsByContract.set(comment.contract_id, comments);
+  }
 
   (adminContracts ?? []).forEach(c => {
-    const comments = (c.contract_comments ?? []) as any[];
+    const comments = activeCommentsByContract.get(c.id) ?? [];
     if (!comments.length) return;
     const workTitle = c.working_title || "Kontrakt";
     const lastComment = comments.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];

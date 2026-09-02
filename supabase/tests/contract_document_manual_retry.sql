@@ -17,7 +17,8 @@ declare
   rescan_contract_id uuid := gen_random_uuid();
   new_contract_id uuid := gen_random_uuid();
   foreign_contract_id uuid := gen_random_uuid();
-  non_pdf_contract_id uuid := gen_random_uuid();
+  word_contract_id uuid := gen_random_uuid();
+  non_document_contract_id uuid := gen_random_uuid();
   terminal_job_id uuid := gen_random_uuid();
   failed_job_id uuid := gen_random_uuid();
   active_job_id uuid := gen_random_uuid();
@@ -28,7 +29,7 @@ declare
   failed_recovery_id uuid;
   failed_lease uuid := gen_random_uuid();
   ownership_rejected boolean := false;
-  non_pdf_rejected boolean := false;
+  non_document_rejected boolean := false;
   rescan_rejected boolean := false;
 begin
   if has_function_privilege(
@@ -75,7 +76,8 @@ begin
     (rescan_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/rescan.pdf', 'needs_review', 'ocr_rescan_required'),
     (new_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/new.pdf', 'failed', 'missing_job'),
     (foreign_contract_id, test_org, other_holder_id, 'a-løn', 'kladde', test_org || '/' || other_actor_id || '/foreign.pdf', 'failed', 'missing_job'),
-    (non_pdf_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/contract.docx', 'failed', 'missing_job');
+    (word_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/contract.docx', 'failed', 'missing_job'),
+    (non_document_contract_id, test_org, actor_holder_id, 'a-løn', 'kladde', test_org || '/' || actor_id || '/contract.txt', 'failed', 'missing_job');
 
   insert into public.contract_document_jobs(
     id, org_id, contract_id, original_storage_path, output_storage_path,
@@ -283,16 +285,29 @@ begin
     raise exception 'Manual OCR retry regression: non-owner could queue another member''s contract';
   end if;
 
+  select * into retry_result from public.queue_or_retry_member_contract_document_job(
+    actor_id, test_org, actor_holder_id, word_contract_id
+  );
+  if retry_result.outcome <> 'queued'
+    or not exists (
+      select 1 from public.contract_document_jobs
+      where id = retry_result.job_id and contract_id = word_contract_id
+        and original_storage_path = test_org || '/' || actor_id || '/contract.docx'
+        and downstream_ai_policy = 'reanalyze'
+    ) then
+    raise exception 'Manual OCR retry regression: DOCX blev ikke sendt sikkert gennem dokumentworkeren';
+  end if;
+
   begin
     perform public.queue_or_retry_member_contract_document_job(
-      actor_id, test_org, actor_holder_id, non_pdf_contract_id
+      actor_id, test_org, actor_holder_id, non_document_contract_id
     );
   exception when others then
-    non_pdf_rejected := true;
+    non_document_rejected := true;
   end;
-  if not non_pdf_rejected
-    or exists (select 1 from public.contract_document_jobs where contract_id = non_pdf_contract_id) then
-    raise exception 'Manual OCR retry regression: non-PDF contract entered the document queue';
+  if not non_document_rejected
+    or exists (select 1 from public.contract_document_jobs where contract_id = non_document_contract_id) then
+    raise exception 'Manual OCR retry regression: TXT entered the document queue';
   end if;
 
   if position('for update of job' in lower(pg_get_functiondef(

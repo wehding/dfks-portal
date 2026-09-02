@@ -74,9 +74,17 @@ export async function intakeContractFile(input: {
   const preferredWorkId = input.workId
     ? (await db.from("works").select("id").eq("id", input.workId).maybeSingle()).data?.id ?? null
     : null;
-  const safeRightsHolderId = input.rightsHolderId
-    ? (await db.from("rettighedshavere").select("id,org_affiliations!inner(org_id)").eq("id", input.rightsHolderId).eq("org_affiliations.org_id", actor.orgId).maybeSingle()).data?.id ?? null
-    : null;
+  const canAssignAtIntake = actor.role === "member"
+    || ["superadmin", "admin", "org-admin"].includes(actor.role ?? "");
+  let safeRightsHolderId: string | null = null;
+  if (input.rightsHolderId && canAssignAtIntake) {
+    let holderQuery = db.from("rettighedshavere")
+      .select("id,user_id,org_affiliations!inner(org_id)")
+      .eq("id", input.rightsHolderId)
+      .eq("org_affiliations.org_id", actor.orgId);
+    if (actor.role === "member") holderQuery = holderQuery.eq("user_id", actor.userId);
+    safeRightsHolderId = (await holderQuery.maybeSingle()).data?.id ?? null;
+  }
   const fileHash = contractFileHash(input.file.buffer);
   const { data: duplicate } = await db.from("contract_file_fingerprints")
     .select("contract_id")
@@ -124,7 +132,10 @@ export async function intakeContractFile(input: {
     status: "kladde",
     pdf_url: storagePath,
     working_title: input.file.name.replace(/\.[^.]+$/, ""),
-    rights_holder_id: safeRightsHolderId,
+    // Owner assignment is deliberately deferred to the provenance RPC below.
+    // If this process stops between the insert and the RPC, the remaining draft
+    // is ownerless/pending rather than owner-bound without durable provenance.
+    rights_holder_id: null,
     work_id: preferredWorkId,
     created_by: actor.userId,
   }).select("id").single();
@@ -134,10 +145,42 @@ export async function intakeContractFile(input: {
     return { ok: false as const, status: 500, error: "Kontrakten kunne ikke oprettes" };
   }
 
-  const isPdf = input.file.contentType === "application/pdf" || input.file.name.toLowerCase().endsWith(".pdf");
+  if (safeRightsHolderId) {
+    const assignmentOrigin = actor.role === "member"
+      ? "authenticated_member_drive"
+      : "admin_selected_at_intake";
+    const provenance = await db.rpc("record_contract_owner_provenance", {
+      p_contract_id: contract.id,
+      p_org_id: actor.orgId,
+      p_rights_holder_id: safeRightsHolderId,
+      p_origin: assignmentOrigin,
+      p_authenticated_user_id: actor.userId,
+      p_source_record_type: "contract_import_batch",
+      p_source_record_id: input.batchId,
+      p_evidence_ai_job_id: null,
+    });
+    if (provenance.error) {
+      await db.from("contracts").delete().eq("id", contract.id).eq("org_id", actor.orgId);
+      await db.storage.from("kontrakter").remove([storagePath]);
+      await db.from("contract_import_items").update({
+        status: "dead",
+        error_code: "owner_provenance",
+        error_message: "Ejerskabskilden kunne ikke registreres",
+      }).eq("id", item.id);
+      return { ok: false as const, status: 500, error: "Ejerskabskilden kunne ikke registreres" };
+    }
+  }
+
+  const extension = input.file.name.split(".").pop()?.toLowerCase() ?? "";
+  const needsDocumentProcessing = ["pdf", "doc", "docx"].includes(extension)
+    || [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ].includes(input.file.contentType ?? "");
   let aiJobId: string | null = null;
   let queueError: { message?: string } | null = null;
-  if (isPdf) {
+  if (needsDocumentProcessing) {
     const outputPath = `${actor.orgId}/processed/${contract.id}/normalised.pdf`;
     const result = await db.from("contract_document_jobs").insert({
       contract_id: contract.id,
@@ -167,7 +210,7 @@ export async function intakeContractFile(input: {
     queueError = result.error;
     aiJobId = result.data?.id ?? null;
   }
-  if (queueError || (!isPdf && !aiJobId)) {
+  if (queueError || (!needsDocumentProcessing && !aiJobId)) {
     await db.from("contracts").delete().eq("id", contract.id);
     await db.storage.from("kontrakter").remove([storagePath]);
     await db.from("contract_import_items").update({ status: "dead", error_code: "job_create", error_message: "Analysejobbet kunne ikke oprettes" }).eq("id", item.id);

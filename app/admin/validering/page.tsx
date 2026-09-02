@@ -162,9 +162,6 @@ function AdminValideringPageInner() {
 
     // Producer matching
     const [employers, setEmployers] = useState<{ id: string; name: string; dfi_company_id: number | null }[]>([])
-    const [rettighedshavere, setRettighedshavere] = useState<{ id: string; full_name: string; gender?: string | null }[]>([])
-    const [rhSuggestions, setRhSuggestions] = useState<{ id: string; name: string; score: number }[]>([])
-    const [selectedRhId, setSelectedRhId] = useState<string | null>(null)
     const [employerSuggestions, setEmployerSuggestions] = useState<{
         id: string | null; name: string; source: "db" | "dfi"; score: number; dfi_id?: number
     }[]>([])
@@ -253,9 +250,6 @@ function AdminValideringPageInner() {
         const supabase = createClient()
         supabase.from("employers").select("id, name, dfi_company_id").order("name")
             .then(({ data }) => { if (data) setEmployers(data) })
-        supabase.from("rettighedshavere").select("id, full_name, gender").order("full_name")
-            .then(({ data }) => { if (data) setRettighedshavere(data) })
-
         // Hent overenskomster via server-rute (service-role omgår RLS på agreements-tabellen)
         fetch("/api/admin/agreements?dropdownList=1")
             .then(r => r.ok ? r.json() : null)
@@ -312,32 +306,6 @@ function AdminValideringPageInner() {
                 .finally(() => setSearchingDfi(false))
         }
     }, [formData.producerName, employers])
-
-    // Rettighedshaver-matching når rightsHolderName ændres
-    useEffect(() => {
-        const name = formData.rightsHolderName?.trim()
-        if (!name || name.length < 3) { setRhSuggestions([]); return }
-        const matches = rettighedshavere
-            .map(rh => ({ id: rh.id, name: rh.full_name, score: tokenOverlapScore(rh.full_name, name) }))
-            .filter(x => x.score >= 0.4)
-            .sort((a, b) => b.score - a.score)
-            .slice(0, 4)
-        setRhSuggestions(matches)
-        if (matches.length === 1 && matches[0].score >= 0.8) {
-            setSelectedRhId(matches[0].id)
-        }
-    }, [formData.rightsHolderName, rettighedshavere])
-
-    // Auto-udfyld gender fra rettighedshaverprofil når kobling sættes
-    useEffect(() => {
-        if (!selectedRhId) return
-        const rh = rettighedshavere.find(r => r.id === selectedRhId)
-        if (!rh?.gender) return
-        // Kun auto-udfyld hvis feltet ikke er manuelt redigeret
-        if (!brugerRedigerede.has("gender")) {
-            setFormData(prev => ({ ...prev, gender: rh.gender }))
-        }
-    }, [selectedRhId, rettighedshavere, brugerRedigerede])
 
     // Moderselskab: søg DFI + vis eksisterende parent når employer vælges
     useEffect(() => {
@@ -682,7 +650,6 @@ function AdminValideringPageInner() {
                     employerId: resolvedEmployerId ?? null,
                     contractType: contractType ?? null,
                     overenskomst: overenskomstVal ?? null,
-                    rightsHolderId: (selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id) ? selectedRhId : null,
                 }),
             }).then(async r => {
                 const json = await r.json().catch(() => ({}))
@@ -1365,28 +1332,12 @@ setActiveField(fieldId)
                                             <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
                                             <Input
                                                 value={String(formData.rightsHolderName ?? "")}
-                                                onChange={(e) => { setField("rightsHolderName", e.target.value); setSelectedRhId(null) }}
-                                                placeholder="Klipperens fulde navn..."
+                                                onChange={(e) => setField("rightsHolderName", e.target.value)}
+                                                placeholder="Klipperens navn som skrevet i kontrakten..."
                                             />
-                                            {selectedRhId && (
-                                                <div className="mt-1.5 flex items-center gap-2 text-xs text-green-700 font-medium">
-                                                    <span>✓ Koblet til rettighedshaver</span>
-                                                    <button type="button" className="underline text-muted-foreground" onClick={() => setSelectedRhId(null)}>Fjern</button>
-                                                </div>
-                                            )}
-                                            {!selectedRhId && rhSuggestions.length > 0 && (
-                                                <div className="mt-1.5 space-y-1">
-                                                    {rhSuggestions.map(s => (
-                                                        <button key={s.id} type="button" className="w-full text-left px-3 py-1.5 rounded border text-xs hover:bg-muted transition-colors"
-                                                            onClick={() => setSelectedRhId(s.id)}>
-                                                            {s.name} <span className="text-muted-foreground">({Math.round(s.score * 100)}% match)</span>
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            )}
-                                            {!selectedRhId && formData.rightsHolderName && rhSuggestions.length === 0 && (formData.rightsHolderName as string).length > 2 && (
-                                                <p className="mt-1 text-xs text-amber-600">Ikke fundet i rettighedshavere</p>
-                                            )}
+                                            <p className="mt-1 text-xs text-muted-foreground">
+                                                Feltet beskriver kontraktens tekst. Kontraktens ejer administreres under Ejerskabskontrol i Kontraktarkivet.
+                                            </p>
                                             </F>
                                         )}
                                         <div className="h-full [&>div]:h-full">
@@ -1818,7 +1769,7 @@ setActiveField(fieldId)
                                             {/* Opsummering */}
                                             <div className="rounded-md border divide-y text-xs">
                                                 <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Producent</span><span className="font-medium">{formData.producerName || "—"}{selectedEmployerId && " ✓"}</span></div>
-                                                <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Klipper</span><span className="font-medium">{formData.rightsHolderName || "—"}{selectedRhId && " ✓"}</span></div>
+                                                <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Klipper</span><span className="font-medium">{formData.rightsHolderName || "—"}</span></div>
                                                 <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Produktionstype</span><span className="font-medium">{formData.productionType || "—"}</span></div>
                                                 <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Kontrakttype</span><span className="font-medium">{formData.contractType || "—"}</span></div>
                                                 <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Overenskomst</span><span className="font-medium">{formData.overenskomst || "—"}</span></div>
