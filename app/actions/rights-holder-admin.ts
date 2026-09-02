@@ -235,3 +235,34 @@ export async function deleteRightsHolders(ids: string[]) {
     blocked: result.blocked,
   };
 }
+
+export async function mergeDuplicateRightsHolders(primaryId: string, duplicateId: string) {
+  if (!primaryId || !duplicateId || primaryId === duplicateId) {
+    return { success: false as const, error: "Vælg to forskellige rettighedshavere." };
+  }
+
+  try {
+    const supabase = await createClient();
+    const admin = await assertAdminRole(supabase, ["superadmin"]);
+    if (!admin) return { success: false as const, error: "Kun superadmin kan sammenlægge rettighedshavere." };
+
+    const db = createServiceClient();
+    const { error } = await db.rpc("merge_duplicate_rights_holders", {
+      p_primary_id: primaryId,
+      p_duplicate_id: duplicateId,
+      p_actor_user_id: admin.userId,
+      p_actor_org_id: admin.orgId,
+      p_actor_role: admin.role,
+    });
+    if (error) throw new Error(error.message);
+
+    return {
+      success: true as const,
+    };
+  } catch (error) {
+    return {
+      success: false as const,
+      error: error instanceof Error ? error.message : "Profilerne kunne ikke sammenlægges.",
+    };
+  }
+}
