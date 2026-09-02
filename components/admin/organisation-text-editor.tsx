@@ -7,7 +7,8 @@ import { getOrganisationTextSettings, updateOrganisationTextTemplate } from "@/a
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextEditor } from "@/components/ui/rich-text-editor";
+import { RichTextContent } from "@/components/ui/rich-text-content";
 import {
   insertTextAtSelection,
   placeholdersForTemplate,
@@ -121,17 +122,17 @@ export default function OrganisationTextEditor({ organisationName }: { organisat
     });
   }
 
-  if (loading || !draft) return <section className="rounded-lg border bg-card p-5 text-sm text-muted-foreground shadow-sm"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Henter redigerbare tekster...</section>;
+  if (loading || !draft) return <div className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Henter redigerbare tekster...</div>;
 
   const previewSubject = draft.subject ? renderOrganisationTemplate(draft.subject, previewValues) : null;
   const previewBody = renderOrganisationTemplate(draft.body, previewValues);
 
   return (
-    <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5" data-performance-route="organisation-settings" data-performance-ready="texts">
+    <div data-performance-route="organisation-settings" data-performance-ready="texts">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-base font-semibold">Redigerbare tekster</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Vælg en teksttype, rediger den og indsæt dynamiske felter ved markøren.</p>
+          <h3 className="text-sm font-semibold">Tekstindhold</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Ændringer gemmes særskilt for den valgte teksttype.</p>
         </div>
         <Button type="button" onClick={save} disabled={isPending || !hasChanges || unknown.length > 0}>
           {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Gem tekst
@@ -150,12 +151,25 @@ export default function OrganisationTextEditor({ organisationName }: { organisat
         <div className="space-y-4">
           {draft.durationDays != null && <div className="max-w-xs space-y-2"><Label htmlFor="beta-duration">Standardvarighed i dage</Label><Input id="beta-duration" type="number" min={1} max={365} value={draft.durationDays} onChange={event => setDraft(current => current ? { ...current, durationDays: Number(event.target.value) } : current)} /></div>}
           {draft.subject != null && <div className="space-y-2"><Label htmlFor="organisation-text-subject">Emne</Label><Input ref={subjectRef} id="organisation-text-subject" value={draft.subject} onFocus={() => setActiveField("subject")} onSelect={() => setActiveField("subject")} onChange={event => setDraft(current => current ? { ...current, subject: event.target.value } : current)} /></div>}
-          <div className="space-y-2"><Label htmlFor="organisation-text-body">Tekst</Label><Textarea ref={bodyRef} id="organisation-text-body" rows={14} className="min-h-[300px] leading-6" value={draft.body} onFocus={() => setActiveField("body")} onSelect={() => setActiveField("body")} onChange={event => setDraft(current => current ? { ...current, body: event.target.value } : current)} /></div>
+          <div className="space-y-2">
+            <Label htmlFor="organisation-text-body">Tekst</Label>
+            <RichTextEditor
+              id="organisation-text-body"
+              textareaRef={bodyRef}
+              rows={14}
+              className="min-h-[300px] leading-6"
+              value={draft.body}
+              onFocus={() => setActiveField("body")}
+              onSelect={() => setActiveField("body")}
+              onChange={body => setDraft(current => current ? { ...current, body } : current)}
+            />
+            <p className="text-xs text-muted-foreground">Markér tekst og brug værktøjslinjen til fed, kursiv, understregning, overskrift, punkt eller tekststørrelse.</p>
+          </div>
           {unknown.length > 0 && <p className="text-sm text-destructive">Ukendte dynamiske felter: {unknown.map(value => `{${value}}`).join(", ")}</p>}
           <div className="rounded-md bg-muted/40 p-3 text-sm" aria-label="Forhåndsvisning">
             <p className="font-medium">Eksempel</p>
             {previewSubject && <p className="mt-3 font-semibold">{previewSubject}</p>}
-            <p className="mt-2 whitespace-pre-line text-muted-foreground">{previewBody || "Ingen tekst"}</p>
+            <RichTextContent value={previewBody || "Ingen tekst"} className="mt-2 text-muted-foreground" />
           </div>
         </div>
         <aside className="h-fit rounded-md border bg-muted/20 p-3">
@@ -165,6 +179,6 @@ export default function OrganisationTextEditor({ organisationName }: { organisat
           </div>
         </aside>
       </div>
-    </section>
+    </div>
   );
 }

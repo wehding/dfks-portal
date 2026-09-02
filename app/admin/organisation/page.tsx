@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
-import { AlertCircle, Building2, CheckCircle2, Copy, ImageIcon, Loader2, Plus, Save, Trash2, Upload, Wifi } from "lucide-react";
+import { AlertCircle, Building2, CheckCircle2, ChevronDown, Copy, ImageIcon, Loader2, Plus, Save, Trash2, Upload, Wifi } from "lucide-react";
 import { getOrganisationSettings, removeOrganisationLogo, testOrganisationForeningLetConnection, updateOrganisationSettings, uploadOrganisationLogo } from "@/app/actions/organisation-settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,6 +80,21 @@ const emptyForm: FormState = {
   foreninglet_has_password: false,
   foreninglet_credential_source: "missing",
 };
+
+function SettingsSection({ title, description, children }: { title: string; description: string; children: ReactNode }) {
+  return (
+    <details open className="group rounded-lg border bg-card shadow-sm">
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-4 p-4 marker:hidden sm:p-5 [&::-webkit-details-marker]:hidden">
+        <div>
+          <h2 className="text-base font-semibold">{title}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        </div>
+        <ChevronDown className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="border-t p-4 sm:p-5">{children}</div>
+    </details>
+  );
+}
 
 export default function OrganisationSettingsPage() {
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -338,12 +353,12 @@ export default function OrganisationSettingsPage() {
         </TabsList>
 
         <TabsContent value="organisation" className="space-y-6">
-          <ImportConnectionsSettings />
+          <SettingsSection title="Dataforbindelser" description="Forbindelser til eksterne datakilder og importtjenester.">
+            <ImportConnectionsSettings />
+          </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Branding</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Bruges i menu, portal og invitationsmails.</p>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+      <SettingsSection title="Branding" description="Bruges i menu, portal og invitationsmails.">
+        <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label>Kort navn</Label>
             <Input value={form.short_name} onChange={event => setForm(f => ({ ...f, short_name: event.target.value }))} placeholder="Kort navn" />
@@ -418,22 +433,18 @@ export default function OrganisationSettingsPage() {
             </div>
           </div>
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Opbevaring af kontraktgennemgange</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Afsluttede gennemgange soft-slettes først. Originalfil, mailreference og afledte AI-data slettes efter perioden. Juridisk hold stopper automatisk sletning.</p>
-        <div className="mt-4 max-w-xs space-y-2">
+      <SettingsSection title="Opbevaring af kontraktgennemgange" description="Afsluttede gennemgange soft-slettes først. Originalfil, mailreference og afledte AI-data slettes efter perioden. Juridisk hold stopper automatisk sletning.">
+        <div className="max-w-xs space-y-2">
           <Label htmlFor="review-retention">Opbevaringsperiode i måneder</Label>
           <Input id="review-retention" type="number" min={1} max={120} value={form.contract_review_retention_months} onChange={event => setForm(current => ({ ...current, contract_review_retention_months: Number(event.target.value) }))} />
           <p className="text-xs text-muted-foreground">Standard er 24 måneder. Tilladte værdier er 1–120 måneder. Lange perioder øger mængden af persondata, organisationen opbevarer.</p>
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Statistikgrundlag</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Vælg om kladder må indgå. Kladder kan indeholde ufuldstændige eller endnu ikke kontrollerede data.</p>
-        <div className="mt-4 max-w-md space-y-2">
+      <SettingsSection title="Statistikgrundlag" description="Vælg om kladder må indgå. Kladder kan indeholde ufuldstændige eller endnu ikke kontrollerede data.">
+        <div className="max-w-md space-y-2">
           <Label htmlFor="statistics-contract-scope">Kontrakter i statistik</Label>
           <select
             id="statistics-contract-scope"
@@ -505,29 +516,25 @@ export default function OrganisationSettingsPage() {
             <Button type="button" size="sm" variant="outline" onClick={() => setForm(current => ({ ...current, statistics_work_regions: [...current.statistics_work_regions, ""] }))}><Plus className="mr-2 h-4 w-4" />Tilføj område</Button>
           </div>}
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Mailafsender</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Systemmails sendes gennem Google Workspace med organisationens navn som afsendernavn.</p>
-        <div className="mt-4 max-w-xl space-y-2">
+      <SettingsSection title="Mailafsender" description="Systemmails sendes gennem Google Workspace med organisationens navn som afsendernavn.">
+        <div className="max-w-xl space-y-2">
           <Label>Svaradresse (Reply-To)</Label>
           <Input type="email" value={form.from_email} onChange={event => setForm(f => ({ ...f, from_email: event.target.value }))} placeholder="kontakt@organisation.dk" />
         </div>
-      </section>
+      </SettingsSection>
 
-      <div ref={textEditorAnchor} className="min-h-40" data-organisation-text-editor-anchor>
-        {showTextEditor ? <OrganisationTextEditor organisationName={form.long_name || form.short_name || "Organisationen"} /> : (
-          <section className="rounded-lg border bg-card p-5 text-sm text-muted-foreground shadow-sm">Teksteditoren indlæses, når du nærmer dig den.</section>
-        )}
-      </div>
+      <SettingsSection title="Redigerbare tekster" description="Vælg teksttype, formater indholdet og indsæt dynamiske felter ved markøren.">
+        <div ref={textEditorAnchor} className="min-h-40" data-organisation-text-editor-anchor>
+          {showTextEditor ? <OrganisationTextEditor organisationName={form.long_name || form.short_name || "Organisationen"} /> : (
+            <p className="text-sm text-muted-foreground">Teksteditoren indlæses, når du nærmer dig den.</p>
+          )}
+        </div>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Medlems-API</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Bruges til at hente medlemslisten fra den aktive organisations medlemssystem. Hver organisation skal have sit eget login; oplysningerne gemmes krypteret og vises ikke igen.
-        </p>
-        <div className={`mt-4 flex items-start gap-3 rounded-md border px-3 py-3 ${
+      <SettingsSection title="Medlems-API" description="Henter medlemslisten fra organisationens medlemssystem. Loginoplysninger gemmes krypteret og vises ikke igen.">
+        <div className={`flex items-start gap-3 rounded-md border px-3 py-3 ${
           !form.foreninglet_enabled
             ? "bg-muted/30"
             : form.foreninglet_has_credentials
@@ -598,14 +605,10 @@ export default function OrganisationSettingsPage() {
             </Button>
           </div>
         </div>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-        <h2 className="text-base font-semibold">Fagord og roller</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Disse ord vises i værksflows, onboarding, hjælpetekster og relevante beskeder.
-        </p>
-        <div className="mt-4 space-y-4">
+      <SettingsSection title="Fagord og roller" description="Ord og roller, der vises i værksflows, onboarding, hjælpetekster og relevante beskeder.">
+        <div className="space-y-4">
           <div className="space-y-2">
             <Label>Ord for “medskaber”</Label>
             <Input value={form.coeditor_word} onChange={event => setForm(f => ({ ...f, coeditor_word: event.target.value }))} placeholder="medskaber" />
@@ -680,7 +683,7 @@ export default function OrganisationSettingsPage() {
             </Button>
           </div>
         </div>
-      </section>
+      </SettingsSection>
 
         </TabsContent>
 
