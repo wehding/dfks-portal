@@ -85,7 +85,7 @@ export function RichTextEditor({ id, value, onChange, textareaRef, onFocus, onSe
         ref={textareaRef}
         id={id}
         rows={rows}
-        className={`rounded-none border-0 focus-visible:ring-0 ${className}`}
+        className={`h-80 min-h-60 max-h-[60vh] resize-y overflow-y-auto rounded-none border-0 field-sizing-fixed focus-visible:ring-0 ${className}`}
         value={value}
         onFocus={onFocus}
         onSelect={onSelect}
@@ -94,4 +94,3 @@ export function RichTextEditor({ id, value, onChange, textareaRef, onFocus, onSe
     </div>
   );
 }
-

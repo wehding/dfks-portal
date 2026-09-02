@@ -157,7 +157,7 @@ export default function OrganisationTextEditor({ organisationName }: { organisat
               id="organisation-text-body"
               textareaRef={bodyRef}
               rows={14}
-              className="min-h-[300px] leading-6"
+              className="leading-6"
               value={draft.body}
               onFocus={() => setActiveField("body")}
               onSelect={() => setActiveField("body")}
@@ -166,13 +166,15 @@ export default function OrganisationTextEditor({ organisationName }: { organisat
             <p className="text-xs text-muted-foreground">Markér tekst og brug værktøjslinjen til fed, kursiv, understregning, overskrift, punkt eller tekststørrelse.</p>
           </div>
           {unknown.length > 0 && <p className="text-sm text-destructive">Ukendte dynamiske felter: {unknown.map(value => `{${value}}`).join(", ")}</p>}
-          <div className="rounded-md bg-muted/40 p-3 text-sm" aria-label="Forhåndsvisning">
-            <p className="font-medium">Eksempel</p>
-            {previewSubject && <p className="mt-3 font-semibold">{previewSubject}</p>}
-            <RichTextContent value={previewBody || "Ingen tekst"} className="mt-2 text-muted-foreground" />
-          </div>
+          <details className="rounded-md bg-muted/40 p-3 text-sm">
+            <summary className="cursor-pointer font-medium">Eksempel</summary>
+            <div className="mt-3 max-h-72 overflow-y-auto pr-2" aria-label="Forhåndsvisning">
+              {previewSubject && <p className="font-semibold">{previewSubject}</p>}
+              <RichTextContent value={previewBody || "Ingen tekst"} className="mt-2 text-muted-foreground" />
+            </div>
+          </details>
         </div>
-        <aside className="h-fit rounded-md border bg-muted/20 p-3">
+        <aside className="h-fit max-h-80 overflow-y-auto rounded-md border bg-muted/20 p-3 lg:sticky lg:top-4">
           <div className="flex items-center gap-2 text-sm font-medium"><Braces className="h-4 w-4" />Indsæt dynamisk felt</div>
           <div className="mt-3 flex flex-wrap gap-2 lg:flex-col lg:items-stretch">
             {placeholdersForTemplate(draft.id).map(key => <Button key={key} type="button" variant="ghost" size="sm" className="justify-start font-mono text-xs" onMouseDown={event => event.preventDefault()} onClick={() => insertPlaceholder(key)}>{`{${key}}`}</Button>)}

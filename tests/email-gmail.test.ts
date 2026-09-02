@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   GMAIL_SEND_ENDPOINT,
+  getGmailConfigurationStatus,
   normalizePrivateKey,
   sendGmailMessage,
   type GmailDependencies,
@@ -80,6 +81,12 @@ test("MIME afviser CR/LF header injection", () => {
 test("private key accepterer både escaped og rigtige linjeskift", () => {
   assert.equal(normalizePrivateKey("line1\\nline2"), "line1\nline2");
   assert.equal(normalizePrivateKey("line1\nline2"), "line1\nline2");
+});
+
+test("mailstatus kan vises uden at eksponere konfigurationsværdier", () => {
+  assert.equal(getGmailConfigurationStatus({}), "missing");
+  assert.equal(getGmailConfigurationStatus({ ...VALID_ENV, GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: "ugyldig" }), "invalid");
+  assert.equal(getGmailConfigurationStatus(VALID_ENV), "configured");
 });
 
 test("manglende Google-konfiguration returnerer E-mail ikke konfigureret", async () => {
