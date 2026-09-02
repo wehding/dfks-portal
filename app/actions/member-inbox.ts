@@ -4,6 +4,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { renderOrganisationTemplate } from "@/lib/organisation-text-templates";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { requireOrgId } from "@/lib/org";
 import { sendMemberNotification } from "@/lib/member-notifications";
@@ -120,13 +121,13 @@ async function loadAdminWorkThreads(
 async function ensureWelcomeThread(db: ReturnType<typeof createServiceClient>, params: { holderId: string; memberUserId: string; orgId: string }) {
   try {
     const { data: holder } = await db.from("rettighedshavere")
-      .select("welcome_message_sent_at").eq("id", params.holderId).maybeSingle();
+      .select("welcome_message_sent_at,full_name").eq("id", params.holderId).maybeSingle();
     if (!holder || holder.welcome_message_sent_at) return;
 
     const { data: org } = await db.from("organisations")
       .select("welcome_message_text, branding").eq("id", params.orgId).maybeSingle();
-    const welcomeText = (org?.welcome_message_text ?? "").trim();
-    if (!welcomeText) return;
+    const welcomeTemplate = (org?.welcome_message_text ?? "").trim();
+    if (!welcomeTemplate) return;
 
     // Lås rækken, så parallelle kald ikke opretter dubletter.
     const { data: claimed } = await db.from("rettighedshavere")
@@ -143,6 +144,14 @@ async function ensureWelcomeThread(db: ReturnType<typeof createServiceClient>, p
     const senderId = adminRole?.user_id ?? params.memberUserId;
 
     const shortName = ((org?.branding as { short_name?: string } | null)?.short_name ?? "DFKS").trim() || "DFKS";
+    const { data: assignments } = await db.from("work_assignments").select("works(title)").eq("org_id", params.orgId).eq("rights_holder_id", params.holderId).limit(20);
+    const workTitles = (assignments ?? []).map(row => (row.works as unknown as { title?: string } | null)?.title).filter((title): title is string => Boolean(title));
+    const welcomeText = renderOrganisationTemplate(welcomeTemplate, {
+      name: holder.full_name ?? "medlem",
+      organisation: shortName,
+      primaryWork: workTitles[0] ?? "dit værk",
+      worksText: workTitles.length ? workTitles.join(", ") : "dine værker",
+    });
     const { data: thread } = await db.from("member_message_threads")
       .insert({ org_id: params.orgId, rights_holder_id: params.holderId, subject: `Velkommen til ${shortName}-portalen`, created_by: senderId })
       .select("id").single();

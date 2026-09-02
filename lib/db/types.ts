@@ -24,6 +24,9 @@ export interface DbOrganisation {
     from_email: string | null
     invite_email_text: string | null
     invite_reminder_text: string | null
+    beta_invite_subject: string | null
+    beta_invite_text: string | null
+    beta_default_duration_days: number
     statistics_minimum_group_size: number
     statistics_dominance_limit: number
     statistics_low_sample_threshold: number
@@ -97,6 +100,11 @@ export interface DbOrgAffiliation {
     statistics_participation_updated_at: string | null
     statistics_participation_updated_by: string | null
     economy_overview_viewed_at: string | null
+    beta_tester_since: string | null
+    beta_designated_by_user_id: string | null
+    beta_last_invite_sent_at: string | null
+    beta_last_period_start_date: string | null
+    beta_last_period_end_date: string | null
     created_at: string
 }
 

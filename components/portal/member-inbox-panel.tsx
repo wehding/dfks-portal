@@ -9,6 +9,7 @@ import { fetchMemberInbox, fetchMemberInboxThread, markInboxThreadRead, sendInbo
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { RichTextContent } from "@/components/ui/rich-text-content";
 import { useI18n } from "@/lib/i18n";
 
 type Message = { id: string; author_role: string; body: string; created_at: string };
@@ -142,7 +143,7 @@ function MemberInboxContent() {
                     message.author_role === "member" ? "ml-auto bg-primary text-primary-foreground" : "bg-muted text-foreground"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap text-sm">{message.body}</p>
+                  <RichTextContent value={message.body} className="text-sm" />
                   <p className="mt-1 text-[11px] opacity-70">
                     {message.author_role === "member" ? t("inbox.you") : "DFKS"} · {new Date(message.created_at).toLocaleString(locale === "da" ? "da-DK" : "en-GB")}
                   </p>

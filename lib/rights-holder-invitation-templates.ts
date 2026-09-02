@@ -34,7 +34,7 @@ Hvis oplysningerne ikke er korrekte, kan du afvise tilknytningen i portalen elle
 Med venlig hilsen
 {organisation}`;
 
-export const WORK_INVITE_PLACEHOLDERS = ["{navn}", "{værk}", "{værker}", "{organisation}"] as const;
+export const WORK_INVITE_PLACEHOLDERS = ["{navn}", "{værk}", "{værker}", "{organisation}", "{invitationslink}"] as const;
 
 export function validateWorkInvitationTemplate(subject: string, body: string) {
   if (/[\r\n]/.test(subject)) throw new Error("Emnet må kun fylde én linje.");
