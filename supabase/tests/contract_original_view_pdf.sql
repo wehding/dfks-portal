@@ -18,12 +18,25 @@ begin
   ) then
     raise exception 'contract_document_jobs.original_view_storage_path mangler';
   end if;
-  if has_function_privilege(
-    'authenticated',
-    'public.finish_contract_document_job_v6(uuid,uuid,text,text,text,jsonb,boolean,integer,integer,integer,integer,integer,jsonb,numeric,numeric,numeric,text,text,text,text,text,text,text,text)',
-    'EXECUTE'
+  if exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'finish_contract_document_job_v9'
+      and has_function_privilege('authenticated', p.oid, 'EXECUTE')
   ) then
     raise exception 'Browserrollen må ikke afslutte dokumentjobs';
+  end if;
+  if not exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'finish_contract_document_job_v9'
+      and has_function_privilege('service_role', p.oid, 'EXECUTE')
+  ) then
+    raise exception 'Service-rollen skal kunne afslutte version 9-dokumentjobs';
   end if;
 end $$;
 

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { gzipSync } from "node:zlib";
 import { mergeContractEvidence, resolveNativeLayoutEvidence, resolveSpatialV3Evidence, type SpatialV3Artifact } from "../lib/contract-field-evidence";
 import { evidenceBboxToViewportRect } from "../lib/contract-workbench";
-import { parseVerifiedSpatialV3Artifact } from "../lib/server/contract-spatial-artifact";
+import { parseVerifiedSpatialV3Artifact } from "../lib/server/contract-spatial-artifact-parser";
 
 test("Spatial v3 finder et entydigt, kompakt kildeudsnit", () => {
   const artifact: SpatialV3Artifact = {

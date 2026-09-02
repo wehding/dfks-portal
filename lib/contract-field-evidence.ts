@@ -1,5 +1,5 @@
 import type { ContractLayout } from "@/lib/contract-layout";
-import { matchCitationToClause } from "@/lib/contract-layout-store";
+import { matchCitationToClause } from "@/lib/contract-clause-match";
 import type { StoredContractFieldEvidence } from "@/lib/contract-workbench";
 
 type SpatialVertex = { x?: number; y?: number };
