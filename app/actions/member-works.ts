@@ -24,11 +24,13 @@ import { MEMBER_SERIES_PARENT_SELECT } from "@/lib/series-work-ownership";
 import { registerShareSuggestions } from "@/lib/server/work-share-cases";
 import { normalizeSharePercent } from "@/lib/work-share-distribution";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
+import { isEligibleWorkShareRole } from "@/lib/work-share-reconciliation";
 import { ensureMemberCollaborationReviews, markCollaborationReviewsCoeditorsReported, resolveCollaborationReviewWorkIds } from "@/lib/server/work-collaboration-reviews";
 import { collaborationReviewStatusForSoloClaim } from "@/lib/work-collaboration-review";
 import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
 import { INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS, runExternalLookup, type ExternalLookupStatus } from "@/lib/external-lookup";
 import { loadMemberWorkOverview, type MemberWorkOverviewParams } from "@/lib/server/member-work-overview";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 import { requireMemberContext } from "@/lib/org";
 
@@ -2118,6 +2120,23 @@ export async function updateMemberCoEditors(params: {
 
   const memberRole = cleanText(params.memberRole);
   const selfSharePercent = normalizeSharePercent(params.selfSharePercent);
+  if (params.completeReview !== false && selfSharePercent === null) {
+    const { data: existingCoEditors, error: existingCoEditorsError } = await db.from("work_assignments")
+      .select("role")
+      .eq("org_id", orgId)
+      .in("work_id", targetWorkIds)
+      .neq("rights_holder_id", ownHolder.id)
+      .not("rights_holder_id", "is", null);
+    if (existingCoEditorsError) return { success: false, error: existingCoEditorsError.message };
+    const addsCoEditor = params.changes.some(change =>
+      change.action === "add"
+      && Boolean(change.rightsHolderId || cleanText(change.name))
+      && isEligibleWorkShareRole(change.role),
+    );
+    if (addsCoEditor || (existingCoEditors ?? []).some(assignment => isEligibleWorkShareRole(assignment.role))) {
+      return { success: false, error: "Angiv din egen arbejdsandel, før medklippergennemgangen afsluttes." };
+    }
+  }
   const ownUpdate: Record<string, string | number | null> = {};
   if (memberRole) ownUpdate.role = normalizeWorkEditorRole(memberRole);
   if (selfSharePercent !== null) ownUpdate.share_percent = selfSharePercent;
@@ -2201,22 +2220,49 @@ export async function updateMemberCoEditors(params: {
       return { success: false, error: "Indtast medklipperens navn." };
     }
   }
-  if (pendingAdminSuggestions.length > 0) {
-    if (selfSharePercent === null) {
-      return { success: false, error: "Angiv din egen arbejdsandel, før en ukendt medklipper sendes til kontrol hos DFKS." };
+  let linkedRightsHolderIds: string[] = [];
+  if (params.completeReview !== false) {
+    const { data: linkedCoeditorAssignments, error: linkedCoeditorError } = await db.from("work_assignments")
+      .select("rights_holder_id,role,rettighedshavere(full_name)")
+      .eq("org_id", orgId)
+      .in("work_id", targetWorkIds)
+      .neq("rights_holder_id", ownHolder.id)
+      .not("rights_holder_id", "is", null);
+    if (linkedCoeditorError) return { success: false, error: linkedCoeditorError.message };
+    const linkedSuggestions = new Map<string, { name: string; role: string; rightsHolderId: string }>();
+    for (const assignment of linkedCoeditorAssignments ?? []) {
+      if (!assignment.rights_holder_id || !isEligibleWorkShareRole(assignment.role)) continue;
+      const relation = assignment.rettighedshavere as unknown;
+      const holder = Array.isArray(relation)
+        ? relation[0] as { full_name?: string | null } | undefined
+        : relation as { full_name?: string | null } | null;
+      const name = cleanText(holder?.full_name);
+      if (!name || linkedSuggestions.has(assignment.rights_holder_id)) continue;
+      linkedSuggestions.set(assignment.rights_holder_id, {
+        name,
+        role: normalizeWorkEditorRole(assignment.role),
+        rightsHolderId: assignment.rights_holder_id,
+      });
     }
-    await registerShareSuggestions(db, {
-      orgId,
-      workId: params.editScope === "season" ? work.parent_work_id ?? work.id : work.id,
-      seasonNumber: params.editScope === "season" ? params.seasonNumber ?? work.season_number : null,
-      episodeNumber: params.editScope === "episode" ? work.episode_number : null,
-      episodeNumbers: params.editScope === "season" ? params.episodeNumbers ?? [] : [],
-      actorUserId: user.id,
-      actorRightsHolderId: ownHolder.id,
-      actorRole: memberRole ?? ownAssignments?.[0]?.role ?? "Klipper",
-      actorPercent: selfSharePercent,
-      suggestions: pendingAdminSuggestions,
-    });
+    linkedRightsHolderIds = [...linkedSuggestions.keys()];
+    const shareSuggestions = [...linkedSuggestions.values(), ...pendingAdminSuggestions];
+    if (shareSuggestions.length > 0) {
+      if (selfSharePercent === null) {
+        return { success: false, error: "Angiv din egen arbejdsandel, før medklippergennemgangen afsluttes." };
+      }
+      await registerShareSuggestions(db, {
+        orgId,
+        workId: params.editScope === "season" ? work.parent_work_id ?? work.id : work.id,
+        seasonNumber: params.editScope === "season" ? params.seasonNumber ?? work.season_number : null,
+        episodeNumber: params.editScope === "episode" ? work.episode_number : null,
+        episodeNumbers: params.editScope === "season" ? params.episodeNumbers ?? [] : [],
+        actorUserId: user.id,
+        actorRightsHolderId: ownHolder.id,
+        actorRole: memberRole ?? ownAssignments?.[0]?.role ?? "Klipper",
+        actorPercent: selfSharePercent,
+        suggestions: shareSuggestions,
+      });
+    }
   }
   if (params.completeReview !== false && (params.changes.length > 0 || selfSharePercent !== null)) {
     await markCollaborationReviewsCoeditorsReported(db, {
@@ -2228,6 +2274,23 @@ export async function updateMemberCoEditors(params: {
       episodeNumbers: params.editScope === "season" ? params.episodeNumbers ?? [] : null,
     });
   }
+  await recordSensitiveFlow({
+    actor: { userId: user.id, orgId, role: "member", source: "portal" },
+    action: "update",
+    component: "portal.member_work_collaboration",
+    entityType: "work_share_case",
+    entityId: params.workId,
+    targetMemberUuid: ownHolder.id,
+    targetMemberUuids: [ownHolder.id, ...linkedRightsHolderIds],
+    purposeCode: "work_rights_distribution",
+    legalBasis: "gdpr_art_6_1_b",
+    dataCategories: ["work_data", "rights_data"],
+    counts: {
+      affected_works: targetWorkIds.length,
+      linked_coeditors: linkedRightsHolderIds.length,
+      unmatched_coeditors: pendingAdminSuggestions.length,
+    },
+  });
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
   return { success: true, requiresAdminReview: pendingAdminSuggestions.length };

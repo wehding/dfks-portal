@@ -17,6 +17,13 @@ import { LegacyDeclarationSection } from "./LegacyDeclarationSection";
 type PageSearchParams = Promise<Record<string, string | string[] | undefined>>;
 const stringParam = (value: string | string[] | undefined, fallback = "") => Array.isArray(value) ? value[0] ?? fallback : value ?? fallback;
 
+type MemberDashboardTaskSummary = {
+  contract_required_work_count?: number | string;
+  review_work_count?: number | string;
+  share_task_count?: number | string;
+  share_tasks?: Array<{ caseId?: string | null }> | null;
+};
+
 export default async function MineVaerkerPage({ searchParams }: { searchParams: PageSearchParams }) {
   const timer = createListLoadTimer("member-works");
   const context = await getRequestAppAccessContext();
@@ -38,7 +45,7 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
     sortKey: stringParam(query.sort, "date"),
     sortDir: stringParam(query.direction, "desc") === "asc" ? "asc" as const : "desc" as const,
   };
-  const [rightsHolderResult, overview, broadcastersResult] = await Promise.all([
+  const [rightsHolderResult, overview, broadcastersResult, contractedOverview, dashboardTaskResult] = await Promise.all([
     db.from("rettighedshavere")
       .select("id,full_name,dfi_person_id")
       .eq("id", context.rightsHolderId)
@@ -58,12 +65,36 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
       sortDir: initialQuery.sortDir,
     }),
     db.from("broadcasters").select("name,logo_path").order("name", { ascending: true }),
+    db.rpc("list_member_work_page_v2", {
+      p_org_id: context.orgId,
+      p_rights_holder_id: context.rightsHolderId,
+      p_search: "",
+      p_work_type: "all",
+      p_status: "hasContract",
+      p_sort: "date",
+      p_direction: "desc",
+      p_page: 1,
+      p_page_size: 1,
+    }),
+    db.rpc("get_member_dashboard_overview_v2", {
+      p_org_id: context.orgId,
+      p_rights_holder_id: context.rightsHolderId,
+      p_user_id: context.userId,
+      p_preview_limit: 1,
+    }),
   ]);
   timer.mark("page-data");
 
   const rightsHolder = rightsHolderResult.data;
   if (!rightsHolder) redirect("/admin?notice=member-org-required");
   if (!overview.success) throw new Error(overview.error ?? "Mine værker kunne ikke indlæses.");
+  if (contractedOverview.error || dashboardTaskResult.error) {
+    throw new Error(contractedOverview.error?.message ?? dashboardTaskResult.error?.message ?? "Oversigten kunne ikke beregnes.");
+  }
+
+  const contractedRows = (contractedOverview.data ?? []) as Array<{ filtered_count?: number | string }>;
+  const dashboardSummary = ((Array.isArray(dashboardTaskResult.data) ? dashboardTaskResult.data[0] : dashboardTaskResult.data) ?? {}) as MemberDashboardTaskSummary;
+  const firstShareTaskId = dashboardSummary.share_tasks?.[0]?.caseId ?? null;
 
   const assignments = memberOverviewItemsToAssignments(
     overview.items as unknown as MemberOverviewItem[],
@@ -78,29 +109,36 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
   return (
     <div className="space-y-6">
       <Suspense fallback={null}><LegacyDeclarationSection /></Suspense>
-    <MineVaerkerClient
-      initialAssignments={assignments}
-      allAssignments={[]}
-      broadcasters={(broadcastersResult.data ?? []) as BroadcasterLogo[]}
-      rightsHolderId={rightsHolder.id}
-      dfiPersonId={rightsHolder.dfi_person_id ?? null}
-      contractedWorkIds={contractedWorkIds}
-      legacyDeclarationRequiredWorkIds={overview.legacyRequiredWorkIds ?? []}
-      legacyDeclaredWorkIds={overview.legacyDeclaredWorkIds ?? []}
-      legacyDeclarationTaskCount={overview.legacyDeclarationTaskCount ?? 0}
-      contracts={[] as Contract[]}
-      organisationShortName={context.brand.short_name}
-      defaultRoleLabel={context.terminology.default_role_label}
-      coeditorWord={context.terminology.coeditor_word}
-      pageResult={{
-        page: overview.page ?? page,
-        pageSize: overview.pageSize ?? pageSize,
-        filteredCount: overview.filteredCount ?? assignments.length,
-        totalCount: overview.totalCount ?? assignments.length,
-        hasNextPage: overview.hasNextPage ?? false,
-      }}
-      initialQuery={initialQuery}
-    />
+      <MineVaerkerClient
+        initialAssignments={assignments}
+        allAssignments={[]}
+        broadcasters={(broadcastersResult.data ?? []) as BroadcasterLogo[]}
+        rightsHolderId={rightsHolder.id}
+        dfiPersonId={rightsHolder.dfi_person_id ?? null}
+        contractedWorkIds={contractedWorkIds}
+        legacyDeclarationRequiredWorkIds={overview.legacyRequiredWorkIds ?? []}
+        legacyDeclaredWorkIds={overview.legacyDeclaredWorkIds ?? []}
+        summaryCounts={{
+          totalWorks: overview.totalCount ?? 0,
+          withContract: Number(contractedRows[0]?.filtered_count ?? 0),
+          missingContract: Number(dashboardSummary.contract_required_work_count ?? 0),
+          reviewWorks: Number(dashboardSummary.review_work_count ?? 0),
+          unresolvedShares: Number(dashboardSummary.share_task_count ?? 0),
+        }}
+        firstUnresolvedShareTaskId={firstShareTaskId}
+        contracts={[] as Contract[]}
+        organisationShortName={context.brand.short_name}
+        defaultRoleLabel={context.terminology.default_role_label}
+        coeditorWord={context.terminology.coeditor_word}
+        pageResult={{
+          page: overview.page ?? page,
+          pageSize: overview.pageSize ?? pageSize,
+          filteredCount: overview.filteredCount ?? assignments.length,
+          totalCount: overview.totalCount ?? assignments.length,
+          hasNextPage: overview.hasNextPage ?? false,
+        }}
+        initialQuery={initialQuery}
+      />
     </div>
   );
 }

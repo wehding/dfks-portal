@@ -48,6 +48,7 @@ export function LegacyDeclarationPanel({
     const roles = [...new Set(tasks.filter(task => selected.has(task.rootWorkId)).map(task => task.role))];
     const role = roles.length === 1 ? roles[0] : "klipper";
     return (document?.body ?? "")
+      .replaceAll("\\n", "\n")
       .replaceAll("{faggruppe}", role)
       .replaceAll("{skæringsår}", String(cutoffYear ?? ""))
       .replaceAll("{organisation}", organisationName);
@@ -122,7 +123,7 @@ export function LegacyDeclarationPanel({
     </Alert>
 
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-      <DialogContent className="max-h-[90dvh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-h-[90dvh] overflow-x-hidden overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{document?.title ?? "Tro-og-loveerklæring om arbejde på produktioner"}</DialogTitle>
           <DialogDescription>{t("works.legacy.description")}</DialogDescription>
@@ -131,8 +132,8 @@ export function LegacyDeclarationPanel({
         {!document?.id ? <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>{t("works.legacy.unpublished")}</AlertTitle><AlertDescription>{t("works.legacy.contactAdmin")}</AlertDescription></Alert> : <>
           <div className="whitespace-pre-line rounded-md border bg-muted/30 p-4 text-sm leading-6">{renderedBody}</div>
           <div className="space-y-2">
-            {tasks.map(task => <div key={task.rootWorkId} className="rounded-md border p-3">
-              <div className="flex items-start gap-3">
+            {tasks.map(task => <div key={task.rootWorkId} className="min-w-0 rounded-md border p-3">
+              <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-3 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
                 <input
                   type="checkbox"
                   id={`legacy-${task.rootWorkId}`}
@@ -142,6 +143,7 @@ export function LegacyDeclarationPanel({
                 />
                 <label htmlFor={`legacy-${task.rootWorkId}`} className="min-w-0 flex-1 cursor-pointer">
                   <span className="block font-medium">{task.title}</span>
+                  <span className="mt-1 block text-sm">{t("works.legacy.attestWork")}</span>
                   <span className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span>{task.role}</span>
                     {task.premiereYear != null && <Badge variant="outline">Premiere {task.premiereYear}</Badge>}
@@ -149,7 +151,7 @@ export function LegacyDeclarationPanel({
                     {task.qualifyingScopeCount > 1 && <Badge variant="outline">{task.qualifyingScopeCount} kvalificerede sæsoner/afsnit</Badge>}
                   </span>
                 </label>
-                <Button type="button" size="sm" variant="ghost" disabled={pending} onClick={() => dispute(task)}>{t("works.legacy.dispute")}</Button>
+                <Button type="button" size="sm" variant="ghost" className="col-start-2 justify-self-start px-0 text-muted-foreground sm:col-start-3 sm:row-start-1 sm:justify-self-end sm:px-3" disabled={pending} onClick={() => dispute(task)}>{t("works.legacy.dispute")}</Button>
               </div>
             </div>)}
           </div>
