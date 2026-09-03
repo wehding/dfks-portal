@@ -122,7 +122,7 @@ Brug "udvikling_dokumentar", "udvikling_fiktion" eller "udvikling_underholdning"
 - Titlen er beskrevet som "arbejdstitel" uden fastlagt produktionsformat
 
 Domænereglen: dokumentar → "udvikling_dokumentar", fiktion/drama → "udvikling_fiktion", underholdning/reality → "udvikling_underholdning".
-Serieformat: Hvis kontrakten både angiver konkrete episoder/afsnit og kalder produktionen fiktion, drama eller tv-serie, skal produktionstypen være "tvserie". Formuleringer som "klipper af 2 episoder (5+6)" er et sikkert seriesignal, når kontrakten samtidig siger fiktionsproduktion. En nummereret titel alene er ikke et sikkert signal.
+Serieformat: Et konkret produktionsomfang med nummererede episoder eller arbejde "på afsnit 1 og 4" betyder, at produktionstypen skal være "tvserie". Formuleringer som "klipper af 2 episoder (5+6)" og "Klipper på afsnit 1 og 4" er sikre seriesignaler. En nummereret titel eller en juridisk henvisning som "se afsnit 4" er ikke et seriesignal.
 Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan bestemmes.`
 
     const defaultKlassifikation: Klassifikation = {

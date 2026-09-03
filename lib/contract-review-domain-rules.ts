@@ -19,17 +19,19 @@ const PRODUCTION_TYPES = new Set<ContractReviewProductionType>([
   "udvikling_underholdning",
 ]);
 
-export function hasExplicitFictionSeriesScope(contractText: string) {
-  const hasEpisodeScope = /\b(?:episode|episoder|afsnit|afsnittene)\b/i.test(contractText);
-  const hasFictionSignal = /\b(?:fiktion(?:sproduktion)?|drama(?:serie)?|tv[- ]?serie)\b/i.test(contractText);
-  return hasEpisodeScope && hasFictionSignal;
+export function hasExplicitSeriesEpisodeScope(contractText: string) {
+  return [
+    /\b\d+\s+episoder?\b/i,
+    /\bepisoder?\s*(?:nr\.?\s*)?\d+\b/i,
+    /\b(?:på|for)\s+afsnit(?:tene)?\s*(?:nr\.?\s*)?\d+\b/i,
+  ].some(pattern => pattern.test(contractText));
 }
 
 export function resolveContractReviewProductionType(
   aiValue: unknown,
   contractText: string,
 ): ContractReviewProductionType {
-  if (hasExplicitFictionSeriesScope(contractText)) return "tvserie";
+  if (hasExplicitSeriesEpisodeScope(contractText)) return "tvserie";
   return typeof aiValue === "string" && PRODUCTION_TYPES.has(aiValue as ContractReviewProductionType)
     ? aiValue as ContractReviewProductionType
     : "ukendt";
