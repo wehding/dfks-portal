@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
-import type { AdminDashboardMetrics, ResponseEvent } from "@/lib/admin-dashboard";
+import type { AdminDashboardMetrics, ResponseEvent, UserActivityItem } from "@/lib/admin-dashboard";
 import { calculateResponseTimeStats } from "@/lib/admin-dashboard";
 import { isActionableAdminWorkShareCase } from "@/lib/work-share-admin";
 
@@ -104,3 +104,58 @@ export async function loadAdminDashboardMetrics(orgId: string, userId: string): 
     responseTimes,
   };
 }
+
+export function formatUserActionDescription(action: string, entityType: string, entityLabel: string | null): string {
+  if (action === "complete_onboarding") return "Gennemførte onboarding i portalen";
+  if (action === "create" && (entityType === "contracts" || entityType.startsWith("contract"))) {
+    return entityLabel ? `Uploadede kontrakt: ${entityLabel}` : "Uploadede en ny kontrakt";
+  }
+  if (action === "link" && (entityType === "works" || entityType === "contracts" || entityType === "work_identity")) {
+    return entityLabel ? `Forbandt værk til kontrakt: ${entityLabel}` : "Forbandt et værk til en kontrakt";
+  }
+  if (action === "update" && (entityType === "contracts" || entityType.startsWith("contract"))) {
+    return entityLabel ? `Erklærede / opdaterede kontrakt: ${entityLabel}` : "Erklærede / opdaterede kontrakt";
+  }
+  if (action === "update" && (entityType === "rettighedshavere" || entityType === "member_profile")) {
+    return "Opdaterede sin medlemsprofil";
+  }
+  if (action === "create" && entityType === "works") {
+    return entityLabel ? `Oprettede værk: ${entityLabel}` : "Oprettede et nyt værk";
+  }
+  return `${action} på ${entityLabel || entityType}`;
+}
+
+export async function loadRecentUserActivity(orgId: string, limit = 10): Promise<UserActivityItem[]> {
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("audit_events")
+    .select("id,occurred_at,action,entity_type,entity_id,entity_label,actor_display_name,actor_role,source,audit_event_organisations!inner(org_id)")
+    .eq("audit_event_organisations.org_id", orgId)
+    .or("source.eq.portal,actor_role.eq.member")
+    .order("occurred_at", { ascending: false })
+    .limit(limit);
+
+  if (error || !data) return [];
+
+  return (data as unknown as Array<{
+    id: string;
+    occurred_at: string;
+    action: string;
+    entity_type: string;
+    entity_id: string | null;
+    entity_label: string | null;
+    actor_display_name: string | null;
+    actor_role: string | null;
+  }>).map(row => ({
+    id: row.id,
+    occurredAt: row.occurred_at,
+    action: row.action,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    entityLabel: row.entity_label,
+    actorName: row.actor_display_name || "Medlem",
+    actorRole: row.actor_role,
+    description: formatUserActionDescription(row.action, row.entity_type, row.entity_label),
+  }));
+}
+

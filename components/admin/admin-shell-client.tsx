@@ -27,6 +27,7 @@ import {
     FileClock,
     BadgeCheck,
     Coins,
+    Activity,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -57,6 +58,7 @@ import { OnboardingRequirementBanner } from "@/components/onboarding-requirement
 import { EMPTY_PAGE_METADATA, PageMetadataContext } from "@/components/page-metadata"
 
 const ADMIN_NAV_ITEMS = [
+    { key: "insights",            href: "/admin/insights",            icon: Activity,    labelKey: "nav.insights"         },
     { key: "overblik",            href: "/admin",                     icon: Home,        labelKey: "nav.dashboard"        },
     { key: "kontrakter",          href: "/admin/kontrakter",          icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"        },
     { key: "vaerker",             href: "/admin/vaerker",             icon: SHARED_NAV_ICONS.works,       labelKey: "nav.works"            },
@@ -107,8 +109,8 @@ const MENU_BADGE_GODKEND = `${MENU_BADGE_BASE} bg-amber-100 text-amber-800`
 
 const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ALL_KEYS,
-    admin:       ALL_KEYS.filter(k => k !== "organisationer" && k !== "imdb-kontrol"),
-    "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer" && k !== "imdb-kontrol"),
+    admin:       ALL_KEYS.filter(k => k !== "organisationer" && k !== "imdb-kontrol" && k !== "insights"),
+    "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer" && k !== "imdb-kontrol" && k !== "insights"),
     jurist:      ["overblik", "kontrakter", "rettighedshavere", "kontraktgennemgang", "logning"],
     viewer:      ["overblik", "kontrakter"],
 }

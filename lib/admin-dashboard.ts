@@ -103,3 +103,15 @@ export function formatResponseDuration(milliseconds: number | null, locale: "da"
   const days = Math.round(hours / 24);
   return locale === "da" ? `${days} dage` : `${days} days`;
 }
+
+export type UserActivityItem = {
+  id: string;
+  occurredAt: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  entityLabel: string | null;
+  actorName: string;
+  actorRole: string | null;
+  description: string;
+};

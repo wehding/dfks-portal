@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { AlertCircle, ArrowRight, CheckCircle, FileText, Scale, Users2 } from "lucide-react";
-import type { AdminDashboardMetrics } from "@/lib/admin-dashboard";
+import type { AdminDashboardMetrics, UserActivityItem } from "@/lib/admin-dashboard";
 import { formatResponseDuration } from "@/lib/admin-dashboard";
 import { useI18n } from "@/lib/i18n";
 import { PageHeader } from "@/components/page-header";
 import { AdminInboxPanel } from "@/components/admin/admin-inbox-panel";
 import { Badge } from "@/components/ui/badge";
 import { OrgContextNotice } from "@/components/navigation/org-context-notice";
+import { UserActivityFeed } from "@/components/admin/user-activity-feed";
 
-export function AdminDashboard({ metrics, notice }: { metrics: AdminDashboardMetrics; notice?: string | null }) {
+export function AdminDashboard({ metrics, notice, recentActivities }: { metrics: AdminDashboardMetrics; notice?: string | null; recentActivities?: UserActivityItem[] }) {
   const { t, locale } = useI18n();
   const shortcuts = [
     { id: "contracts", href: "/admin/kontrakter?tab=valideringskoe", icon: CheckCircle, label: t("admin.dashboard.validateContracts"), description: t("admin.dashboard.validateContractsDescription"), tasks: metrics.tasks.contractValidationsPending, messages: metrics.messages.contracts, secondary: t("admin.dashboard.validatedContracts"), secondaryValue: metrics.validatedContracts },
@@ -49,6 +50,8 @@ export function AdminDashboard({ metrics, notice }: { metrics: AdminDashboardMet
     </section>
 
     {metrics.tasks.contractReviews > 0 && <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 dark:bg-amber-950/20"><div className="flex items-center gap-2.5"><AlertCircle className="h-4 w-4 text-amber-600" /><span className="text-xs font-medium">{t("admin.dashboard.reviewsWaiting", { count: metrics.tasks.contractReviews })}</span></div><Link href="/admin/kontraktgennemgang?status=afventer,behandling" className="text-xs font-semibold text-amber-800 underline">{t("admin.dashboard.openQueue")}</Link></div>}
+
+    <UserActivityFeed activities={recentActivities ?? []} />
 
     <section id="messages" className="space-y-2.5"><div className="flex flex-wrap items-center gap-2"><h2 className="flex items-center gap-2 text-base font-semibold"><Users2 className="h-4 w-4 text-blue-500" />{t("admin.dashboard.memberMessages")}</h2><Badge variant="outline" className="text-xs">{metrics.members} {t("admin.dashboard.activeMembers").toLocaleLowerCase(locale)}</Badge>{metrics.messages.inbox > 0 && <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100 text-xs">{metrics.messages.inbox} {t("admin.dashboard.unreadMessages").toLocaleLowerCase(locale)}</Badge>}</div><AdminInboxPanel /></section>
   </div>;

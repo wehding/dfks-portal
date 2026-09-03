@@ -27,7 +27,10 @@ export async function resolvePostLoginDestination(
     });
     if (mustCompleteOnboarding(status)) return "/onboarding";
   }
-  if (roleResult.data?.length) return "/admin";
+  if (roleResult.data?.length) {
+    if (roleResult.data.some(r => r.role === "superadmin")) return "/admin/insights";
+    return "/admin";
+  }
   return rightsHolder ? "/portal" : "/onboarding";
 }
 
