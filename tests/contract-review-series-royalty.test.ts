@@ -81,6 +81,7 @@ test("promoveringsret og TDM/AI er ikke hardcoded i analyseprompten", () => {
     "Manglende TDM/AI-klausul",
     "Manglende promoveringsret",
     "Tavshedspligt og selvpromovering",
+    "1,5% af nettoindtægter",
   ]) {
     assert.doesNotMatch(source, new RegExp(hardcodedRule.replace("/", "\\/"), "i"));
   }

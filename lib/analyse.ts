@@ -438,7 +438,6 @@ Kendte store selskaber (SF Film, Nordisk Film, DR, TV 2, Zentropa) behøver norm
 A-LØN vs. LEVERANDØRKONTRAKT — se KONTRAKTFAKTA øverst for denne kontrakts type.
 
 Royalty:
-- 1,5% af nettoindtægter er STANDARD for FAF dokumentar — flagger ALDRIG som lavt
 - Anbefal ALDRIG højere sats — det er branchepolitisk følsomt
 - Anbefal ALDRIG fjernelse af royalty-klausul
 
