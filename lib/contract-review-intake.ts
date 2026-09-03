@@ -28,6 +28,7 @@ export async function triggerContractReviewWorker(origin: string) {
     const response = await fetch(new URL("/api/contracts/reviews/jobs/process", origin), {
       method: "POST",
       headers: { Authorization: `Bearer ${secret}` },
+      signal: AbortSignal.timeout(5_000),
     });
     if (!await isContractReviewWorkerResponse(response)) {
       console.warn("[review-intake] Worker kunne ikke startes", response.status);
@@ -54,7 +55,10 @@ export async function ensureContractReviewWorkerRuns(origin: string) {
   if (started) return;
   try {
     const { processPendingContractReviewJobs } = await import("@/lib/server/contract-review-job-processor");
-    await processPendingContractReviewJobs(3);
+    // Keep the request-bound safety net deliberately small. The durable worker
+    // remains responsible for draining the queue; this only prevents the newly
+    // enqueued job from waiting until the next scheduled run.
+    await processPendingContractReviewJobs(1);
   } catch (error) {
     console.warn("[review-intake] Inline jobkørsel fejlede", error instanceof Error ? error.message : "ukendt fejl");
   }

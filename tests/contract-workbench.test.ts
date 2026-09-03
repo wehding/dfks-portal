@@ -305,4 +305,7 @@ test("Serie- og sæsongenkendelse udtrækker basistitel og sæson for DNA 2 og D
   assert.deepEqual(extractBaseSeriesTitle("DNA 2"), { baseTitle: "DNA", seasonNumber: 2 });
   assert.deepEqual(extractBaseSeriesTitle("DNA2"), { baseTitle: "DNA", seasonNumber: 2 });
   assert.deepEqual(extractBaseSeriesTitle("DNA"), { baseTitle: "DNA", seasonNumber: null });
+  assert.equal(parseSeasonNumberFromTitle("Apollo13"), null);
+  assert.equal(parseSeasonNumberFromTitle("District9"), null);
+  assert.deepEqual(extractBaseSeriesTitle("Apollo13"), { baseTitle: "Apollo13", seasonNumber: null });
 });
