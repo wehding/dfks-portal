@@ -45,7 +45,7 @@ type LegalNote = {
     id: string
     title: string
     body: string
-    priority: "baggrund" | "altid"
+    priority: "aktiv-indsats" | "altid" | "baggrund"
     active: boolean
     exclude_for_overenskomst: boolean
     gyldig_fra: string | null
@@ -281,10 +281,11 @@ function AddChunkDialog({ open, onClose, onSaved }: { open: boolean; onClose: ()
 // ─────────────────────────────────────────────────────────────
 
 const PRIORITY_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
+    "aktiv-indsats": { label: "Aktiv indsats", color: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800", dot: "bg-rose-500" },
     altid:    { label: "Altid",    color: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800", dot: "bg-orange-500" },
     baggrund: { label: "Baggrund", color: "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800",  dot: "bg-indigo-500" },
 }
-const PRIORITY_ORDER = ["altid", "baggrund"] as const
+const PRIORITY_ORDER = ["aktiv-indsats", "altid", "baggrund"] as const
 
 type GeneretNotering = { titel: string; body: string }
 
@@ -298,7 +299,7 @@ function NoteringerTab() {
 
     // ── AI-editor state ───────────────────────────────────────
     const [fritekst, setFritekst] = useState("")
-    const [aiPrioritet, setAiPrioritet] = useState<"altid" | "baggrund">("altid")
+    const [aiPrioritet, setAiPrioritet] = useState<"aktiv-indsats" | "altid" | "baggrund">("altid")
     const [genererer, setGenererer] = useState(false)
     const [generetNotering, setGeneretNotering] = useState<GeneretNotering | null>(null)
     const [gemmerAi, setGemmerAi] = useState(false)
@@ -435,11 +436,12 @@ function NoteringerTab() {
                 <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                         <Label className="text-xs shrink-0">Prioritet:</Label>
-                        <Select value={aiPrioritet} onValueChange={v => setAiPrioritet(v as "altid" | "baggrund")}>
-                            <SelectTrigger className="h-7 text-xs w-32">
+                        <Select value={aiPrioritet} onValueChange={v => setAiPrioritet(v as "aktiv-indsats" | "altid" | "baggrund")}>
+                            <SelectTrigger className="h-7 text-xs w-36">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
+                                <SelectItem value="aktiv-indsats">Aktiv indsats</SelectItem>
                                 <SelectItem value="altid">Altid</SelectItem>
                                 <SelectItem value="baggrund">Baggrund</SelectItem>
                             </SelectContent>
@@ -517,7 +519,7 @@ function NoteringerTab() {
             <div className="space-y-4">
                 <div className="flex items-start justify-between">
                     <p className="text-sm text-muted-foreground mt-1">
-                        Noteringer injiceres i alle kontraktanalyser. <em>Altid</em> kommenteres altid på, <em>Baggrund</em> bruges som kontekst.
+                        Noteringer injiceres i alle kontraktanalyser. <em>Aktiv indsats</em> kommenteres på med eksplicit omtale af DFKS-indsatsen, <em>Altid</em> kommenteres altid på, <em>Baggrund</em> bruges som kontekst.
                     </p>
                     <div className="flex items-center gap-2">
                         <NoteringGuide />

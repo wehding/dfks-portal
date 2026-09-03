@@ -33,15 +33,22 @@ Godt eksempel:
 Jo mere præcis, jo bedre — AI'en gætter ikke.`,
   },
   {
-    titel: "Prioritet: Baggrund vs. Altid",
+    titel: "Prioritet: Aktiv indsats / Altid / Baggrund",
     ikon: "🔀",
-    indhold: `ALTID: Noteringen aktiveres i ALLE analyser uanset kontrakttype.
+    indhold: `AKTIV INDSATS: Højeste prioritet. AI'en tjekker og kommenterer altid,
+og nævner EKSPLICIT i mailen at DFKS p.t. kører en målrettet indsats på
+punktet ("Vi har i øjeblikket særligt fokus på ...") med en kort begrundelse.
+Brug til: tidsbegrænsede kampagner, fx betaling for klipperens deltagelse
+i lydmix/vfx/komponistarbejde. Sæt gerne gyldig_til.
+
+ALTID: Noteringen aktiveres i ALLE analyser uanset kontrakttype og
+kommenteres på — men uden den særlige "indsats"-framing.
 Brug til: Copydan-forbehold, AI-klausul, royalty-tjek.
 
 BAGGRUND: Noteringen bruges som kontekst men kommenteres ikke direkte.
 Brug til: generel brancheviden, fortolkningsprincipper, DFKS-holdninger.
 
-Vær tilbageholdende med ALTID — for mange ALTID-noteringer giver
+Vær tilbageholdende med AKTIV INDSATS og ALTID — for mange giver
 støjende analyser der nævner det samme i hver mail.`,
   },
   {
