@@ -510,11 +510,19 @@ TIL DIG-SEKTIONEN
 ═══════════════════════════════════════════════
 
 Inkludér altid:
-1. BETA og helligdagsbetaling med præcise kronebeløb beregnet ud fra den konkrete løn
+1. BETA og helligdagsbetaling med præcise kronebeløb
    — hent satser fra KONTRAKTFAKTA/AKTUELLE SATSER-blokkene øverst i prompten
-   Format: "[løn] × [sats] = [beløb] kr./uge"
+   — BETA, helligdagsbetaling og feriepenge beregnes af FERIEBERETTIGET LØN
+     (grundløn + faste tillæg som personligt tillæg), IKKE af grundlønnen alene
+   — skriv hvilket grundlag du regner af, og brug samme tal hele vejen:
+     Format: "ferieberettiget løn [beløb] × [sats] = [beløb] kr./uge"
+   — kender du ikke de faste tillæg sikkert: skriv "mindst [beløb] kr./uge
+     (af grundlønnen — højere med tillæg)" frem for et falsk-præcist tal
 2. Producentforenings-tjek hvis producenten er ukendt
-3. Vurdering af løn ift. overenskomstens minimumssats
+3. Vurdering af løn ift. overenskomstens minimumssats. Ligger lønnen over
+   normallønnen — eller betales pension af et højere grundlag end krævet — så
+   skriv det som noget positivt, ikke som et forbehold eller en kontrol-opfordring.
+   Nævn kun en løngruppe hvis kontrakten selv angiver den (se satslinjernes note).
 
 Start ALDRIG et afsnit i TIL DIG med "Husk at..." — for belærende.
 

@@ -210,12 +210,27 @@ function byggAbsolutteRegler(
     const fornavn = klassifikation.membres_fornavn || "[fornavn ikke fundet i kontrakt]"
     const efternavn = klassifikation.membres_efternavn || ""
 
-    const satsLinje = (label: string, s: { vaerdi: number | string; enhed: string } | undefined) =>
-        s ? `${label}: ${s.vaerdi} ${s.enhed}` : `${label}: [ikke tilgængelig — verificér mod overenskomst]`
+    const satsLinje = (label: string, s: { vaerdi: number | string; enhed: string; beskrivelse?: string } | undefined) => {
+        if (!s) return `${label}: [ikke tilgængelig — verificér mod overenskomst]`
+        // Behold en eventuel paragraf-/grundlagsnote fra beskrivelsen (fx pension).
+        const note = s.beskrivelse?.match(/\((§[^)]+)\)/)?.[1]
+        return `${label}: ${s.vaerdi} ${s.enhed}${note ? ` — ${note}` : ""}`
+    }
 
     const loenInfo = klassifikation.aftalt_loen
-        ? `${klassifikation.aftalt_loen} ${klassifikation.loen_enhed ?? "kr/uge"}`
+        ? `${klassifikation.aftalt_loen} ${klassifikation.loen_enhed ?? "kr/uge"} (grundløns-/basislinjen — den SAMLEDE ugeløn kan være højere med personligt tillæg og faste tillæg; læs dem fra kontraktteksten)`
         : "[ikke fundet i kontrakt]"
+
+    // A-løns-beregninger fejler ofte fordi modellen kun har fået ét løntal og
+    // blander grundløn, samlet løn og ferieberettiget løn sammen. Gør grundlaget eksplicit.
+    const loenGrundlagRegel = (erOverenskomst && klassifikation.kontrakttype === "a-loen")
+        ? `LØNGRUNDLAG — HVILKET TAL REGNER DU AF:
+- Ferieberettiget løn = grundløn + alle faste, tilbagevendende tillæg (personligt tillæg, fast tillæg for over-/forskudttid, genetillæg). Engangsbeløb, udlæg og rene omkostningsgodtgørelser tæller IKKE med.
+- BETA-fond, helligdagsbetaling og feriepenge beregnes af FERIEBERETTIGET LØN — ikke af grundlønnen alene. Har kontrakten et personligt tillæg, SKAL det med i grundlaget.
+- Pension beregnes af det grundlag der står i pensions-satslinjen ovenfor (fx "af normalløn"). Betaler kontrakten pension af et HØJERE grundlag end overenskomsten kræver (fx af grundløn når kun normalløn kræves), er det et PLUS for medlemmet — ikke en anmærkning.
+- Oplys ALTID hvilket tal du regner af, og brug samme tal konsekvent i hele mailen.
+- Kan du ikke fastslå de faste tillæg sikkert: skriv fx "mindst 85 kr./uge (beregnet af grundlønnen — bliver højere med tillæg)" frem for et falsk-præcist tal.`
+        : ""
 
     const sprogRegel = klassifikation.kontraktsprog === "en"
         ? "🌐 ENGELSK KONTRAKT: Mailen til medlemmet skrives på DANSK som normalt. KUN de tekststykker der er indpakket i <mark style=\"background-color:#fef08a\"> og </mark> skrives på ENGELSK — både den menneskelige indledningssætning og kontraktteksten der foreslås. TIL DIG-sektionen skrives på dansk."
@@ -286,6 +301,7 @@ Producent:           ${klassifikation.producent_navn || "[ikke fundet]"}
 AKTUELLE SATSER FRA DATABASE — BRUG KUN DISSE TAL, ALDRIG EGNE:
 ${normallonLinjer.length > 0
     ? normallonLinjer.map(s => `${s.beskrivelse}: ${s.vaerdi} ${s.enhed}`).join("\n")
+      + `\n(Linjerne er IKKE matchet mod kontraktens funktion/løngruppe. Nævn kun en bestemt løngruppe i mailen hvis kontrakten selv angiver den, ELLER hvis der kun findes én linje for den relevante funktion ovenfor. Ellers: skriv "normalløn for [funktion]" uden gruppenummer.)`
     : "Normalløn: [ikke tilgængelig — verificér mod overenskomst]"}
 ${satsLinje("Pension", pension)}
 ${erOverenskomst && klassifikation.kontrakttype === "a-loen"
@@ -299,6 +315,8 @@ ${loenTypeRegel}
 ${kontrakttypeRegler}
 ${overenskomstRegler}
 ${royaltyRegel}
+${loenGrundlagRegel}
+BEDRE END OVERENSKOMSTEN = POSITIVT: Er et vilkår bedre for medlemmet end overenskomstens minimum (løn over normalløn, pension af et højere grundlag, længere prolongationsvarsel, royalty over standard, tillæg over minimum), så fremstil det som POSITIVT (type "positiv"/"info", ✓) — aldrig som "advarsel"/"kritisk", et "OBS" eller et "kontrollér at ...". Kontrol-opfordringer kun ved en konkret uregelmæssighed, ikke rutinemæssigt.
 Start feedbackmailen med: Kære ${fornavn},
 `.trim()
 }
@@ -316,6 +334,14 @@ Din opgave er at:
 2. Fremhæve positive elementer der er i orden
 3. Foreslå konkrete forbedringer og forhandlingspunkter
 4. Udarbejde et udkast til en professionel feedback-mail til producenten
+
+BEDRE END OVERENSKOMSTEN = POSITIVT:
+Er et vilkår bedre for medlemmet end overenskomstens minimum (løn over normalløn,
+pension beregnet af et højere grundlag end krævet, længere prolongationsvarsel,
+royalty over standardsats, tillæg over minimum), SKAL feedbackpunktet have
+type "positiv" eller "info" — aldrig "advarsel" eller "kritisk". Skriv ikke "OBS",
+"vær opmærksom på" eller "kontrollér at ..." om et vilkår der allerede er bedre end
+kravet. En kontrol-opfordring hører kun til ved en konkret uregelmæssighed.
 
 Returner KUN gyldig JSON uden markdown-backticks:
 
