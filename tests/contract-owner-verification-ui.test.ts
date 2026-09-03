@@ -41,6 +41,7 @@ test("editoren understøtter ét klik, næste og PDF-kilde", () => {
   assert.doesNotMatch(ownership, /Tidligere registreret ejer/);
   assert.match(ownership, /canConfirm && oneClickOwner/);
   assert.match(editor, /queue\?\.kind === "ownership"/);
+  assert.match(editor, /queue\?\.kind === "missingOwner"/);
   assert.match(editor, /Ejerskab afklaring/);
 });
 
@@ -109,4 +110,5 @@ test("godkendelsesfanen viser tydelige dokument- og underskriftsstatusser", () =
   // underskrifts-evidens falder tilbage til sidste side når der ikke er en konkret side
   assert.match(editor, /evidence\.fieldKey === "signatureStatus" \|\| evidence\.fieldKey === "signatureDate"/);
   assert.match(editor, /evidence\.page \?\? documentLastPage/);
+  assert.match(editor, /renderEditor\("approve", "approval"\)/);
 });

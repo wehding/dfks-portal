@@ -54,6 +54,7 @@ import { contractReadinessDetails, effectiveCopydanStatus, normalizeTriState } f
 import { contractDataToManualWorkSeed, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work"
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker"
 import { contractDocumentPresentation } from "@/lib/contract-workbench"
+import { ArchiveTaskButton } from "@/components/admin/archive-task-button"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -2742,8 +2743,8 @@ function AdminKontrakterPageInner({
                 ? "upload"
                 : "arkiv"
     const [activeTab, setActiveTab] = useState<ContractArchiveTab>(initialTab)
-    const [taskCounts, setTaskCounts] = useState<AdminContractTaskCounts>(initialTaskCounts ?? { validation: null, ownership: null, messages: null })
-    const [openingTask, setOpeningTask] = useState<"validation" | "ownership" | "messages" | null>(null)
+    const [taskCounts, setTaskCounts] = useState<AdminContractTaskCounts>(initialTaskCounts ?? { validation: null, ownership: null, missingOwner: null, messages: null })
+    const [openingTask, setOpeningTask] = useState<"validation" | "ownership" | "missingOwner" | "messages" | null>(null)
     const tabRefs = useRef<Partial<Record<ContractArchiveTab, HTMLButtonElement | null>>>({})
     const visibleContractTabs: ContractArchiveTab[] = ["arkiv", "valideringskoe", "upload"]
 
@@ -2768,7 +2769,7 @@ function AdminKontrakterPageInner({
         return () => window.removeEventListener("contracts-updated", refresh)
     }, [refreshTaskCounts])
 
-    const openTask = async (kind: "validation" | "ownership" | "messages") => {
+    const openTask = async (kind: "validation" | "ownership" | "missingOwner" | "messages") => {
         const count = taskCounts[kind]
         if (count === null) {
             toast.error("Opgavetallet kunne ikke hentes. Prøv igen.")
@@ -2785,11 +2786,13 @@ function AdminKontrakterPageInner({
                 toast.error(result.error ?? "Opgaven kunne ikke åbnes")
                 return
             }
-            const section = kind === "validation" ? "approve" : kind === "ownership" ? "ownership" : "messages"
+            const section = kind === "validation" ? "approve" : kind === "ownership" || kind === "missingOwner" ? "ownership" : "messages"
             const returnTo = kind === "validation"
                 ? "/admin/kontrakter?tab=arkiv&status=validationPending"
                 : kind === "ownership"
                     ? "/admin/kontrakter?tab=arkiv&ownership=review"
+                    : kind === "missingOwner"
+                        ? "/admin/kontrakter?tab=arkiv&ownership=missing"
                     : "/admin/kontrakter?tab=arkiv&status=beskeder"
             const params = new URLSearchParams({ returnTo, queueId: result.queueId, section })
             router.push(`/admin/kontrakter/${result.firstContractId}/rediger?${params.toString()}`)
@@ -2891,54 +2894,17 @@ function AdminKontrakterPageInner({
                     Kontraktupload
                 </button>
             </div>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2" aria-label="Opgaver i kontraktarkivet">
-                <Button
-                    type="button"
-                    variant="outline"
-                    className={`h-auto min-w-0 justify-start gap-2.5 whitespace-normal px-3.5 py-2.5 text-left text-xs font-semibold sm:text-sm ${taskCounts.validation !== null && taskCounts.validation > 0 ? "border-amber-300 bg-amber-50/80 text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-100" : "text-muted-foreground"}`}
-                    onClick={() => void openTask("validation")}
-                    disabled={openingTask !== null || taskCounts.validation === 0}
-                    title={taskCounts.validation === null ? "Opgavetallet kunne ikke hentes" : undefined}
-                >
-                    {openingTask === "validation" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <CheckCircle2 className={`h-4 w-4 shrink-0 ${taskCounts.validation !== null && taskCounts.validation > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />}
-                    <span className="min-w-0 flex-1 leading-tight">Afventer validering</span>
-                    <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${taskCounts.validation !== null && taskCounts.validation > 0 ? "bg-amber-200/80 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
-                        {taskCounts.validation ?? "–"}
-                    </span>
-                </Button>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3" aria-label="Opgaver i kontraktarkivet">
+                <ArchiveTaskButton label="Afventer validering" count={taskCounts.validation} loading={openingTask !== null} onClick={() => void openTask("validation")} icon={openingTask === "validation" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <CheckCircle2 className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />
                 {canManageOwnership && (
-                    <Button
-                        type="button"
-                        variant="outline"
-                        className={`h-auto min-w-0 justify-start gap-2.5 whitespace-normal px-3.5 py-2.5 text-left text-xs font-semibold sm:text-sm ${taskCounts.ownership !== null && taskCounts.ownership > 0 ? "border-amber-300 bg-amber-50/80 text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-100" : "text-muted-foreground"}`}
-                        onClick={() => void openTask("ownership")}
-                        disabled={openingTask !== null || taskCounts.ownership === 0}
-                        title={taskCounts.ownership === null ? "Opgavetallet kunne ikke hentes" : undefined}
-                    >
-                        {openingTask === "ownership" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <AlertTriangle className={`h-4 w-4 shrink-0 ${taskCounts.ownership !== null && taskCounts.ownership > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />}
-                        <span className="min-w-0 flex-1 leading-tight">Ejerskab skal afklares</span>
-                        <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${taskCounts.ownership !== null && taskCounts.ownership > 0 ? "bg-amber-200/80 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
-                            {taskCounts.ownership ?? "–"}
-                        </span>
-                    </Button>
+                    <ArchiveTaskButton label="Ejerskab skal afklares" count={taskCounts.ownership} loading={openingTask !== null} onClick={() => void openTask("ownership")} icon={openingTask === "ownership" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />
                 )}
+                {canManageOwnership && <ArchiveTaskButton label="Tilføj ejer" count={taskCounts.missingOwner} loading={openingTask !== null} onClick={() => void openTask("missingOwner")} icon={openingTask === "missingOwner" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />}
                 {taskCounts.messages !== null && taskCounts.messages > 0 && (
-                    <Button
-                        type="button"
-                        variant="outline"
-                        className="h-auto justify-start py-2.5 px-3.5 gap-2.5 text-xs font-semibold sm:text-sm border-blue-300 bg-blue-50 text-blue-950 hover:bg-blue-100 dark:bg-blue-950/30 dark:text-blue-100"
-                        onClick={() => void openTask("messages")}
-                        disabled={openingTask !== null}
-                    >
-                        {openingTask === "messages" ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <MessageSquare className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />}
-                        <span>Ulæste beskeder</span>
-                        <span className="ml-auto rounded-full bg-blue-200/80 dark:bg-blue-900/60 px-2 py-0.5 text-xs font-bold text-blue-900 dark:text-blue-100 tabular-nums">
-                            {taskCounts.messages}
-                        </span>
-                    </Button>
+                    <ArchiveTaskButton label="Ulæste beskeder" count={taskCounts.messages} loading={openingTask !== null} tone="blue" onClick={() => void openTask("messages")} icon={openingTask === "messages" ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <MessageSquare className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />} />
                 )}
             </div>
-            {(taskCounts.validation === null || (canManageOwnership && taskCounts.ownership === null)) && (
+            {(taskCounts.validation === null || (canManageOwnership && (taskCounts.ownership === null || taskCounts.missingOwner === null))) && (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100" role="status">
                     <span>Et eller flere opgavetal kunne ikke hentes.</span>
                     <Button type="button" variant="outline" size="sm" className="h-7 bg-background" onClick={() => void refreshTaskCounts()}>

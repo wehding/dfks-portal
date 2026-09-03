@@ -797,7 +797,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   }
 
   function contractEditorUrl(nextContractId: string) {
-    const section = queue?.kind === "ownership" && data.canManageOwnership ? "ownership" : tab;
+    const section = (queue?.kind === "ownership" || queue?.kind === "missingOwner") && data.canManageOwnership ? "ownership" : tab;
     const params = new URLSearchParams({ returnTo, section });
     if (queueId) params.set("queueId", queueId);
     return `/admin/kontrakter/${nextContractId}/rediger?${params.toString()}`;
@@ -925,8 +925,9 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         <div className="hidden min-w-0 flex-1 md:block"><p className="truncate text-xs font-semibold">{form.workingTitle || linkedWork?.title || "Kontrakt"}</p><p className="truncate text-[10px] text-muted-foreground">{producerSelections[0]?.canonicalName ?? employer?.name ?? "Ingen producent"} · {holder?.full_name ?? "Ingen rettighedshaver"}</p></div>
         <Badge variant="outline" className="h-6 shrink-0 rounded-sm px-1.5 text-[10px]">{contract.status === "valideret" ? "Valideret" : contract.status === "arkiveret" ? "Afvist" : "Afventer validering"}</Badge>
         {queue?.kind === "ownership" && <span className="shrink-0 text-[11px] font-semibold text-amber-800 dark:text-amber-200">Ejerskab afklaring</span>}
+        {queue?.kind === "missingOwner" && <span className="shrink-0 text-[11px] font-semibold text-amber-800 dark:text-amber-200">Tilføj ejer</span>}
         {queue?.kind === "validation" && <span className="shrink-0 text-[11px] font-semibold text-amber-800 dark:text-amber-200">Valideringsafklaring</span>}
-        <div className="flex h-8 shrink-0 items-center rounded-sm border bg-background" aria-label={queue?.kind === "ownership" ? "Ejerskab afklaring" : queue?.kind === "validation" ? "Valideringsafklaring" : "Listenavigation"}>
+        <div className="flex h-8 shrink-0 items-center rounded-sm border bg-background" aria-label={queue?.kind === "ownership" ? "Ejerskab afklaring" : queue?.kind === "missingOwner" ? "Tilføj ejer" : queue?.kind === "validation" ? "Valideringsafklaring" : "Listenavigation"}>
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7" disabled={queueLoading || !queue?.previousContractId} onClick={() => requestNavigate(queue?.previousContractId ?? null)} aria-label="Forrige kontrakt"><ChevronLeft className="h-4 w-4" /></Button>
           <Button type="button" variant="ghost" className="h-7 min-w-14 px-1.5 text-[10px]" disabled={queueLoading || !queue} onClick={() => setQueueSheetOpen(true)} aria-label="Vis kontrakter på listen">{queueLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : queue ? `${queue.position} / ${queue.total}` : "– / –"}</Button>
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7" disabled={queueLoading || !queue?.nextContractId} onClick={() => requestNavigate(queue?.nextContractId ?? null)} aria-label="Næste kontrakt"><ChevronRight className="h-4 w-4" /></Button>
@@ -1071,6 +1072,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
               {baseRow({ key: "contractType", label: "Kontrakttype", sourceKey: "contractType", focusText: data.sources.contractType_focus, source: form.type !== contract.type ? "manual" : data.sources.contractType ? "contract" : contract.type ? "stored" : "unknown", missing: !form.type, children: <Select value={form.type} onValueChange={type => setForm(current => ({ ...current, type }))}><SelectTrigger className="h-6 w-fit min-w-32 gap-1.5 text-[11px] py-0 px-2" aria-label="Kontrakttype">{form.type === "leverandør" ? <Building2 className="h-3 w-3" /> : <BriefcaseBusiness className="h-3 w-3" />}<span>{form.type === "leverandør" ? "Leverandøraftale" : "A-løn"}</span></SelectTrigger><SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandøraftale</SelectItem></SelectContent></Select> })}
               {baseRow({ key: "agreement", label: "Overenskomst", sourceKey: "collectiveAgreement", source: form.overenskomst === contract.overenskomst ? "contract" : "manual", missing: !form.overenskomst, children: <Select value={form.overenskomst} onValueChange={overenskomst => setForm(current => ({ ...current, overenskomst }))}><SelectTrigger className="h-6 w-fit min-w-32 text-[11px] py-0 px-2"><Scale className="h-3 w-3" /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem><SelectItem value="faf">FAF (fiktion)</SelectItem><SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem><SelectItem value="dj">DJ</SelectItem><SelectItem value="metal">Metal</SelectItem><SelectItem value="ingen">Ingen</SelectItem></SelectContent></Select> })}
             </div>
+            {renderEditor("approve", "approval")}
             <div className="flex flex-wrap items-center gap-2 border-t p-3">
               {isValidationRecommended && (
                 <Badge className="bg-blue-600 text-white hover:bg-blue-600 text-xs px-2.5 py-1 shrink-0 font-medium">
@@ -1084,7 +1086,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
               <Button variant="destructive" disabled={saving} onClick={() => setRejectOpen(true)}><XCircle className="h-4 w-4" />Afvis</Button>
             </div>
           </TabsContent>
-          {data.canManageOwnership ? <TabsContent forceMount value="ownership" className="m-0 data-[state=inactive]:hidden">{visitedTabs.has("ownership") ? <ContractOwnershipEditor contractId={contract.id} canManage={data.canManageOwnership} inOwnershipQueue={queue?.kind === "ownership"} hasNext={Boolean(queue?.nextContractId)} commandTrigger={ownershipCommand} onEvidenceActivate={setActive} onCompleted={handleOwnershipCompleted} /> : null}</TabsContent> : null}
+          {data.canManageOwnership ? <TabsContent forceMount value="ownership" className="m-0 data-[state=inactive]:hidden">{visitedTabs.has("ownership") ? <ContractOwnershipEditor contractId={contract.id} canManage={data.canManageOwnership} inOwnershipQueue={queue?.kind === "ownership" || queue?.kind === "missingOwner"} hasNext={Boolean(queue?.nextContractId)} commandTrigger={ownershipCommand} onEvidenceActivate={setActive} onCompleted={handleOwnershipCompleted} /> : null}</TabsContent> : null}
           <TabsContent forceMount value="messages" className="m-0 p-3 data-[state=inactive]:hidden">
             {visitedTabs.has("messages") ? <MessageThread
               title="Beskeder"
@@ -1155,7 +1157,11 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     <Sheet open={queueSheetOpen} onOpenChange={setQueueSheetOpen}>
       <SheetContent side="right" className="w-[min(92vw,28rem)] overflow-y-auto">
         <SheetHeader><SheetTitle>{queue?.label ?? "Kontraktliste"}</SheetTitle><SheetDescription>Vælg en kontrakt på listen. Det aktive faneblad bevares.</SheetDescription></SheetHeader>
-        <div className="mt-4 divide-y rounded-md border">{queue?.items.map(item => <button key={item.contractId} type="button" className={`flex w-full items-center gap-3 p-3 text-left hover:bg-muted ${item.contractId === contract.id ? "bg-muted" : ""}`} onClick={() => { setQueueSheetOpen(false); requestNavigate(item.contractId); }}><span className="w-8 shrink-0 text-xs tabular-nums text-muted-foreground">{item.position}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{item.title}</span><span className="block truncate text-xs text-muted-foreground">{item.ownershipStatus ? `Ejerskab: ${item.ownershipStatus}` : item.contractStatus}</span></span>{item.status === "completed" ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : null}</button>)}</div>
+        <div className="mt-4 divide-y rounded-md border">{queue?.items.map(item => {
+          const primaryTitle = item.workTitle ?? item.contractTitle;
+          const showContractTitle = item.workTitle && item.contractTitle !== item.workTitle;
+          return <button key={item.contractId} type="button" className={`flex w-full items-center gap-3 p-3 text-left hover:bg-muted ${item.contractId === contract.id ? "bg-muted" : ""}`} onClick={() => { setQueueSheetOpen(false); requestNavigate(item.contractId); }}><span className="w-8 shrink-0 text-xs tabular-nums text-muted-foreground">{item.position}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{primaryTitle}</span>{showContractTitle ? <span className="block truncate text-xs text-muted-foreground">Kontrakt: {item.contractTitle}</span> : null}</span>{item.status === "completed" ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : null}</button>;
+        })}</div>
       </SheetContent>
     </Sheet>
 

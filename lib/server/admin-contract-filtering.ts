@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isUuid } from "@/lib/uuid";
 import { isSeriesType } from "@/lib/series-episodes";
+import { hasCompleteAssignmentDistribution, hasResolvedShareDistribution } from "@/lib/contract-validation-readiness";
 
 export const ADMIN_CONTRACT_OWNERSHIP_FILTERS = [
   "all",
@@ -211,15 +212,15 @@ export async function matchingAdminContractIds(
           .eq("org_id", orgId)
           .in("work_id", workIds)
           .in("rights_holder_id", holderIds)
-          .in("status", ["solo_confirmed", "coeditors_reported"]),
+          .eq("status", "solo_confirmed"),
         db
           .from("work_assignments")
-          .select("work_id, rights_holder_id")
+          .select("work_id, rights_holder_id, share_percent")
           .eq("org_id", orgId)
           .in("work_id", workIds),
         db
           .from("work_share_cases")
-          .select("work_id")
+          .select("work_id,status,reserve_percent,work_share_participants(rights_holder_id,final_percent,excluded_at)")
           .eq("org_id", orgId)
           .in("work_id", workIds),
       ]);
@@ -227,27 +228,28 @@ export async function matchingAdminContractIds(
       const clarifiedReviews = new Set(
         (reviewsRes.data ?? []).map(r => `${r.rights_holder_id}:${r.work_id}`)
       );
-      const assignmentsByWork = new Map<string, Set<string>>();
+      const assignmentsByWork = new Map<string, Array<{ rights_holder_id: string | null; share_percent: number | string | null }>>();
       for (const row of assignmentsRes.data ?? []) {
-        if (!row.rights_holder_id) continue;
-        if (!assignmentsByWork.has(row.work_id)) assignmentsByWork.set(row.work_id, new Set());
-        assignmentsByWork.get(row.work_id)!.add(row.rights_holder_id);
+        if (!assignmentsByWork.has(row.work_id)) assignmentsByWork.set(row.work_id, []);
+        assignmentsByWork.get(row.work_id)!.push(row);
       }
-      const worksWithMultipleEditors = new Set(
+      const worksWithCompleteAssignments = new Set(
         [...assignmentsByWork.entries()]
-          .filter(([, holders]) => holders.size > 1)
+          .filter(([, assignments]) => hasCompleteAssignmentDistribution(assignments))
           .map(([workId]) => workId)
       );
-      const worksWithShareCases = new Set(
-        (shareCasesRes.data ?? []).map(s => s.work_id)
+      const worksWithResolvedShareCases = new Set(
+        (shareCasesRes.data ?? [])
+          .filter(shareCase => hasResolvedShareDistribution(shareCase))
+          .map(shareCase => shareCase.work_id)
       );
 
       for (const candidate of needsLookup) {
         const reviewKey = `${candidate.rights_holder_id}:${candidate.work_id}`;
         if (
           clarifiedReviews.has(reviewKey) ||
-          worksWithMultipleEditors.has(candidate.work_id) ||
-          worksWithShareCases.has(candidate.work_id)
+          worksWithCompleteAssignments.has(candidate.work_id) ||
+          worksWithResolvedShareCases.has(candidate.work_id)
         ) {
           clarifiedViaExternal.add(candidate.id);
         }
@@ -304,13 +306,7 @@ export async function matchingAdminContractIds(
     else if (ownership === "corrected") query = query.eq("status", "corrected");
     const result = await query.limit(5000);
     if (result.error) throw new Error(result.error.message);
-    let ownershipIds = (result.data ?? []).map(row => row.contract_id);
-    if (ownership === "review") {
-      const missing = await db.from("contracts").select("id").eq("org_id", orgId).is("rights_holder_id", null).limit(5000);
-      if (missing.error) throw new Error(missing.error.message);
-      ownershipIds = uniqueIds([...ownershipIds, ...(missing.data ?? []).map(row => row.id)]);
-    }
-    ids = intersectIds(ids, ownershipIds);
+    ids = intersectIds(ids, (result.data ?? []).map(row => row.contract_id));
   }
 
   return ids;
