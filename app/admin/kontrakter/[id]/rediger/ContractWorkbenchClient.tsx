@@ -216,8 +216,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   const [soloConfirmed, setSoloConfirmed] = useState<boolean>(() => {
     return Boolean(
       (validationData as any).soloConfirmed ??
-      (validationData as any).isSoloClipped ??
-      (contract as any).solo_confirmed
+      (validationData as any).isSoloClipped
     );
   });
   const [validatedOpen, setValidatedOpen] = useState(false);
@@ -926,7 +925,8 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         <div className="hidden min-w-0 flex-1 md:block"><p className="truncate text-xs font-semibold">{form.workingTitle || linkedWork?.title || "Kontrakt"}</p><p className="truncate text-[10px] text-muted-foreground">{producerSelections[0]?.canonicalName ?? employer?.name ?? "Ingen producent"} · {holder?.full_name ?? "Ingen rettighedshaver"}</p></div>
         <Badge variant="outline" className="h-6 shrink-0 rounded-sm px-1.5 text-[10px]">{contract.status === "valideret" ? "Valideret" : contract.status === "arkiveret" ? "Afvist" : "Afventer validering"}</Badge>
         {queue?.kind === "ownership" && <span className="shrink-0 text-[11px] font-semibold text-amber-800 dark:text-amber-200">Ejerskab afklaring</span>}
-        <div className="flex h-8 shrink-0 items-center rounded-sm border bg-background" aria-label={queue?.kind === "ownership" ? "Ejerskab afklaring" : "Listenavigation"}>
+        {queue?.kind === "validation" && <span className="shrink-0 text-[11px] font-semibold text-amber-800 dark:text-amber-200">Valideringsafklaring</span>}
+        <div className="flex h-8 shrink-0 items-center rounded-sm border bg-background" aria-label={queue?.kind === "ownership" ? "Ejerskab afklaring" : queue?.kind === "validation" ? "Valideringsafklaring" : "Listenavigation"}>
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7" disabled={queueLoading || !queue?.previousContractId} onClick={() => requestNavigate(queue?.previousContractId ?? null)} aria-label="Forrige kontrakt"><ChevronLeft className="h-4 w-4" /></Button>
           <Button type="button" variant="ghost" className="h-7 min-w-14 px-1.5 text-[10px]" disabled={queueLoading || !queue} onClick={() => setQueueSheetOpen(true)} aria-label="Vis kontrakter på listen">{queueLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : queue ? `${queue.position} / ${queue.total}` : "– / –"}</Button>
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7" disabled={queueLoading || !queue?.nextContractId} onClick={() => requestNavigate(queue?.nextContractId ?? null)} aria-label="Næste kontrakt"><ChevronRight className="h-4 w-4" /></Button>

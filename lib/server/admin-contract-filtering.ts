@@ -152,7 +152,6 @@ export async function matchingAdminContractIds(
         work_id,
         rights_holder_id,
         episode_numbers,
-        solo_confirmed,
         works(id, type, parent_work_id),
         contract_validations(extracted_data)
       `)
@@ -168,7 +167,6 @@ export async function matchingAdminContractIds(
       work_id: string;
       rights_holder_id: string;
       episode_numbers: number[] | null;
-      solo_confirmed: boolean | null;
       works: { id: string; type: string | null; parent_work_id: string | null } | Array<{ id: string; type: string | null; parent_work_id: string | null }> | null;
       contract_validations: { extracted_data: Record<string, unknown> | null } | Array<{ extracted_data: Record<string, unknown> | null }> | null;
     };
@@ -191,9 +189,9 @@ export async function matchingAdminContractIds(
     });
 
     // 2. Solo- / medklipperafklaring:
-    // Tjek først om solo er bekræftet direkte på kontrakten eller i valideringsdata
+    // Solo/medklipper-status gemmes i valideringsdata og i den særskilte
+    // samarbejdsgennemgang. Der findes ikke et solo_confirmed-felt på contracts.
     const needsLookup = episodePassingCandidates.filter(candidate => {
-      if (candidate.solo_confirmed) return false;
       const val = Array.isArray(candidate.contract_validations)
         ? candidate.contract_validations[0]
         : candidate.contract_validations;
@@ -258,7 +256,6 @@ export async function matchingAdminContractIds(
 
     const readyIds = episodePassingCandidates
       .filter(candidate => {
-        if (candidate.solo_confirmed) return true;
         const val = Array.isArray(candidate.contract_validations)
           ? candidate.contract_validations[0]
           : candidate.contract_validations;
