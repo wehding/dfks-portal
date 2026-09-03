@@ -1,7 +1,7 @@
 "use client"
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2, Eye, Search } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -128,7 +128,14 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
     const afventer = rows.filter(r => r.status === "kladde")
     const gennemgaede = rows.filter(r => r.status !== "kladde")
 
-    useEffect(() => { onAfventerCount?.(afventer.length) }, [afventer.length, onAfventerCount])
+    // Rapportér antallet op til forælderen — men KUN når selve tallet ændrer sig.
+    // onAfventerCount holdes ude af dependency-listen via en "latest ref": hvis
+    // en forælder sender en frisk closure hver render (og dens setState laver et
+    // nyt objekt hver gang), giver et callback-dependency en uendelig render-løkke
+    // → "Maximum update depth exceeded".
+    const onAfventerCountRef = useRef(onAfventerCount)
+    useEffect(() => { onAfventerCountRef.current = onAfventerCount }, [onAfventerCount])
+    useEffect(() => { onAfventerCountRef.current?.(afventer.length) }, [afventer.length])
 
     // Fritekstsøgning på tværs af arbejdstitel, rettighedshaver og arbejdsgiver.
     // Vigtigt for kontrakter, der endnu ikke er tilknyttet et værk — deres
