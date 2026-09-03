@@ -22,6 +22,7 @@ import { findParentMember } from "@/lib/db/employers"
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
 import { resolveAgreementByDate } from "@/lib/agreement-version-resolver"
 import { getAgreementSatserForContext } from "@/lib/agreement-wage-server"
+import { filterLegalNotesForContract, type LegalNoteContextRow } from "@/lib/legal-note-context"
 
 // ── Sensitiv data-maskning ────────────────────────────────────
 
@@ -590,10 +591,14 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         )
         const { data: noter } = await admin
             .from("legal_notes")
-            .select("title, body")
+            .select("title, body, exclude_for_overenskomst")
             .eq("priority", "altid")
             .eq("active", true)
-        altidNoteringer = noter ?? []
+        altidNoteringer = filterLegalNotesForContract(
+            (noter ?? []) as LegalNoteContextRow[],
+            klassifikation?.er_overenskomst === true,
+            klassifikation?.overenskomst_navn ? [klassifikation.overenskomst_navn] : []
+        )
     } catch (e) {
         logWarn("analyse", "Altid-noteringer hentning fejlede", { error: errorMessage(e) })
     }

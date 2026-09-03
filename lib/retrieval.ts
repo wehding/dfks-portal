@@ -5,6 +5,7 @@ import { estimateEmbeddingTokens } from "./ai-cost"
 import { recordAiUsage, type AiUsageContext } from "./ai-usage"
 import { detectAgreementReferences } from "./agreement-detection"
 import { getSupabaseServiceKey } from "./env"
+import { filterLegalNotesForContract, type LegalNoteContextRow } from "./legal-note-context"
 
 const MATCH_THRESHOLD = 0.65
 const MATCH_COUNT = 6
@@ -317,10 +318,10 @@ export async function hentKontekst(
         }),
 
         // 4. Altid-noteringer
-        supabase.from("legal_notes").select("title, body").or(`org_id.is.null,org_id.eq.${orgId}`).eq("priority", "altid").eq("active", true),
+        supabase.from("legal_notes").select("title, body, exclude_for_overenskomst").or(`org_id.is.null,org_id.eq.${orgId}`).eq("priority", "altid").eq("active", true),
 
         // 5. Baggrundsnoteringer
-        supabase.from("legal_notes").select("title, body").or(`org_id.is.null,org_id.eq.${orgId}`).eq("priority", "baggrund").eq("active", true),
+        supabase.from("legal_notes").select("title, body, exclude_for_overenskomst").or(`org_id.is.null,org_id.eq.${orgId}`).eq("priority", "baggrund").eq("active", true),
 
         // 6. Godkendte, strukturerede aftale-, løn- og pensionskilder
         hentStruktureretAftalegrundlag(detekterede, kontraktdato),
@@ -361,8 +362,16 @@ export async function hentKontekst(
         kategorier,
         overenskomstSemantisk,
         mønstre: (mønstreRes.data ?? []) as KontekstResultat["mønstre"],
-        altid: (altidRes.data ?? []) as { title: string; body: string }[],
-        baggrund: (baggrundRes.data ?? []) as { title: string; body: string }[],
+        altid: filterLegalNotesForContract(
+            (altidRes.data ?? []) as LegalNoteContextRow[],
+            detekterede.length > 0,
+            detekterede
+        ),
+        baggrund: filterLegalNotesForContract(
+            (baggrundRes.data ?? []) as LegalNoteContextRow[],
+            detekterede.length > 0,
+            detekterede
+        ),
         detekteredeOverenskomster: detekterede,
         aftaleGrundlag,
     }
