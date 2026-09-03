@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
   async function dfiGet(endpoint: string) {
     const res = await fetch(`https://data.dfi.dk${endpoint}`, {
       headers: { Authorization: authHeader, Accept: "application/json", "Accept-Language": "da-DK" },
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) throw new Error(`DFI API status ${res.status}`);
     return res.json();

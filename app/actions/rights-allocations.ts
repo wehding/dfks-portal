@@ -103,23 +103,35 @@ export async function getRightsAllocations(run_id: string): Promise<{
             .from("rights_allocations")
             .select(`
                 *,
-                rettighedshavere ( full_name, member_number ),
-                works ( title ),
-                episodes ( title )
+                rettighedshavere ( full_name, org_affiliations ( member_no ) ),
+                rights_work_allocations (
+                    work_id,
+                    episode_id,
+                    works ( title ),
+                    episodes ( title )
+                )
             `)
             .eq("run_id", run_id)
             .eq("org_id", caller.orgId)
-            .order("individual_net", { ascending: false })
+            .order("created_at", { ascending: false })
 
         if (error) throw error
 
-        const allocations: RightsAllocation[] = (data ?? []).map((r) => ({
-            ...r,
-            rights_holder_name: r.rettighedshavere?.full_name,
-            rights_holder_member_number: r.rettighedshavere?.member_number,
-            work_title: r.works?.title,
-            episode_title: r.episodes?.title,
-        }))
+        const allocations: RightsAllocation[] = (data ?? []).map((r) => {
+            const rh = firstRelated(r.rettighedshavere)
+            const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
+            const wa = firstRelated(r.rights_work_allocations)
+            const work = firstRelated(wa?.works)
+            const episode = firstRelated(wa?.episodes)
+            return {
+                ...r,
+                individual_net: Number(r.individual_net ?? r.individual_amount ?? r.net_amount ?? 0),
+                rights_holder_name: rh?.full_name,
+                rights_holder_member_number: aff?.member_no ?? null,
+                work_title: work?.title,
+                episode_title: episode?.title,
+            }
+        })
 
         await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "read", component: "admin.rights.allocations", entityType: "rights_allocations", entityId: run_id, targetMemberUuids: allocations.map(item => item.rights_holder_id), orgIds: [caller.orgId], purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"], counts: { results: allocations.length } })
 
@@ -263,18 +275,22 @@ export async function getWithheldPositions(run_id: string): Promise<{
 
         const { data, error } = await db
             .from("withheld_beneficiary_positions")
-            .select(`*, rettighedshavere ( full_name, member_number )`)
+            .select(`*, rettighedshavere ( full_name, org_affiliations ( member_no ) )`)
             .eq("run_id", run_id)
             .eq("org_id", caller.orgId)
             .order("created_at", { ascending: false })
 
         if (error) throw error
 
-        const positions: WithheldPosition[] = (data ?? []).map((r) => ({
-            ...r,
-            rights_holder_name: r.rettighedshavere?.full_name,
-            rights_holder_member_number: r.rettighedshavere?.member_number,
-        }))
+        const positions: WithheldPosition[] = (data ?? []).map((r) => {
+            const rh = firstRelated(r.rettighedshavere)
+            const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
+            return {
+                ...r,
+                rights_holder_name: rh?.full_name,
+                rights_holder_member_number: aff?.member_no ?? null,
+            }
+        })
 
         await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "read", component: "admin.rights.withheld-list", entityType: "withheld_beneficiary_positions", entityId: run_id, targetMemberUuids: positions.map(item => item.rights_holder_id), orgIds: [caller.orgId], purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"], counts: { results: positions.length } })
 
@@ -384,9 +400,10 @@ export async function getRightsHolderSummary(run_id: string): Promise<{
             .from("rights_allocations")
             .select(`
                 rights_holder_id,
-                individual_net,
+                individual_net:individual_amount,
+                net_amount,
                 status,
-                rettighedshavere ( full_name, member_number )
+                rettighedshavere ( full_name, org_affiliations ( member_no ) )
             `)
             .eq("run_id", run_id)
             .eq("org_id", caller.orgId)
@@ -398,11 +415,12 @@ export async function getRightsHolderSummary(run_id: string): Promise<{
         for (const row of data ?? []) {
             const id = row.rights_holder_id
             const holder = firstRelated(row.rettighedshavere)
+            const aff = Array.isArray(holder?.org_affiliations) ? holder.org_affiliations[0] : holder?.org_affiliations
             if (!map.has(id)) {
                 map.set(id, {
                     rights_holder_id: id,
                     rights_holder_name: holder?.full_name ?? "—",
-                    member_number: holder?.member_number ?? null,
+                    member_number: aff?.member_no ?? null,
                     allocation_count: 0,
                     total_individual_net: 0,
                     has_withheld: false,
@@ -410,7 +428,7 @@ export async function getRightsHolderSummary(run_id: string): Promise<{
             }
             const entry = map.get(id)!
             entry.allocation_count++
-            entry.total_individual_net += Number(row.individual_net)
+            entry.total_individual_net += Number(row.individual_net ?? row.net_amount ?? 0)
             if (["partially_withheld", "fully_withheld"].includes(row.status)) {
                 entry.has_withheld = true
             }

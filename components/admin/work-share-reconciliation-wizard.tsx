@@ -124,7 +124,10 @@ export function WorkShareReconciliationWizard({
       const previewResponse = await fetch("/api/admin/user", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "preview_invite", rhId: participant.rights_holder_id, workId: active.work_id }) });
       const preview = await previewResponse.json();
       if (!previewResponse.ok) { setMessage(preview.error ?? "Invitationen kunne ikke forhåndsvises."); return; }
-      const previewText = `${preview.membership === "member" ? "Medlem" : "Ikke-medlem"}: ${preview.name}\n${preview.email}\n\n${preview.subject}\n\n${preview.bodyText}`;
+      const lookupWarnings = Array.isArray(preview.work_lookup?.warnings) && preview.work_lookup.warnings.length
+        ? `\n\nBemærk:\n${preview.work_lookup.warnings.map((warning: string) => `• ${warning}`).join("\n")}`
+        : "";
+      const previewText = `${preview.membership === "member" ? "Medlem" : "Ikke-medlem"}: ${preview.name}\n${preview.email}\n\n${preview.subject}\n\n${preview.bodyText}${lookupWarnings}`;
       if (!window.confirm(`${previewText}\n\nSend denne invitation?`)) return;
     } catch {
       setMessage("Invitationen kunne ikke forhåndsvises.");
