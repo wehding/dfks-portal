@@ -50,13 +50,14 @@ export function royaltyRequirementForContract({
   agreementName,
   distributionChannels,
 }: RoyaltyRequirementInput) {
-  const isDe4FictionAgreement = agreementCovered && (agreementName ?? "de4-fiktion") === "de4-fiktion";
+  const hasDe4FictionAgreementReference = agreementName === "de4-fiktion"
+    || (agreementCovered && agreementName == null);
   const hasCinemaDistribution = distributionChannels.some(channel => channel.toLowerCase() === "biograf");
 
-  if (isDe4FictionAgreement) {
+  if (hasDe4FictionAgreementReference) {
     return hasCinemaDistribution
-      ? "⚠ ROYALTY PÅKRÆVET: Produktionen er omfattet af De4-fiktionsoverenskomsten og har biografdistribution. Tjek eksplicit om kontrakten nævner royalty. Hvis ikke — det SKAL kommenteres som et selvstændigt punkt."
-      : "";
+      ? "✓ DE4-ROYALTY DÆKKET: Kontrakten henviser til De4-fiktionsoverenskomsten, og produktionen har biografdistribution. Royalty følger derfor overenskomsten for de produktioner, bestemmelsen omfatter. Nævn det som et positivt punkt — flag ALDRIG en manglende særskilt royaltyklausul."
+      : "✓ DE4-ROYALTY: Kontrakten henviser til De4-fiktionsoverenskomsten. Royalty er dermed dækket for de produktioner, overenskomstens royaltybestemmelse omfatter. Ved ren TV/streamingdistribution skal royalty ikke kræves; flag ALDRIG en manglende særskilt royaltyklausul.";
   }
 
   return productionType === "spillefilm"

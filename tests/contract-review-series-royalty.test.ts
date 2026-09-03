@@ -29,24 +29,39 @@ test("en nummereret titel eller juridisk afsnitshenvisning bruges ikke som serie
   assert.equal(resolveContractReviewProductionType("spillefilm", "Fiktionsproduktion med titlen SOMMERDAHL 8"), "spillefilm");
 });
 
-test("De4-fiktionsoverenskomsten kræver royalty ved biografdistribution", () => {
-  assert.match(royaltyRequirementForContract({
+test("De4-reference gør royalty ved biografdistribution til et positivt punkt", () => {
+  const rule = royaltyRequirementForContract({
     productionType: "tvserie",
     agreementCovered: true,
     agreementName: "de4-fiktion",
     distributionChannels: ["biograf", "streaming_svod"],
-  }), /ROYALTY PÅKRÆVET/);
+  });
+  assert.match(rule, /POSITIV/i);
+  assert.doesNotMatch(rule, /PÅKRÆVET|manglende særskilt royaltyklausul(?!\.)/i);
 });
 
-test("De4-fiktionsoverenskomsten kræver ikke royalty ved tv eller streaming", () => {
+test("De4-reference forbyder royaltymangel ved tv eller streaming", () => {
   for (const distributionChannels of [["tv_lineaer"], ["streaming_svod"], ["streaming_avod"], []]) {
-    assert.equal(royaltyRequirementForContract({
+    const rule = royaltyRequirementForContract({
       productionType: "spillefilm",
       agreementCovered: true,
       agreementName: "de4-fiktion",
       distributionChannels,
-    }), "");
+    });
+    assert.match(rule, /flag ALDRIG/i);
+    assert.doesNotMatch(rule, /ROYALTY PÅKRÆVET/i);
   }
+});
+
+test("en udtrykkelig De4-reference gælder også uden ProF-medlemskab", () => {
+  const rule = royaltyRequirementForContract({
+    productionType: "spillefilm",
+    agreementCovered: false,
+    agreementName: "de4-fiktion",
+    distributionChannels: ["biograf"],
+  });
+  assert.match(rule, /POSITIV/i);
+  assert.doesNotMatch(rule, /ROYALTY PÅKRÆVET/i);
 });
 
 test("spillefilmskontrollen bevares uden De4-fiktionsoverenskomsten", () => {

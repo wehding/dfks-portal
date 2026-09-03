@@ -301,7 +301,7 @@ og Producenten."
     const overenskomstNavn = klassifikation.overenskomst_navn ?? ""
     const overenskomstFormularRegel =
         overenskomstNavn === "de4-fiktion"
-            ? "✓ DE4-FIKTION: De4-standardformularen dækker allerede eksplicit Copydan-forbehold og SVOD/streaming-aftale. Henviser kontrakten til De4-overenskomsten eller standardformularen, ER disse dækket — nævn dem som POSITIVE, ALDRIG som 'manglende Copydan' / 'manglende SVOD'. Royalty står IKKE i De4-standardformularen — vurder royalty separat."
+            ? "✓ DE4-FIKTION: De4-standardformularen dækker allerede Copydan-forbehold, SVOD/streaming-aftale og royalty for de produktioner, royaltybestemmelsen omfatter. Henviser kontrakten til De4-overenskomsten eller standardformularen, ER disse dækket — nævn relevante rettigheder som POSITIVE, og flag dem ALDRIG som manglende, blot fordi der ikke står en særskilt klausul i kontrakten."
         : ["faf", "faf-dokumentar"].includes(overenskomstNavn)
             ? "⚠ FAF: FAF-standardformularen mangler eksplicit Copydan, SVOD og royalty. Mangler kontrakten dem, skal alle tre skrives ind (eksplicit hvis producenten ikke er ProF-bundet; ellers med overenskomsten som hjemmel)."
         : ""
@@ -421,8 +421,9 @@ KRITISK FORSKEL — FAF (2025-2027) vs. De4 (2022) for fiktion:
 - De4-standardkontrakten INDEHOLDER allerede eksplicit Copydan-forbehold og SVOD/streaming-aftale.
   Henviser kontrakten til De4-overenskomsten eller bruger De4-standardformularen, ER Copydan og
   SVOD dækket — anerkend dem som POSITIVE, flag dem ALDRIG som "manglende".
+- En henvisning til De4-overenskomsten dækker også royalty for de produktioner, royaltybestemmelsen
+  omfatter. Nævn relevant royaltydækning som POSITIV, og kræv ALDRIG en særskilt royaltyklausul.
 - FAF-standardkontrakten mangler eksplicit Copydan, SVOD og royalty — disse skal tilføjes separat.
-- Royalty står IKKE som fast tekst i De4-standardformularen — vurder royalty separat uanset formular.
 
 PRODUCENTFORENINGENS MEDLEMSSKAB — HVAD DET AFGØR:
 Overenskomstens vilkår gælder AUTOMATISK kun for ProF-medlemmer (se KONTRAKTFAKTA øverst).
