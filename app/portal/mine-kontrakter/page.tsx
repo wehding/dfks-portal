@@ -1,13 +1,12 @@
 export const dynamic = "force-dynamic";
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import MineKontrakterClient from "./MineKontrakterClient";
 import type { Contract } from "./MineKontrakterClient";
-import { requireMemberContext } from "@/lib/org";
 import { createListLoadTimer } from "@/lib/server/list-load-timing";
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
 import { fetchMemberContractsPage, type MemberContractsPageParams } from "@/app/actions/member-contracts";
 import { normalizedPage, normalizedPageSize } from "@/lib/list-query";
 
@@ -40,15 +39,18 @@ function stringParam(value: string | string[] | undefined, fallback = "") {
 
 export default async function MineKontrakterPage({ searchParams }: { searchParams: PageSearchParams }) {
   const timer = createListLoadTimer("member-contracts");
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/")
+  const accessContext = await getRequestAppAccessContext();
+  if (!accessContext) redirect("/");
   timer.mark("auth");
 
-  const db = createServiceClient();
-  const memberContext = await requireMemberContext(db, user.id).catch(() => null);
-  if (!memberContext?.rightsHolderId) redirect("/admin?notice=member-org-required");
+  if (!accessContext.rightsHolderId) redirect("/admin?notice=member-org-required");
   timer.mark("access");
+
+  const memberContext = {
+    orgId: accessContext.orgId,
+    rightsHolderId: accessContext.rightsHolderId,
+  };
+  const db = createServiceClient();
 
   const query = await searchParams;
   const pageParams: MemberContractsPageParams = {

@@ -333,7 +333,6 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     // Den præcise tekstmarkering har førsteprioritet. Koordinatboksen fungerer
     // samtidig som fallback, hvis OCR-teksten er opdelt på en måde der ikke kan matches.
     const preciseFocusText = activeEvidence?.focusText?.trim() ?? ""
-    const hasPreciseFocus = preciseFocusText.length >= 2 && preciseFocusText.length <= 64
     const legacyBbox = activeClauseId && layout
         ? layout.clauses.find(c => c.id === activeClauseId)?.pdfBbox
         : null
@@ -354,8 +353,10 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     effectiveSectionHighlightsRef.current = effectiveSectionHighlights
 
     useEffect(() => {
-        if (activeHighlight && !hasCoordinateBox) setFitMode("width")
-    }, [activeHighlight, hasCoordinateBox, hasPreciseFocus, preciseFocusText])
+        zoomedEvidence.current = null
+        setPageRendered(false)
+        setPageViewport(null)
+    }, [url])
 
     const previousResetToken = useRef(resetViewToken)
     useEffect(() => {
@@ -400,11 +401,28 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
 
     const zoomedEvidence = useRef<string | null>(null)
     useEffect(() => {
-        if (!activeBbox || !pageViewport || !containerRef.current || !activeEvidence) return
-        const key = `${activeEvidence.fieldKey}:${activeEvidence.page ?? activeEvidence.clause?.page ?? pageNumber}:${JSON.stringify(activeBbox)}`
-        if (zoomedEvidence.current === key) return
-        const boxWidth = activeBbox.space === "normalized_top_left" ? activeBbox.width * pageViewport.pdfWidth : activeBbox.width
-        const boxHeight = activeBbox.space === "normalized_top_left" ? activeBbox.height * pageViewport.pdfHeight : activeBbox.height
+        if (!pageViewport || !containerRef.current) return
+
+        let boxWidth = 0
+        let boxHeight = 0
+        let evidenceKey = ""
+
+        if (activeBbox && activeEvidence) {
+            boxWidth = activeBbox.space === "normalized_top_left" ? activeBbox.width * pageViewport.pdfWidth : activeBbox.width
+            boxHeight = activeBbox.space === "normalized_top_left" ? activeBbox.height * pageViewport.pdfHeight : activeBbox.height
+            evidenceKey = `${activeEvidence.fieldKey}:${activeEvidence.page ?? activeEvidence.clause?.page ?? pageNumber}:${JSON.stringify(activeBbox)}`
+        } else if (pageRendered) {
+            const exactEl = containerRef.current.querySelector<HTMLElement>('[data-exact-hl="active"]')
+            if (exactEl && (activeHighlight || preciseFocusText)) {
+                boxWidth = exactEl.offsetWidth / (scale || 1)
+                boxHeight = exactEl.offsetHeight / (scale || 1)
+                evidenceKey = `text:${activeHighlight || preciseFocusText}:${pageNumber}:${Math.round(boxWidth)}`
+            }
+        }
+
+        if (boxWidth <= 0 || boxHeight <= 0 || !evidenceKey) return
+        if (zoomedEvidence.current === evidenceKey) return
+
         const targetScale = calculatePdfEvidenceScale({
             containerWidth: containerRef.current.clientWidth,
             containerHeight: containerRef.current.clientHeight,
@@ -412,10 +430,10 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             boxHeight,
             pdfWidth: pageViewport.pdfWidth,
         })
-        zoomedEvidence.current = key
+        zoomedEvidence.current = evidenceKey
         setFitMode("manual")
         setScale(targetScale)
-    }, [activeBbox, activeEvidence, pageNumber, pageViewport])
+    }, [activeBbox, activeEvidence, activeHighlight, pageNumber, pageRendered, pageViewport, preciseFocusText, scale])
 
     // Naviger til evidensens eller klausulens side ved skift
     useEffect(() => {
@@ -473,21 +491,45 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         return () => clearTimeout(timer)
     }, [highlights, effectiveActiveHighlight, effectiveSectionHighlights, pageNumber, pageRendered, activeClauseId, layout, effectivePreciseFocusText])
 
+    const scrollToActiveHighlight = useCallback((smooth = true) => {
+        const container = containerRef.current
+        if (!container) return
+        const highlight = container.querySelector<HTMLElement>(
+            '[data-coordinate-hl="active"], [data-exact-hl="active"], [data-hl="active"]'
+        )
+        if (!highlight) return
+
+        const containerRect = container.getBoundingClientRect()
+        const highlightRect = highlight.getBoundingClientRect()
+
+        const currentScrollLeft = container.scrollLeft
+        const currentScrollTop = container.scrollTop
+
+        const targetScrollLeft = currentScrollLeft + (highlightRect.left + highlightRect.width / 2) - (containerRect.left + containerRect.width / 2)
+        const targetScrollTop = currentScrollTop + (highlightRect.top + highlightRect.height / 2) - (containerRect.top + containerRect.height / 2)
+
+        container.scrollTo({
+            left: Math.max(0, targetScrollLeft),
+            top: Math.max(0, targetScrollTop),
+            behavior: smooth ? "smooth" : "auto",
+        })
+    }, [])
+
     useEffect(() => {
-        if (!pageRendered || !activeBbox || !containerRef.current || !pageViewport) return
+        if (!pageRendered || !containerRef.current) return
         let cancelled = false
-        const timer = setTimeout(() => {
-            if (cancelled) return
-            const container = containerRef.current
-            const highlight = container?.querySelector<HTMLElement>('[data-coordinate-hl="active"]')
-            if (!container || !highlight) return
-            highlight.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" })
-        }, 80)
+        const t1 = setTimeout(() => {
+            if (!cancelled) scrollToActiveHighlight(false)
+        }, 50)
+        const t2 = setTimeout(() => {
+            if (!cancelled) scrollToActiveHighlight(true)
+        }, 180)
         return () => {
             cancelled = true
-            clearTimeout(timer)
+            clearTimeout(t1)
+            clearTimeout(t2)
         }
-    }, [activeBbox, pageNumber, pageRendered, scale, pageViewport])
+    }, [activeBbox, activeEvidence, activeHighlight, pageNumber, pageRendered, scale, pageViewport, scrollToActiveHighlight])
 
 
     if (error) {
@@ -521,14 +563,14 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                 <Button variant={fitMode === "width" ? "secondary" : "ghost"} size="icon" className="h-7 w-7" title="Tilpas PDF til bredden" aria-label="Tilpas PDF til bredden" onClick={() => setFitMode("width")}><Maximize2 className="h-3.5 w-3.5" /></Button>
             </div>
             <div ref={containerRef} className="flex-1 overflow-auto bg-muted/30">
-                <div className="flex justify-center p-4">
+                <div className="p-4 w-max min-w-full flex justify-center">
                     <Document file={url} onLoadSuccess={onDocumentLoadSuccess} onLoadError={onDocumentLoadError} loading={Spinner}>
                         <div style={{ position: "relative", display: "inline-block" }}>
                             <Page pageNumber={pageNumber} scale={scale} className="shadow-sm"
                                 renderTextLayer={true} renderAnnotationLayer={false}
                                 onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
                             {/* Koordinatbaseret fallback — den aktive kilde markeres altid gult. */}
-                            {pageViewport && activeBboxes.length > 0 && contractEvidencePage(activeEvidence) === pageNumber && activeBboxes.map((box, index) => {
+                            {pageViewport && activeBboxes.length > 0 && (contractEvidencePage(activeEvidence) ?? 1) === pageNumber && activeBboxes.map((box, index) => {
                                 const style = bboxToScreenStyle(box, pageViewport)
                                 return (
                                     <div key={`${activeEvidence?.fieldKey ?? activeClauseId}-${pageNumber}-${index}`}

@@ -11,6 +11,7 @@ import { memberOverviewItemsToAssignments } from "@/lib/member-work-overview";
 import type { MemberOverviewItem } from "@/lib/member-work-overview";
 import { normalizedPage, normalizedPageSize } from "@/lib/list-query";
 import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
+import { getCachedBroadcasters } from "@/lib/server/cached-broadcasters";
 import { loadMemberWorkOverview } from "@/lib/server/member-work-overview";
 import { LegacyDeclarationSection } from "./LegacyDeclarationSection";
 
@@ -45,7 +46,7 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
     sortKey: stringParam(query.sort, "date"),
     sortDir: stringParam(query.direction, "desc") === "asc" ? "asc" as const : "desc" as const,
   };
-  const [rightsHolderResult, overview, broadcastersResult, contractedOverview, dashboardTaskResult] = await Promise.all([
+  const [rightsHolderResult, overview, broadcasters, contractedOverview, dashboardTaskResult] = await Promise.all([
     db.from("rettighedshavere")
       .select("id,full_name,dfi_person_id")
       .eq("id", context.rightsHolderId)
@@ -64,7 +65,7 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
       sortKey: initialQuery.sortKey,
       sortDir: initialQuery.sortDir,
     }),
-    db.from("broadcasters").select("name,logo_path").order("name", { ascending: true }),
+    getCachedBroadcasters(),
     db.rpc("list_member_work_page_v2", {
       p_org_id: context.orgId,
       p_rights_holder_id: context.rightsHolderId,
@@ -112,7 +113,7 @@ export default async function MineVaerkerPage({ searchParams }: { searchParams: 
       <MineVaerkerClient
         initialAssignments={assignments}
         allAssignments={[]}
-        broadcasters={(broadcastersResult.data ?? []) as BroadcasterLogo[]}
+        broadcasters={broadcasters as BroadcasterLogo[]}
         rightsHolderId={rightsHolder.id}
         dfiPersonId={rightsHolder.dfi_person_id ?? null}
         contractedWorkIds={contractedWorkIds}

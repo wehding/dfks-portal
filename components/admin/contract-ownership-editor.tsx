@@ -78,14 +78,19 @@ export function ContractOwnershipEditor({
     if (result.success) {
       setDetail(result.data);
       const evidence = result.data.documentEvidence?.spatialEvidence;
-      const quote = result.data.aiEvidence?.sourceQuote ?? "";
+      const quote = result.data.aiEvidence?.sourceQuote
+        ?? result.data.aiEvidence?.extractedRightsHolderName
+        ?? result.data.proposedRightsHolder?.name
+        ?? result.data.assignedRightsHolder?.name
+        ?? "";
+      const focusText = result.data.aiEvidence?.extractedRightsHolderName ?? quote;
       onEvidenceActivate({
         fieldKey: "ownership",
         label: "Navn aflæst fra kontrakten",
         sourceKey: "rightsHolderName",
         quote,
-        focusText: result.data.aiEvidence?.extractedRightsHolderName ?? quote,
-        page: evidence?.page ?? null,
+        focusText,
+        page: evidence?.page ?? 1,
         bbox: evidence?.bbox ?? null,
         coordinateSource: evidence?.coordinateSource ?? null,
         confidence: evidence?.confidence ?? null,
@@ -114,17 +119,20 @@ export function ContractOwnershipEditor({
   const sourceQuote = detail?.aiEvidence?.sourceQuote ?? null;
   const canConfirm = Boolean(canManage && detail && oneClickOwner && !["confirmed", "corrected", "not_applicable", "blocked"].includes(detail.verification.status));
 
-  const sourceActivation = useMemo<ContractEvidenceActivation>(() => ({
-    fieldKey: "ownership",
-    label: "Navn aflæst fra kontrakten",
-    sourceKey: "rightsHolderName",
-    quote: sourceQuote ?? "",
-    focusText: extractedName ?? sourceQuote,
-    page: detail?.documentEvidence?.spatialEvidence?.page ?? null,
-    bbox: detail?.documentEvidence?.spatialEvidence?.bbox ?? null,
-    coordinateSource: detail?.documentEvidence?.spatialEvidence?.coordinateSource ?? null,
-    confidence: detail?.documentEvidence?.spatialEvidence?.confidence ?? null,
-  }), [detail?.documentEvidence?.spatialEvidence, extractedName, sourceQuote]);
+  const sourceActivation = useMemo<ContractEvidenceActivation>(() => {
+    const quote = sourceQuote ?? extractedName ?? proposedOwner?.name ?? assignedOwner?.name ?? "";
+    return {
+      fieldKey: "ownership",
+      label: "Navn aflæst fra kontrakten",
+      sourceKey: "rightsHolderName",
+      quote,
+      focusText: extractedName ?? quote,
+      page: detail?.documentEvidence?.spatialEvidence?.page ?? 1,
+      bbox: detail?.documentEvidence?.spatialEvidence?.bbox ?? null,
+      coordinateSource: detail?.documentEvidence?.spatialEvidence?.coordinateSource ?? null,
+      confidence: detail?.documentEvidence?.spatialEvidence?.confidence ?? null,
+    };
+  }, [detail?.documentEvidence?.spatialEvidence, extractedName, sourceQuote, proposedOwner?.name, assignedOwner?.name]);
 
   async function applyOwner(owner: ContractOwnerSummary, goNext: boolean) {
     if (!detail || saving) return;

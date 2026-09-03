@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isUuid } from "@/lib/uuid";
+import { isSeriesType } from "@/lib/series-episodes";
 
 export const ADMIN_CONTRACT_OWNERSHIP_FILTERS = [
   "all",
@@ -139,9 +140,131 @@ export async function matchingAdminContractIds(
     if (result.error) throw new Error(result.error.message);
     ids = intersectIds(ids, (result.data ?? []).map(row => row.id));
   } else if (params.status === "validationPending") {
-    const result = await db.from("contracts").select("id").eq("org_id", orgId).eq("status", "kladde").not("work_id", "is", null).not("rights_holder_id", "is", null).limit(5000);
+    const result = await db
+      .from("contracts")
+      .select(`
+        id,
+        work_id,
+        rights_holder_id,
+        episode_numbers,
+        solo_confirmed,
+        works(id, type, is_season_group, parent_work_id),
+        contract_validations(extracted_data)
+      `)
+      .eq("org_id", orgId)
+      .eq("status", "kladde")
+      .not("work_id", "is", null)
+      .not("rights_holder_id", "is", null)
+      .limit(5000);
     if (result.error) throw new Error(result.error.message);
-    ids = intersectIds(ids, (result.data ?? []).map(row => row.id));
+
+    type CandidateRow = {
+      id: string;
+      work_id: string;
+      rights_holder_id: string;
+      episode_numbers: number[] | null;
+      solo_confirmed: boolean | null;
+      works: { id: string; type: string | null; is_season_group: boolean | null; parent_work_id: string | null } | Array<{ id: string; type: string | null; is_season_group: boolean | null; parent_work_id: string | null }> | null;
+      contract_validations: { extracted_data: Record<string, unknown> | null } | Array<{ extracted_data: Record<string, unknown> | null }> | null;
+    };
+
+    const candidates = (result.data ?? []) as unknown as CandidateRow[];
+
+    // 1. Afsnitsafklaring: Hvis værket er en serie, skal der være valgt mindst ét afsnit
+    const episodePassingCandidates = candidates.filter(candidate => {
+      const work = Array.isArray(candidate.works) ? candidate.works[0] : candidate.works;
+      const isSeries = Boolean(
+        work && (
+          isSeriesType(work.type) ||
+          work.is_season_group ||
+          work.parent_work_id
+        )
+      );
+      if (isSeries) {
+        return Array.isArray(candidate.episode_numbers) && candidate.episode_numbers.length > 0;
+      }
+      return true;
+    });
+
+    // 2. Solo- / medklipperafklaring:
+    // Tjek først om solo er bekræftet direkte på kontrakten eller i valideringsdata
+    const needsLookup = episodePassingCandidates.filter(candidate => {
+      if (candidate.solo_confirmed) return false;
+      const val = Array.isArray(candidate.contract_validations)
+        ? candidate.contract_validations[0]
+        : candidate.contract_validations;
+      const ed = val?.extracted_data as Record<string, unknown> | undefined;
+      return !(ed?.soloConfirmed || ed?.isSoloClipped);
+    });
+
+    const clarifiedViaExternal = new Set<string>();
+    if (needsLookup.length > 0) {
+      const workIds = [...new Set(needsLookup.map(c => c.work_id))];
+      const holderIds = [...new Set(needsLookup.map(c => c.rights_holder_id))];
+
+      const [reviewsRes, assignmentsRes, shareCasesRes] = await Promise.all([
+        db
+          .from("member_work_collaboration_reviews")
+          .select("rights_holder_id, work_id, status")
+          .eq("org_id", orgId)
+          .in("work_id", workIds)
+          .in("rights_holder_id", holderIds)
+          .in("status", ["solo_confirmed", "coeditors_reported"]),
+        db
+          .from("work_assignments")
+          .select("work_id, rights_holder_id")
+          .eq("org_id", orgId)
+          .in("work_id", workIds),
+        db
+          .from("work_share_cases")
+          .select("work_id")
+          .eq("org_id", orgId)
+          .in("work_id", workIds),
+      ]);
+
+      const clarifiedReviews = new Set(
+        (reviewsRes.data ?? []).map(r => `${r.rights_holder_id}:${r.work_id}`)
+      );
+      const assignmentsByWork = new Map<string, Set<string>>();
+      for (const row of assignmentsRes.data ?? []) {
+        if (!row.rights_holder_id) continue;
+        if (!assignmentsByWork.has(row.work_id)) assignmentsByWork.set(row.work_id, new Set());
+        assignmentsByWork.get(row.work_id)!.add(row.rights_holder_id);
+      }
+      const worksWithMultipleEditors = new Set(
+        [...assignmentsByWork.entries()]
+          .filter(([, holders]) => holders.size > 1)
+          .map(([workId]) => workId)
+      );
+      const worksWithShareCases = new Set(
+        (shareCasesRes.data ?? []).map(s => s.work_id)
+      );
+
+      for (const candidate of needsLookup) {
+        const reviewKey = `${candidate.rights_holder_id}:${candidate.work_id}`;
+        if (
+          clarifiedReviews.has(reviewKey) ||
+          worksWithMultipleEditors.has(candidate.work_id) ||
+          worksWithShareCases.has(candidate.work_id)
+        ) {
+          clarifiedViaExternal.add(candidate.id);
+        }
+      }
+    }
+
+    const readyIds = episodePassingCandidates
+      .filter(candidate => {
+        if (candidate.solo_confirmed) return true;
+        const val = Array.isArray(candidate.contract_validations)
+          ? candidate.contract_validations[0]
+          : candidate.contract_validations;
+        const ed = val?.extracted_data as Record<string, unknown> | undefined;
+        if (ed?.soloConfirmed || ed?.isSoloClipped) return true;
+        return clarifiedViaExternal.has(candidate.id);
+      })
+      .map(c => c.id);
+
+    ids = intersectIds(ids, readyIds);
   } else if (params.status === "validationRecommended") {
     const result = await db.from("contract_validations").select("contract_id,has_credit_clause,has_overenskomst_incorporation").or("has_credit_clause.eq.false,has_overenskomst_incorporation.eq.false").limit(5000);
     if (result.error) throw new Error(result.error.message);
