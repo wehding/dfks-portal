@@ -309,12 +309,6 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   }, [data.canManageOwnership, initialSection, loadQueue, queueId, returnTo]);
 
   useEffect(() => {
-    if (queue?.kind !== "ownership" || !data.canManageOwnership || tab === "ownership") return;
-    setVisitedTabs(current => new Set(current).add("ownership"));
-    setTab("ownership");
-  }, [data.canManageOwnership, queue?.kind, tab]);
-
-  useEffect(() => {
     if (splitLayout && mobileSourceView !== "closed") setMobileSourceView("closed");
   }, [mobileSourceView, splitLayout]);
 
@@ -792,8 +786,20 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     }
   }
 
+  async function saveAndNext() {
+    const success = await save();
+    if (!success) return;
+    toast.success("Kontrakten er gemt", { duration: 2000 });
+    if (queue?.nextContractId) {
+      navigateTo(queue.nextContractId);
+    } else {
+      router.push(safeContractReturnTo(returnTo));
+    }
+  }
+
   function contractEditorUrl(nextContractId: string) {
-    const params = new URLSearchParams({ returnTo, section: tab });
+    const section = queue?.kind === "ownership" && data.canManageOwnership ? "ownership" : tab;
+    const params = new URLSearchParams({ returnTo, section });
     if (queueId) params.set("queueId", queueId);
     return `/admin/kontrakter/${nextContractId}/rediger?${params.toString()}`;
   }
@@ -926,8 +932,14 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7" disabled={queueLoading || !queue?.nextContractId} onClick={() => requestNavigate(queue?.nextContractId ?? null)} aria-label="Næste kontrakt"><ChevronRight className="h-4 w-4" /></Button>
         </div>
         <div className="flex shrink-0 rounded-sm border bg-muted/30 p-0.5">
-          <Button size="sm" className="h-7 shrink-0 rounded-sm px-2 text-xs" variant={variant === "original" ? "secondary" : "ghost"} disabled={!data.documents.original?.url} onClick={() => setVariant("original")}>{data.documents.original?.convertedForViewing ? "Original konverteret PDF" : "Original"}</Button>
-          <Button size="sm" className="h-7 shrink-0 rounded-sm px-2 text-xs" variant={variant === "commented" ? "secondary" : "ghost"} disabled={!data.documents.commented?.url} onClick={() => setVariant("commented")}>Kommenteret PDF</Button>
+          <Button size="sm" className={`h-7 shrink-0 gap-1.5 rounded-sm px-2 text-xs ${variant === "original" ? "bg-background font-medium text-foreground shadow-xs" : ""}`} variant={variant === "original" ? "secondary" : "ghost"} disabled={!data.documents.original?.url} onClick={() => setVariant("original")}>
+            {variant === "original" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
+            {data.documents.original?.convertedForViewing ? "Original konverteret PDF" : "Original"}
+          </Button>
+          <Button size="sm" className={`h-7 shrink-0 gap-1.5 rounded-sm px-2 text-xs ${variant === "commented" ? "bg-background font-medium text-foreground shadow-xs" : ""}`} variant={variant === "commented" ? "secondary" : "ghost"} disabled={!data.documents.commented?.url} onClick={() => setVariant("commented")}>
+            {variant === "commented" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
+            Kommenteret PDF
+          </Button>
         </div>
         {data.documents.original?.sourceUrl && <Button asChild size="icon" variant="outline" className="h-8 w-8 shrink-0" title="Download uændret original"><a href={data.documents.original.sourceUrl} download><Download className="h-3.5 w-3.5" /><span className="sr-only">Download uændret original</span></a></Button>}
         <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving || aiReading} onClick={() => void runAiReading()}>{aiReading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}AI-aflæsning</Button>
@@ -1066,6 +1078,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
               <Button onClick={() => void validate(false)} disabled={saving}><CheckCircle2 className="h-4 w-4" />Validér kontrakt</Button>
               <Button variant="outline" onClick={() => void validate(true)} disabled={saving || !queue?.nextContractId} title="Gemmer alle ændringer, validerer og åbner næste (⌘⏎)"><CheckCircle2 className="h-4 w-4" />Validér og næste <kbd className="rounded border px-1 font-mono text-[10px]">⌘⏎</kbd></Button>
               <Button variant="outline" disabled={saving} onClick={() => void save()}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Gem</Button>
+              <Button variant="outline" disabled={saving || !queue?.nextContractId} onClick={() => void saveAndNext()} title="Gemmer ændringer som kladde og åbner næste kontrakt"><Save className="h-4 w-4" />Gem og næste</Button>
               <Button variant="destructive" disabled={saving} onClick={() => setRejectOpen(true)}><XCircle className="h-4 w-4" />Afvis</Button>
             </div>
           </TabsContent>
@@ -1168,8 +1181,14 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
           <DialogTitle className="min-w-0 flex-1 truncate text-sm">{activeField?.label ?? "Kilde i kontrakten"}</DialogTitle>
           <DialogDescription className="sr-only">Hele kontrakten med den valgte dokumentkilde markeret.</DialogDescription>
           <div className="flex shrink-0 rounded-md border bg-muted/30 p-0.5">
-            <Button size="sm" variant={variant === "original" ? "secondary" : "ghost"} disabled={!data.documents.original?.url} onClick={() => setVariant("original")}>{data.documents.original?.convertedForViewing ? "Original konverteret PDF" : "Original"}</Button>
-            <Button size="sm" variant={variant === "commented" ? "secondary" : "ghost"} disabled={!data.documents.commented?.url} onClick={() => setVariant("commented")}>Kommenteret PDF</Button>
+            <Button size="sm" className={`gap-1.5 ${variant === "original" ? "bg-background font-medium text-foreground shadow-xs" : ""}`} variant={variant === "original" ? "secondary" : "ghost"} disabled={!data.documents.original?.url} onClick={() => setVariant("original")}>
+              {variant === "original" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
+              {data.documents.original?.convertedForViewing ? "Original konverteret PDF" : "Original"}
+            </Button>
+            <Button size="sm" className={`gap-1.5 ${variant === "commented" ? "bg-background font-medium text-foreground shadow-xs" : ""}`} variant={variant === "commented" ? "secondary" : "ghost"} disabled={!data.documents.commented?.url} onClick={() => setVariant("commented")}>
+              {variant === "commented" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
+              Kommenteret PDF
+            </Button>
           </div>
         </DialogHeader>
         <div className="min-h-0 flex-1">

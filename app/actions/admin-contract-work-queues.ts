@@ -204,10 +204,11 @@ export async function fetchAdminContractTaskCounts() {
   if (!caller) return { success: false as const, error: "Ikke autoriseret" };
   const db = createServiceClient();
   try {
-    const [validationRaw, messagesRaw, ownership] = await Promise.all([
+    const [validationRaw, messagesRaw, ownership, draftsResult] = await Promise.all([
       matchingAdminContractIds(db, caller.orgId, { status: "validationPending" }),
       matchingAdminContractIds(db, caller.orgId, { status: "beskeder" }),
       caller.canManageOwnership ? ownershipTaskIds(db, caller.orgId) : Promise.resolve(new Set<string>()),
+      db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", caller.orgId).is("superseded_by_contract_id", null).eq("status", "kladde"),
     ]);
     const [validation, messages] = await Promise.all([
       existingScopedContractIds(db, caller.orgId, validationRaw),
@@ -215,7 +216,7 @@ export async function fetchAdminContractTaskCounts() {
     ]);
     return {
       success: true as const,
-      counts: { validation: validation.size, ownership: ownership.size, messages: messages.size },
+      counts: { validation: validation.size, ownership: ownership.size, messages: messages.size, drafts: draftsResult.count ?? 0 },
     };
   } catch (error) {
     return { success: false as const, error: error instanceof Error ? error.message : "Opgaverne kunne ikke hentes" };

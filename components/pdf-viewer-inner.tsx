@@ -366,9 +366,15 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     }, [resetViewToken])
 
     const navigationRequest = useRef(0)
+    const lastNavigatedSourceKey = useRef<string | null>(null)
     useEffect(() => {
         const request = ++navigationRequest.current
         if (!activeHighlight || !pdfDoc || !numPages) return
+
+        const currentSourceKey = `${activeHighlight}:${activePage ?? ""}`
+        if (lastNavigatedSourceKey.current === currentSourceKey) return
+        lastNavigatedSourceKey.current = currentSourceKey
+
         if (activePage && activePage >= 1 && activePage <= numPages) {
             if (activePage !== pageNumber) {
                 setPageRendered(false)
@@ -403,6 +409,15 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     useEffect(() => {
         if (!pageViewport || !containerRef.current) return
 
+        // Hvis der ikke er aktiv evidens eller highlight, nulstil til breddetilpasning
+        if (!activeEvidence && !activeHighlight && !preciseFocusText) {
+            if (zoomedEvidence.current !== null) {
+                zoomedEvidence.current = null
+                setFitMode("width")
+            }
+            return
+        }
+
         let boxWidth = 0
         let boxHeight = 0
         let evidenceKey = ""
@@ -420,6 +435,17 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             }
         }
 
+        // Hvis markeringen er en bred klausul (> 45% af sidens bredde) eller en klausul uden snæver boks:
+        // Zoom ud til fuld bredde (fitMode="width"), så hele teksten kan læses uden horisontal beskæring.
+        const isWideOrClause = boxWidth >= pageViewport.pdfWidth * 0.45 || (!activeBbox && !boxWidth && activeEvidence?.clauseId)
+        if (isWideOrClause) {
+            const clauseKey = `clause:${activeEvidence?.clauseId ?? activeClauseId ?? "wide"}`
+            if (zoomedEvidence.current === clauseKey) return
+            zoomedEvidence.current = clauseKey
+            setFitMode("width")
+            return
+        }
+
         if (boxWidth <= 0 || boxHeight <= 0 || !evidenceKey) return
         if (zoomedEvidence.current === evidenceKey) return
 
@@ -433,16 +459,22 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         zoomedEvidence.current = evidenceKey
         setFitMode("manual")
         setScale(targetScale)
-    }, [activeBbox, activeEvidence, activeHighlight, pageNumber, pageRendered, pageViewport, preciseFocusText, scale])
+    }, [activeBbox, activeClauseId, activeEvidence, activeHighlight, pageNumber, pageRendered, pageViewport, preciseFocusText, scale])
 
-    // Naviger til evidensens eller klausulens side ved skift
+    // Naviger til evidensens eller klausulens side ved skift (kun når kilden skifter, aldrig ved brugerens manuelle sideskift)
+    const lastNavigatedClauseKey = useRef<string | null>(null)
     useEffect(() => {
         const targetPage = activeEvidence?.page ?? activeEvidence?.clause?.page ?? (activeClauseId && layout ? layout.clauses.find(c => c.id === activeClauseId)?.page : null)
+        const currentKey = `${activeClauseId ?? ""}:${activeEvidence?.fieldKey ?? ""}:${targetPage ?? ""}`
+        if (lastNavigatedClauseKey.current === currentKey) return
+        lastNavigatedClauseKey.current = currentKey
+
         if (targetPage && targetPage >= 1 && targetPage !== pageNumber) {
             setPageRendered(false)
             setPageNumber(targetPage)
         }
-    }, [activeClauseId, activeEvidence, layout, pageNumber])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeClauseId, activeEvidence, layout])
 
     // Hent sidedimensioner fra PDF-viewporten ved den aktuelle skala.
     // Kører når pdfDoc skifter ELLER side/scale ændres — kræver IKKE pageRendered
@@ -532,6 +564,92 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     }, [activeBbox, activeEvidence, activeHighlight, pageNumber, pageRendered, scale, pageViewport, scrollToActiveHighlight])
 
 
+    const [isMetaPressed, setIsMetaPressed] = useState(false)
+    const isDraggingRef = useRef(false)
+    const [isDragging, setIsDragging] = useState(false)
+    const dragStartRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 })
+
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Meta" || e.key === "Control") setIsMetaPressed(true)
+        }
+        const onKeyUp = (e: KeyboardEvent) => {
+            if (e.key === "Meta" || e.key === "Control") setIsMetaPressed(false)
+        }
+        window.addEventListener("keydown", onKeyDown)
+        window.addEventListener("keyup", onKeyUp)
+        return () => {
+            window.removeEventListener("keydown", onKeyDown)
+            window.removeEventListener("keyup", onKeyUp)
+        }
+    }, [])
+
+    useEffect(() => {
+        const container = containerRef.current
+        if (!container) return
+
+        const onWheel = (e: WheelEvent) => {
+            if (!e.metaKey && !e.ctrlKey) return // Normal rulning op/ned
+
+            e.preventDefault()
+            const zoomIn = e.deltaY < 0
+            const factor = zoomIn ? 1.15 : 0.87
+
+            setScale(currentScale => {
+                const newScale = Math.min(3.0, Math.max(0.25, currentScale * factor))
+                if (newScale === currentScale) return currentScale
+
+                const rect = container.getBoundingClientRect()
+                const mouseX = e.clientX - rect.left
+                const mouseY = e.clientY - rect.top
+
+                const ratio = newScale / currentScale
+                container.scrollLeft = (container.scrollLeft + mouseX) * ratio - mouseX
+                container.scrollTop = (container.scrollTop + mouseY) * ratio - mouseY
+
+                return newScale
+            })
+            setFitMode("manual")
+        }
+
+        container.addEventListener("wheel", onWheel, { passive: false })
+        return () => container.removeEventListener("wheel", onWheel)
+    }, [])
+
+    const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (!e.metaKey && !e.ctrlKey) return // Normalt klik -> tillad tekstmarkering i tekstlaget
+        if (!containerRef.current) return
+        isDraggingRef.current = true
+        setIsDragging(true)
+        dragStartRef.current = {
+            x: e.clientX,
+            y: e.clientY,
+            scrollLeft: containerRef.current.scrollLeft,
+            scrollTop: containerRef.current.scrollTop,
+        }
+        try {
+            e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {}
+        e.preventDefault()
+    }
+
+    const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (!isDraggingRef.current || !containerRef.current) return
+        const dx = e.clientX - dragStartRef.current.x
+        const dy = e.clientY - dragStartRef.current.y
+        containerRef.current.scrollLeft = dragStartRef.current.scrollLeft - dx
+        containerRef.current.scrollTop = dragStartRef.current.scrollTop - dy
+    }
+
+    const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (!isDraggingRef.current) return
+        isDraggingRef.current = false
+        setIsDragging(false)
+        try {
+            e.currentTarget.releasePointerCapture(e.pointerId)
+        } catch {}
+    }
+
     if (error) {
         return (
             <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground text-center">
@@ -562,7 +680,14 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setFitMode("manual"); setScale(s => Math.min(2.5, s + 0.2)) }}><ZoomIn className="h-3.5 w-3.5" /></Button>
                 <Button variant={fitMode === "width" ? "secondary" : "ghost"} size="icon" className="h-7 w-7" title="Tilpas PDF til bredden" aria-label="Tilpas PDF til bredden" onClick={() => setFitMode("width")}><Maximize2 className="h-3.5 w-3.5" /></Button>
             </div>
-            <div ref={containerRef} className="flex-1 overflow-auto bg-muted/30">
+            <div
+                ref={containerRef}
+                className={`flex-1 overflow-auto bg-muted/30 ${isMetaPressed ? (isDragging ? "cursor-grabbing select-none" : "cursor-grab select-none") : ""}`}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+            >
                 <div className="p-4 w-max min-w-full flex justify-center">
                     <Document file={url} onLoadSuccess={onDocumentLoadSuccess} onLoadError={onDocumentLoadError} loading={Spinner}>
                         <div style={{ position: "relative", display: "inline-block" }}>
