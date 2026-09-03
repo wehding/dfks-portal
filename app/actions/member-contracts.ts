@@ -11,9 +11,11 @@ import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncContractProducerRelations } from "@/lib/server/production-company-relations";
 import { mergeContractWorkData, type LinkedContractWorkData } from "@/lib/contract-work-data";
+import { applyApprovedAgreementRoyalty } from "@/lib/agreement-royalty-server";
 import { isUuid } from "@/lib/uuid";
 import { resolveDefaultRole } from "@/lib/branding";
-import { parseLocalEpisodeCode } from "@/lib/series-episodes";
+import { buildCompleteEpisodeOptions, episodeOptionsFromLocalChildren, mergeEpisodeOptionsByPriority, parseLocalEpisodeCode } from "@/lib/series-episodes";
+import { resolveExternalSeriesEpisodesForTitle } from "@/app/actions/member-works";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { effectiveCopydanStatus, normalizeTriState, weeklySalaryWithPersonalSupplement } from "@/lib/contract-list-status";
 import { resolveSeriesScopeTarget, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
@@ -21,13 +23,30 @@ import { auditHeadersContext } from "@/lib/audit-access-server";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { extractWordText } from "@/lib/word-text";
+import { extractPdfTextWithLayout } from "@/lib/pdf-parse";
+import { buildPdfLayout } from "@/lib/contract-layout";
+import type { ContractLayout } from "@/lib/contract-layout";
+import { matchCitationToClause } from "@/lib/contract-layout-store";
+import { findContractTypeEvidence, type StoredContractFieldEvidence } from "@/lib/contract-workbench";
+import { mergeContractEvidence, resolveNativeLayoutEvidence, resolveSpatialV3Evidence, sanitizeStoredContractEvidence } from "@/lib/contract-field-evidence";
+import { parseVerifiedSpatialV3Artifact } from "@/lib/server/contract-spatial-artifact";
+import { hasActiveMemberContractOwnership, type MemberOrgAffiliation } from "@/lib/member-contract-access";
+import { createHash, randomUUID } from "node:crypto";
+import { highestStaffRole, type StaffRole } from "@/lib/admin-roles";
 
 import { requireMemberContext, requireOrgId } from "@/lib/org";
 import { getContractImportStatesForOrg } from "@/lib/server/contract-import-state";
 import { createListLoadTimer } from "@/lib/server/list-load-timing";
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
+import {
+  applyAdminContractFilters,
+  matchingAdminContractIds,
+  type AdminContractFilterParams,
+} from "@/lib/server/admin-contract-filtering";
 import type { ListPageResult } from "@/lib/list-query";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
 const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024;
+const SIGNED_UPLOAD_TOMBSTONE_MS = 135 * 60 * 1000;
 
 type ContractExtractData = {
   contractType?: string | null;
@@ -38,6 +57,26 @@ type ContractExtractData = {
   endDate?: string | null;
 };
 
+type MemberUploadIdentity = {
+  ownerId: string;
+  orgId: string;
+  rightsHolderId: string;
+  uploadIntentId: string;
+  contractId: string;
+  storagePath: string;
+};
+
+type ClaimedMemberUploadIdentity = MemberUploadIdentity & {
+  finalizationToken: string;
+  requestHash: string;
+};
+
+type MemberUploadFinalizationClaim = {
+  outcome: "claimed" | "in_progress" | "already_finalized" | "recovery_required";
+  finalization_token: string | null;
+  contract_id: string;
+};
+
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
 
 function documentExtension(path: string | null | undefined) {
@@ -46,19 +85,146 @@ function documentExtension(path: string | null | undefined) {
   return match?.[1] ?? "";
 }
 
+function requiresDocumentProcessing(path: string | null | undefined) {
+  return ["pdf", "doc", "docx"].includes(documentExtension(path));
+}
+
+function stableRequestValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableRequestValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, stableRequestValue(entry)]),
+    );
+  }
+  return value;
+}
+
+function memberUploadRequestHash(kind: "legacy" | "guided", filePath: string, payload: unknown) {
+  return createHash("sha256")
+    .update(JSON.stringify(stableRequestValue({ version: 1, kind, filePath, payload })))
+    .digest("hex");
+}
+
+async function claimMemberUploadFinalization(
+  db: ReturnType<typeof createServiceClient>,
+  identity: MemberUploadIdentity,
+  requestHash: string,
+) {
+  const claimToken = randomUUID();
+  const claimParams = {
+    p_owner_id: identity.ownerId,
+    p_org_id: identity.orgId,
+    p_rights_holder_id: identity.rightsHolderId,
+    p_upload_intent_id: identity.uploadIntentId,
+    p_contract_id: identity.contractId,
+    p_storage_path: identity.storagePath,
+    p_request_hash: requestHash,
+    p_finalization_token: claimToken,
+  };
+  let result = await db.rpc("claim_member_uploaded_contract_finalization", claimParams);
+  if (result.error || !result.data) {
+    // Reuse the caller-generated token. If the first transaction committed but
+    // its response was lost, this retry regains the same lease rather than
+    // stranding the upload in an ambiguous in-progress state.
+    result = await db.rpc("claim_member_uploaded_contract_finalization", claimParams);
+  }
+  const row = (Array.isArray(result.data) ? result.data[0] : result.data) as MemberUploadFinalizationClaim | null;
+  if (result.error || !row?.outcome) {
+    return { success: false as const, error: result.error?.message ?? "Uploaden kunne ikke færdiggøres." };
+  }
+  if (row.outcome === "in_progress") {
+    return {
+      success: false as const,
+      inProgress: true as const,
+      error: "Kontrakten er allerede ved at blive færdiggjort. Vent et øjeblik og prøv igen.",
+    };
+  }
+  if (row.outcome === "recovery_required") {
+    return {
+      success: false as const,
+      recoveryRequired: true as const,
+      error: "Uploaden blev bevaret sikkert, men kræver kontrol hos DFKS, før den kan færdiggøres.",
+    };
+  }
+  if (row.outcome === "already_finalized") {
+    return { success: true as const, alreadyFinalized: true as const, identity: null };
+  }
+  if (!row.finalization_token) {
+    return { success: false as const, error: "Uploadens sikre færdiggørelsestoken mangler." };
+  }
+  return {
+    success: true as const,
+    alreadyFinalized: false as const,
+    identity: {
+      ...identity,
+      finalizationToken: row.finalization_token,
+      requestHash,
+    } satisfies ClaimedMemberUploadIdentity,
+  };
+}
+
 async function currentUser() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   return user;
 }
 
+async function rollbackMemberUploadedContract(
+  db: ReturnType<typeof createServiceClient>,
+  identity: ClaimedMemberUploadIdentity,
+) {
+  const result = await db.rpc("rollback_member_uploaded_contract", {
+    p_owner_id: identity.ownerId,
+    p_org_id: identity.orgId,
+    p_rights_holder_id: identity.rightsHolderId,
+    p_upload_intent_id: identity.uploadIntentId,
+    p_contract_id: identity.contractId,
+    p_storage_path: identity.storagePath,
+    p_finalization_token: identity.finalizationToken,
+  });
+  return {
+    confirmed: !result.error && result.data === true,
+    error: result.error,
+  };
+}
+
+async function rollbackMemberUploadOrReport(
+  db: ReturnType<typeof createServiceClient>,
+  identity: ClaimedMemberUploadIdentity,
+  originalError: string,
+) {
+  const rollback = await rollbackMemberUploadedContract(db, identity);
+  if (rollback.confirmed) return { success: false as const, error: originalError };
+
+  console.error("Sikker rollback af medlemskontrakt kunne ikke bekræftes", {
+    reason: rollback.error?.code ?? "not_confirmed",
+  });
+  return {
+    success: false as const,
+    error: "Kontrakten kunne ikke færdiggøres. Originalfilen er bevaret sikkert, så DFKS kan kontrollere uploaden.",
+  };
+}
+
 async function assertAdminForOrg(db: ReturnType<typeof createServiceClient>, userId: string, orgId: string) {
+  return Boolean(await staffRoleForOrg(db, userId, orgId));
+}
+
+async function staffRoleForOrg(
+  db: ReturnType<typeof createServiceClient>,
+  userId: string,
+  orgId: string,
+): Promise<StaffRole | null> {
   const { data } = await db
     .from("user_org_roles")
-    .select("role")
-    .eq("user_id", userId)
-    .eq("org_id", orgId);
-  return (data ?? []).some(row => ADMIN_ROLES.includes(row.role));
+    .select("role,org_id")
+    .eq("user_id", userId);
+  return highestStaffRole((data ?? [])
+    .filter(row => row.role === "superadmin"
+      || (row.org_id === orgId && ADMIN_ROLES.includes(row.role)))
+    .map(row => row.role));
 }
 
 async function contractValidationBlocker(
@@ -74,13 +240,16 @@ async function contractValidationBlocker(
     .eq("id", contract.id).maybeSingle();
   const seriesWorkId = work?.parent_work_id ?? work?.id;
   const seasonNumber = contractScope?.season_number ?? work?.season_number ?? 1;
-  let scopeQuery = db.from("member_series_episode_scopes").select("id,status").eq("status", "confirmed");
-  if (contractScope?.episode_scope_id) scopeQuery = scopeQuery.eq("id", contractScope.episode_scope_id);
-  else scopeQuery = scopeQuery
+  // A stored scope id is only a pointer, never proof of ownership. Always
+  // re-check the scope against the contract's current owner and organisation.
+  let scopeQuery = db.from("member_series_episode_scopes")
+    .select("id,status")
+    .eq("status", "confirmed")
     .eq("org_id", contractScope?.org_id)
     .eq("rights_holder_id", contract.rights_holder_id)
     .eq("series_work_id", seriesWorkId)
     .eq("season_number", seasonNumber);
+  if (contractScope?.episode_scope_id) scopeQuery = scopeQuery.eq("id", contractScope.episode_scope_id);
   const { data: sharedScope } = await scopeQuery.maybeSingle();
   if (sharedScope) return null;
   const { data: confirmation } = await db.from("contract_episode_confirmations")
@@ -90,15 +259,9 @@ async function contractValidationBlocker(
 
 type SeriesEpisodeWork = { id: string; title: string | null; season_number: number | null; episode_number: number | null; parent_work_id: string | null };
 
-export type AdminContractsPageParams = {
+export type AdminContractsPageParams = AdminContractFilterParams & {
   page?: number;
   pageSize?: number;
-  search?: string;
-  status?: string;
-  type?: string;
-  rightsHolderId?: string | null;
-  sortKey?: "production" | "rightsHolder" | "employer" | "type" | "overenskomst" | "period" | "status";
-  sortDir?: "asc" | "desc";
   includeLookups?: boolean;
   includeSummary?: boolean;
 };
@@ -106,20 +269,6 @@ export type AdminContractsPageParams = {
 function clampPageSize(value: number | undefined) {
   if (!value || Number.isNaN(value)) return 20;
   return Math.min(Math.max(Math.floor(value), 10), 200);
-}
-
-function normalizeSearch(value: string | undefined) {
-  return value?.trim().toLowerCase() ?? "";
-}
-
-function uniqueIds(values: Array<string | null | undefined>) {
-  return [...new Set(values.filter((value): value is string => Boolean(value)))];
-}
-
-function intersectIds(base: Set<string> | null, next: Iterable<string>) {
-  const nextSet = new Set(next);
-  if (!base) return nextSet;
-  return new Set([...base].filter(id => nextSet.has(id)));
 }
 
 function normalizeAdminContractLookups(results: any[] | null) {
@@ -154,119 +303,6 @@ async function fetchSeriesEpisodeWorks(
   return { episodeWorks, error: null };
 }
 
-async function matchingAdminContractIds(
-  db: ReturnType<typeof createServiceClient>,
-  orgId: string,
-  params: AdminContractsPageParams,
-) {
-  let ids: Set<string> | null = null;
-  const q = normalizeSearch(params.search);
-
-  if (q) {
-    const like = `%${q}%`;
-    const matches = new Set<string>();
-    if (isUuid(q)) {
-      const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).eq("id", q).limit(1);
-      if (error) throw new Error(error.message);
-      for (const row of data ?? []) matches.add(row.id);
-    }
-    const directColumns = ["working_title", "type", "overenskomst", "status", "document_processing_status"];
-    const directResults = await Promise.all(directColumns.map(column =>
-      db.from("contracts").select("id").eq("org_id", orgId).ilike(column, like).limit(5000)
-    ));
-    for (const result of directResults) {
-      if (result.error) throw new Error(result.error.message);
-      for (const row of result.data ?? []) matches.add(row.id);
-    }
-
-    const numeric = Number(q);
-    if (Number.isFinite(numeric)) {
-      const { data, error } = await db
-        .from("contracts")
-        .select("id")
-        .eq("org_id", orgId)
-        .or(`contract_date.ilike.%${numeric}%,start_date.ilike.%${numeric}%,end_date.ilike.%${numeric}%`)
-        .limit(5000);
-      if (error) throw new Error(error.message);
-      for (const row of data ?? []) matches.add(row.id);
-    }
-
-    const [{ data: holders, error: holdersError }, { data: employers, error: employersError }, { data: works, error: worksError }] = await Promise.all([
-      db.from("rettighedshavere").select("id").eq("org_id", orgId).ilike("full_name", like).limit(5000),
-      db.from("employers").select("id").eq("org_id", orgId).ilike("name", like).limit(5000),
-      db.from("works").select("id").eq("org_id", orgId).ilike("title", like).limit(5000),
-    ]);
-    if (holdersError) throw new Error(holdersError.message);
-    if (employersError) throw new Error(employersError.message);
-    if (worksError) throw new Error(worksError.message);
-
-    const holderIds = uniqueIds((holders ?? []).map(row => row.id));
-    const employerIds = uniqueIds((employers ?? []).map(row => row.id));
-    const workIds = uniqueIds((works ?? []).map(row => row.id));
-    const relationResults = await Promise.all([
-      holderIds.length ? db.from("contracts").select("id").eq("org_id", orgId).in("rights_holder_id", holderIds).limit(5000) : Promise.resolve({ data: [], error: null }),
-      employerIds.length ? db.from("contracts").select("id").eq("org_id", orgId).in("employer_id", employerIds).limit(5000) : Promise.resolve({ data: [], error: null }),
-      workIds.length ? db.from("contracts").select("id").eq("org_id", orgId).in("work_id", workIds).limit(5000) : Promise.resolve({ data: [], error: null }),
-    ]);
-    for (const result of relationResults) {
-      if (result.error) throw new Error(result.error.message);
-      for (const row of result.data ?? []) matches.add(row.id);
-    }
-
-    if (q.includes("mangler") && q.includes("værk")) {
-      const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("work_id", null).limit(5000);
-      if (error) throw new Error(error.message);
-      for (const row of data ?? []) matches.add(row.id);
-    }
-    if (q.includes("mangler") && (q.includes("ejer") || q.includes("rettighedshaver"))) {
-      const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("rights_holder_id", null).limit(5000);
-      if (error) throw new Error(error.message);
-      for (const row of data ?? []) matches.add(row.id);
-    }
-
-    ids = intersectIds(ids, matches);
-  }
-
-  if (params.rightsHolderId) {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).eq("rights_holder_id", params.rightsHolderId).limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  }
-
-  if (params.status === "beskeder") {
-    const { data, error } = await db
-      .from("contract_comments")
-      .select("contract_id")
-      .eq("author_role", "member")
-      .is("admin_read_at", null)
-      .limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.contract_id));
-  } else if (params.status === "missingOwner") {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("rights_holder_id", null).limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  } else if (params.status === "missingWork") {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).is("work_id", null).neq("status", "valideret").limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  } else if (params.status === "validationPending") {
-    const { data, error } = await db.from("contracts").select("id").eq("org_id", orgId).not("work_id", "is", null).not("rights_holder_id", "is", null).neq("status", "valideret").limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.id));
-  } else if (params.status === "validationRecommended") {
-    const { data, error } = await db
-      .from("contract_validations")
-      .select("contract_id, has_credit_clause, has_overenskomst_incorporation")
-      .or("has_credit_clause.eq.false,has_overenskomst_incorporation.eq.false")
-      .limit(5000);
-    if (error) throw new Error(error.message);
-    ids = intersectIds(ids, (data ?? []).map(row => row.contract_id));
-  }
-
-  return ids;
-}
-
 export async function fetchAdminContractsPage(params: AdminContractsPageParams = {}) {
   const timer = createListLoadTimer("admin-contracts");
   const session = await createClient();
@@ -276,12 +312,25 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
 
   const db = createServiceClient();
   const orgId = caller.orgId;
+  const appAccess = await getRequestAppAccessContext();
+  const canManageOwnership = Boolean(
+    appAccess?.orgId === orgId
+    && appAccess.canUseAdmin
+    && appAccess.modules?.contract_ownership?.write,
+  );
+  const canReadRightsHolderLookups = Boolean(
+    appAccess?.orgId === orgId
+    && appAccess.canUseAdmin
+    && appAccess.modules?.rights_holders?.read,
+  );
   const includeLookups = params.includeLookups === true;
   const includeSummary = params.includeSummary !== false;
   const lookupsPromise = includeLookups
     ? Promise.all([
         db.from("employers").select("id,name,parent_id,dfi_company_id").eq("org_id", orgId).order("name"),
-        db.from("org_affiliations").select("rettighedshavere(id,full_name)").eq("org_id", orgId),
+        canReadRightsHolderLookups
+          ? db.from("org_affiliations").select("rettighedshavere(id,full_name)").eq("org_id", orgId)
+          : Promise.resolve({ data: [], error: null }),
         db.from("works").select("id,title,year,poster_url").eq("org_id", orgId).order("title").limit(500),
       ])
     : Promise.resolve(null);
@@ -300,11 +349,11 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
     ]);
     const lookups = normalizeAdminContractLookups(lookupResults);
     const timing = timer.finish({ rowCount: 0, page, includeLookups, includeSummary });
-    return { success: true, contracts: [], totalCount: 0, totalAllCount: totalAllCount ?? undefined, stats: includeSummary ? { total: totalAllCount ?? 0, validerede: 0, kladder: 0 } : undefined, lookups, context: { orgId, role: caller.role }, timing };
+    return { success: true, contracts: [], totalCount: 0, totalAllCount: totalAllCount ?? undefined, stats: includeSummary ? { total: totalAllCount ?? 0, validerede: 0, kladder: 0 } : undefined, lookups, context: { orgId, role: caller.role, canManageOwnership }, timing };
   }
 
   const selectFields = `
-    id, type, overenskomst, status, pdf_url, processed_pdf_url,
+    id, type, overenskomst, status, pdf_url, original_view_pdf_url, processed_pdf_url,
     document_processing_status, document_processing_error_code, superseded_by_contract_id,
     contract_date, start_date, end_date, created_at,
     employer_id, rights_holder_id, working_title,
@@ -312,19 +361,17 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
     employers (name),
     rettighedshavere (full_name),
     works (id, title, type, poster_url),
-    contract_validations (has_credit_clause, has_overenskomst_incorporation)
+    contract_validations (has_credit_clause, has_overenskomst_incorporation),
+    contract_owner_verifications (
+      status, assignment_origin, reason_code, revision,
+      assigned_rights_holder_id, proposed_rights_holder_id,
+      proposed_rights_holder:rettighedshavere!contract_owner_verifications_proposed_rights_holder_id_fkey(full_name)
+    )
   `;
   let countQuery = db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("superseded_by_contract_id", null);
   let listQuery = db.from("contracts").select(selectFields).eq("org_id", orgId).is("superseded_by_contract_id", null);
-  const applyFilters = (query: any) => {
-    let next = query;
-    if (matchedIds) next = next.in("id", [...matchedIds]);
-    if (params.status && !["all", "beskeder", "missingOwner", "missingWork", "validationPending", "validationRecommended"].includes(params.status)) next = next.eq("status", params.status);
-    if (params.type && params.type !== "all") next = next.eq("type", params.type);
-    return next;
-  };
-  countQuery = applyFilters(countQuery);
-  listQuery = applyFilters(listQuery);
+  countQuery = applyAdminContractFilters(countQuery, params, matchedIds);
+  listQuery = applyAdminContractFilters(listQuery, params, matchedIds);
 
   const ascending = params.sortDir !== "desc";
   if (params.sortKey === "rightsHolder") listQuery = listQuery.order("rights_holder_id", { ascending });
@@ -378,6 +425,8 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
   }
   const contracts = rawContracts.map(row => {
     const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations;
+    const ownership = Array.isArray(row.contract_owner_verifications) ? row.contract_owner_verifications[0] : row.contract_owner_verifications;
+    const proposedOwner = Array.isArray(ownership?.proposed_rights_holder) ? ownership.proposed_rights_holder[0] : ownership?.proposed_rights_holder;
     return {
       id: row.id,
       type: row.type,
@@ -397,6 +446,13 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
       employer_name: row.employers?.name ?? null,
       rights_holder_id: row.rights_holder_id ?? null,
       rights_holder_name: row.rettighedshavere?.full_name ?? null,
+      ownership_status: ownership?.status ?? null,
+      ownership_origin: ownership?.assignment_origin ?? null,
+      ownership_reason_code: ownership?.reason_code ?? null,
+      ownership_revision: ownership?.revision ?? null,
+      ownership_assigned_rights_holder_id: ownership?.assigned_rights_holder_id ?? null,
+      ownership_proposed_rights_holder_id: ownership?.proposed_rights_holder_id ?? null,
+      ownership_proposed_rights_holder_name: proposedOwner?.full_name ?? null,
       work_id: row.works?.id ?? null,
       working_title: row.working_title ?? null,
       work_title: row.works?.title ?? null,
@@ -424,7 +480,7 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
     totalAllCount: includeSummary ? totalAllCount ?? count ?? contracts.length : undefined,
     stats: includeSummary ? { total: totalAllCount ?? count ?? contracts.length, validerede: validatedCount ?? 0, kladder: draftCount ?? 0 } : undefined,
     lookups,
-    context: { orgId, role: caller.role },
+    context: { orgId, role: caller.role, canManageOwnership },
     timing,
   };
 }
@@ -458,10 +514,18 @@ export async function uploadMemberContract(formData: FormData) {
     return { success: false, error: "Filformat ikke understøttet — brug PDF, DOC, DOCX eller TXT" };
   }
 
-  // Upload til kontrakter-bucket (samme som admin)
-  const safeName = file.name.replace(/[^a-zA-Z0-9.\-_æøåÆØÅ]/g, "_");
-  const pdfUrl = `${user.id}/${Date.now()}-${safeName}`;
+  const pdfUrl = `${orgId}/${user.id}/${randomUUID()}.${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
+  const { data: uploadIntent, error: uploadIntentError } = await db.rpc("create_contract_upload_intent", {
+    p_owner_id: user.id,
+    p_org_id: orgId,
+    p_rights_holder_id: rh.id,
+    p_storage_path: pdfUrl,
+    p_expected_size: file.size,
+  });
+  if (uploadIntentError || !uploadIntent?.id) {
+    return { success: false, error: "Kunne ikke klargøre en sikker upload" };
+  }
 
   const { error: storageErr } = await db.storage
     .from(BUCKET)
@@ -469,53 +533,97 @@ export async function uploadMemberContract(formData: FormData) {
 
   if (storageErr) {
     console.error("Storage upload fejl:", storageErr);
+    await db.from("contract_upload_intents")
+      .update({ expires_at: new Date().toISOString() })
+      .eq("id", uploadIntent.id)
+      .eq("owner_id", user.id)
+      .is("contract_id", null);
     return { success: false, error: "Kunne ikke uploade filen" };
   }
 
-  // Kald eksisterende AI-extract route (genbruger al Claude-logik)
-  let aiData: ContractExtractData = {};
-  try {
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
-    const extractForm = new FormData();
-    extractForm.append("file", new Blob([buffer], { type: file.type }), file.name);
+  // Den autoritative udtrækning sker først efter dokumentworkerens PDF/DOC/
+  // DOCX-normalisering. Denne ældre uploadvej må ikke sende rå Word/PDF
+  // direkte til en separat AI-route.
+  const aiData: ContractExtractData = {};
 
-    const res = await fetch(`${baseUrl}/api/contracts/extract`, {
-      method: "POST",
-      body: extractForm,
-    });
+  const createParams = {
+    p_owner_id: user.id,
+    p_org_id: orgId,
+    p_rights_holder_id: rh.id,
+    p_upload_intent_id: uploadIntent.id,
+    p_storage_path: pdfUrl,
+    p_uploaded_size: file.size,
+    p_working_title: file.name.replace(/\.[^.]+$/, ""),
+    p_work_id: null,
+    p_season_number: null,
+    p_episode_numbers: null,
+    p_defer_ai_job: false,
+  };
+  let createResult = await db.rpc("create_member_uploaded_contract", createParams);
 
-    if (res.ok) {
-      aiData = await res.json() as ContractExtractData;
-    } else {
-      console.warn("Extract route returnerede:", res.status);
-    }
-  } catch (err: unknown) {
-    console.error("AI-udtræk fejl:", err instanceof Error ? err.message : err);
-    // Fortsæt uden AI-data — kontrakten gemmes stadig
+  if (createResult.error || !createResult.data) {
+    // The RPC is idempotent and row-locks the intent. A retry therefore
+    // resolves an uncertain/lost response without racing a committed upload.
+    createResult = await db.rpc("create_member_uploaded_contract", createParams);
+  }
+  const contract = createResult.data;
+  if (createResult.error || !contract) {
+    console.error("DB insert fejl:", createResult.error?.code ?? "unknown");
+    // Never remove the object after an uncertain database result. The
+    // token-safe tombstone cleanup owns orphan removal after the intent expires.
+    return { success: false, error: "Kunne ikke gemme kontrakten" };
   }
 
-  // Gem kontrakt i DB — status "kladde" så admin kan validere via eksisterende flow
-  const { data: contract, error: dbErr } = await db
-    .from("contracts")
-    .insert({
-      org_id: orgId,
-      rights_holder_id: rh.id,
-      pdf_url: pdfUrl,
-      type: aiData.contractType === "leverandør" || aiData.isFreelanceContract ? "leverandør" : "a-løn",
-      overenskomst: aiData.overenskomst ?? null,
-      contract_date: aiData.contractDate?.substring(0, 10) ?? null,
-      start_date: aiData.startDate?.substring(0, 10) ?? null,
-      end_date: aiData.endDate?.substring(0, 10) ?? null,
-      status: "kladde",
-    })
-    .select("id")
-    .single();
-
-  if (dbErr || !contract) {
-    console.error("DB insert fejl:", dbErr);
-    // Ryd op i storage ved DB-fejl
-    await db.storage.from(BUCKET).remove([pdfUrl]);
-    return { success: false, error: "Kunne ikke gemme kontrakten" };
+  const contractMetadata = {
+    type: aiData.contractType === "leverandør" || aiData.isFreelanceContract ? "leverandør" : "a-løn",
+    overenskomst: aiData.overenskomst ?? null,
+    contract_date: aiData.contractDate?.substring(0, 10) ?? null,
+    start_date: aiData.startDate?.substring(0, 10) ?? null,
+    end_date: aiData.endDate?.substring(0, 10) ?? null,
+  };
+  const uploadIdentity: MemberUploadIdentity = {
+    ownerId: user.id,
+    orgId,
+    rightsHolderId: rh.id,
+    uploadIntentId: uploadIntent.id,
+    contractId: contract.id,
+    storagePath: pdfUrl,
+  };
+  const requestHash = memberUploadRequestHash("legacy", pdfUrl, {
+    workingTitle: file.name.replace(/\.[^.]+$/, ""),
+    contractMetadata,
+  });
+  const claim = await claimMemberUploadFinalization(db, uploadIdentity, requestHash);
+  if (!claim.success) return { success: false, error: claim.error };
+  if (!claim.alreadyFinalized && claim.identity) {
+    const finishParams = {
+      p_owner_id: user.id,
+      p_org_id: orgId,
+      p_rights_holder_id: rh.id,
+      p_upload_intent_id: uploadIntent.id,
+      p_contract_id: contract.id,
+      p_storage_path: pdfUrl,
+      p_finalization_token: claim.identity.finalizationToken,
+      p_request_hash: requestHash,
+      p_validation_notes: null,
+      p_contract_metadata: contractMetadata,
+      p_series_work_id: null,
+      p_scope_season_number: null,
+      p_scope_status: null,
+      p_scope_episode_numbers: null,
+      p_scope_covers_whole_season: false,
+    };
+    let finalized = await db.rpc("finish_member_uploaded_contract_finalization", finishParams);
+    if (finalized.error || !finalized.data) {
+      finalized = await db.rpc("finish_member_uploaded_contract_finalization", finishParams);
+    }
+    if (finalized.error || !finalized.data) {
+      return rollbackMemberUploadOrReport(
+        db,
+        claim.identity,
+        "Kontrakten kunne ikke færdiggøres.",
+      );
+    }
   }
 
   revalidatePath("/portal/mine-kontrakter");
@@ -524,9 +632,6 @@ export async function uploadMemberContract(formData: FormData) {
 
 export async function saveUploadedContract(params: {
   filePath: string;
-  orgId: string;
-  rhId: string;
-  memberName: string;
   workTitle?: string;
   workId?: string;
   productionType: string;
@@ -554,132 +659,265 @@ export async function saveUploadedContract(params: {
   const memberContext = await requireMemberContext(db, user.id);
   const orgId = memberContext.orgId;
   if (memberContext.rightsHolderId !== rh.id) return { success: false, error: "Ingen rettighedshaverprofil i den aktive organisation" };
-  if (!params.filePath.startsWith(`${orgId}/`)) {
-    return { success: false, error: "Filstien tilhører ikke din organisation" };
+  const expectedPrefix = `${orgId}/${user.id}/`;
+  if (!params.filePath.startsWith(expectedPrefix)
+    || params.filePath.slice(expectedPrefix.length).includes("/")) {
+    return { success: false, error: "Filstien tilhører ikke din upload" };
   }
-
-  const { data: saved, error: dbErr } = await db
-    .from("contracts")
-    .insert({
-      org_id: orgId,
-      rights_holder_id: rh.id,
-      type: "a-løn",
-      status: "kladde",
-      pdf_url: params.filePath,
-      working_title: params.workTitle || null,
-      work_id: params.workId ?? null,
-      season_number: params.season ?? null,
-      episode_numbers: params.season && params.episodeSelectionConfirmed
-        ? params.coversWholeSeason
-          ? []
-          : params.episodes?.map(episode => episode.number).filter(number => Number.isInteger(number) && number > 0) ?? []
-        : null,
-    })
-    .select()
-    .single();
-
-  if (dbErr || !saved) return { success: false, error: dbErr?.message ?? "Kunne ikke gemme kontrakten" };
-
-  if (params.workId && params.season) {
-    const target = await resolveSeriesScopeTarget(db, params.workId, params.season);
-    if (target) {
-      const episodes = params.episodes?.map(episode => episode.number) ?? [];
-      const confirmed = Boolean(params.episodeSelectionConfirmed && (params.coversWholeSeason || episodes.length > 0));
-      const scopeResult = await upsertMemberSeriesEpisodeScope(db, {
-        orgId,
-        rightsHolderId: rh.id,
-        seriesWorkId: target.seriesWorkId,
-        seasonNumber: target.seasonNumber,
-        status: confirmed ? "confirmed" : "pending",
-        episodeNumbers: episodes,
-        coversWholeSeason: confirmed && params.coversWholeSeason,
-        source: "contract_upload",
-      });
-      if (!scopeResult.success) {
-        await db.from("contracts").delete().eq("id", saved.id);
-        await db.storage.from(BUCKET).remove([params.filePath]);
-        return { success: false, error: scopeResult.error };
-      }
-      await db.from("contracts").update({
-        episode_scope_id: scopeResult.scope.id,
-        season_number: scopeResult.scope.season_number,
-        episode_numbers: scopeResult.scope.status === "confirmed"
-          ? scopeResult.scope.covers_whole_season ? [] : scopeResult.scope.episode_numbers
-          : null,
-      }).eq("id", saved.id);
+  const extension = documentExtension(params.filePath);
+  if (!["pdf", "doc", "docx", "txt"].includes(extension)) {
+    return { success: false, error: "Filformat ikke understøttet — brug PDF, DOC, DOCX eller TXT" };
+  }
+  const filePath = params.filePath;
+  const { data: pendingIntent, error: intentLookupError } = await db
+    .from("contract_upload_intents")
+    .select("id,org_id,rights_holder_id,expected_size,expires_at,consumed_at,contract_id")
+    .eq("owner_id", user.id)
+    .eq("storage_path", filePath)
+    .maybeSingle();
+  if (intentLookupError || !pendingIntent
+    || pendingIntent.org_id !== orgId
+    || pendingIntent.rights_holder_id !== rh.id
+    || (!pendingIntent.contract_id && (
+      Boolean(pendingIntent.consumed_at)
+      || new Date(pendingIntent.expires_at).getTime() <= Date.now()
+    ))) {
+    return { success: false, error: "Uploadtilladelsen er udløbet eller allerede brugt" };
+  }
+  const uploaded = await db.storage.from(BUCKET).info(filePath);
+  const uploadedSize = uploaded.data?.size;
+  if (uploaded.error || typeof uploadedSize !== "number" || uploadedSize <= 0) {
+    return { success: false, error: "Den uploadede kontrakt blev ikke fundet" };
+  }
+  if (uploadedSize > MAX_CONTRACT_UPLOAD_BYTES) {
+    if (!pendingIntent.contract_id) await db.storage.from(BUCKET).remove([filePath]);
+    return { success: false, error: "Filen er for stor. Maksimum er 25 MB." };
+  }
+  if (uploadedSize !== Number(pendingIntent.expected_size)) {
+    if (!pendingIntent.contract_id) {
+      await db.storage.from(BUCKET).remove([filePath]);
+      await db.from("contract_upload_intents")
+        .update({ expires_at: new Date().toISOString() })
+        .eq("id", pendingIntent.id)
+        .eq("owner_id", user.id)
+        .is("contract_id", null);
     }
+    return { success: false, error: "Den uploadede fil svarer ikke til den klargjorte upload" };
+  }
+  const episodeNumbers = params.season && params.episodeSelectionConfirmed
+    ? params.coversWholeSeason
+      ? []
+      : params.episodes?.map(episode => episode.number)
+        .filter(number => Number.isInteger(number) && number > 0) ?? []
+    : null;
+  const atomicCreateParams = {
+    p_owner_id: user.id,
+    p_org_id: orgId,
+    p_rights_holder_id: rh.id,
+    p_upload_intent_id: pendingIntent.id,
+    p_storage_path: filePath,
+    p_uploaded_size: uploadedSize,
+    p_working_title: params.workTitle || null,
+    p_work_id: params.workId ?? null,
+    p_season_number: params.season ?? null,
+    p_episode_numbers: episodeNumbers,
+    p_defer_ai_job: Boolean(params.deferAiJob),
+  };
+  let atomicCreate = await db.rpc("create_member_uploaded_contract", atomicCreateParams);
+
+  if (atomicCreate.error || !atomicCreate.data) {
+    // Serialise recovery through the same intent row lock. The RPC returns an
+    // existing committed contract on a lost response and never duplicates jobs.
+    atomicCreate = await db.rpc("create_member_uploaded_contract", atomicCreateParams);
+  }
+  const saved = atomicCreate.data;
+  if (atomicCreate.error || !saved) {
+    // Unknown database outcomes never authorize Storage deletion. The
+    // unlinked intent/tombstone cleanup will remove true orphans safely.
+    return { success: false, error: "Kunne ikke gemme kontrakten og starte den automatiske behandling" };
   }
 
-  const { error: validationError } = await db.from("contract_validations").insert({
-    contract_id: saved.id,
-    org_id: orgId,
-    notes: JSON.stringify({
-      memberName: rh.full_name ?? params.memberName,
-      workTitle: params.workTitle,
-      workId: params.workId,
-      productionType: params.productionType || undefined,
-      creditedRoles: params.roles,
-      duration: params.duration,
-      premiereDate: params.premiereDate,
-      season: params.season,
-      episodes: params.episodes,
-      submittedByMember: true,
-    }),
+  const uploadIdentity: MemberUploadIdentity = {
+    ownerId: user.id,
+    orgId,
+    rightsHolderId: rh.id,
+    uploadIntentId: pendingIntent.id,
+    contractId: saved.id,
+    storagePath: filePath,
+  };
+  const requestHash = memberUploadRequestHash("guided", filePath, {
+    workTitle: params.workTitle,
+    workId: params.workId,
+    productionType: params.productionType,
+    roles: params.roles,
+    duration: params.duration,
+    premiereDate: params.premiereDate,
+    season: params.season,
+    episodes: params.episodes,
+    coversWholeSeason: params.coversWholeSeason,
+    episodeSelectionConfirmed: params.episodeSelectionConfirmed,
+    deferAiJob: params.deferAiJob,
+    producerSelections: params.producerSelections,
   });
+  const claim = await claimMemberUploadFinalization(db, uploadIdentity, requestHash);
+  if (!claim.success) return { success: false, error: claim.error };
+  if (claim.alreadyFinalized || !claim.identity) {
+    if (documentExtension(filePath) === "txt" && !params.deferAiJob) {
+      triggerContractAiJobProcessing(orgId);
+    }
+    revalidatePath("/portal/mine-kontrakter");
+    return { success: true, contract: saved };
+  }
 
-  if (validationError) {
-    await db.from("contracts").delete().eq("id", saved.id);
-    await db.storage.from(BUCKET).remove([params.filePath]);
-    return { success: false, error: validationError.message };
+  let scopeTarget: Awaited<ReturnType<typeof resolveSeriesScopeTarget>> = null;
+  if (params.workId && params.season) {
+    scopeTarget = await resolveSeriesScopeTarget(db, params.workId, params.season);
   }
 
   if (params.producerSelections?.length) {
     try {
       await syncContractProducerRelations(db, saved.id, params.producerSelections, "member_upload");
     } catch (producerError) {
-      await db.from("contracts").delete().eq("id", saved.id).eq("org_id", orgId);
-      await db.storage.from(BUCKET).remove([params.filePath]);
-      return {
-        success: false,
-        error: producerError instanceof Error ? producerError.message : "Producenten kunne ikke tilknyttes kontrakten",
-      };
+      return rollbackMemberUploadOrReport(
+        db,
+        claim.identity,
+        producerError instanceof Error ? producerError.message : "Producenten kunne ikke tilknyttes kontrakten",
+      );
     }
   }
 
-  if (!params.deferAiJob) {
-    const isPdf = params.filePath.toLowerCase().endsWith(".pdf");
-    const result = isPdf
-      ? await db.from("contract_document_jobs").insert({
-        contract_id: saved.id,
-        org_id: orgId,
-        created_by: user.id,
-        original_storage_path: params.filePath,
-        output_storage_path: `${orgId}/processed/${saved.id}/normalised.pdf`,
-        status: "queued",
-        priority: 100,
-      })
-      : await db.from("contract_ai_jobs").insert({
-        contract_id: saved.id,
-        org_id: orgId,
-        status: "queued",
-        priority: 0,
-      });
+  const selectedEpisodes = [...new Set((params.episodes ?? [])
+    .map(episode => episode.number)
+    .filter(number => Number.isInteger(number) && number > 0))]
+    .sort((left, right) => left - right);
+  const confirmedScope = Boolean(
+    scopeTarget
+    && params.episodeSelectionConfirmed
+    && (params.coversWholeSeason || selectedEpisodes.length > 0),
+  );
+  const validationNotes = {
+    memberName: rh.full_name,
+    workTitle: params.workTitle,
+    workId: params.workId,
+    productionType: params.productionType || undefined,
+    creditedRoles: params.roles,
+    duration: params.duration,
+    premiereDate: params.premiereDate,
+    season: params.season,
+    episodes: params.episodes,
+    submittedByMember: true,
+  };
+  const finishParams = {
+    p_owner_id: user.id,
+    p_org_id: orgId,
+    p_rights_holder_id: rh.id,
+    p_upload_intent_id: pendingIntent.id,
+    p_contract_id: saved.id,
+    p_storage_path: filePath,
+    p_finalization_token: claim.identity.finalizationToken,
+    p_request_hash: requestHash,
+    p_validation_notes: validationNotes,
+    p_contract_metadata: {},
+    p_series_work_id: scopeTarget?.seriesWorkId ?? null,
+    p_scope_season_number: scopeTarget?.seasonNumber ?? null,
+    p_scope_status: scopeTarget ? confirmedScope ? "confirmed" : "pending" : null,
+    p_scope_episode_numbers: scopeTarget && confirmedScope && !params.coversWholeSeason
+      ? selectedEpisodes
+      : [],
+    p_scope_covers_whole_season: Boolean(scopeTarget && confirmedScope && params.coversWholeSeason),
+  };
+  let finalization = await db.rpc("finish_member_uploaded_contract_finalization", finishParams);
+  if (finalization.error || !finalization.data) {
+    // Completion itself is idempotent. Retry once before attempting a
+    // token-bound rollback so a lost successful response cannot delete data.
+    finalization = await db.rpc("finish_member_uploaded_contract_finalization", finishParams);
+  }
+  if (finalization.error || !finalization.data) {
+    return rollbackMemberUploadOrReport(
+      db,
+      claim.identity,
+      finalization.error?.message ?? "Kontrakten kunne ikke færdiggøres.",
+    );
+  }
 
-    if (result.error) {
-      console.error("Kunne ikke oprette behandlingsjob for uploadet kontrakt:", result.error);
-    } else if (!isPdf) {
-      triggerContractAiJobProcessing(orgId);
-    }
+  if (documentExtension(filePath) === "txt" && !params.deferAiJob) {
+    triggerContractAiJobProcessing(orgId);
   }
 
   revalidatePath("/portal/mine-kontrakter");
-  return { success: true, contract: saved };
+  return { success: true, contract: finalization.data };
+}
+
+export async function prepareMemberContractUpload(params: {
+  fileName: string;
+  fileSize: number;
+}) {
+  const user = await currentUser();
+  if (!user) return { success: false as const, error: "Ikke logget ind" };
+  if (!Number.isSafeInteger(params.fileSize) || params.fileSize <= 0) {
+    return { success: false as const, error: "Ingen fil modtaget" };
+  }
+  if (params.fileSize > MAX_CONTRACT_UPLOAD_BYTES) {
+    return { success: false as const, error: "Filen er for stor. Maksimum er 25 MB." };
+  }
+  const extension = documentExtension(params.fileName);
+  if (!["pdf", "doc", "docx", "txt"].includes(extension)) {
+    return { success: false as const, error: "Filformat ikke understøttet — brug PDF, DOC, DOCX eller TXT" };
+  }
+
+  const db = createServiceClient();
+  const memberContext = await requireMemberContext(db, user.id);
+  if (!memberContext.rightsHolderId) {
+    return { success: false as const, error: "Ingen rettighedshaverprofil i den aktive organisation" };
+  }
+  const filePath = `${memberContext.orgId}/${user.id}/${randomUUID()}.${extension}`;
+  const { data: intent, error: intentError } = await db.rpc("create_contract_upload_intent", {
+    p_owner_id: user.id,
+    p_org_id: memberContext.orgId,
+    p_rights_holder_id: memberContext.rightsHolderId,
+    p_storage_path: filePath,
+    p_expected_size: params.fileSize,
+  });
+  if (intentError || !intent?.id) {
+    return { success: false as const, error: "For mange samtidige uploads. Vent et øjeblik og prøv igen." };
+  }
+  const signed = await db.storage.from(BUCKET).createSignedUploadUrl(filePath);
+  if (signed.error || !signed.data?.token) {
+    await db.from("contract_upload_intents")
+      .update({ expires_at: new Date().toISOString() })
+      .eq("id", intent.id)
+      .eq("owner_id", user.id)
+      .is("contract_id", null);
+    return { success: false as const, error: "Kunne ikke klargøre en sikker upload" };
+  }
+  const purgeAfter = new Date(Date.now() + SIGNED_UPLOAD_TOMBSTONE_MS).toISOString();
+  const extendedTombstone = await db.from("contract_upload_intents")
+    .update({ purge_after: purgeAfter })
+    .eq("id", intent.id)
+    .eq("owner_id", user.id)
+    .is("contract_id", null)
+    .select("id")
+    .maybeSingle();
+  if (extendedTombstone.error || !extendedTombstone.data?.id) {
+    await db.from("contract_upload_intents")
+      .update({ expires_at: new Date().toISOString() })
+      .eq("id", intent.id)
+      .eq("owner_id", user.id)
+      .is("contract_id", null);
+    return { success: false as const, error: "Kunne ikke klargøre en sikker upload" };
+  }
+  return {
+    success: true as const,
+    filePath,
+    uploadToken: signed.data.token,
+  };
 }
 
 export async function queueUploadedContractAiJob(contractId: string) {
   const db = createServiceClient();
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
+  if (!isUuid(contractId)) return { success: false, error: "Ugyldig kontrakt" };
 
   const { data: rh } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
@@ -695,22 +933,25 @@ export async function queueUploadedContractAiJob(contractId: string) {
     .maybeSingle();
   if (!contract) return { success: false, error: "Kontrakten blev ikke fundet" };
 
-  if (contract.pdf_url?.toLowerCase().endsWith(".pdf")) {
-    const { data: existingDocumentJob } = await db.from("contract_document_jobs")
-      .select("id").eq("contract_id", contractId).in("status", ["queued", "processing", "failed"]).lt("attempts", 5).limit(1).maybeSingle();
-    if (existingDocumentJob) return { success: true, alreadyQueued: true };
-    const { error } = await db.from("contract_document_jobs").insert({
-      contract_id: contractId,
-      org_id: orgId,
-      created_by: user.id,
-      original_storage_path: contract.pdf_url,
-      output_storage_path: `${orgId}/processed/${contractId}/normalised.pdf`,
-      status: "queued",
-      priority: 100,
+  if (requiresDocumentProcessing(contract.pdf_url)) {
+    const { data, error } = await db.rpc("queue_or_retry_member_contract_document_job", {
+      p_owner_id: user.id,
+      p_org_id: orgId,
+      p_rights_holder_id: rh.id,
+      p_contract_id: contractId,
     });
-    if (error) return { success: false, error: error.message };
-    await db.from("contracts").update({ document_processing_status: "pending", document_processing_error_code: null }).eq("id", contractId).eq("org_id", orgId);
-    return { success: true, alreadyQueued: false };
+    const result = (Array.isArray(data) ? data[0] : data) as {
+      outcome?: "queued" | "requeued" | "already_queued" | "already_processed";
+    } | null;
+    if (error || !result?.outcome) {
+      return { success: false, error: "Dokumentbehandlingen kunne ikke sættes i kø" };
+    }
+    return {
+      success: true,
+      alreadyQueued: result.outcome === "already_queued",
+      alreadyProcessed: result.outcome === "already_processed",
+      requeued: result.outcome === "requeued",
+    };
   }
 
   const { data: existing } = await db
@@ -784,6 +1025,36 @@ export async function fetchMemberContractsList() {
   return { success: true, contracts: data ?? [] };
 }
 
+export async function fetchMemberContractsForWorks(params: { rightsHolderId: string; workIds: string[] }) {
+  const context = await getRequestAppAccessContext();
+  if (!context?.rightsHolderId || context.rightsHolderId !== params.rightsHolderId) {
+    return { success: false as const, error: "Du kan kun se dine egne kontrakter.", contracts: [] };
+  }
+  const workIds = [...new Set(params.workIds.filter(isUuid))].slice(0, 100);
+  if (!workIds.length) return { success: true as const, contracts: [] };
+
+  const db = createServiceClient();
+  const { data, error } = await db.from("contracts")
+    .select("id,type,overenskomst,status,contract_date,start_date,end_date,pdf_url,processed_pdf_url,work_id,working_title,season_number,episode_numbers,created_at,works(id,title,year,type),employers(id,name),contract_validations(has_credit_clause,has_overenskomst_incorporation,validated_at)")
+    .eq("org_id", context.orgId)
+    .eq("rights_holder_id", context.rightsHolderId)
+    .is("superseded_by_contract_id", null)
+    .in("work_id", workIds)
+    .order("created_at", { ascending: false });
+  if (error) return { success: false as const, error: error.message, contracts: [] };
+
+  return {
+    success: true as const,
+    contracts: (data ?? []).map(contract => ({
+      ...contract,
+      works: Array.isArray(contract.works) ? contract.works[0] ?? null : contract.works,
+      employers: Array.isArray(contract.employers) ? contract.employers[0] ?? null : contract.employers,
+      contract_attachments: [],
+      contract_comments: [],
+    })),
+  };
+}
+
 export type MemberContractsPageParams = {
   page?: number;
   pageSize?: number;
@@ -812,7 +1083,14 @@ type MemberContractListRow = {
   works: unknown;
   employers: unknown;
   contract_validations: unknown;
-  contract_attachments: never[];
+  contract_attachments: Array<{
+    id: string;
+    type: string;
+    title: string | null;
+    pdf_url: string | null;
+    created_at: string;
+    ai_status: "analyserer" | "klar" | "fejl" | null;
+  }>;
   contract_comments: Array<{
     id: string;
     author_role: "admin";
@@ -901,6 +1179,7 @@ export async function fetchMemberContractsPage(
       .select("contract_id,contracts!inner(org_id,rights_holder_id)")
       .eq("author_role", "admin")
       .is("member_read_at", null)
+      .eq("member_rights_holder_id", context.rightsHolderId)
       .eq("contracts.org_id", context.orgId)
       .eq("contracts.rights_holder_id", context.rightsHolderId)
       .limit(2000);
@@ -951,15 +1230,23 @@ export async function fetchMemberContractsPage(
 
   const rawRows = (listResult.data ?? []) as unknown as Array<Omit<MemberContractListRow, "contract_comments" | "contract_attachments" | "episode_confirmed">>;
   const ids = rawRows.map(row => row.id);
-  const [commentsResult, confirmationsResult] = await Promise.all([
+  const [commentsResult, confirmationsResult, attachmentsResult] = await Promise.all([
     ids.length
-      ? db.from("contract_comments").select("id,contract_id,created_at,member_read_at,admin_read_at").in("contract_id", ids).eq("author_role", "admin").is("member_read_at", null).order("created_at")
+      ? db.from("contract_comments").select("id,contract_id,created_at,member_read_at,admin_read_at").in("contract_id", ids).eq("member_rights_holder_id", context.rightsHolderId).eq("author_role", "admin").is("member_read_at", null).order("created_at")
       : Promise.resolve({ data: [], error: null }),
     ids.length
       ? db.from("contract_episode_confirmations").select("contract_id").in("contract_id", ids).is("invalidated_at", null)
       : Promise.resolve({ data: [], error: null }),
+    ids.length
+      ? db.from("contract_attachments")
+          .select("id,contract_id,type,title,pdf_url,created_at,ai_status")
+          .eq("org_id", context.orgId)
+          .eq("type", "allonge")
+          .in("contract_id", ids)
+          .order("created_at", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
   ]);
-  const detailError = commentsResult.error ?? confirmationsResult.error;
+  const detailError = commentsResult.error ?? confirmationsResult.error ?? attachmentsResult.error;
   if (detailError) return { success: false, error: detailError.message };
   const confirmed = new Set((confirmationsResult.data ?? []).map(row => row.contract_id));
   const comments = new Map<string, MemberContractListRow["contract_comments"]>();
@@ -968,9 +1255,22 @@ export async function fetchMemberContractsPage(
     values.push({ ...row, author_role: "admin", message: "", member_read_at: null });
     comments.set(row.contract_id, values);
   }
+  const attachments = new Map<string, MemberContractListRow["contract_attachments"]>();
+  for (const row of attachmentsResult.data ?? []) {
+    const values = attachments.get(row.contract_id) ?? [];
+    values.push({
+      id: row.id,
+      type: row.type,
+      title: row.title,
+      pdf_url: row.pdf_url,
+      created_at: row.created_at,
+      ai_status: row.ai_status as "analyserer" | "klar" | "fejl" | null,
+    });
+    attachments.set(row.contract_id, values);
+  }
   const rows = rawRows.map(row => ({
     ...row,
-    contract_attachments: [] as never[],
+    contract_attachments: attachments.get(row.id) ?? [],
     contract_comments: comments.get(row.id) ?? [],
     episode_confirmed: confirmed.has(row.id),
   }));
@@ -1099,13 +1399,20 @@ export async function fetchMemberContractDetail(contractId: string) {
 
   const { data, error } = await db
     .from("contracts")
-    .select("id, org_id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
+    .select("id, org_id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result)")
     .eq("id", contractId)
     .eq("rights_holder_id", rh.id)
     .maybeSingle();
 
   if (error) return { success: false, error: error.message };
   if (!data) return { success: false, error: "Kontrakten blev ikke fundet." };
+  const { data: contractComments, error: commentsError } = await db
+    .from("contract_comments")
+    .select("id, author_role, message, created_at, member_read_at, admin_read_at")
+    .eq("contract_id", contractId)
+    .eq("member_rights_holder_id", rh.id)
+    .order("created_at", { ascending: true });
+  if (commentsError) return { success: false, error: commentsError.message };
   await recordAuditEvent({
     context: auditHeadersContext(await headers(), { userId: user.id, orgId: data.org_id, role: "member" }, "portal", "portal.contracts.detail"),
     action: "read",
@@ -1118,36 +1425,61 @@ export async function fetchMemberContractDetail(contractId: string) {
     dataCategories: ["contract_data", "salary_data", "message_data", "ai_analysis"],
     orgIds: [data.org_id],
   });
-  return { success: true, contract: data };
+  return { success: true, contract: { ...data, contract_comments: contractComments ?? [] } };
 }
 
 export async function getContractSignedUrl(pdfUrl: string) {
   const user = await currentUser();
   if (!user) return { url: null, error: "Ikke logget ind" };
   const db = createServiceClient();
-  const { data: rh } = await db
+  const { data: memberProfiles } = await db
     .from("rettighedshavere")
     .select("id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (!rh) return { url: null, error: "Ingen rettighedshaver-profil" };
+    .eq("user_id", user.id);
+  const memberProfileIds = (memberProfiles ?? []).map(profile => profile.id);
+  const { data: memberAffiliations } = memberProfileIds.length > 0
+    ? await db
+      .from("org_affiliations")
+      .select("org_id,rights_holder_id,valid_from,valid_to")
+      .in("rights_holder_id", memberProfileIds)
+    : { data: [] as MemberOrgAffiliation[] };
+  const today = new Date().toISOString().slice(0, 10);
+  const ownsContractInOrg = (rightsHolderId: string | null, orgId: string) => hasActiveMemberContractOwnership({
+    profileIds: memberProfileIds,
+    affiliations: memberAffiliations ?? [],
+    rightsHolderId,
+    orgId,
+    date: today,
+  });
 
-  const { data: contract } = await db
+  let { data: contract } = await db
     .from("contracts")
     .select("id, org_id, rights_holder_id, pdf_url")
     .eq("pdf_url", pdfUrl)
     .maybeSingle();
+  if (!contract) {
+    const processed = await db
+      .from("contracts")
+      .select("id, org_id, rights_holder_id, pdf_url")
+      .eq("processed_pdf_url", pdfUrl)
+      .maybeSingle();
+    contract = processed.data;
+  }
 
   let auditOrgId: string;
   let targetMemberUuid: string | null;
   let entityId: string | null = null;
+  let isOwnContract = false;
+  let actorRole: "member" | StaffRole = "member";
   if (contract) {
     auditOrgId = contract.org_id;
     targetMemberUuid = contract.rights_holder_id;
     entityId = contract.id;
-    if (contract.rights_holder_id !== rh.id) {
-      const isAdmin = await assertAdminForOrg(db, user.id, contract.org_id);
-      if (!isAdmin) return { url: null, error: "Ikke autoriseret" };
+    isOwnContract = ownsContractInOrg(contract.rights_holder_id, contract.org_id);
+    if (!isOwnContract) {
+      const staffRole = await staffRoleForOrg(db, user.id, contract.org_id);
+      if (!staffRole) return { url: null, error: "Ikke autoriseret" };
+      actorRole = staffRole;
     }
   } else {
     const { data: attachment } = await db
@@ -1160,22 +1492,24 @@ export async function getContractSignedUrl(pdfUrl: string) {
     if (!owner) return { url: null, error: "Fil ikke fundet" };
     auditOrgId = owner.org_id;
     targetMemberUuid = owner.rights_holder_id;
-    if (owner.rights_holder_id !== rh.id) {
-      const isAdmin = await assertAdminForOrg(db, user.id, owner.org_id);
-      if (!isAdmin) return { url: null, error: "Ikke autoriseret" };
+    isOwnContract = ownsContractInOrg(owner.rights_holder_id, owner.org_id);
+    if (!isOwnContract) {
+      const staffRole = await staffRoleForOrg(db, user.id, owner.org_id);
+      if (!staffRole) return { url: null, error: "Ikke autoriseret" };
+      actorRole = staffRole;
     }
   }
 
   const { data } = await db.storage.from(BUCKET).createSignedUrl(pdfUrl, 3600);
   if (data?.signedUrl) {
     await recordAuditEvent({
-      context: auditHeadersContext(await headers(), { userId: user.id, orgId: auditOrgId, role: targetMemberUuid === rh.id ? "member" : "admin" }, targetMemberUuid === rh.id ? "portal" : "admin", "contracts.document-download"),
+      context: auditHeadersContext(await headers(), { userId: user.id, orgId: auditOrgId, role: actorRole }, isOwnContract ? "portal" : "admin", "contracts.document-download"),
       action: "download",
       entityType: "contracts",
       entityId,
       entityLabel: "Kontraktdokument",
       targetMemberUuid,
-      purposeCode: targetMemberUuid === rh.id ? "member_self_service" : "contract_case_management",
+      purposeCode: isOwnContract ? "member_self_service" : "contract_case_management",
       legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
       dataCategories: ["contract_data", "salary_data"],
       orgIds: [auditOrgId],
@@ -1201,9 +1535,12 @@ export async function getContractDocumentPreview(contractId: string) {
     .eq("id", contractId)
     .maybeSingle();
   if (!contract) return { kind: "none" as const, error: "Kontrakt ikke fundet" };
-  if (contract.rights_holder_id !== rh.id) {
-    const isAdmin = await assertAdminForOrg(db, user.id, contract.org_id);
-    if (!isAdmin) return { kind: "none" as const, error: "Ikke autoriseret" };
+  const isOwnContract = contract.rights_holder_id === rh.id;
+  let actorRole: "member" | StaffRole = "member";
+  if (!isOwnContract) {
+    const staffRole = await staffRoleForOrg(db, user.id, contract.org_id);
+    if (!staffRole) return { kind: "none" as const, error: "Ikke autoriseret" };
+    actorRole = staffRole;
   }
 
   const path = contract.processed_pdf_url ?? contract.pdf_url;
@@ -1212,13 +1549,13 @@ export async function getContractDocumentPreview(contractId: string) {
   const fileName = path.split("/").pop() ?? "kontrakt";
 
   await recordAuditEvent({
-    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: contract.rights_holder_id === rh.id ? "member" : "admin" }, contract.rights_holder_id === rh.id ? "portal" : "admin", "contracts.document-preview"),
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: actorRole }, isOwnContract ? "portal" : "admin", "contracts.document-preview"),
     action: "read",
     entityType: "contracts",
     entityId: contract.id,
     entityLabel: contract.working_title ?? "Kontraktdokument",
     targetMemberUuid: contract.rights_holder_id,
-    purposeCode: contract.rights_holder_id === rh.id ? "member_self_service" : "contract_case_management",
+    purposeCode: isOwnContract ? "member_self_service" : "contract_case_management",
     legalBasis: "GDPR Art. 6(1)(b) og 6(1)(f)",
     dataCategories: ["contract_data", "salary_data"],
     orgIds: [contract.org_id],
@@ -1261,7 +1598,7 @@ export async function deleteMemberContract(contractId: string) {
 
   const { data: contract } = await db
     .from("contracts")
-    .select("pdf_url, rights_holder_id")
+    .select("pdf_url, original_view_pdf_url, processed_pdf_url, document_spatial_data_path, rights_holder_id")
     .eq("id", contractId)
     .single();
 
@@ -1270,14 +1607,20 @@ export async function deleteMemberContract(contractId: string) {
 
   // Slet altid databaserækken først. Hvis storage slettes først og database-
   // sletningen fejler, står brugeren ellers med en kontrakt uden dokument.
-  const { data: attachments } = await db
-    .from("contract_attachments")
-    .select("pdf_url")
-    .eq("contract_id", contractId);
-  const storagePaths = [
+  const [{ data: attachments }, { data: documentJobs }] = await Promise.all([
+    db.from("contract_attachments").select("pdf_url").eq("contract_id", contractId),
+    db.from("contract_document_jobs")
+      .select("output_storage_path,original_view_storage_path,spatial_data_path")
+      .eq("contract_id", contractId),
+  ]);
+  const storagePaths = [...new Set([
     contract.pdf_url,
+    contract.original_view_pdf_url,
+    contract.processed_pdf_url,
+    contract.document_spatial_data_path,
     ...((attachments ?? []).map(a => a.pdf_url)),
-  ].filter((p): p is string => Boolean(p));
+    ...((documentJobs ?? []).flatMap(job => [job.output_storage_path, job.original_view_storage_path, job.spatial_data_path])),
+  ].filter((p): p is string => Boolean(p)))];
   const { error: deleteError } = await db.from("contracts").delete().eq("id", contractId);
   if (deleteError) {
     console.error("[member-contracts] contract delete failed", deleteError.code);
@@ -1312,11 +1655,12 @@ export async function getContractValidation(contractId: string, includeEpisodes 
         production_companies, production_countries, description,
         dfi_id, tmdb_id, imdb_id
       )
-    `)
+  `)
     .eq("id", contractId)
     .single();
   if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
-  if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+  const staffRole = await staffRoleForOrg(db, user.id, contract.org_id);
+  if (!staffRole) return { success: false, error: "Ikke autoriseret" };
   const { data } = await db
     .from("contract_validations")
     .select("extracted_data")
@@ -1332,13 +1676,18 @@ export async function getContractValidation(contractId: string, includeEpisodes 
     season_number: relatedWork.season_number ?? parsedEpisode?.seasonNumber ?? null,
     episode_number: relatedWork.episode_number ?? parsedEpisode?.episodeNumber ?? null,
   } : null;
-  const extractedData = mergeContractWorkData({
+  let extractedData = mergeContractWorkData({
     extractedData: (data?.extracted_data ?? null) as Record<string, unknown> | null,
     contract,
     work,
     employerName: employer?.name ?? null,
     rightsHolderName: rightsHolder?.full_name ?? null,
   });
+  try {
+    extractedData = (await applyApprovedAgreementRoyalty(extractedData)).data;
+  } catch (error) {
+    console.warn("[contract-validation] Royaltyreglen kunne ikke anvendes", error instanceof Error ? error.message : error);
+  }
 
   const linkedEpisodes: Array<{ id: string; title: string; seasonNumber: number; episodeNumber: number; role: string | null }> = [];
   const episodeOptions: Array<{ id: string; title: string; seasonNumber: number; episodeNumber: number }> = [];
@@ -1381,7 +1730,7 @@ export async function getContractValidation(contractId: string, includeEpisodes 
   // fallback-felter — så UI kan skelne "endnu ingen validering" fra "felter fyldt fra det linkede værk".
   const hasSavedValidation = Boolean(data?.extracted_data && Object.keys(data.extracted_data as Record<string, unknown>).length > 0);
   await recordAuditEvent({
-    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: "admin" }, "admin", "admin.contracts.validation"),
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: staffRole }, "admin", "admin.contracts.validation"),
     action: "read",
     entityType: "contracts",
     entityId: contractId,
@@ -1408,9 +1757,15 @@ export async function getContractValidation(contractId: string, includeEpisodes 
   };
 }
 
-export type ContractValidationSectionKey = "rights" | "dates" | "salary" | "series" | "signature" | "ids" | "work";
+export type ContractValidationSectionKey = "approval" | "rights" | "dates" | "salary" | "series" | "signature" | "ids" | "work";
 
 const CONTRACT_VALIDATION_SECTION_FIELDS: Record<ContractValidationSectionKey, readonly string[]> = {
+  approval: [
+    "copydan", "svod", "hasCreditClause", "royalty", "royaltyPercent",
+    "royaltySourceType", "royaltyResolutionReason", "royaltyAgreementCode",
+    "royaltyAgreementTitle", "royaltyAgreementSection", "royaltyTag", "_royaltyResolution",
+    "signatureStatus", "signatureDate", "contractDate", "_sources", "_lockedFields",
+  ],
   rights: [
     "copydan", "svod", "agreementReferenceStatus", "collectiveAgreement",
     "collectiveAgreementByReference", "hasOverenskomstIncorporation", "rightsNotApplicable",
@@ -1487,7 +1842,7 @@ export async function getContractValidationSection(params: { contractId: string;
     sectionData.tmdbId = result.workIdentifiers?.tmdbId ?? null;
     sectionData.imdbId = result.workIdentifiers?.imdbId ?? null;
   }
-  if (params.section === "rights" && sectionData.agreementReferenceStatus == null) {
+  if ((params.section === "rights" || params.section === "approval") && sectionData.agreementReferenceStatus == null) {
     sectionData.agreementReferenceStatus = [
       sectionData.collectiveAgreement,
       sectionData.collectiveAgreementByReference,
@@ -1501,6 +1856,70 @@ export async function getContractValidationSection(params: { contractId: string;
     episodeOptions: params.section === "series" ? result.episodeOptions : undefined,
     isSeriesWork: result.isSeriesWork,
   };
+}
+
+export async function getAdminContractSeriesEpisodeOptions(params: { contractId: string; seasonNumber: number }) {
+  const user = await currentUser();
+  if (!user) return { success: false as const, error: "Ikke logget ind", options: [], selectedEpisodes: [] };
+  const db = createServiceClient();
+  const { data: contract } = await db.from("contracts")
+    .select("id,org_id,rights_holder_id,work_id,episode_numbers,works(id,title,type,year,parent_work_id,episode_count,dfi_id,tmdb_id)")
+    .eq("id", params.contractId)
+    .maybeSingle();
+  if (!contract || !(await assertAdminForOrg(db, user.id, contract.org_id))) {
+    return { success: false as const, error: "Ikke autoriseret", options: [], selectedEpisodes: [] };
+  }
+  const relatedWork = Array.isArray(contract.works) ? contract.works[0] : contract.works;
+  if (!relatedWork || !contract.work_id) {
+    return { success: false as const, error: "Kontrakten mangler et tilknyttet serieværk", options: [], selectedEpisodes: [] };
+  }
+  const parentId = relatedWork.parent_work_id ?? relatedWork.id;
+  const { data: parentWork } = relatedWork.parent_work_id
+    ? await db.from("works").select("id,title,type,year,episode_count,dfi_id,tmdb_id").eq("id", parentId).eq("org_id", contract.org_id).maybeSingle()
+    : { data: relatedWork };
+  if (!parentWork) return { success: false as const, error: "Serien blev ikke fundet", options: [], selectedEpisodes: [] };
+
+  const seasonNumber = Math.max(1, Math.floor(Number(params.seasonNumber) || 1));
+  const { data: localChildren } = await db.from("works")
+    .select("id,title,season_number,episode_number,parent_work_id")
+    .eq("org_id", contract.org_id)
+    .eq("parent_work_id", parentId)
+    .eq("season_number", seasonNumber)
+    .order("episode_number", { ascending: true });
+  const external = await resolveExternalSeriesEpisodesForTitle({
+    title: parentWork.title,
+    year: parentWork.year,
+    dfiId: parentWork.dfi_id == null ? null : String(parentWork.dfi_id),
+    tmdbId: parentWork.tmdb_id == null ? null : Number(parentWork.tmdb_id),
+    seasonNumber,
+  });
+  const localOptions = episodeOptionsFromLocalChildren(localChildren, seasonNumber);
+  const merged = mergeEpisodeOptionsByPriority(localOptions, external.dfiEpisodeOptions, external.tmdbEpisodeOptions);
+  const directSelection = Array.isArray(contract.episode_numbers)
+    ? contract.episode_numbers.filter((number): number is number => Number.isInteger(number) && number > 0)
+    : [];
+  let selectedEpisodes = directSelection;
+  if (selectedEpisodes.length === 0 && contract.rights_holder_id && (localChildren?.length ?? 0) > 0) {
+    const childById = new Map((localChildren ?? []).map(child => [child.id, Number(child.episode_number)]));
+    const { data: assignments } = await db.from("work_assignments")
+      .select("work_id")
+      .eq("org_id", contract.org_id)
+      .eq("rights_holder_id", contract.rights_holder_id)
+      .in("work_id", [...childById.keys()]);
+    selectedEpisodes = (assignments ?? [])
+      .map(assignment => childById.get(assignment.work_id) ?? 0)
+      .filter(number => number > 0)
+      .sort((left, right) => left - right);
+  }
+  const episodeCount = Math.max(
+    Number(parentWork.episode_count ?? 0) || 0,
+    external.episodeCount ?? 0,
+    ...merged.map(option => option.number),
+    ...selectedEpisodes,
+    0,
+  );
+  const options = buildCompleteEpisodeOptions({ episodeCount, externalOptions: merged, localChildren, seasonNumber });
+  return { success: true as const, options, selectedEpisodes, seasonNumber };
 }
 
 export async function saveContractValidationSection(params: {
@@ -1613,7 +2032,8 @@ export async function saveContractValidation(params: { contractId: string; extra
   const db = createServiceClient();
   const { data: contract } = await db.from("contracts").select("id, org_id").eq("id", params.contractId).single();
   if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
-  if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+  const staffRole = await staffRoleForOrg(db, user.id, contract.org_id);
+  if (!staffRole) return { success: false, error: "Ikke autoriseret" };
 
   const ed = params.extractedData as Record<string, unknown>;
 
@@ -1632,6 +2052,7 @@ export async function saveContractValidation(params: { contractId: string; extra
   const writeDb = createServiceClient({ audit: {
     actorUserId: user.id,
     actorOrgId: contract.org_id,
+    actorRole: staffRole,
     source: "admin",
     correlationId: crypto.randomUUID(),
   } });
@@ -1668,18 +2089,20 @@ export async function deleteAdminContractsPermanently(contractIds: string[]) {
   const db = createServiceClient();
   const { data: rows, error: fetchErr } = await db
     .from("contracts")
-    .select("id, org_id, pdf_url")
+    .select("id, org_id, pdf_url, original_view_pdf_url, processed_pdf_url, document_spatial_data_path")
     .in("id", ids);
   if (fetchErr) return { success: false, error: fetchErr.message };
 
   const found = rows ?? [];
   if (found.length === 0) return { success: false, error: "Ingen af kontrakterne blev fundet" };
-  const { data: attachmentRows, error: attachmentFetchError } = await db
-    .from("contract_attachments")
-    .select("pdf_url")
-    .in("contract_id", found.map(row => row.id));
-  if (attachmentFetchError) {
-    console.error("[member-contracts] attachment paths could not be loaded", attachmentFetchError.code);
+  const [{ data: attachmentRows, error: attachmentFetchError }, { data: documentJobRows, error: documentJobFetchError }] = await Promise.all([
+    db.from("contract_attachments").select("pdf_url").in("contract_id", found.map(row => row.id)),
+    db.from("contract_document_jobs")
+      .select("output_storage_path,original_view_storage_path,spatial_data_path")
+      .in("contract_id", found.map(row => row.id)),
+  ]);
+  if (attachmentFetchError || documentJobFetchError) {
+    console.error("[member-contracts] derivative paths could not be loaded", attachmentFetchError?.code ?? documentJobFetchError?.code);
     return { success: false, error: "Kontraktfilerne kunne ikke klargøres til sletning." };
   }
 
@@ -1690,9 +2113,12 @@ export async function deleteAdminContractsPermanently(contractIds: string[]) {
   }
 
   const actorOrgId = await requireOrgId(db, user.id);
+  const actorRole = await staffRoleForOrg(db, user.id, actorOrgId);
+  if (!actorRole) return { success: false, error: "Ikke autoriseret" };
   const writeDb = createServiceClient({ audit: {
     actorUserId: user.id,
     actorOrgId,
+    actorRole,
     source: "admin",
     correlationId: crypto.randomUUID(),
   } });
@@ -1718,8 +2144,9 @@ export async function deleteAdminContractsPermanently(contractIds: string[]) {
   }
 
   const pdfs = [...new Set([
-    ...found.map(row => row.pdf_url),
+    ...found.flatMap(row => [row.pdf_url, row.original_view_pdf_url, row.processed_pdf_url, row.document_spatial_data_path]),
     ...(attachmentRows ?? []).map(row => row.pdf_url),
+    ...(documentJobRows ?? []).flatMap(row => [row.output_storage_path, row.original_view_storage_path, row.spatial_data_path]),
   ].filter((url): url is string => Boolean(url)))];
   let cleanupWarning: string | undefined;
   if (pdfs.length > 0) {
@@ -1796,11 +2223,13 @@ export async function addAdminContractComment(contractId: string, message: strin
     .eq("id", contractId)
     .single();
   if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
-  if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+  const staffRole = await staffRoleForOrg(db, user.id, contract.org_id);
+  if (!staffRole) return { success: false, error: "Ikke autoriseret" };
 
   const writeDb = createServiceClient({ audit: {
     actorUserId: user.id,
     actorOrgId: contract.org_id,
+    actorRole: staffRole,
     source: "admin",
     correlationId: crypto.randomUUID(),
   } });
@@ -1858,26 +2287,54 @@ export type AdminContractUpdate = {
   producer_selections?: ProductionCompanySelection[];
 };
 
-export async function fetchAdminContractEditorData(contractId: string) {
+export async function queueAdminContractAiExtraction(contractId: string) {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
   const db = createServiceClient();
   const orgId = await requireOrgId(db, user.id);
   if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+  const { data: contract, error: contractError } = await db.from("contracts")
+    .select("id,pdf_url,document_processing_status")
+    .eq("id", contractId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (contractError) return { success: false, error: contractError.message };
+  if (!contract?.pdf_url) return { success: false, error: "Kontrakten mangler en fil" };
+  if (requiresDocumentProcessing(contract.pdf_url) && !["ready", "not_required"].includes(contract.document_processing_status ?? "")) {
+    return { success: false, error: "Dokumentbehandlingen skal være færdig, før AI-aflæsningen kan startes" };
+  }
+  const { data: job, error } = await db.from("contract_ai_jobs").insert({
+    contract_id: contract.id,
+    org_id: orgId,
+    status: "queued",
+    priority: 0,
+  }).select("id").single();
+  if (error) return { success: false, error: error.message };
+  return { success: true, jobId: job.id };
+}
 
-  const [contractResult, rightsHoldersResult, worksResult, producerResult] = await Promise.all([
+export async function fetchAdminContractEditorData(contractId: string) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const db = createServiceClient();
+  const orgId = await requireOrgId(db, user.id);
+  const staffRole = await staffRoleForOrg(db, user.id, orgId);
+  if (!staffRole) return { success: false, error: "Ikke autoriseret" };
+  const access = await getRequestAppAccessContext();
+  const canManageOwnership = Boolean(
+    access?.orgId === orgId
+    && access.canUseAdmin
+    && access.modules?.contract_ownership?.write,
+  );
+
+  const [contractResult, worksResult, producerResult, commentsResult] = await Promise.all([
     db.from("contracts")
-      .select("id,type,overenskomst,status,pdf_url,contract_date,start_date,end_date,employer_id,rights_holder_id,work_id,working_title,season_number,episode_numbers,employers(name),rettighedshavere(full_name),works(title,year,type),contract_comments(*),contract_attachments(*)")
+      .select("id,org_id,type,overenskomst,status,pdf_url,original_view_pdf_url,processed_pdf_url,layout_data,document_processing_status,document_processing_error_code,document_spatial_data_path,document_spatial_schema_version,document_spatial_accuracy,contract_date,start_date,end_date,employer_id,rights_holder_id,work_id,working_title,season_number,episode_numbers,employers(name),rettighedshavere(full_name),works(id,title,year,type,dfi_id,tmdb_id,imdb_id),contract_validations(id,extracted_data,has_credit_clause,has_overenskomst_incorporation),contract_attachments(*)")
       .eq("id", contractId)
       .eq("org_id", orgId)
       .maybeSingle(),
-    db.from("rettighedshavere")
-      .select("id,full_name,org_affiliations!inner(org_id)")
-      .eq("org_affiliations.org_id", orgId)
-      .order("full_name")
-      .limit(1000),
     db.from("works")
-      .select("id,title,year,type")
+      .select("id,title,year,type,dfi_id,tmdb_id,imdb_id")
       .eq("org_id", orgId)
       .order("title")
       .limit(1000),
@@ -1885,15 +2342,152 @@ export async function fetchAdminContractEditorData(contractId: string) {
       .select("employer_id,legal_entity_id,sort_order,employers(name),employer_legal_entities(legal_name,registration_number)")
       .eq("contract_id", contractId)
       .order("sort_order"),
+    db.from("contract_comments")
+      .select("id,author_role,message,created_at,member_read_at,admin_read_at,member_rights_holder_id")
+      .eq("contract_id", contractId)
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: true }),
   ]);
 
   if (contractResult.error) return { success: false, error: contractResult.error.message };
   if (!contractResult.data) return { success: false, error: "Kontrakten blev ikke fundet" };
-  if (rightsHoldersResult.error) return { success: false, error: rightsHoldersResult.error.message };
   if (worksResult.error) return { success: false, error: worksResult.error.message };
+  if (commentsResult.error) return { success: false, error: commentsResult.error.message };
 
   const contract = contractResult.data;
+  const participantIds = [...new Set((commentsResult.data ?? [])
+    .filter(comment => comment.author_role === "member")
+    .map(comment => comment.member_rights_holder_id)
+    .filter((id): id is string => Boolean(id)))];
+  const { data: commentParticipants, error: commentParticipantsError } = participantIds.length
+    ? await db.from("rettighedshavere")
+        .select("id,full_name")
+        .in("id", participantIds)
+    : { data: [], error: null };
+  if (commentParticipantsError) return { success: false, error: commentParticipantsError.message };
+  const participantNames = new Map((commentParticipants ?? []).map(participant => [participant.id, participant.full_name]));
+  const contractComments = (commentsResult.data ?? []).map(comment => ({
+    ...comment,
+    participant_name: comment.author_role === "member" && comment.member_rights_holder_id
+      ? participantNames.get(comment.member_rights_holder_id) ?? null
+      : null,
+  }));
+  const validation = Array.isArray(contract.contract_validations)
+    ? contract.contract_validations[0]
+    : contract.contract_validations;
+  const relatedWork = Array.isArray(contract.works) ? contract.works[0] : contract.works;
   const employer = Array.isArray(contract.employers) ? contract.employers[0] : contract.employers;
+  const rightsHolder = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere;
+  let extractedData = mergeContractWorkData({
+    extractedData: (validation?.extracted_data ?? {}) as Record<string, unknown>,
+    contract,
+    work: relatedWork,
+    employerName: employer?.name ?? null,
+    rightsHolderName: rightsHolder?.full_name ?? null,
+  });
+  try {
+    extractedData = (await applyApprovedAgreementRoyalty(extractedData)).data;
+  } catch (error) {
+    console.warn("[contract-editor] Royaltyreglen kunne ikke anvendes", error instanceof Error ? error.message : error);
+  }
+  const sources = extractedData._sources && typeof extractedData._sources === "object"
+    ? extractedData._sources as Record<string, string | null>
+    : {};
+  let layout = contract.layout_data as ContractLayout | null;
+  const layoutPath = contract.processed_pdf_url ?? contract.pdf_url;
+  if (!layout && layoutPath && documentExtension(layoutPath) === "pdf") {
+    try {
+      const { data: file } = await db.storage.from(BUCKET).download(layoutPath);
+      if (file) {
+        layout = buildPdfLayout(await extractPdfTextWithLayout(Buffer.from(await file.arrayBuffer())));
+        await db.from("contracts").update({ layout_data: layout }).eq("id", contractId).eq("org_id", orgId);
+      }
+    } catch (error) {
+      console.warn("[contract-editor] Layout kunne ikke bygges", error instanceof Error ? error.message : error);
+    }
+  }
+  const addEvidence = (key: string, value: unknown) => {
+    const quote = typeof value === "string" ? value.trim() : "";
+    if (!quote || sources[key]) return;
+    sources[key] = quote;
+    sources[`${key}_clause_id`] = matchCitationToClause(quote, layout);
+  };
+  addEvidence("employerName", extractedData.employerName ?? extractedData.producerName);
+  addEvidence("rightsHolderName", extractedData.rightsHolderName);
+  addEvidence("director", extractedData.director);
+  addEvidence("signatureEvidence", extractedData.signatureEvidence);
+  if (typeof extractedData.signaturePage === "number" || typeof extractedData.signaturePage === "string") {
+    sources.signatureEvidence_page = String(extractedData.signaturePage);
+  }
+  if (!sources.contractType) {
+    const evidence = findContractTypeEvidence(contract.type, layout);
+    if (evidence) {
+      sources.contractType = evidence.quote;
+      sources.contractType_focus = evidence.focusText;
+      sources.contractType_clause_id = evidence.clauseId;
+      sources.contractType_page = String(evidence.page);
+    }
+  }
+  // Normalisér navigationen for alle kilder ét sted. Ældre AI-resultater har
+  // ofte citatet, men mangler klausul-id og sidenummer.
+  for (const [key, quote] of Object.entries({ ...sources })) {
+    if (!quote || key.endsWith("_clause_id") || key.endsWith("_page")) continue;
+    const clauseKey = `${key}_clause_id`;
+    const pageKey = `${key}_page`;
+    const clauseId = sources[clauseKey] ?? matchCitationToClause(quote, layout);
+    if (!clauseId) continue;
+    sources[clauseKey] = clauseId;
+    const clause = layout?.clauses.find(item => item.id === clauseId);
+    if (clause?.page && !sources[pageKey]) sources[pageKey] = String(clause.page);
+  }
+  const storedEvidence = sanitizeStoredContractEvidence(extractedData._evidence);
+  const nativeEvidence = resolveNativeLayoutEvidence(sources, layout);
+  let spatialEvidence: Record<string, StoredContractFieldEvidence> = {};
+  if (
+    contract.document_spatial_schema_version === "google-vision-spatial-v3"
+    && Number(contract.document_spatial_accuracy ?? 0) >= 0.95
+    && contract.document_spatial_data_path
+  ) {
+    try {
+      const { data: spatialJob } = await db.from("contract_document_jobs")
+        .select("spatial_data_path,spatial_sha256,spatial_schema_version,spatial_accuracy_score")
+        .eq("contract_id", contractId)
+        .eq("status", "completed")
+        .eq("spatial_data_path", contract.document_spatial_data_path)
+        .eq("spatial_schema_version", "google-vision-spatial-v3")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (spatialJob?.spatial_sha256 && Number(spatialJob.spatial_accuracy_score ?? 0) >= 0.95) {
+        const { data: file, error: downloadError } = await db.storage.from(BUCKET).download(contract.document_spatial_data_path);
+        if (downloadError || !file) throw downloadError ?? new Error("Spatial-artefaktet kunne ikke hentes");
+        const artifact = parseVerifiedSpatialV3Artifact(Buffer.from(await file.arrayBuffer()), spatialJob.spatial_sha256);
+        spatialEvidence = resolveSpatialV3Evidence(sources, artifact);
+      }
+    } catch (error) {
+      console.warn("[contract-editor] Spatial v3 kunne ikke bruges", error instanceof Error ? error.message : error);
+    }
+  }
+  const evidence = mergeContractEvidence(storedEvidence, nativeEvidence, spatialEvidence);
+  if (validation?.id && JSON.stringify(storedEvidence) !== JSON.stringify(evidence)) {
+    const nextExtractedData = { ...extractedData, _evidence: evidence };
+    const { error: evidenceSaveError } = await db.from("contract_validations")
+      .update({ extracted_data: nextExtractedData })
+      .eq("id", validation.id)
+      .eq("contract_id", contractId);
+    if (evidenceSaveError) throw new Error(`Kildekoordinater kunne ikke gemmes: ${evidenceSaveError.message}`);
+    extractedData = nextExtractedData;
+  }
+  const signedUrl = async (path: string | null) => {
+    if (!path) return null;
+    const { data } = await db.storage.from(BUCKET).createSignedUrl(path, 60 * 60);
+    return data?.signedUrl ?? null;
+  };
+  const [originalUrl, originalViewUrl, commentedUrl] = await Promise.all([
+    signedUrl(contract.pdf_url),
+    signedUrl(contract.original_view_pdf_url),
+    signedUrl(contract.processed_pdf_url),
+  ]);
   const producerSelections: ProductionCompanySelection[] = producerResult.error
     ? (contract.employer_id && employer?.name ? [{ employerId: contract.employer_id, canonicalName: employer.name }] : [])
     : (producerResult.data ?? []).map(row => {
@@ -1909,7 +2503,7 @@ export async function fetchAdminContractEditorData(contractId: string) {
       });
 
   await recordAuditEvent({
-    context: auditHeadersContext(await headers(), { userId: user.id, orgId, role: "admin" }, "admin", "admin.contracts.editor"),
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId, role: staffRole }, "admin", "admin.contracts.editor"),
     action: "read",
     entityType: "contracts",
     entityId: contractId,
@@ -1923,10 +2517,41 @@ export async function fetchAdminContractEditorData(contractId: string) {
 
   return {
     success: true,
-    contract,
-    rightsHolders: rightsHoldersResult.data ?? [],
+    contract: {
+      ...contract,
+      contract_comments: contractComments,
+      validation_data: extractedData,
+      validation_has_credit_clause: validation?.has_credit_clause ?? null,
+      validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
+    },
+    canManageOwnership,
     works: worksResult.data ?? [],
     producerSelections,
+    documents: {
+      original: contract.pdf_url ? {
+        path: contract.original_view_pdf_url ?? contract.pdf_url,
+        url: originalViewUrl ?? originalUrl,
+        sourcePath: contract.pdf_url,
+        sourceUrl: originalUrl,
+        sourceFormat: documentExtension(contract.pdf_url) === "docx"
+          ? "docx"
+          : documentExtension(contract.pdf_url) === "doc" ? "doc" : documentExtension(contract.pdf_url) === "pdf" ? "pdf" : "unknown",
+        convertedForViewing: Boolean(contract.original_view_pdf_url),
+      } : null,
+      commented: contract.processed_pdf_url ? {
+        path: contract.processed_pdf_url,
+        url: commentedUrl,
+        sourcePath: contract.pdf_url ?? contract.processed_pdf_url,
+        sourceUrl: originalUrl,
+        sourceFormat: documentExtension(contract.pdf_url) === "docx"
+          ? "docx"
+          : documentExtension(contract.pdf_url) === "doc" ? "doc" : documentExtension(contract.pdf_url) === "pdf" ? "pdf" : "unknown",
+        convertedForViewing: false,
+      } : null,
+    },
+    layout,
+    sources,
+    evidence,
   };
 }
 
@@ -1935,7 +2560,8 @@ export async function updateAdminContract(contractId: string, values: AdminContr
   if (!user) return { success: false, error: "Ikke logget ind" };
   const db = createServiceClient();
   const orgId = await requireOrgId(db, user.id);
-  if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+  const staffRole = await staffRoleForOrg(db, user.id, orgId);
+  if (!staffRole) return { success: false, error: "Ikke autoriseret" };
   const { data: existing } = await db.from("contracts").select("id,status,org_id,work_id,rights_holder_id,season_number,episode_numbers").eq("id", contractId).eq("org_id", orgId).maybeSingle();
   if (!existing) return { success: false, error: "Kontrakten blev ikke fundet" };
   const requestedEpisodeScopeChange =
@@ -1953,17 +2579,27 @@ export async function updateAdminContract(contractId: string, values: AdminContr
     const blocker = await contractValidationBlocker(db, {
       id: existing.id,
       work_id: targetWorkId,
-      rights_holder_id: values.rights_holder_id === undefined ? existing.rights_holder_id : values.rights_holder_id,
+      rights_holder_id: existing.rights_holder_id,
     });
     if (blocker) return { success: false, error: blocker };
   }
   const writeDb = createServiceClient({ audit: {
     actorUserId: user.id,
     actorOrgId: orgId,
+    actorRole: staffRole,
     source: "admin",
     correlationId: crypto.randomUUID(),
   } });
-  const { producer_selections: producerSelections, status: requestedStatus, ...remainingContractValues } = values;
+  const {
+    producer_selections: producerSelections,
+    status: requestedStatus,
+    // Ownership changes are only allowed through the dedicated, revision-
+    // checked review RPC. The general editor may still send this legacy field
+    // during the UI transition, but it is intentionally never persisted.
+    rights_holder_id: _ignoredRightsHolderId,
+    ...remainingContractValues
+  } = values;
+  void _ignoredRightsHolderId;
   const contractValues = requestedStatus === undefined || requestedStatus === "valideret"
     ? remainingContractValues
     : { ...remainingContractValues, status: requestedStatus };
@@ -1987,9 +2623,9 @@ export async function updateAdminContract(contractId: string, values: AdminContr
       return { success: false, error: relationError instanceof Error ? relationError.message : "Producentrelationer kunne ikke gemmes" };
     }
   }
-  if (existing.status !== "valideret" && values.status === "valideret" && values.rights_holder_id) {
+  if (existing.status !== "valideret" && values.status === "valideret" && existing.rights_holder_id) {
     try {
-      await sendMemberNotification({ eventKey: `contract-validated:${contractId}`, eventType: "contract_validated", orgId, rightsHolderId: values.rights_holder_id, category: "transactional", subject: "Din kontrakt er valideret", bodyText: "DFKS har valideret din kontrakt. Du kan se resultatet i portalen.", path: `/portal/mine-kontrakter?contract=${contractId}`, entityType: "contract", entityId: contractId });
+      await sendMemberNotification({ eventKey: `contract-validated:${contractId}`, eventType: "contract_validated", orgId, rightsHolderId: existing.rights_holder_id, category: "transactional", subject: "Din kontrakt er valideret", bodyText: "DFKS har valideret din kontrakt. Du kan se resultatet i portalen.", path: `/portal/mine-kontrakter?contract=${contractId}`, entityType: "contract", entityId: contractId });
     } catch (notificationError) {
       console.error("[notification] valideringsmail kunne ikke sendes", notificationError);
     }
@@ -2006,7 +2642,8 @@ export async function validateAdminContracts(contractIds: string[]) {
   if (!ids.length) return { success: true, count: 0 };
   const db = createServiceClient();
   const orgId = await requireOrgId(db, user.id);
-  if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+  const staffRole = await staffRoleForOrg(db, user.id, orgId);
+  if (!staffRole) return { success: false, error: "Ikke autoriseret" };
   const { data: contracts, error: fetchError } = await db.from("contracts").select("id,status,work_id,rights_holder_id").eq("org_id", orgId).in("id", ids);
   if (fetchError) return { success: false, error: fetchError.message };
   for (const contract of contracts ?? []) {
@@ -2018,6 +2655,7 @@ export async function validateAdminContracts(contractIds: string[]) {
     const writeDb = createServiceClient({ audit: {
       actorUserId: user.id,
       actorOrgId: orgId,
+      actorRole: staffRole,
       source: "admin",
       correlationId: crypto.randomUUID(),
     } });
@@ -2057,8 +2695,11 @@ export async function markContractCommentsRead(contractId: string, viewerRole: "
 
   // Rollen bestemmes af HVILKEN side der kalder (admin vs portal), ikke af hvem
   // brugeren er — ellers fejler mark-læst når admin selv er rettighedshaveren.
+  let auditRole = "member";
   if (viewerRole === "admin") {
-    if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+    const staffRole = await staffRoleForOrg(db, user.id, contract.org_id);
+    if (!staffRole) return { success: false, error: "Ikke autoriseret" };
+    auditRole = staffRole;
   } else {
     const { data: rh } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
     if (!rh || rh.id !== contract.rights_holder_id) return { success: false, error: "Ikke autoriseret" };
@@ -2066,15 +2707,29 @@ export async function markContractCommentsRead(contractId: string, viewerRole: "
 
   const asMember = viewerRole === "member";
   // Medlem markerer admin-beskeder læst; admin markerer medlem-beskeder læst.
-  const query = db
+  let query = db
     .from("contract_comments")
     .update(asMember ? { member_read_at: now } : { admin_read_at: now })
     .eq("contract_id", contractId)
     .eq("author_role", asMember ? "admin" : "member")
     .is(asMember ? "member_read_at" : "admin_read_at", null);
+  if (asMember) query = query.eq("member_rights_holder_id", contract.rights_holder_id);
 
   const { error } = await query;
   if (error) return { success: false, error: error.message };
+
+  await recordAuditEvent({
+    context: auditHeadersContext(await headers(), { userId: user.id, orgId: contract.org_id, role: auditRole }, viewerRole === "admin" ? "admin" : "portal", "contracts.messages.read"),
+    action: "update",
+    entityType: "contract_comments",
+    entityId: contract.id,
+    entityLabel: "Beskedtråd markeret som læst",
+    targetMemberUuid: contract.rights_holder_id,
+    purposeCode: "contract_case_management",
+    legalBasis: viewerRole === "admin" ? "GDPR Art. 6(1)(c) og 6(1)(f)" : "GDPR Art. 6(1)(b)",
+    dataCategories: ["message_data", "contract_data"],
+    orgIds: [contract.org_id],
+  });
 
   revalidatePath("/portal/mine-kontrakter");
   revalidatePath("/admin/kontrakter");

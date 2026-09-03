@@ -75,3 +75,75 @@ for (const [routeName, path] of routes) {
     await testInfo.attach("performance", { body: JSON.stringify({ median, samples }, null, 2), contentType: "application/json" });
   });
 }
+
+for (const [scenario, query] of [
+  ["search", "?q=a"],
+  ["filter", "?status=missingContract"],
+  ["pagination", "?page=2&pageSize=20"],
+] as const) {
+  test(`member-works ${scenario} holder performancegrænser`, async ({ page }, testInfo) => {
+    const path = `/portal/mine-vaerker${query}`;
+    const samples: Array<{ firstRowMs: number; completeMs: number; requestCount: number; bytes: number }> = [];
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Network.enable");
+
+    for (let index = 0; index < 3; index += 1) {
+      let requestCount = 0;
+      let bytes = 0;
+      const responseHandler = () => { requestCount += 1; };
+      const loadingFinishedHandler = (event: { encodedDataLength: number }) => { bytes += event.encodedDataLength; };
+      page.on("response", responseHandler);
+      cdp.on("Network.loadingFinished", loadingFinishedHandler);
+      const separator = path.includes("?") ? "&" : "?";
+      const started = performance.now();
+      await page.goto(`${path}${separator}perf=${index}`);
+      await page.locator('[data-performance-route="member-works"][data-performance-ready="first-row"]').first().waitFor({ state: "attached" });
+      const firstRowMs = performance.now() - started;
+      await page.locator('[data-performance-route="member-works"][data-performance-ready="complete"]').first().waitFor({ state: "attached" });
+      samples.push({ firstRowMs, completeMs: performance.now() - started, requestCount, bytes });
+      page.off("response", responseHandler);
+      cdp.off("Network.loadingFinished", loadingFinishedHandler);
+    }
+
+    samples.sort((left, right) => left.firstRowMs - right.firstRowMs);
+    const median = samples[1];
+    const mobile = testInfo.project.name === "mobile-4g";
+    await mkdir("performance-report/results", { recursive: true });
+    await writeFile(`performance-report/results/${testInfo.project.name}-member-works-${scenario}.json`, JSON.stringify({ routeName: "member-works", scenario, project: testInfo.project.name, median, samples }, null, 2));
+    // The local database stages remain well below 600 ms. Allow bounded CI
+    // browser/runner variance while preserving the fixed 3 s completed-list SLA.
+    expect(median.firstRowMs).toBeLessThan(mobile ? 2_500 : 1_350);
+    expect(median.completeMs).toBeLessThan(mobile ? 4_000 : 3_000);
+  });
+}
+
+test("organisation settings indlæser grunddata før tekstskabeloner", async ({ page }, testInfo) => {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Network.enable");
+  const samples: Array<{ shellMs: number; textsMs: number; requestCount: number; bytes: number }> = [];
+  for (let index = 0; index < 3; index += 1) {
+    let requestCount = 0;
+    let bytes = 0;
+    const responseHandler = () => { requestCount += 1; };
+    const loadingFinishedHandler = (event: { encodedDataLength: number }) => { bytes += event.encodedDataLength; };
+    page.on("response", responseHandler);
+    cdp.on("Network.loadingFinished", loadingFinishedHandler);
+    const started = performance.now();
+    await page.goto(`/admin/organisation?perf=${index}`);
+    await page.locator('[data-performance-route="organisation-settings"][data-performance-ready="shell"]').waitFor({ state: "attached" });
+    const shellMs = performance.now() - started;
+    await page.locator("[data-organisation-text-editor-anchor]").scrollIntoViewIfNeeded();
+    await page.locator('[data-performance-route="organisation-settings"][data-performance-ready="texts"]').waitFor({ state: "attached" });
+    samples.push({ shellMs, textsMs: performance.now() - started, requestCount, bytes });
+    page.off("response", responseHandler);
+    cdp.off("Network.loadingFinished", loadingFinishedHandler);
+  }
+  samples.sort((left, right) => left.shellMs - right.shellMs);
+  const median = samples[1];
+  const mobile = testInfo.project.name === "mobile-4g";
+  expect(median.shellMs).toBeLessThan(mobile ? 2_500 : 1_200);
+  expect(median.textsMs).toBeLessThan(mobile ? 4_000 : 3_000);
+  await mkdir("performance-report/results", { recursive: true });
+  await writeFile(`performance-report/results/${testInfo.project.name}-organisation-settings.json`, JSON.stringify({ routeName: "organisation-settings", project: testInfo.project.name, median, samples }, null, 2));
+  await testInfo.attach("performance", { body: JSON.stringify({ median, samples }, null, 2), contentType: "application/json" });
+});

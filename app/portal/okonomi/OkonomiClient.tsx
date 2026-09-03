@@ -1,7 +1,6 @@
 "use client"
 
-import { useState } from "react"
-import { Wallet, AlertTriangle, CheckCircle2, Clock, CoinsIcon } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Clock, CoinsIcon } from "lucide-react"
 import { PortalPageHeader } from "@/components/portal/portal-page-header"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"

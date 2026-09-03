@@ -9,6 +9,7 @@ import { extractWordText } from "@/lib/word-text"
 import { maskPersonalData } from "@/lib/mask-text"
 import { jsonrepair } from "jsonrepair"
 import { SATSER_UDTRAEK_SYSTEM_PROMPT } from "@/lib/satser-udtraek-prompt"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 function sb() {
     return createClient(
@@ -141,8 +142,10 @@ ${maskPersonalData(kildetekst).slice(0, 150_000)}`,
             }
         }
 
+        const kandidater = parsed.kandidater ?? []
+        await recordSensitiveFlow({ actor: { userId: auth.userId, orgId: auth.orgId, role: auth.role, source: "admin" }, action: "ai_analysis", component: "admin.agreements.rate-extraction", entityType: "agreements", entityId: agreementId, orgIds: [auth.orgId], purposeCode: "agreement_rule_extraction", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["agreement_data", "salary_rules", "ai_analysis"], counts: { candidates: kandidater.length } })
         return NextResponse.json({
-            kandidater: parsed.kandidater ?? [],
+            kandidater,
             kildeTitel: kildenavn,
             kildeUrl: kildeUrl ?? null,
         })
@@ -206,5 +209,6 @@ export async function GET(req: NextRequest) {
         bilag.push({ overenskomst: agr.code, gyldigFra: c.gyldig_fra, bilagType: "lønskema", label: `Lønskema — gyldig fra ${c.gyldig_fra}` })
     }
 
+    await recordSensitiveFlow({ actor: { userId: auth.userId, orgId: auth.orgId, role: auth.role, source: "admin" }, action: "read", component: "admin.agreements.rate-attachments", entityType: "agreements", entityId: agreementId, orgIds: [auth.orgId], purposeCode: "agreement_rule_administration", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["agreement_data", "salary_rules"], counts: { results: bilag.length } })
     return NextResponse.json({ bilag })
 }

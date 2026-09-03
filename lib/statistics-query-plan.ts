@@ -108,14 +108,14 @@ export function statisticsQuerySystemPrompt(currentYear = new Date().getFullYear
   return `Du oversætter danske statistikspørgsmål til en lukket JSON-plan.
 Returnér kun JSON med: metrics, groupBy, compareBy, filters, chart og adjustForInflation.
 metrics er et array med 1–4 af: median_monthly_salary, average_monthly_salary, average_pension, median_working_weeks, average_working_weeks, contract_count, contributions, copydan_share, streaming_share, royalty_share, ai_clause_share.
-Brug median_monthly_salary ved "medianløn" og average_monthly_salary ved "gennemsnitsløn". Ved løn uden præcisering bruges kun median_monthly_salary.
+Brug median_monthly_salary ved "medianløn" og average_monthly_salary ved "gennemsnitsløn", "gennemsnitlig løn", "snitløn", "løn i snit" eller "i gennemsnit". Ved løn uden præcisering bruges kun median_monthly_salary.
 groupBy skal være year. chart må være line, bar eller table.
 compareBy er et array med højst to af: category, contract_type, producer, gender, producer_type, membership_type, profession_type, experience_group.
 Når spørgsmålet sammenligner flere produktionstyper, kontrakttyper, producenter eller andre grupper, skal den relevante dimension stå i compareBy, så grupperne bliver separate serier.
 filters må kun indeholde years, yearFrom, yearTo, genders, categories, contractTypes, producerNames, producerTypeCodes, membershipTypes, professionTypes og experienceGroups.
 Ved "siden 2022" sættes yearFrom til 2022 og yearTo til ${currentYear}. Ved et enkelt år bruges years. Brug null for en manglende periodegrænse.
 Alle filterfelter undtagen yearFrom/yearTo er arrays. Brug tomme arrays eller null for værdier, der ikke fremgår.
-Spillefilm er category feature, dokumentarfilm documentary, TV-serie tvSeries og dokumentarserie docSeries.
+Spillefilm, fiktion og fiktionsfilm er category feature, dokumentarfilm documentary, TV-serie tvSeries og dokumentarserie docSeries.
 A-løn er contractType a-løn; faktura, freelance og leverandørkontrakt er leverandør.
 experienceGroups: new_graduate (0–3 år), early_career (4–7 år), experienced (8–17 år), veteran (18+ år).
 membershipTypes: member, associate, none eller unknown.
@@ -222,36 +222,91 @@ function includesAny(value: string, needles: string[]) {
   return needles.some(needle => value.includes(needle));
 }
 
+function pushUnique<T>(items: T[], item: T) {
+  if (!items.includes(item)) items.push(item);
+}
+
+function requestedAverageSalary(value: string) {
+  return includesAny(value, [
+    "gennemsnit", "gennemsnitlig", "gennemsnitlige", "middelværdi", "middelvaerdi",
+    "i snit", "snitlon", "snitløn", "snitlig", "gns.",
+  ]);
+}
+
+function extractProducerNamesFromQuestion(question: string) {
+  const matches = [...question.matchAll(
+    /\b(?:producent(?:en|er|erne)?|produktionsselskab(?:et|er|erne)?|selskab(?:et|er|erne)?)\s+["“”']?([^"“”'?.!,;:]+?)(?=\s+(?:og\s+(?:producent|produktionsselskab|selskab)|siden|over tid|gennem årene|gennem arene|fra|mellem|i\s+(?:19|20)\d{2}|for\s+(?:spillefilm|fiktion|fiktionsfilm|dokumentar|dokumentarfilm|tv-serie|tv serie|kortfilm|reality|a[- ]?løn|a[- ]?lon|leverandør|leverandor|faktura|freelance)|som|med|efter)\b|[?.!,;:]|$)/giu,
+  )];
+  const names = matches.map(match => match[1].trim())
+    .map(name => name.replace(/\s+(?:giver|betaler|har|med|over|under|i)\b.*$/iu, "").trim())
+    .filter(name => /[A-ZÆØÅ0-9]/u.test(name) || /\b(?:a\/s|aps|film|tv|dr|dk4)\b/iu.test(name))
+    .filter(name => !/\b(?:giver|betaler|bedst|mest|hojest|højest|lavest|snit|gennemsnit|løn|lon)\b/iu.test(name))
+    .map(name => name.slice(0, 120));
+  return [...new Set(names)].slice(0, 5);
+}
+
 /**
  * Sikker, deterministisk fortolkning af almindelige danske statistikspørgsmål.
  * Den gør kernefunktionerne uafhængige af AI-udbyderens tilgængelighed. Mere
  * frie spørgsmål sendes fortsat til den lukkede AI-planlægger.
  */
 export function predefinedStatisticsQueryPlan(question: string): StatisticsQueryPlan | null {
+  const personNameProbe = question.replace(/\b(?:Vis|Hvordan|Hvor|Hvad|Har|Er|Ja|Nej|Copydan|AI|TV|A)\b/g, "");
+  if ((
+    /\b[A-ZÆØÅ][a-zæøå]+(?:\s+[A-ZÆØÅ][a-zæøå]+)+\b/.test(personNameProbe)
+    || /\b(?:kan|for|hos|fra)\s+[A-ZÆØÅ][a-zæøå]+\b/.test(question)
+  ) && !/\b(?:producent|produktionsselskab|selskab)/i.test(question)) {
+    throw new StatisticsQueryPlanError("person_query_not_allowed", "Statistikmotoren må ikke besvare spørgsmål om identificerbare personer.");
+  }
   const value = normalizedQuestion(question);
-  if (includesAny(value, ["hvad tjener", "hvem tjener", "højest lønnede", "hojest lonnede", "lavest lønnede", "lavest lonnede"])) {
+  if (includesAny(value, ["budget", "budgetter", "produktionsland", "efter land", "fordelt pa land", "fordelt på land"])) return null;
+  if (includesAny(value, ["hvad tjener", "hvem tjener", "hvem har", "højest lønnede", "hojest lonnede", "lavest lønnede", "lavest lonnede"])) {
     throw new StatisticsQueryPlanError("person_query_not_allowed", "Statistikmotoren må ikke besvare spørgsmål om identificerbare personer.");
   }
   const metrics: StatisticsMetric[] = [];
-  const addMetric = (metric: StatisticsMetric) => { if (!metrics.includes(metric)) metrics.push(metric); };
+  const addMetric = (metric: StatisticsMetric) => pushUnique(metrics, metric);
 
   const withoutContractTypeNames = value.replace(/a[- ]?(?:løn|lon)\w*/g, "");
-  const salaryMentioned = includesAny(withoutContractTypeNames, ["lon", "løn", "ugeløn", "ugelon", "manedslon", "månedsløn"]);
+  const realWageCoreMentioned = includesAny(value, [
+    "reallon", "realløn", "reallons", "realløns", "købekraft", "kobekraft",
+    "faktiske kobekraft", "faktiske købekraft", "varer og tjenester", "flere varer", "rad til mere",
+    "råd til mere", "faerre varer", "færre varer", "raekker pengene", "rækker pengene",
+  ]);
+  const realWageMentioned = realWageCoreMentioned || includesAny(value, [
+    "inflation", "inflationen", "prisudvikling", "prisstigning", "prisstigninger",
+  ]);
+  const nominalWageMentioned = includesAny(value, [
+    "nominel", "nominelle", "nominellon", "nominelløn", "nominellonnen", "nominellønnen",
+    "nominal", "for inflation", "før inflation", "lonseddel", "lønseddel", "lonsedlen", "lønsedlen",
+    "belobet pa lonsedlen", "beløbet på lønsedlen", "kroner og orer", "kroner og ører", "lønnen i kroner", "lonnen i kroner",
+  ]);
+  const nonSalaryMetricMentioned = includesAny(value, [
+    "pension", "arbejdsuger", "arbejdsuge", "antal uger", "antal kontrakter", "hvor mange kontrakter",
+    "kontraktantal", "kontrakter er der", "producentbidrag", "feriepenge", "beta-bidrag", "beta bidrag",
+    "copydan", "streaming", "svod", "royalty", "ai-forbehold", "ai forbehold", "data-mining", "datamining",
+  ]);
+  const explicitSalaryMentioned = includesAny(withoutContractTypeNames, [
+    "lon", "løn", "ugeløn", "ugelon", "manedslon", "månedsløn",
+    "honorar", "betaling", "betaler bedst", "betaler mest", "giver mest", "højeste gennemsnit", "hojeste gennemsnit",
+    "mere end", "mindst", "under ", "mindre end", "højst", "hojst",
+    "om ugen", "pr uge", "per uge", "/uge", "ugentlig",
+  ]) || nominalWageMentioned;
+  const salaryMentioned = explicitSalaryMentioned || realWageCoreMentioned || (realWageMentioned && !nonSalaryMetricMentioned);
   const contractCountMentioned = includesAny(value, ["antal kontrakter", "hvor mange kontrakter", "kontraktantal", "kontrakter er der"])
     || /hvor mange.*kontrakt/.test(value);
-  if (salaryMentioned) addMetric(includesAny(value, ["gennemsnit", "middelværdi", "middelvaerdi"]) ? "average_monthly_salary" : "median_monthly_salary");
+  if (salaryMentioned) addMetric(requestedAverageSalary(value) ? "average_monthly_salary" : "median_monthly_salary");
   if (value.includes("pension")) addMetric("average_pension");
   if (includesAny(value, ["arbejdsuger", "arbejdsuge", "antal uger"])) addMetric(value.includes("median") ? "median_working_weeks" : "average_working_weeks");
   if (contractCountMentioned) addMetric("contract_count");
   if (includesAny(value, ["producentbidrag", "producentbidragene", "feriepenge", "beta-bidrag", "beta bidrag"])) addMetric("contributions");
   if (value.includes("copydan")) addMetric("copydan_share");
-  if (includesAny(value, ["streamingforbehold", "streaming-forbehold", "svod-forbehold", "svod forbehold"])) addMetric("streaming_share");
+  if (includesAny(value, ["streaming", "streamingforbehold", "streaming-forbehold", "svod-forbehold", "svod forbehold"])) addMetric("streaming_share");
   if (value.includes("royalty")) addMetric("royalty_share");
   if (includesAny(value, ["ai-forbehold", "ai forbehold", "data-mining", "datamining"])) addMetric("ai_clause_share");
   if (!metrics.length) return null;
 
   const plan = emptyPlan(metrics.slice(0, 4));
-  if (value.includes("spillefilm")) plan.filters.categories.push("feature");
+  if (value.includes("spillefilm") || includesAny(value, ["fiktion", "fiktionsfilm", "fiction"])) plan.filters.categories.push("feature");
   if (includesAny(value, ["dokumentarserie", "dokumentar-serie", "dok-serie", "dok serie"])) plan.filters.categories.push("docSeries");
   if (value.includes("dokumentarfilm") || (value.includes("dokumentar") && !plan.filters.categories.includes("docSeries"))) plan.filters.categories.push("documentary");
   if (includesAny(value, ["tv-serie", "tv serie", "tvserier", "tv-serier"])) plan.filters.categories.push("tvSeries");
@@ -263,6 +318,32 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   if (includesAny(value, ["leverandor", "leverandør", "faktura", "freelance"])) plan.filters.contractTypes.push("leverandør");
   if (includesAny(value, ["kvinder", "kvinde"])) plan.filters.genders.push("female");
   if (includesAny(value, ["mænd", "maend", "mand"])) plan.filters.genders.push("male");
+  if (/(?:0|nul)\s*[-–]\s*3\s*ar|(?:0|nul)\s*[-–]\s*3\s*år|nyuddannet|nyuddannede|nye klippere/.test(value)) pushUnique(plan.filters.experienceGroups, "new_graduate");
+  if (/4\s*[-–]\s*7\s*ar|4\s*[-–]\s*7\s*år|tidlig karriere/.test(value)) pushUnique(plan.filters.experienceGroups, "early_career");
+  if (/8\s*[-–]\s*17\s*ar|8\s*[-–]\s*17\s*år|(?<!meget )erfarne/.test(value)) pushUnique(plan.filters.experienceGroups, "experienced");
+  if (/18\+|18\s*(?:eller flere|plus)|veteran|veteraner|meget erfarne/.test(value)) pushUnique(plan.filters.experienceGroups, "veteran");
+
+  const membershipProbe = value.replace(/ikke[- ]?medlemmer?|uorganiserede|uden medlemskab/g, "");
+  if (/\bmedlemmer?\b/.test(membershipProbe)) pushUnique(plan.filters.membershipTypes, "member");
+  if (/ikke[- ]?medlemmer?|uorganiserede|uden medlemskab/.test(value)) pushUnique(plan.filters.membershipTypes, "none");
+  if (/associerede|tilknyttede medlemmer?|associeret/.test(value)) pushUnique(plan.filters.membershipTypes, "associate");
+  if (/ukendt medlemsstatus/.test(value)) pushUnique(plan.filters.membershipTypes, "unknown");
+
+  if (/medklippere?|co[- ]?editors?/.test(value)) pushUnique(plan.filters.professionTypes, "Medklipper");
+  const professionProbe = value.replace(/medklippere?/g, "");
+  if (/klippere?\b/.test(professionProbe)) pushUnique(plan.filters.professionTypes, "Klipper");
+  if (/klippeassistenter?|assistenter?\b/.test(value)) pushUnique(plan.filters.professionTypes, "Klippeassistent");
+
+  if (/filmproducenter?|spillefilmproducenter?/.test(value)) pushUnique(plan.filters.producerTypeCodes, "feature_fiction");
+  if (/dokumentarproducenter?/.test(value)) pushUnique(plan.filters.producerTypeCodes, "documentary");
+  if (/tv-producenter?|tv producenter?/.test(value)) pushUnique(plan.filters.producerTypeCodes, "tv");
+  if (/streamere?|streamingtjenester?/.test(value)) pushUnique(plan.filters.producerTypeCodes, "streamer");
+  if (/broadcastere?|broadcast/.test(value)) pushUnique(plan.filters.producerTypeCodes, "broadcaster");
+  if (/animationsproducenter?|animation/.test(value)) pushUnique(plan.filters.producerTypeCodes, "animation");
+  if (/reklameproducenter?|reklame/.test(value)) pushUnique(plan.filters.producerTypeCodes, "advertising");
+
+  const producerNames = extractProducerNamesFromQuestion(question);
+  for (const producerName of producerNames) pushUnique(plan.filters.producerNames, producerName);
 
   const yearMatches = [...value.matchAll(/\b((?:19|20)\d{2})\b/g)].map(match => Number(match[1]));
   const uniqueYears = [...new Set(yearMatches)].sort((left, right) => left - right);
@@ -281,16 +362,34 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
 
   if (plan.filters.categories.length > 1 || includesAny(value, ["efter produktionstype", "fordelt pa produktionstype", "fordelt på produktionstype"])) plan.compareBy.push("category");
   if (plan.filters.contractTypes.length > 1 || includesAny(value, ["efter kontrakttype", "fordelt pa kontrakttype", "fordelt på kontrakttype"])) plan.compareBy.push("contract_type");
+  const producerTypeGroupingMentioned = includesAny(value, ["efter producenttype", "fordelt pa producenttype", "fordelt på producenttype"]);
+  const producerRankingMentioned = includesAny(value, [
+    "hvilke producenter", "hvilket produktionsselskab", "hvilke produktionsselskaber",
+    "bedste producenter", "bedste produktionsselskaber", "producenter giver bedst",
+    "producenter betaler bedst", "produktionsselskaber giver bedst", "produktionsselskab giver mest",
+    "giver mest i lon", "giver mest i løn", "betaler mest", "top producenter",
+    "top produktionsselskaber", "højeste løn", "hojeste lon", "højeste gennemsnit", "hojeste gennemsnit",
+    "efter producent", "efter producenter", "producenter efter", "efter produktionsselskab", "efter produktionsselskaber", "produktionsselskaber efter",
+    "fordelt pa producent", "fordelt på producent",
+  ]);
+  const producerCurveMentioned = includesAny(value, ["lønkurve", "lonkurve", "løngraf", "longraf", "udvikling"]) && plan.filters.producerNames.length > 0;
+  if (!producerTypeGroupingMentioned && salaryMentioned && producerRankingMentioned) plan.compareBy.push("producer");
+  if (!producerTypeGroupingMentioned && producerCurveMentioned && plan.filters.producerNames.length > 1) plan.compareBy.push("producer");
+  if (!producerTypeGroupingMentioned && includesAny(value, ["sammenlign"]) && plan.filters.producerNames.length > 1) plan.compareBy.push("producer");
   if (plan.filters.genders.length > 1 || /\b(?:efter|fordelt (?:pa|på)) (?:kon|køn)\b/.test(value)) plan.compareBy.push("gender");
-  if (includesAny(value, ["efter erfaringsgruppe", "fordelt pa erfaring", "fordelt på erfaring"])) plan.compareBy.push("experience_group");
-  if (includesAny(value, ["efter faggruppe", "fordelt pa faggruppe", "fordelt på faggruppe"])) plan.compareBy.push("profession_type");
-  if (includesAny(value, ["inflation", "reallon", "realløn", "købekraft", "kobekraft"])) plan.adjustForInflation = true;
-  plan.chart = includesAny(value, ["tabel", "oversigt"]) ? "table" : includesAny(value, ["søjle", "sojle"]) ? "bar" : "line";
-
-  // Producentnavne og andre fritekstværdier skal stadig løses af AI og det
-  // kanoniske register. Undgå at gætte, når spørgsmålet tydeligt nævner en
-  // navngiven producent.
-  if (value.includes("producent") && /\b(?:hos|fra|for)\b/.test(value)) return null;
+  if (plan.filters.experienceGroups.length > 1 || includesAny(value, ["efter erfaringsgruppe", "efter erfaring", "fordelt pa erfaring", "fordelt på erfaring"])) plan.compareBy.push("experience_group");
+  if (plan.filters.professionTypes.length > 1 || includesAny(value, ["efter faggruppe", "fordelt pa faggruppe", "fordelt på faggruppe"])) plan.compareBy.push("profession_type");
+  if (plan.filters.membershipTypes.length > 1 || includesAny(value, ["efter medlemsstatus", "fordelt pa medlemsstatus", "fordelt på medlemsstatus"])) plan.compareBy.push("membership_type");
+  if (plan.filters.producerTypeCodes.length > 1 || producerTypeGroupingMentioned) plan.compareBy.push("producer_type");
+  if (realWageMentioned) plan.adjustForInflation = true;
+  if (nominalWageMentioned && !realWageCoreMentioned) plan.adjustForInflation = false;
+  const requestedTable = includesAny(value, ["tabel", "oversigt"]);
+  const requestedBar = includesAny(value, ["søjle", "sojle"]);
+  const countComparison = plan.metrics.length === 1 && plan.metrics[0] === "contract_count" && plan.compareBy.length > 0;
+  const producerSalaryRanking = plan.compareBy.includes("producer")
+    && plan.filters.producerNames.length === 0
+    && plan.metrics.some(metric => metric === "median_monthly_salary" || metric === "average_monthly_salary");
+  plan.chart = requestedTable ? "table" : requestedBar || countComparison || producerSalaryRanking ? "bar" : "line";
   return parseStatisticsQueryPlan(plan);
 }
 
@@ -354,7 +453,7 @@ export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
   if (plan.compareBy.includes("membership_type") && !plan.filters.membershipTypes.length) plan.filters.membershipTypes = [...allowedMembershipTypes];
   if (plan.compareBy.includes("experience_group") && !plan.filters.experienceGroups.length) plan.filters.experienceGroups = [...allowedExperienceGroups];
   for (const dimension of plan.compareBy) {
-    const values = dimension === "producer" ? plan.filters.producerNames
+    const values = dimension === "producer" ? ["auto"]
       : dimension === "producer_type" ? plan.filters.producerTypeCodes
         : dimension === "profession_type" ? plan.filters.professionTypes
           : ["category", "contract_type", "gender", "membership_type", "experience_group"].includes(dimension) ? ["known"] : [];

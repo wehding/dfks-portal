@@ -1,4 +1,13 @@
+<!-- DFKS_AI_RULES_VERSION: 1.0.0 -->
 # DFKS Kontraktportal — Agent Guide
+
+## Fælles Codex/Claude-regler
+
+Læs `AI_CODING_RULES.md` før kodearbejde. Filen er den autoritative, fælles
+regelpakke for Codex og Claude Code. Klassificér ændringen A-D, og anvend de
+krævede audit-, RLS-, dataminimerings-, test- og performancekontroller. Stop før
+produktionsmigration eller platformændring uden udtrykkelig driftsgodkendelse.
+Denne regelpakke ændrer ikke Git-reglerne nedenfor.
 
 > Læs denne fil **inden** du skriver en eneste linje kode.
 > Den indeholder arkitekturbeslutninger, domæneviden og "rør ikke ved X"-regler.

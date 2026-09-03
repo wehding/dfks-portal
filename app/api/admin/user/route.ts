@@ -33,26 +33,16 @@ import {
     NON_MEMBER_WORK_INVITE_TEXT,
 } from "@/lib/rights-holder-invitation-templates"
 import { renderInvitationTemplate } from "@/lib/work-share-reconciliation"
+import { DEFAULT_BETA_INVITE_SUBJECT, DEFAULT_BETA_INVITE_TEXT, renderBetaInviteTemplate, todayInCopenhagen, validateBetaPeriod } from "@/lib/beta-test"
+import { formatInvitationWorks, type InvitationWorkLookup } from "@/lib/invitation-works"
+import { resolveInvitationWorks } from "@/lib/server/invitation-work-resolver"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
-async function invitationWorkList(admin: ReturnType<typeof getAdmin>, orgId: string, rightsHolderId: string, preferredWorkId?: string | null) {
-    const [{ data: assignments }, { data: participants }] = await Promise.all([
-        admin.from("work_assignments").select("work_id,works(title,year)").eq("org_id", orgId).eq("rights_holder_id", rightsHolderId).limit(100),
-        admin.from("work_share_participants").select("work_id,source_tags,work_share_cases!inner(org_id),works(title,year)").eq("rights_holder_id", rightsHolderId).eq("work_share_cases.org_id", orgId).is("excluded_at", null).limit(100),
-    ])
-    const rows = [
-      ...(assignments ?? []).map(row => ({ ...row, sources: ["Portal"] })),
-      ...(participants ?? []).map(row => ({ ...row, sources: Array.isArray(row.source_tags) && row.source_tags.length ? row.source_tags.map(source => source === "dfi" ? "DFI" : source === "tmdb" ? "TMDb" : source === "member" ? "Indtastet" : "Portal") : ["Portal"] })),
-    ].flatMap(row => {
-        const work = row.works as unknown as { title?: string | null; year?: number | null } | null
-        return work?.title ? [{ id: row.work_id as string, title: work.title, year: work.year ?? null, sources: row.sources }] : []
-    })
-    const unique = [...rows.reduce((map, row) => {
-      const existing = map.get(row.id)
-      map.set(row.id, existing ? { ...existing, sources: [...new Set([...existing.sources, ...row.sources])] } : row)
-      return map
-    }, new Map<string, typeof rows[number]>()).values()]
-      .sort((left, right) => Number(right.id === preferredWorkId) - Number(left.id === preferredWorkId) || (right.year ?? 0) - (left.year ?? 0) || left.title.localeCompare(right.title, "da"))
-    return unique
+const EMPTY_WORK_LOOKUP: InvitationWorkLookup = {
+    works: [],
+    counts: { local: 0, external: 0, total: 0 },
+    sourceStatus: { local: "none", dfi: "none", tmdb: "none" },
+    warnings: [],
 }
 
 function getAdmin(audit?: AuditContext) {
@@ -143,12 +133,14 @@ export async function POST(req: NextRequest) {
             if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 })
             const holder = await getRightsHolderInOrg(admin, rhId, orgId)
             if (!holder) return NextResponse.json({ error: "Rettighedshaveren tilhører ikke din organisation" }, { status: 403 })
-            const [{ data: org }, { data: affiliation }, allWorks] = await Promise.all([
-                admin.from("organisations").select("name,branding,member_work_invite_subject,member_work_invite_text,non_member_work_invite_subject,non_member_work_invite_text").eq("id", orgId).single(),
+            const isBetaPreview = body.invitationType === "beta"
+            const betaStartDate = todayInCopenhagen()
+            const [{ data: org }, { data: affiliation }, workLookup] = await Promise.all([
+                admin.from("organisations").select("name,branding,beta_invite_subject,beta_invite_text,beta_default_duration_days,member_work_invite_subject,member_work_invite_text,non_member_work_invite_subject,non_member_work_invite_text").eq("id", orgId).single(),
                 admin.from("org_affiliations").select("is_member").eq("org_id", orgId).eq("rights_holder_id", rhId).maybeSingle(),
-                invitationWorkList(admin, orgId, rhId, typeof body.workId === "string" ? body.workId : null),
+                resolveInvitationWorks({ db: admin, orgId, rightsHolderId: rhId, preferredWorkId: typeof body.workId === "string" ? body.workId : null }),
             ])
-            const works = allWorks.slice(0, 10)
+            const works = workLookup.works.slice(0, 10)
             const brand = resolveBranding(org as never)
             const isMember = affiliation?.is_member === true
             const subjectTemplate = isMember
@@ -157,23 +149,54 @@ export async function POST(req: NextRequest) {
             const bodyTemplate = isMember
                 ? org?.member_work_invite_text ?? MEMBER_WORK_INVITE_TEXT
                 : org?.non_member_work_invite_text ?? NON_MEMBER_WORK_INVITE_TEXT
-            const worksText = works.length
-                ? `${works.map(work => `• ${work.title}${work.year ? ` (${work.year})` : ""} · ${work.sources.join(" · ")}`).join("\n")}${allWorks.length > works.length ? `\n• ${allWorks.length - works.length} øvrige titler kan ses i portalen` : ""}`
-                : "Vi har endnu ikke en sikker værksliste. Du kan gennemgå og tilføje dine værker i portalen."
+            const worksText = formatInvitationWorks(workLookup.works)
             const values = { name: holder.full_name ?? "", organisation: org?.name ?? brand.long_name, worksText, primaryWork: works[0]?.title ?? "et værk" }
+            const requestedEndDate = typeof body.betaEndDate === "string" ? body.betaEndDate : ""
+            const betaDurationDays = Math.min(365, Math.max(1, Number(org?.beta_default_duration_days ?? 10)))
+            const fallbackEnd = new Date(`${betaStartDate}T12:00:00Z`)
+            fallbackEnd.setUTCDate(fallbackEnd.getUTCDate() + betaDurationDays)
+            const betaEndDate = requestedEndDate || fallbackEnd.toISOString().slice(0, 10)
+            if (isBetaPreview) validateBetaPeriod(betaStartDate, betaEndDate)
+            await recordSensitiveFlow({
+                actor: { userId: caller.userId, orgId, role: caller.role, source: "admin" },
+                action: "search",
+                component: "admin.user.invitation-work-preview",
+                entityType: "invitation_work_candidates",
+                entityId: rhId,
+                targetMemberUuid: rhId,
+                orgIds: [orgId],
+                purposeCode: "portal_invitation_preparation",
+                legalBasis: "GDPR Art. 6(1)(f), Art. 9(2)(d)",
+                dataCategories: ["identity_data", "work_data", "union_membership_data"],
+                correlationId,
+                counts: {
+                    localWorks: workLookup.counts.local,
+                    externalWorks: workLookup.counts.external,
+                    totalWorks: workLookup.counts.total,
+                    dfiUnavailable: workLookup.sourceStatus.dfi === "unavailable",
+                    tmdbUnavailable: workLookup.sourceStatus.tmdb === "unavailable",
+                    dfiAmbiguous: workLookup.sourceStatus.dfi === "ambiguous",
+                    tmdbAmbiguous: workLookup.sourceStatus.tmdb === "ambiguous",
+                },
+            })
             return NextResponse.json({
                 ok: true,
                 name: holder.full_name,
                 email: holder.email,
                 membership: isMember ? "member" : "non_member",
-                subject: renderInvitationTemplate(subjectTemplate, values),
-                bodyText: renderInvitationTemplate(bodyTemplate, values),
+                subject: isBetaPreview
+                    ? renderBetaInviteTemplate(org?.beta_invite_subject ?? DEFAULT_BETA_INVITE_SUBJECT, { ...values, startDate: betaStartDate, endDate: betaEndDate })
+                    : renderInvitationTemplate(subjectTemplate, values),
+                bodyText: isBetaPreview
+                    ? renderBetaInviteTemplate(org?.beta_invite_text ?? DEFAULT_BETA_INVITE_TEXT, { ...values, startDate: betaStartDate, endDate: betaEndDate })
+                    : renderInvitationTemplate(bodyTemplate, values),
                 works,
+                work_lookup: { counts: workLookup.counts, sourceStatus: workLookup.sourceStatus, warnings: workLookup.warnings },
             })
         }
 
         // ── Invite / reminder: opret eller gensend link ──────────
-        if (body.action === "invite" || body.action === "reminder") {
+        if (body.action === "invite" || body.action === "reminder" || body.action === "beta_invite") {
             const { rhId, role: inviteRole, title } = body
             if (!rhId) return NextResponse.json({ error: "rhId er påkrævet" }, { status: 400 })
 
@@ -216,8 +239,16 @@ export async function POST(req: NextRequest) {
             // Tjek max_users-grænse for den aktuelle org
             const [{ count: userCount }, { data: org }] = await Promise.all([
                 admin.from("user_org_roles").select("*", { count: "exact", head: true }).eq("org_id", orgId),
-                admin.from("organisations").select("max_users, name, from_email, branding, invite_email_text, invite_reminder_text, member_work_invite_subject, member_work_invite_text, non_member_work_invite_subject, non_member_work_invite_text").eq("id", orgId).single(),
+                admin.from("organisations").select("max_users, name, from_email, branding, invite_email_text, invite_reminder_text, beta_invite_subject, beta_invite_text, beta_default_duration_days, member_work_invite_subject, member_work_invite_text, non_member_work_invite_subject, non_member_work_invite_text").eq("id", orgId).single(),
             ])
+            const isBetaInvitation = !isStaff && body.action === "beta_invite"
+            const betaStartDate = todayInCopenhagen()
+            const requestedEndDate = typeof body.betaEndDate === "string" ? body.betaEndDate : ""
+            const betaDurationDays = Math.min(365, Math.max(1, Number((org as { beta_default_duration_days?: number | null } | null)?.beta_default_duration_days ?? 10)))
+            const fallbackEnd = new Date(`${betaStartDate}T12:00:00Z`)
+            fallbackEnd.setUTCDate(fallbackEnd.getUTCDate() + betaDurationDays)
+            const effectiveBetaEndDate = requestedEndDate || fallbackEnd.toISOString().slice(0, 10)
+            if (isBetaInvitation) validateBetaPeriod(betaStartDate, effectiveBetaEndDate)
             const existingAuthUser = await findAuthUserByEmail(admin, email)
             if (org && isNewUserLimitReached({ existingUserId: existingAuthUser?.id, currentUsers: userCount ?? 0, maxUsers: org.max_users })) {
                 return NextResponse.json({ error: `Brugerlimit nået (max ${org.max_users})` }, { status: 403 })
@@ -278,14 +309,14 @@ export async function POST(req: NextRequest) {
             const orgForMail = org as { name?: string | null; from_email?: string | null; branding?: Record<string, unknown> | null } | null
             const brand = resolveBranding(orgForMail as never)
             const { data: affiliation } = !isStaff
-                ? await admin.from("org_affiliations").select("is_member").eq("org_id", orgId).eq("rights_holder_id", rhId).maybeSingle()
+                ? await admin.from("org_affiliations").select("is_member,beta_tester_since").eq("org_id", orgId).eq("rights_holder_id", rhId).maybeSingle()
                 : { data: null }
-            const allWorks = !isStaff ? await invitationWorkList(admin, orgId, rhId, typeof body.workId === "string" ? body.workId : null) : []
-            const works = allWorks.slice(0, 10)
-            const worksText = works.length
-                ? `${works.map(work => `• ${work.title}${work.year ? ` (${work.year})` : ""} · ${work.sources.join(" · ")}`).join("\n")}${allWorks.length > works.length ? `\n• ${allWorks.length - works.length} øvrige titler kan ses i portalen` : ""}`
-                : "Vi har endnu ikke en sikker værksliste. Du kan gennemgå og tilføje dine værker i portalen."
-            const isWorkInvitation = !isStaff && body.includeWorks !== false && body.action !== "reminder"
+            const workLookup = !isStaff && body.action !== "reminder"
+                ? await resolveInvitationWorks({ db: admin, orgId, rightsHolderId: rhId, preferredWorkId: typeof body.workId === "string" ? body.workId : null })
+                : EMPTY_WORK_LOOKUP
+            const works = workLookup.works.slice(0, 10)
+            const worksText = formatInvitationWorks(workLookup.works)
+            const isWorkInvitation = !isStaff && body.includeWorks !== false && body.action !== "reminder" && !isBetaInvitation
             const isMember = affiliation?.is_member === true
             const workSubjectTemplate = isMember
                 ? ((org as { member_work_invite_subject?: string | null } | null)?.member_work_invite_subject ?? MEMBER_WORK_INVITE_SUBJECT)
@@ -293,18 +324,20 @@ export async function POST(req: NextRequest) {
             const workBodyTemplate = isMember
                 ? ((org as { member_work_invite_text?: string | null } | null)?.member_work_invite_text ?? MEMBER_WORK_INVITE_TEXT)
                 : ((org as { non_member_work_invite_text?: string | null } | null)?.non_member_work_invite_text ?? NON_MEMBER_WORK_INVITE_TEXT)
-            const templateValues = { name: name || "", organisation: org?.name ?? brand.long_name, worksText, primaryWork: works[0]?.title ?? "et værk" }
             const accessType = invitationAccessType(existingAuthUser?.id)
             const inviteUrl = buildAccountAccessUrl(
                 siteUrl,
                 linkData.properties.hashed_token,
                 accessType,
             )
+            const templateValues = { name: name || "", organisation: org?.name ?? brand.long_name, worksText, primaryWork: works[0]?.title ?? "et værk", invitationLink: inviteUrl }
             const mail = await sendEmail({
                 to: email,
                 fromName: resolveEmailSenderName(orgForMail as never),
                 replyTo: resolveReplyToEmail(orgForMail as never),
-                subject: isWorkInvitation
+                subject: isBetaInvitation
+                    ? renderBetaInviteTemplate((org as { beta_invite_subject?: string | null } | null)?.beta_invite_subject ?? DEFAULT_BETA_INVITE_SUBJECT, { name: name || "", organisation: org?.name ?? brand.long_name, startDate: betaStartDate, endDate: effectiveBetaEndDate, invitationLink: inviteUrl, primaryWork: templateValues.primaryWork, worksText: templateValues.worksText })
+                    : isWorkInvitation
                     ? renderInvitationTemplate(workSubjectTemplate, templateValues)
                     : body.action === "reminder"
                     ? `2. invitation til ${brand.long_name}s portal`
@@ -314,18 +347,35 @@ export async function POST(req: NextRequest) {
                     inviteUrl,
                     orgName: brand.long_name,
                     primaryColor: brand.primary_color,
-                    bodyText: isWorkInvitation
+                    bodyText: isBetaInvitation
+                        ? renderBetaInviteTemplate((org as { beta_invite_text?: string | null } | null)?.beta_invite_text ?? DEFAULT_BETA_INVITE_TEXT, { name: name || "", organisation: org?.name ?? brand.long_name, startDate: betaStartDate, endDate: effectiveBetaEndDate, invitationLink: inviteUrl, primaryWork: templateValues.primaryWork, worksText: templateValues.worksText })
+                        : isWorkInvitation
                         ? renderInvitationTemplate(workBodyTemplate, templateValues)
                         : body.action === "reminder"
-                        ? ((org as { invite_reminder_text?: string | null } | null)?.invite_reminder_text ?? null)
-                        : ((org as { invite_email_text?: string | null } | null)?.invite_email_text ?? null),
-                    bodyIncludesGreeting: isWorkInvitation,
+                        ? renderInvitationTemplate(((org as { invite_reminder_text?: string | null } | null)?.invite_reminder_text ?? ""), templateValues) || null
+                        : renderInvitationTemplate(((org as { invite_email_text?: string | null } | null)?.invite_email_text ?? ""), templateValues) || null,
+                    bodyIncludesGreeting: isWorkInvitation || isBetaInvitation,
                     variant: body.action === "reminder" ? "reminder" : "invite",
                     accessType,
                 }),
             })
 
             const inviteSentAt = inviteSentAtAfterMail(mail.ok, new Date().toISOString())
+            if (isBetaInvitation) {
+                const { error: betaError } = await admin.rpc("set_beta_tester_status", {
+                    p_org_id: orgId, p_rights_holder_id: rhId, p_actor_user_id: caller.userId, p_actor_role: caller.role,
+                    p_enabled: true, p_period_start: betaStartDate, p_period_end: effectiveBetaEndDate,
+                    p_email_delivered: mail.ok, p_link_type: accessType,
+                    p_work_lookup: {
+                        localWorks: workLookup.counts.local,
+                        externalWorks: workLookup.counts.external,
+                        totalWorks: workLookup.counts.total,
+                        dfiStatus: workLookup.sourceStatus.dfi,
+                        tmdbStatus: workLookup.sourceStatus.tmdb,
+                    },
+                })
+                if (betaError) throw new Error(betaError.message)
+            }
             if (inviteSentAt && rhId && rhId !== "__staff__") {
                 const { error: sentAtError } = await admin
                     .from("rettighedshavere")
@@ -334,17 +384,28 @@ export async function POST(req: NextRequest) {
                 if (sentAtError) console.error("[admin/user] Invitationsmailen blev sendt, men invite_sent_at kunne ikke opdateres.")
             }
 
-            await recordAuditEvent({
+            if (!isBetaInvitation) await recordAuditEvent({
                 context: auditContext,
                 action: "invite",
                 entityType: isStaff ? "auth_users" : "rettighedshavere",
                 entityId: isStaff ? newUserId : String(rhId),
-                entityLabel: name || (isStaff ? "Medarbejder" : "Rettighedshaver"),
+                entityLabel: isBetaInvitation ? "Betatester" : name || (isStaff ? "Medarbejder" : "Rettighedshaver"),
+                targetMemberUuid: isStaff ? null : String(rhId),
                 orgIds: [orgId],
+                purposeCode: isBetaInvitation ? "beta_program_administration" : undefined,
+                legalBasis: isBetaInvitation ? "GDPR Art. 6(1)(f), Art. 9(2)(d)" : undefined,
+                dataCategories: isBetaInvitation ? ["identity_data", "contact_data", "union_membership_data"] : undefined,
+                systemComponent: isBetaInvitation ? "admin.user.beta-invite" : undefined,
                 metadata: {
                     reminder: body.action === "reminder",
+                    invitationType: isBetaInvitation ? "beta" : "standard",
                     linkType: accessType,
                     emailDelivered: mail.ok,
+                    localWorks: workLookup.counts.local,
+                    externalWorks: workLookup.counts.external,
+                    totalWorks: workLookup.counts.total,
+                    dfiStatus: workLookup.sourceStatus.dfi,
+                    tmdbStatus: workLookup.sourceStatus.tmdb,
                 },
             })
 
@@ -356,6 +417,7 @@ export async function POST(req: NextRequest) {
                 email_sent: mail.ok,
                 email_error: mail.ok ? undefined : mail.error,
                 works,
+                work_lookup: { counts: workLookup.counts, sourceStatus: workLookup.sourceStatus, warnings: workLookup.warnings },
             })
         }
 

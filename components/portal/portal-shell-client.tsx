@@ -53,6 +53,7 @@ import { AppShellTopBar } from "@/components/navigation/app-shell-top-bar"
 import { resolveNavigationTitle } from "@/lib/navigation-title"
 import { PortalContextualHelp } from "@/components/portal/portal-contextual-help"
 import { OnboardingRequirementBanner } from "@/components/onboarding-requirement-banner"
+import { EMPTY_PAGE_METADATA, PageMetadataContext } from "@/components/page-metadata"
 
 const ALL_ADMIN_NAV_ITEMS = [
     { key: "kontrakter",           href: "/admin/kontrakter",           icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"          },
@@ -103,6 +104,7 @@ export default function PortalShellClient({
     const [activeOrgId, setActiveOrgId] = useState(initialContext.orgId)
     const organisations = initialContext.organisations
     const [badges, setBadges] = useState<NavigationBadgeCounts>(EMPTY_NAVIGATION_BADGES)
+    const [pageMetadata, setPageMetadata] = useState(EMPTY_PAGE_METADATA)
     const brand = initialContext.brand
     const isAssociationMember = initialContext.canUseMember
 
@@ -191,7 +193,8 @@ export default function PortalShellClient({
             ...item,
             label: t(item.labelKey as Parameters<typeof t>[0]),
         }))
-    const currentPageTitle = resolveNavigationTitle(pathname, visiblePortalNavItems, t("nav.portal"))
+    const currentPageTitle = pageMetadata.title ?? resolveNavigationTitle(pathname, visiblePortalNavItems, t("nav.portal"))
+    const currentPageSubtitle = pageMetadata.subtitle ?? "Din rettighedsportal"
 
     const renderPortalNavItem = (item: (typeof portalNavItems)[number]) => {
         if (item.href === "/portal/mine-data") return null
@@ -260,6 +263,7 @@ export default function PortalShellClient({
     }
 
     return (
+        <PageMetadataContext.Provider value={setPageMetadata}>
         <SidebarProvider>
             <SidebarCloseOnNavigation />
             <Sidebar variant="inset">
@@ -398,9 +402,10 @@ export default function PortalShellClient({
                 <AppShellTopBar>
                     <SidebarTrigger className="shrink-0" />
                     <Separator orientation="vertical" className="hidden h-4 sm:block" />
-                    <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">
-                        {currentPageTitle}
-                    </h1>
+                    <div className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden">
+                        <h1 className="max-w-[45%] shrink-0 truncate text-base font-semibold text-foreground sm:max-w-none">{currentPageTitle}</h1>
+                        <p className="min-w-0 truncate text-xs text-muted-foreground sm:text-sm" title={currentPageSubtitle}>{currentPageSubtitle}</p>
+                    </div>
                     <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
                         {organisations.length > 1 && (
                             <label className="flex items-center gap-1.5">
@@ -425,5 +430,6 @@ export default function PortalShellClient({
                 <main className="min-w-0 max-w-full flex-1 overflow-x-clip p-3 sm:p-4 lg:p-6">{children}</main>
             </SidebarInset>
         </SidebarProvider>
+        </PageMetadataContext.Provider>
     )
 }

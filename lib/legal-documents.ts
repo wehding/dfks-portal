@@ -3,6 +3,14 @@ export const LEGAL_DOCUMENT_TYPES = [
   "terms_of_service",
   "ai_transparency_notice",
   "contract_analysis_notice",
+  "legacy_work_declaration",
+] as const;
+
+export const ONBOARDING_LEGAL_DOCUMENT_TYPES = [
+  "privacy_notice",
+  "terms_of_service",
+  "ai_transparency_notice",
+  "contract_analysis_notice",
 ] as const;
 
 export const LEGAL_DOCUMENT_AUDIENCES = ["member", "non_member"] as const;
@@ -27,6 +35,7 @@ export const LEGAL_DOCUMENT_TYPE_LABELS: Record<LegalDocumentType, string> = {
   terms_of_service: "Brugervilkår",
   ai_transparency_notice: "AI-transparens",
   contract_analysis_notice: "Kontraktanalyse",
+  legacy_work_declaration: "Tro-og-love for ældre værker",
 };
 
 export const LEGAL_DOCUMENT_AUDIENCE_LABELS: Record<LegalDocumentAudience, string> = {
@@ -91,7 +100,7 @@ export const DEFAULT_LEGAL_DOCUMENT_COPY: Record<LegalDocumentAudience, Record<L
       title: "Velkommen til DFKS-portalen – dine data, dine rettigheder",
       body: `For at give dig den skarpeste rådgivning om din løn og dine rettigheder bruger vi AI til at gennemgå din kontrakt. Din sikkerhed kommer først.
 
-Inden systemet læser dokumentet, maskerer vi automatisk CPR-nummer og bankoplysninger. Kontrakten behandles i et lukket system, som ikke bruges til at træne offentlige AI-modeller.
+Scannede kontraktsider sendes til Google Vision i EU for at skabe søgbar tekst. Før teksten sendes videre til AI-kontraktanalysen, maskerer vi automatisk CPR-nummer, bankoplysninger og andre oplagte personlige kontaktoplysninger. Kontrakten bruges ikke til at træne offentlige AI-modeller.
 
 Som medlem er du oplyst om, at foreningen bruger overordnede kontrakt- og lønoplysninger til anonymiseret statistikarbejde. Statistikken bruges kun samlet og under faste diskretionsgrænser.
 
@@ -113,9 +122,17 @@ Systemet foretager ingen automatiske afgørelser. Fundne passager fremhæves, s�
     },
     contract_analysis_notice: {
       title: "Kontraktanalyse og maskering",
-      body: `Når du uploader en kontrakt, udtrækker systemet tekst og maskerer CPR-nummer, bankoplysninger og andre oplagte personlige kontaktoplysninger, før teksten sendes til AI-analyse.
+      body: `Når du uploader en scannet kontrakt, behandler Google Vision i EU de rå sider for at udtrække søgbar tekst og koordinater. Derefter maskerer systemet CPR-nummer, bankoplysninger og andre oplagte personlige kontaktoplysninger, før teksten sendes til AI-kontraktanalysen.
 
 Analysen bruges til at finde relevante kontraktpunkter og mulige risici. En faglig rådgiver eller administrator skal kunne verificere fundene, før de bruges som grundlag for rådgivning.`,
+    },
+    legacy_work_declaration: {
+      title: "Tro-og-loveerklæring om arbejde på produktioner",
+      body: `Jeg erklærer på tro og love, at jeg personligt har arbejdet som {faggruppe} på de produktioner, jeg har valgt nedenfor, og at oplysningerne om min kreditering og deltagelse er korrekte.
+
+For produktioner før {skæringsår} kræver Copydan ikke, at dokumentationen for rettighedshaverens tilknytning nødvendigvis består af en kontrakt. {organisation} anvender derfor denne erklæring som dokumentation i behandlingen og den eventuelle fordeling af rettighedsmidler.
+
+Jeg er bekendt med, at {organisation} kan bede om supplerende dokumentation. Jeg forpligter mig til straks at rette oplysningerne, hvis de viser sig at være forkerte. Urigtige oplysninger kan medføre, at en udbetaling tilbageholdes, korrigeres eller kræves tilbagebetalt.`,
     },
   },
   non_member: {
@@ -125,7 +142,7 @@ Analysen bruges til at finde relevante kontraktpunkter og mulige risici. En fagl
 
 Da du ikke er medlem, opbevarer vi din kontrakt sikkert som juridisk dokumentation, så vi kan varetage dine ophavsrettigheder og sikre udbetaling af dine Copydan- og streamingmidler.
 
-Dit CPR-nummer og dine bankoplysninger maskeres automatisk, inden systemet analyserer dokumentet. Din kontrakt behandles i et lukket system og benyttes aldrig til at træne offentlige AI-modeller.
+Scannede kontraktsider sendes til Google Vision i EU for at skabe søgbar tekst. Dit CPR-nummer, dine bankoplysninger og andre oplagte personlige kontaktoplysninger maskeres automatisk, før teksten sendes videre til AI-kontraktanalysen. Kontrakten benyttes aldrig til at træne offentlige AI-modeller.
 
 Læs den fulde privatlivspolitik for rettighedshavere: ${PRIVACY_POLICY_URL}`,
     },
@@ -145,9 +162,17 @@ Systemet foretager ingen automatiske afgørelser. Fundne passager fremhæves, s�
     },
     contract_analysis_notice: {
       title: "Kontraktanalyse og anonym markedsstatistik",
-      body: `Når du uploader en kontrakt, udtrækker systemet tekst og maskerer CPR-nummer, bankoplysninger og andre oplagte personlige kontaktoplysninger, før teksten sendes til AI-analyse.
+      body: `Når du uploader en scannet kontrakt, behandler Google Vision i EU de rå sider for at udtrække søgbar tekst og koordinater. Derefter maskerer systemet CPR-nummer, bankoplysninger og andre oplagte personlige kontaktoplysninger, før teksten sendes til AI-kontraktanalysen.
 
 Du kan frivilligt vælge, om dine overordnede løn- og arbejdsvilkår må indgå i anonymiseret markedsstatistik. Hvis du vælger nej, bruges kontrakten kun som dokumentation for dine rettigheder og udbetalinger.`,
+    },
+    legacy_work_declaration: {
+      title: "Tro-og-loveerklæring om arbejde på produktioner",
+      body: `Jeg erklærer på tro og love, at jeg personligt har arbejdet som {faggruppe} på de produktioner, jeg har valgt nedenfor, og at oplysningerne om min kreditering og deltagelse er korrekte.
+
+For produktioner før {skæringsår} kræver Copydan ikke, at dokumentationen for rettighedshaverens tilknytning nødvendigvis består af en kontrakt. {organisation} anvender derfor denne erklæring som dokumentation i behandlingen og den eventuelle fordeling af rettighedsmidler.
+
+Jeg er bekendt med, at {organisation} kan bede om supplerende dokumentation. Jeg forpligter mig til straks at rette oplysningerne, hvis de viser sig at være forkerte. Urigtige oplysninger kan medføre, at en udbetaling tilbageholdes, korrigeres eller kræves tilbagebetalt.`,
     },
   },
 };

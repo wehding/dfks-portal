@@ -39,7 +39,10 @@ det senest gemte trin, `rematch` genbruger AI-resultatet uden et nyt AI-kald, og
 `reanalyze` sletter kun det gemte udtræksresultat og bruger den aktuelt valgte
 model ved næste behandling.
 
-Kildedokumentet og den maskerede tekst gemmes ikke i AI-jobbet. Det strukturerede
+For billedbaserede PDF'er sender OCR-workeren rå sider til Google Vision EU og gemmer
+en privat, søgbar afledt PDF med koordinater. Før den efterfølgende AI-analyse maskeres
+CPR-, bank- og kontaktoplysninger fortsat i den udtrukne tekst. Kildedokumentet og den
+maskerede tekst gemmes ikke i AI-jobbet. Det strukturerede
 udtræk gemmes kun som checkpoint, indtil jobbet er færdigt; derefter ligger de
 godkendelige felter i kontraktvalideringen, og checkpointet slettes. Model,
 prompt-/skemaversion, tokenforbrug, prisreference og provider request-id bevares

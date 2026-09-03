@@ -1,9 +1,9 @@
 import { after, NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { processPendingContractJobs } from "@/lib/server/contract-import-processor";
 import { CONTRACT_IMPORT_PROMPT_VERSION, CONTRACT_IMPORT_SCHEMA_VERSION } from "@/lib/contract-import-job";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
+import { requireContractImportWriteAccess } from "@/lib/server/contract-import-access";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -11,9 +11,9 @@ export const maxDuration = 300;
 type RetryMode = "resume" | "rematch" | "reanalyze";
 
 export async function POST(request: NextRequest, context: { params: Promise<{ batchId: string }> }) {
-  const session = await createClient();
-  const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin"]);
-  if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const auth = await requireContractImportWriteAccess();
+  if (!auth) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const { caller } = auth;
   const { batchId } = await context.params;
   const body = await request.json().catch(() => ({})) as { itemIds?: unknown; mode?: unknown };
   const mode: RetryMode | null = body.mode === "resume" || body.mode === "rematch" || body.mode === "reanalyze" ? body.mode : null;
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ba
   if (batch.error) return NextResponse.json({ error: "Importen kunne ikke hentes" }, { status: 500 });
   if (!batch.data) return NextResponse.json({ error: "Importen blev ikke fundet" }, { status: 404 });
 
-  let query = db.from("contract_import_items").select("id,ai_job_id").eq("batch_id", batchId).eq("org_id", caller.orgId).not("ai_job_id", "is", null);
+  let query = db.from("contract_import_items").select("id,ai_job_id,contract_id").eq("batch_id", batchId).eq("org_id", caller.orgId).not("ai_job_id", "is", null);
   if (itemIds.length) query = query.in("id", itemIds);
   else if (mode === "resume") query = query.in("status", ["retryable_error", "blocked", "dead"]);
   const items = await query;
@@ -84,6 +84,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ba
     updated_at: now,
   }).in("id", resetItemIds);
   if (resetItems.error) return NextResponse.json({ error: "Importstatus kunne ikke nulstilles" }, { status: 500 });
+
+  const contractIds = [...new Set((items.data ?? []).map(item => item.contract_id).filter((id): id is string => Boolean(id)))];
+  const { data: contracts } = contractIds.length ? await db.from("contracts").select("rights_holder_id").in("id", contractIds).eq("org_id", caller.orgId) : { data: [] };
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "ai_analysis", component: "admin.contract-imports.retry", entityType: "contract_import_batches", entityId: batchId, targetMemberUuids: (contracts ?? []).map(item => item.rights_holder_id).filter((id): id is string => Boolean(id)), orgIds: [caller.orgId], purposeCode: "contract_import_retry", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["contract_data", "document_data", "ai_analysis"], counts: { queued: updatedJobIds.size } });
 
   after(async () => { await processPendingContractJobs(caller.orgId); });
   return NextResponse.json({ ok: true, queued: updatedJobIds.size, mode });

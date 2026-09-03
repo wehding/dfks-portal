@@ -3,7 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { getRequiredEnv, getSupabaseServiceKey } from "@/lib/env";
 import type { AuditContext } from "@/lib/audit-log";
 
-export function createServiceClient(options: { audit?: AuditContext } = {}) {
+export function createServiceClient(options: {
+  audit?: AuditContext;
+  fetch?: typeof globalThis.fetch;
+} = {}) {
   const url = getRequiredEnv("NEXT_PUBLIC_SUPABASE_URL");
   const key = getSupabaseServiceKey();
   const audit = options.audit;
@@ -15,8 +18,14 @@ export function createServiceClient(options: { audit?: AuditContext } = {}) {
     "x-dfks-correlation-id": audit.correlationId ?? "",
     "x-dfks-audit-mode": audit.mode ?? "row",
   } : undefined;
+  const globalOptions = headers || options.fetch
+    ? {
+        ...(headers ? { headers } : {}),
+        ...(options.fetch ? { fetch: options.fetch } : {}),
+      }
+    : undefined;
   return createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false },
-    global: headers ? { headers } : undefined,
+    global: globalOptions,
   });
 }

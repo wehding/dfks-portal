@@ -70,10 +70,14 @@ import { WORK_TYPES, workTypeLabel } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import { normalizeCompanyName, type ExternalProductionCompany, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
-import { WorkShareReconciliationWizard } from "@/components/admin/work-share-reconciliation-wizard";
-import { countAdminShareTasks } from "@/app/actions/work-share-cases";
+import { WorkShareReconciliationTab } from "@/components/admin/work-share-reconciliation-tab";
+import { LegacyWorkDeclarationStatus } from "@/components/admin/legacy-work-declaration-status";
+import { countAdminShareTasks, type fetchAdminShareQueue } from "@/app/actions/work-share-cases";
 import { normalizeWorkEditorRole, resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
+import { useI18n } from "@/lib/i18n";
+import { SourcePictogram } from "@/components/source-pictogram";
+import { externalLookupWarning, runWithLookupDeadline } from "@/lib/external-lookup";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -186,6 +190,7 @@ type WorkRow = {
   title: string;
   type: string;
   year: number | null;
+  production_year?: number | null;
   duration_minutes: number | null;
   season_count: number | null;
   episode_count: number | null;
@@ -230,6 +235,7 @@ type WorkForm = {
   title: string;
   type: string;
   year: string;
+  production_year: string;
   duration_minutes: string;
   season_count: string;
   episode_count: string;
@@ -260,6 +266,7 @@ type AddWorkForm = {
   title: string;
   type: string;
   year: string;
+  production_year: string;
   duration_minutes: string;
   season_count: string;
   episode_count: string;
@@ -297,6 +304,7 @@ type AdminCreateWorkData = {
   title: string;
   type: string;
   year: number | null;
+  production_year: number | null;
   duration_minutes: number | null;
   season_count: number | null;
   episode_count: number | null;
@@ -557,6 +565,7 @@ function toForm(work: WorkRow): WorkForm {
     title: work.title ?? "",
     type: work.type ?? "",
     year: work.year?.toString() ?? "",
+    production_year: work.production_year?.toString() ?? "",
     duration_minutes: work.duration_minutes?.toString() ?? "",
     season_count: work.season_count?.toString() ?? "",
     episode_count: work.episode_count?.toString() ?? "",
@@ -687,6 +696,7 @@ function defaultAddForm(): AddWorkForm {
     title: "",
     type: "spillefilm",
     year: "",
+    production_year: "",
     duration_minutes: "",
     season_count: "",
     episode_count: "",
@@ -736,15 +746,19 @@ function distributionPayload(items: DistributionDraft[]) {
   }));
 }
 
-export default function WorkArchiveClient({ initialResult, initialQuery }: { initialResult?: Awaited<ReturnType<typeof fetchAdminWorksPage>>; initialQuery?: AdminWorksPageParams }) {
+type WorkArchiveTab = "oversigt" | "beskeder" | "arbejdsandele";
+type InitialShareQueue = Awaited<ReturnType<typeof fetchAdminShareQueue>>;
+
+export default function WorkArchiveClient({ initialResult, initialQuery, initialShareQueue, initialTab = "oversigt" }: { initialResult?: Awaited<ReturnType<typeof fetchAdminWorksPage>>; initialQuery?: AdminWorksPageParams; initialShareQueue?: InitialShareQueue; initialTab?: WorkArchiveTab }) {
   return (
     <Suspense fallback={<TableSkeleton columns={7} rows={7} />}>
-      <VaerksadministrationContent initialResult={initialResult} initialQuery={initialQuery} />
+      <VaerksadministrationContent initialResult={initialResult} initialQuery={initialQuery} initialShareQueue={initialShareQueue} initialTab={initialTab} />
     </Suspense>
   );
 }
 
-function VaerksadministrationContent({ initialResult, initialQuery }: { initialResult?: Awaited<ReturnType<typeof fetchAdminWorksPage>>; initialQuery?: AdminWorksPageParams }) {
+function VaerksadministrationContent({ initialResult, initialQuery, initialShareQueue, initialTab }: { initialResult?: Awaited<ReturnType<typeof fetchAdminWorksPage>>; initialQuery?: AdminWorksPageParams; initialShareQueue?: InitialShareQueue; initialTab: WorkArchiveTab }) {
+  const { t, locale } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [works, setWorks] = useState<WorkRow[]>(initialResult?.success ? initialResult.works as unknown as WorkRow[] : []);
@@ -761,8 +775,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
   const [totalCount, setTotalCount] = useState(initialResult?.success ? initialResult.totalCount ?? 0 : 0);
   const [totalAllCount, setTotalAllCount] = useState(initialResult?.success ? initialResult.totalAllCount ?? 0 : 0);
   const [serverStats, setServerStats] = useState(initialResult?.success ? initialResult.stats ?? { total: 0, withContract: 0, missingContract: 0 } : { total: 0, withContract: 0, missingContract: 0 });
-  const [shareTaskCount, setShareTaskCount] = useState(0);
-  const [shareTasksOpen, setShareTasksOpen] = useState(false);
+  const [shareTaskCount, setShareTaskCount] = useState(initialShareQueue?.totalCount ?? 0);
   const [sortKey, setSortKey] = useState<SortKey>((initialQuery?.sortKey as SortKey) ?? "status");
   const [sortDir, setSortDir] = useState<SortDir>(initialQuery?.sortDir ?? "asc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -830,7 +843,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
   const [editingSeasonEpisodes, setEditingSeasonEpisodes] = useState<WorkRow[]>([]);
   const [seasonCreditDrafts, setSeasonCreditDrafts] = useState<Record<string, SeasonCreditDraft>>({});
   const { activeRh, setActiveRh } = useActiveRightsHolder();
-  const [activeTab, setActiveTab] = useState<"oversigt" | "beskeder">("oversigt");
+  const [activeTab, setActiveTab] = useState<WorkArchiveTab>(initialTab);
   const [beskedCount, setBeskedCount] = useState<number>(0);
   const lookupsLoadedRef = useRef(false);
   const summaryLoadedRef = useRef(Boolean(initialResult?.success && initialResult.stats));
@@ -849,6 +862,15 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
     setShareTaskCount(count);
     window.dispatchEvent(new Event("works-updated"));
   }, []);
+  const selectTab = useCallback((tab: WorkArchiveTab) => {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("shareTasks");
+    params.delete("shareTask");
+    if (tab === "oversigt") params.delete("tab");
+    else params.set("tab", tab);
+    router.push(params.size ? `/admin/vaerker?${params.toString()}` : "/admin/vaerker", { scroll: false });
+  }, [router, searchParams]);
 
   useEffect(() => {
     async function fetchBeskedCount() {
@@ -968,14 +990,16 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
   }, [editingSeasonGroup, editing, addOpen]);
 
   useEffect(() => {
+    if (activeTab !== "oversigt") return;
     if (initialLoadConsumedRef.current) {
       initialLoadConsumedRef.current = false;
       return;
     }
     void load(currentPage);
-  }, [currentPage, load]);
+  }, [activeTab, currentPage, load]);
 
   useEffect(() => {
+    if (activeTab !== "oversigt") return;
     const timeout = window.setTimeout(() => {
       const params = new URLSearchParams(searchParams.toString());
       const setOrDelete = (key: string, value: string, fallback: string) => value === fallback ? params.delete(key) : params.set(key, value);
@@ -992,7 +1016,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
       if (next !== searchParams.toString()) router.replace(next ? `/admin/vaerker?${next}` : "/admin/vaerker", { scroll: false });
     }, 300);
     return () => window.clearTimeout(timeout);
-  }, [currentPage, filterConnection, filterMissingConnection, filterStatus, filterType, pageSize, router, search, searchParams, sortDir, sortKey]);
+  }, [activeTab, currentPage, filterConnection, filterMissingConnection, filterStatus, filterType, pageSize, router, search, searchParams, sortDir, sortKey]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -1007,10 +1031,19 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
       setActiveTab("beskeder");
     }
     if (searchParams.get("shareTasks") === "1") {
+      setActiveTab("arbejdsandele");
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("shareTasks");
+      params.set("tab", "arbejdsandele");
+      router.replace(`/admin/vaerker?${params.toString()}`, { scroll: false });
+    } else if (searchParams.get("tab") === "arbejdsandele") {
+      setActiveTab("arbejdsandele");
+    } else if (searchParams.get("tab") === "beskeder") {
+      setActiveTab("beskeder");
+    } else if (requestedStatus !== "beskeder") {
       setActiveTab("oversigt");
-      setShareTasksOpen(true);
     }
-  }, [searchParams]);
+  }, [router, searchParams]);
 
   const lastDeepLink = useRef<string | null>(null);
   const rhParamHandled = useRef(false);
@@ -1414,6 +1447,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
           title: editForm.title,
           type: editForm.type,
           year: nullableNumber(editForm.year),
+          production_year: nullableNumber(editForm.production_year),
           duration_minutes: nullableNumber(editForm.duration_minutes),
           season_count: nullableNumber(editForm.season_count),
           episode_count: nullableNumber(editForm.episode_count),
@@ -1614,6 +1648,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
           title: editForm.title,
           type: editForm.type,
           year: nullableNumber(editForm.year),
+          production_year: nullableNumber(editForm.production_year),
           duration_minutes: nullableNumber(editForm.duration_minutes),
           season_count: nullableNumber(editForm.season_count),
           episode_count: nullableNumber(editForm.episode_count),
@@ -1720,6 +1755,14 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
       const unified = await searchWorksUnified(addQuery, { preferLocalOnly: !addForceExternalSearch });
       const results = (unified.success ? unified.results ?? [] : []).slice(0, 12);
       setUnifiedAddResults(results);
+      const warning = externalLookupWarning(unified.externalLookup, locale);
+      if (warning) {
+        setNotice(warning);
+        if (!results.length) {
+          setAddManualMode(true);
+          setAddForm(form => ({ ...form, title: addQuery }));
+        }
+      }
       if (results[0]) await pickUnifiedAddResult(results[0]);
     } finally {
       setIsSearchingAdd(false);
@@ -1822,7 +1865,20 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
           : null
     );
 
-    const details = await resolveUnifiedSearchResultDetails(result);
+    const lookup = await runWithLookupDeadline(() => resolveUnifiedSearchResultDetails(result));
+    if (lookup.status !== "success") {
+      setAddManualMode(true);
+      setAddForm(form => ({
+        ...form,
+        title: result.title,
+        type: result.type ?? form.type,
+        year: result.year ? String(result.year) : form.year,
+        director: result.director ?? form.director,
+      }));
+      setNotice("Eksterne kilder svarede ikke. Kontrollér de manuelle værksdata og gem igen.");
+      return;
+    }
+    const details = lookup.value;
     const d = details.success ? details.details : null;
     const episodeOptions = (d?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
     const episodeCount = Math.max(d?.episode_count ?? 0, episodeOptions.length);
@@ -1866,8 +1922,15 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
         setAddEpisodesLoading(true);
         setAddEpisodesError(null);
         try {
-          const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedAddResult, sNum);
+          const lookup = await runWithLookupDeadline(() => resolveUnifiedSearchResultDetails(pickedUnifiedAddResult, sNum));
           if (cancelled) return;
+          if (lookup.status !== "success") {
+            setAddEpisodeOptions([]);
+            setAddSelectedEpisodes([]);
+            setAddEpisodesError(`Eksterne kilder svarede ikke. Indtast sæson ${sNum} og afsnit manuelt.`);
+            return;
+          }
+          const detailsRes = lookup.value;
           const d = detailsRes.success ? detailsRes.details : null;
           const episodeOptions = (d?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
           const episodeCount = Math.max(d?.episode_count ?? 0, episodeOptions.length);
@@ -1908,6 +1971,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
         title: addForm.title,
         type: addForm.type,
         year: nullableNumber(addForm.year),
+        production_year: nullableNumber(addForm.production_year),
         duration_minutes: nullableNumber(addForm.duration_minutes),
         season_count: nullableNumber(addForm.season_count),
         episode_count: nullableNumber(addForm.episode_count),
@@ -2027,20 +2091,20 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
       {!loading && <ListReadinessMarker route="admin-works" stage="complete" />}
       <PageHeader
         title="Værksarkiv"
-        subtitle={`${filtered.length} af ${works.length} værker`}
-        actions={
+        subtitle={activeTab === "arbejdsandele" ? `${shareTaskCount} opgaver afventer` : `${filtered.length} af ${works.length} værker`}
+        actions={activeTab === "oversigt" ?
             <Button className="gap-2" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4" />
               Tilføj værk
-            </Button>
+            </Button> : undefined
         }
       />
 
       {/* Tab-navigation */}
-      <div className="flex gap-0 border-b">
+      <div className="flex gap-0 overflow-x-auto border-b">
         <button
           type="button"
-          onClick={() => setActiveTab("oversigt")}
+          onClick={() => selectTab("oversigt")}
           className={[
             "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
             activeTab === "oversigt"
@@ -2052,7 +2116,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab("beskeder")}
+          onClick={() => selectTab("beskeder")}
           className={[
             "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
             activeTab === "beskeder"
@@ -2067,9 +2131,21 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
             </span>
           )}
         </button>
+        <button
+          type="button"
+          onClick={() => selectTab("arbejdsandele")}
+          className={[
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === "arbejdsandele" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+          ].join(" ")}
+        >
+          {t("works.shareQueue.tab")}
+          {shareTaskCount > 0 && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900 dark:bg-amber-950 dark:text-amber-100">{shareTaskCount}</span>}
+        </button>
       </div>
 
       {activeTab === "beskeder" && <VaerkerBeskederTab onCountLoaded={setBeskedCount} />}
+      {activeTab === "arbejdsandele" && (initialShareQueue ? <WorkShareReconciliationTab initialPage={initialShareQueue} onCountChange={handleShareTaskCountChange} /> : <TableSkeleton columns={4} rows={6} />)}
 
       {activeTab === "oversigt" && notice && (
         <div className="flex items-center justify-between rounded-md border px-4 py-3 text-sm">
@@ -2099,7 +2175,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
         />
         <button
           type="button"
-          onClick={() => setShareTasksOpen(true)}
+          onClick={() => selectTab("arbejdsandele")}
           className={[
             "min-w-0 rounded-lg border px-3 py-3 text-left text-card-foreground transition-colors sm:flex sm:min-w-56 sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-2.5",
             shareTaskCount > 0
@@ -2113,13 +2189,6 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
           <span className="mt-1 block text-xl font-bold tabular-nums text-foreground sm:mt-0">{shareTaskCount}</span>
         </button>
       </SummaryGrid>
-
-      <Dialog open={shareTasksOpen} onOpenChange={setShareTasksOpen}>
-        <DialogContent className="top-[max(1rem,env(safe-area-inset-top))] bottom-auto max-h-[calc(100svh-2rem)] max-w-4xl translate-y-0 overflow-y-auto rounded-lg sm:top-6 sm:translate-y-0">
-          <DialogHeader><DialogTitle>Afstem arbejdsandele</DialogTitle></DialogHeader>
-          <WorkShareReconciliationWizard onCountChange={handleShareTaskCountChange} />
-        </DialogContent>
-      </Dialog>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
         <div className="relative w-full lg:w-auto">
@@ -2565,6 +2634,9 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                   </Button>
                 </div>
               </div>
+              <InfoPanel title="Tro-og-loveerklæringer">
+                <LegacyWorkDeclarationStatus workId={editing.parent_work_id ?? editing.id} />
+              </InfoPanel>
               <InfoPanel title="Kommentarer og requests">
                 {requests.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Ingen brugerkommentarer.</p>
@@ -2714,6 +2786,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                     <DiffField diff={activeDiffMap.year}>
                       <Field label="Premiereår" source={editForm.field_sources.year}><Input value={editForm.year} onChange={e => setEditForm({ ...editForm, year: e.target.value, field_sources: { ...editForm.field_sources, year: "manual" } })} /></Field>
                     </DiffField>
+                    <Field label="Produktionsår"><Input inputMode="numeric" value={editForm.production_year} onChange={e => setEditForm({ ...editForm, production_year: e.target.value.replace(/\D/g, "") })} /></Field>
                     <DiffField diff={activeDiffMap.duration_minutes}>
                       <Field label="Varighed"><Input value={editForm.duration_minutes} onChange={e => setEditForm({ ...editForm, duration_minutes: e.target.value })} /></Field>
                     </DiffField>
@@ -2944,7 +3017,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                     {editUnifiedResults.map(result => (
                       <button key={result.id} type="button" onClick={() => applyUnifiedToEdit(result)} className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-muted">
                         <span><span className="font-medium">{result.title}</span><span className="ml-2 text-xs text-muted-foreground">{result.year ?? "-"} · {workTypeLabel(result.type)}</span></span>
-                        <span className="flex gap-1">{result.sources.map(source => <Badge key={source} variant="secondary" className="uppercase">{source}</Badge>)}</span>
+                        <span className="flex gap-1">{result.sources.map(source => <SourcePictogram key={source} source={source} />)}</span>
                       </button>
                     ))}
                   </div>
@@ -3185,11 +3258,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
                                 <p className="truncate font-medium">{result.title}</p>
-                                {result.sources.map(source => (
-                                  <Badge key={source} variant={source === "local" ? "default" : "secondary"} className="uppercase">
-                                    {source === "local" ? "Findes allerede" : source}
-                                  </Badge>
-                                ))}
+                                {result.sources.map(source => <SourcePictogram key={source} source={source} />)}
                               </div>
                               <p className="mt-1 text-xs text-muted-foreground">
                                 {result.year ?? "-"} · {workTypeLabel(result.type)}{result.imdb_id ? ` · IMDb ${result.imdb_id}` : ""}
@@ -3278,6 +3347,7 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                     </Select>
                   </Field>
                   <Field label="Premiereår"><Input value={addForm.year} onChange={e => setAddForm({ ...addForm, year: e.target.value })} /></Field>
+                  <Field label="Produktionsår"><Input inputMode="numeric" value={addForm.production_year} onChange={e => setAddForm({ ...addForm, production_year: e.target.value.replace(/\D/g, "") })} /></Field>
                   <Field label="Varighed"><Input value={addForm.duration_minutes} onChange={e => setAddForm({ ...addForm, duration_minutes: e.target.value })} /></Field>
                   {addManualMode && addIsSeries && <>
                     <SeasonStepper value={Number(addSeasonNumber) || 1} onChange={season => { setAddSeasonNumber(String(season)); setAddSelectedEpisodes([]); }} />
@@ -3468,6 +3538,32 @@ function VaerksadministrationContent({ initialResult, initialQuery }: { initialR
                 </SelectContent>
               </Select>
             </Field>
+            {masterId && (
+              <div className="rounded-md border p-3 bg-muted/20 space-y-2 text-xs">
+                <div className="font-medium text-sm text-foreground">Sammenligning før fletning:</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="border rounded p-2 bg-background space-y-1">
+                    <span className="font-semibold text-primary block">Hovedværk (bevares):</span>
+                    <div><strong>Titel:</strong> {selectedWorks.find(w => w.id === masterId)?.title}</div>
+                    <div><strong>Type:</strong> {workTypeLabel(selectedWorks.find(w => w.id === masterId)?.type)}</div>
+                    <div><strong>År:</strong> {selectedWorks.find(w => w.id === masterId)?.year ?? "—"}</div>
+                    {selectedWorks.find(w => w.id === masterId)?.director && (
+                      <div><strong>Instruktør:</strong> {selectedWorks.find(w => w.id === masterId)?.director}</div>
+                    )}
+                  </div>
+                  <div className="border rounded p-2 bg-background space-y-1">
+                    <span className="font-semibold text-muted-foreground block">Dublet(ter) (arkiveres):</span>
+                    {selectedWorks.filter(w => w.id !== masterId).map(dup => (
+                      <div key={dup.id} className="pb-1 border-b last:border-0 last:pb-0">
+                        <div><strong>Titel:</strong> {dup.title}</div>
+                        <div><strong>Type:</strong> {workTypeLabel(dup.type)} · <strong>År:</strong> {dup.year ?? "—"}</div>
+                        {dup.director && <div><strong>Instruktør:</strong> {dup.director}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
             <p className="text-sm text-muted-foreground">
               Alle kontrakter og relationer fra de øvrige valgte værker flyttes til hovedværket. Dubletterne arkiveres bagefter.
             </p>

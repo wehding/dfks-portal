@@ -16,13 +16,19 @@ import {
   statisticsQuerySystemPrompt,
   StatisticsQueryPlanError,
   type StatisticsMetric,
+  type StatisticsQueryPlan,
 } from "@/lib/statistics-query-plan";
-import { buildStatisticsQuerySegments, describeStatisticsPlan } from "@/lib/statistics-query-execution";
+import { buildStatisticsQuerySegments, describeStatisticsPlan, interpretStatisticsQuestion } from "@/lib/statistics-query-execution";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getAnnualCpi } from "@/lib/statistics-cpi";
-import { companyMatchScore, normalizeCompanyBaseName, type ProductionCompanyOption } from "@/lib/production-companies";
+import { salaryDataToMonthly } from "@/lib/statistics-calculations";
 import { sampleSizeBand } from "@/lib/statistics/privacy-guard";
+import { experienceGroupAt } from "@/lib/experience-groups";
+import { normalizeStatisticsMinimumGroupSize } from "@/lib/statistics-privacy";
 import { buildStatisticsVisualization } from "@/lib/statistics/visualization";
+import { buildStatisticsDirectAnswer } from "@/lib/statistics/direct-answer";
+import { collectOmittedStatisticsPoints, describeOmittedStatisticsPoints, type OmittedStatisticsPoint } from "@/lib/statistics/omitted-points";
+import { resolveStatisticsProducerNames, type ProducerCandidate } from "@/lib/statistics-query-producers";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { auditRequestContext } from "@/lib/audit-access-server";
 import { recordAuditEvent } from "@/lib/audit-log-server";
@@ -30,8 +36,8 @@ import type { AuditContext } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
 
-type ProducerCandidate = { id: string; name: string; score: number };
 const STATISTICS_CALCULATION_VERSION = "union-stats-v1";
+const AUTO_PRODUCER_LIMIT = 5;
 
 async function recordStatisticsAudit(input: {
   orgId: string;
@@ -81,49 +87,121 @@ async function recordStatisticsAudit(input: {
   if (error) throw new Error("Statistikforespørgslen kunne ikke revisionslogges sikkert.");
 }
 
-async function resolveProducerNames(names: string[]) {
-  if (!names.length) return { resolved: [] as Array<{ id: string; name: string }>, ambiguous: null as null | { query: string; candidates: ProducerCandidate[] } };
+async function resolveProducerNames(names: string[], question: string) {
+  if (!names.length) return { resolved: [], ambiguous: null as null | { query: string; candidates: ProducerCandidate[] } };
   const db = createServiceClient();
   const { data, error } = await db.from("employers")
-    .select("id,name,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_number,entity_kind,is_primary,registration_status,website,archived_at)")
+    .select("id,name,parent_id,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_number,entity_kind,is_primary,registration_status,website,archived_at)")
     .is("merged_into_id", null).is("archived_at", null).limit(5000);
   if (error) throw new Error("Producentregisteret kunne ikke hentes.");
-  const options: ProductionCompanyOption[] = (data ?? []).map(employer => ({
-    employerId: employer.id,
-    canonicalName: employer.name,
-    aliases: (employer.employer_aliases ?? []).map(alias => alias.alias),
-    legalEntities: (employer.employer_legal_entities ?? []).filter(entity => !entity.archived_at).map(entity => ({
-      id: entity.id,
-      legalName: entity.legal_name,
-      registrationCountry: "DK",
-      registrationType: "CVR",
-      registrationNumber: entity.registration_number,
-      entityKind: entity.entity_kind as "company" | "subsidiary" | "spv",
-      isPrimary: entity.is_primary,
-      registrationStatus: entity.registration_status,
-      website: entity.website,
-    })),
-    isVerified: true,
-  }));
+  return resolveStatisticsProducerNames(names, question, data ?? []);
+}
 
-  const resolved: Array<{ id: string; name: string }> = [];
-  for (const name of names) {
-    const candidates = options.map(option => {
-      const exact = [option.canonicalName, ...option.aliases, ...option.legalEntities.map(entity => entity.legalName)]
-        .some(candidate => normalizeCompanyBaseName(candidate) === normalizeCompanyBaseName(name));
-      return { id: option.employerId, name: option.canonicalName, score: exact ? 200 : companyMatchScore(option, name) };
-    }).filter(candidate => candidate.score >= 50)
-      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name, "da-DK"))
-      .slice(0, 5);
-    const best = candidates[0];
-    const second = candidates[1];
-    if (!best) return { resolved, ambiguous: { query: name, candidates: [] } };
-    if (best.score < 100 || (second && best.score - second.score < 10)) {
-      return { resolved, ambiguous: { query: name, candidates } };
-    }
-    if (!resolved.some(item => item.id === best.id)) resolved.push({ id: best.id, name: best.name });
+type ProducerRankingFact = {
+  rights_holder_id: string;
+  contract_status: "valideret" | "kladde";
+  period_year: number | null;
+  contract_type: string | null;
+  production_type: string | null;
+  gender: string | null;
+  producer_ids: string[] | null;
+  producer_type_codes: string[] | null;
+  membership_types: string[] | null;
+  profession_type: string | null;
+  professional_start_year: number | null;
+  statistics_data: Record<string, unknown> | null;
+};
+
+function valuesOverlap(left: string[] | null | undefined, right: string[]) {
+  return !right.length || right.some(value => (left ?? []).includes(value));
+}
+
+function median(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function producerRankingFactMatchesPlan(fact: ProducerRankingFact, plan: StatisticsQueryPlan) {
+  const year = Number(fact.period_year);
+  if (!Number.isInteger(year)) return false;
+  if (plan.filters.years.length && !plan.filters.years.includes(year)) return false;
+  if (plan.filters.categories.length && (!fact.production_type || !plan.filters.categories.includes(fact.production_type as never))) return false;
+  if (plan.filters.contractTypes.length && (!fact.contract_type || !plan.filters.contractTypes.includes(fact.contract_type as never))) return false;
+  if (plan.filters.genders.length && (!fact.gender || !plan.filters.genders.includes(fact.gender as never))) return false;
+  if (plan.filters.producerTypeCodes.length && !valuesOverlap(fact.producer_type_codes, plan.filters.producerTypeCodes)) return false;
+  if (plan.filters.membershipTypes.length) {
+    const memberships = fact.membership_types?.length ? fact.membership_types : ["none"];
+    if (!valuesOverlap(memberships, plan.filters.membershipTypes)) return false;
   }
-  return { resolved, ambiguous: null };
+  if (plan.filters.professionTypes.length) {
+    const profession = String(fact.profession_type ?? "").trim().toLocaleLowerCase("da");
+    if (!plan.filters.professionTypes.map(value => value.trim().toLocaleLowerCase("da")).includes(profession)) return false;
+  }
+  if (plan.filters.experienceGroups.length) {
+    const group = experienceGroupAt(fact.professional_start_year == null ? null : Number(fact.professional_start_year), year);
+    if (!group || !plan.filters.experienceGroups.includes(group)) return false;
+  }
+  return true;
+}
+
+function personWeightedSalary(rows: Array<{ rightsHolderId: string; monthlySalary: number }>, mode: "median" | "average") {
+  const byPerson = new Map<string, number[]>();
+  for (const row of rows) byPerson.set(row.rightsHolderId, [...(byPerson.get(row.rightsHolderId) ?? []), row.monthlySalary]);
+  const personValues = [...byPerson.values()].map(values => values.reduce((sum, value) => sum + value, 0) / values.length);
+  if (!personValues.length) return 0;
+  if (mode === "average") return Math.round(personValues.reduce((sum, value) => sum + value, 0) / personValues.length);
+  return median(personValues);
+}
+
+async function resolveTopSalaryProducers(orgId: string, plan: StatisticsQueryPlan) {
+  const db = createServiceClient();
+  const { data: organisation, error: organisationError } = await db.from("organisations")
+    .select("statistics_contract_scope,statistics_minimum_group_size")
+    .eq("id", orgId)
+    .single();
+  if (organisationError) throw new Error("Organisationens statistikindstillinger kunne ikke hentes.");
+  const includeDrafts = organisation.statistics_contract_scope === "validated_and_drafts";
+  const minimumGroupSize = normalizeStatisticsMinimumGroupSize(organisation.statistics_minimum_group_size);
+  const { data, error } = await db.rpc("get_statistics_facts", {
+    target_org_id: orgId,
+    include_drafts: includeDrafts,
+  });
+  if (error) throw new Error("Statistikgrundlaget kunne ikke hentes til producentrangering.");
+
+  const byProducer = new Map<string, Array<{ rightsHolderId: string; monthlySalary: number }>>();
+  const rankingMode = plan.metrics.includes("average_monthly_salary") ? "average" : "median";
+  for (const fact of (data ?? []) as ProducerRankingFact[]) {
+    if (!producerRankingFactMatchesPlan(fact, plan)) continue;
+    const monthlySalary = salaryDataToMonthly(fact.statistics_data ?? {});
+    if (!Number.isFinite(monthlySalary) || monthlySalary <= 0) continue;
+    for (const producerId of fact.producer_ids ?? []) {
+      byProducer.set(producerId, [...(byProducer.get(producerId) ?? []), { rightsHolderId: fact.rights_holder_id, monthlySalary }]);
+    }
+  }
+
+  const ranked = [...byProducer.entries()].map(([id, rows]) => ({
+    id,
+    memberCount: new Set(rows.map(row => row.rightsHolderId)).size,
+    contractCount: rows.length,
+    salary: personWeightedSalary(rows, rankingMode),
+  })).filter(row => row.memberCount >= minimumGroupSize && row.salary > 0)
+    .sort((left, right) => right.salary - left.salary || right.memberCount - left.memberCount || right.contractCount - left.contractCount)
+    .slice(0, AUTO_PRODUCER_LIMIT);
+  if (!ranked.length) return [];
+
+  const { data: employers, error: employersError } = await db.from("employers")
+    .select("id,name")
+    .in("id", ranked.map(row => row.id))
+    .is("merged_into_id", null)
+    .is("archived_at", null);
+  if (employersError) throw new Error("Producentnavne kunne ikke hentes.");
+  const names = new Map((employers ?? []).map(employer => [employer.id, employer.name]));
+  return ranked.flatMap(row => {
+    const name = names.get(row.id);
+    return name ? [{ ids: [row.id], name, scope: "group" as const }] : [];
+  });
 }
 
 function classifyStatisticsQueryError(error: unknown) {
@@ -230,7 +308,7 @@ export async function POST(request: NextRequest) {
     }
     const jsonText = response?.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
     const plan = deterministicPlan ?? parseStatisticsQueryPlan(JSON.parse(jsonText ?? ""));
-    const producers = await resolveProducerNames(plan.filters.producerNames);
+    const producers = await resolveProducerNames(plan.filters.producerNames, question);
     if (producers.ambiguous) {
       await finishAiUsageRun(runId, "succeeded");
       return NextResponse.json({
@@ -245,16 +323,23 @@ export async function POST(request: NextRequest) {
       }, { status: 409 });
     }
 
-    const segments = buildStatisticsQuerySegments(plan, producers.resolved);
+    const autoSelectedProducers = plan.compareBy.includes("producer") && !plan.filters.producerNames.length
+      ? await resolveTopSalaryProducers(caller.orgId, plan)
+      : [];
+    const resolvedProducers = producers.resolved.length ? producers.resolved : autoSelectedProducers;
+    const interpretedQuestion = interpretStatisticsQuestion(plan, resolvedProducers);
+    const segments = buildStatisticsQuerySegments(plan, resolvedProducers);
     const allSeries: ReturnType<typeof extractStatisticsSeries> = [];
     let minimum = 5;
     let dominanceLimit = 0.8;
     let includeDrafts = false;
     let suppressedSegments = 0;
     let suppressedCells = 0;
+    const omittedData: OmittedStatisticsPoint[] = [];
     const suppressionReasons: Record<string, number> = {};
     for (const segment of segments) {
       const statistics = await getAdminStatistics(caller.orgId, segment.filters);
+      const statisticsRecord = statistics as unknown as Record<string, unknown>;
       minimum = statistics.minimum;
       dominanceLimit = Number(statistics.dominanceLimit ?? dominanceLimit);
       includeDrafts ||= Boolean(statistics.includeDrafts);
@@ -265,8 +350,21 @@ export async function POST(request: NextRequest) {
       for (const [reason, count] of Object.entries(reasons)) suppressionReasons[reason] = (suppressionReasons[reason] ?? 0) + Number(count);
       if (statistics.suppressed) {
         suppressedSegments += 1;
+        omittedData.push({
+          year: null,
+          seriesLabel: segment.label,
+          metricLabel: plan.metrics.map(metric => STATISTICS_METRIC_META[metric].label).join(", "),
+          reason: "suppressed_segment",
+          memberCount: typeof statisticsRecord.memberCount === "number" ? statisticsRecord.memberCount : null,
+          contractCount: typeof statisticsRecord.contractCount === "number" ? statisticsRecord.contractCount : null,
+        });
         continue;
       }
+      omittedData.push(...collectOmittedStatisticsPoints({
+        metrics: plan.metrics,
+        statistics: statisticsRecord,
+        segmentLabel: segment.label === "Samlet resultat" ? "" : segment.label,
+      }));
       for (const metric of plan.metrics) {
         const meta = STATISTICS_METRIC_META[metric];
         const segmentLabel = segment.label === "Samlet resultat" ? "" : segment.label;
@@ -290,6 +388,7 @@ export async function POST(request: NextRequest) {
         minimumGroupSize: minimum,
         dominanceLimit,
         calculationVersion: STATISTICS_CALCULATION_VERSION,
+        interpretedQuestion,
         understoodAs: describeStatisticsPlan(plan),
         explanation: "Der blev ikke fundet et tilstrækkeligt datagrundlag til den valgte kombination.",
         caveats: ["Små eller tomme udsnit returneres ikke som statistik."],
@@ -309,6 +408,7 @@ export async function POST(request: NextRequest) {
     }
     const comparison = applyInflation(allSeries, inflation).map(row => ({ ...row, sampleBand: sampleSizeBand(row.memberCount) }));
     const visualization = buildStatisticsVisualization(comparison, plan.chart);
+    const directAnswer = buildStatisticsDirectAnswer(question, comparison);
     await recordStatisticsAudit({
       orgId: caller.orgId, actorUserId: caller.userId, plan,
       suppressionCount: suppressedSegments + suppressedCells, pointCount: comparison.length,
@@ -325,6 +425,10 @@ export async function POST(request: NextRequest) {
       ...(suppressionReasons.minimum_count ? [`${suppressionReasons.minimum_count} datapunkt(er) er sløret, fordi de bygger på for få forskellige personer.`] : []),
       ...(suppressionReasons.dominance ? [`${suppressionReasons.dominance} økonomiske datapunkt(er) er sløret, fordi få producenter overstiger dominansgrænsen på ${Math.round(dominanceLimit * 100)} %.`] : []),
       ...(suppressionReasons.secondary ? [`${suppressionReasons.secondary} datapunkt(er) er sekundært sløret for at forhindre bagudregning.`] : []),
+      ...(autoSelectedProducers.length
+        ? [`Producenterne er automatisk valgt fra de ${AUTO_PRODUCER_LIMIT} højest lønnede producentgrupper, der opfylder minimumskravet. Producentnavne er ikke anonymiserede, men løntal pr. producent vises stadig kun, når gruppen har mindst ${minimum} forskellige personer.`]
+        : []),
+      ...describeOmittedStatisticsPoints(omittedData),
       ...(comparison.some(row => (row.outlierExcludedCount ?? 0) > 0) ? ["Åbenlyse løn-afvigere er frasorteret før beregning af løn- og bidragstal."] : []),
       ...(inflationUnavailable ? ["Inflationsdata er midlertidigt utilgængelige. Løntallene vises derfor nominelt uden inflationskorrektion."] : []),
     ];
@@ -336,14 +440,17 @@ export async function POST(request: NextRequest) {
       calculationVersion: STATISTICS_CALCULATION_VERSION,
       plan,
       interpretedBy,
+      interpretedQuestion,
       understoodAs: describeStatisticsPlan(plan),
       chart: plan.chart,
       includeDrafts,
       lowSample: comparison.some(row => row.lowSample),
       suppressionCount: suppressedSegments + suppressedCells,
       suppressionReasons,
+      omittedData,
       series: comparison,
       visualization,
+      directAnswer,
       metricMeta: plan.metrics.map(metric => ({ metric, ...STATISTICS_METRIC_META[metric] })),
       caveats,
       explanation: `${comparison.length} aggregerede datapunkter i ${new Set(comparison.map(row => row.seriesKey)).size} serie(r). Hvert person-gennemsnit vægter én gang i løn-, pensions- og arbejdsugeberegninger.`,

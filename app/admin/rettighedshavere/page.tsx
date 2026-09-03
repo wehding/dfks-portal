@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Fragment, type ReactNode } from "react"
 import Image from "next/image"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown, GitMerge, FlaskConical, Send } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -34,12 +34,15 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal } from "lucide-react"
 import { getDfksMemberImportPreview, getDfksMembersSyncStatus, importDfksMembersToRightsHolders, syncDfksMembers } from "@/app/actions/dfks-members"
-import { archiveRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHolders } from "@/app/actions/rights-holder-admin"
+import { archiveRightsHolders, mergeDuplicateRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHolders } from "@/app/actions/rights-holder-admin"
 import { ListSkeleton, TableSkeleton } from "@/components/ui/data-skeletons"
 import { RightsHolderRelations } from "@/components/admin/rights-holder-relations"
 import { ListResultSummary } from "@/components/list-result-summary"
+import { rightsHolderInvitationState, rightsHolderPortalAction } from "@/lib/admin-rights-holder-invitation"
+import { createAdminBetaTesterMessage, getBetaTestAdminSummary, removeBetaTester } from "@/app/actions/beta-test"
+import { addCalendarDays } from "@/lib/beta-test"
 
-type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "inviteret" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
+type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "betatestere" | "inviteret" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
 type SortKey = "name" | "email" | "member_no" | "contracts" | "works" | "status" | "portal" | "validated"
 type AdminUserResponse = {
     error?: string
@@ -49,6 +52,22 @@ type AdminUserResponse = {
     email_sent?: boolean
     email_error?: string
     link_type?: "invite" | "recovery"
+    subject?: string
+    bodyText?: string
+    works?: Array<{ id: string; title: string; year: number | null; sources: string[]; verification: "linked" | "external_candidate" }>
+    work_lookup?: {
+        counts: { local: number; external: number; total: number }
+        sourceStatus: { local: "ok" | "none"; dfi: "ok" | "none" | "ambiguous" | "unavailable"; tmdb: "ok" | "none" | "ambiguous" | "unavailable" }
+        warnings: string[]
+    }
+}
+type BetaInviteResult = {
+    marked: number
+    sent: number
+    failed: number
+    emailError?: string
+    manualLink?: string
+    workLookupIssues: number
 }
 type DfksMemberOption = {
     display_id: string | null
@@ -144,6 +163,13 @@ function hasPortalAccess(rh: RettighedshaverWithAffiliation) {
     return Boolean(rh.user_id || rh.onboarding_completed_at)
 }
 
+function invitationStatus(rh: RettighedshaverWithAffiliation) {
+    const state = rightsHolderInvitationState(rh)
+    if (state === "active") return { state, label: "Aktiv" }
+    if (state === "invited") return { state, label: `Inviteret ${formatInvitationDate(rh.invite_sent_at)}` }
+    return { state: "not_invited" as const, label: "Ikke inviteret" }
+}
+
 const EMPTY_FORM = {
     full_name: "", email: "", phone: "", address: "", cpr_no: "", bank_account: "", member_no: "", is_member: false,
     gender: "", opt_out_statistics: false, send_invite: false,
@@ -163,10 +189,13 @@ export default function RettighedshavereAdminPage() {
     const [loading, setLoading] = useState(true)
     const [loadingMore, setLoadingMore] = useState(false)
     const loadAllPromiseRef = useRef<Promise<void> | null>(null)
+    const loadRequestRef = useRef(0)
+    const searchReadyRef = useRef(false)
+    const lastLoadedSearchRef = useRef<string | null>(null)
     const [expandedRightsHolderId, setExpandedRightsHolderId] = useState<string | null>(null)
     const [hasMore, setHasMore] = useState(false)
+    const [filteredResultCount, setFilteredResultCount] = useState(0)
     const [search, setSearch] = useState("")
-    useEffect(() => { setSearch(new URLSearchParams(window.location.search).get("search") ?? "") }, [])
     const [filter, setFilter] = useState<Filter>("alle")
     const [sortKey, setSortKey] = useState<SortKey>("name")
     const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
@@ -175,6 +204,18 @@ export default function RettighedshavereAdminPage() {
     const [createSaving, setCreateSaving] = useState(false)
     const [bulkSendingInvitations, setBulkSendingInvitations] = useState(false)
     const [inviteConfirmOpen, setInviteConfirmOpen] = useState(false)
+    const [betaInviteTargets, setBetaInviteTargets] = useState<RettighedshaverWithAffiliation[]>([])
+    const [betaInviteOpen, setBetaInviteOpen] = useState(false)
+    const [betaInviteStartDate, setBetaInviteStartDate] = useState("")
+    const [betaInviteEndDate, setBetaInviteEndDate] = useState("")
+    const [betaInviteSending, setBetaInviteSending] = useState(false)
+    const [betaInviteResult, setBetaInviteResult] = useState<BetaInviteResult | null>(null)
+    const [betaInvitePreview, setBetaInvitePreview] = useState<AdminUserResponse | null>(null)
+    const [betaInvitePreviewLoading, setBetaInvitePreviewLoading] = useState(false)
+    const [betaTesterCount, setBetaTesterCount] = useState(0)
+    const [betaMessageOpen, setBetaMessageOpen] = useState(false)
+    const [betaMessageSending, setBetaMessageSending] = useState(false)
+    const [betaMessage, setBetaMessage] = useState({ subject: "", body: "" })
     const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
     const [createForm, setCreateForm] = useState({ ...EMPTY_FORM })
     const [createMemberNoTouched, setCreateMemberNoTouched] = useState(false)
@@ -194,6 +235,8 @@ export default function RettighedshavereAdminPage() {
     const [portalLoading, setPortalLoading] = useState(false)
     const [portalLink, setPortalLink] = useState<string | null>(null)
     const [portalEmailStatus, setPortalEmailStatus] = useState<{ sent: boolean; error?: string } | null>(null)
+    const [portalInvitePreview, setPortalInvitePreview] = useState<AdminUserResponse | null>(null)
+    const [portalInvitePreviewLoading, setPortalInvitePreviewLoading] = useState(false)
 
     const [syncingMembers, setSyncingMembers] = useState(false)
     const [memberSyncStatus, setMemberSyncStatus] = useState<{ count: number; syncedAt: string | null } | null>(null)
@@ -209,6 +252,10 @@ export default function RettighedshavereAdminPage() {
     const [deleteContracts, setDeleteContracts] = useState(false)
     const [deleteUnsharedWorks, setDeleteUnsharedWorks] = useState(true)
     const [deleteConfirmation, setDeleteConfirmation] = useState("")
+    const [mergeOpen, setMergeOpen] = useState(false)
+    const [mergePrimaryId, setMergePrimaryId] = useState("")
+    const [mergeConfirmation, setMergeConfirmation] = useState("")
+    const [merging, setMerging] = useState(false)
     const [importOpen, setImportOpen] = useState(false)
     const [importLoading, setImportLoading] = useState(false)
     const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([])
@@ -220,40 +267,59 @@ export default function RettighedshavereAdminPage() {
     const [importSortKey, setImportSortKey] = useState<ImportSortKey>("name")
     const [importSortDirection, setImportSortDirection] = useState<"asc" | "desc">("asc")
 
-    useEffect(() => {
-        void load().then(result => {
-            if (!result) return
-            void loadDfksMembers(result.orgId)
-            void refreshMemberSyncStatus()
-        })
-    }, [])
-
-    async function load() {
+    const load = useCallback(async (query: string, includeSummary = true) => {
+        const requestId = ++loadRequestRef.current
         setLoading(true)
         try {
-            const result = await getAdminRightsHolders()
+            const result = await getAdminRightsHolders({ search: query, includeSummary })
+            if (requestId !== loadRequestRef.current) return null
             setRows(result.rows)
             setCountsByRightsHolder(result.countsByRightsHolder)
             setOrgId(result.orgId)
             setCanSeeAllOrganisations(result.canSeeAllOrganisations)
             setHasMore(result.hasMore)
-            setRightsHolderSummary(result.summary)
+            setFilteredResultCount(result.filteredCount)
+            lastLoadedSearchRef.current = query
+            if (result.summary) setRightsHolderSummary(result.summary)
             return result
         } catch (error) {
             toast.error(errorMessage(error))
             return null
         } finally {
-            setLoading(false)
+            if (requestId === loadRequestRef.current) setLoading(false)
         }
-    }
+    }, [])
+
+    useEffect(() => {
+        const initialSearch = new URLSearchParams(window.location.search).get("search") ?? ""
+        setSearch(initialSearch)
+        void load(initialSearch, true).then(result => {
+            if (!result) return
+            void loadDfksMembers(result.orgId)
+            void refreshMemberSyncStatus()
+            void refreshBetaSummary()
+        }).finally(() => {
+            searchReadyRef.current = true
+        })
+    }, [load])
+
+    useEffect(() => {
+        if (!searchReadyRef.current) return
+        if (search.trim() === lastLoadedSearchRef.current) return
+        const timer = window.setTimeout(() => {
+            void load(search.trim(), false)
+        }, 300)
+        return () => window.clearTimeout(timer)
+    }, [load, search])
 
     async function loadMore() {
         setLoadingMore(true)
         try {
-            const result = await getAdminRightsHolders({ offset: rows.length, limit: 100 })
+            const result = await getAdminRightsHolders({ offset: rows.length, limit: 100, search: search.trim(), includeSummary: false })
             setRows(current => [...current, ...result.rows.filter(row => !current.some(existing => existing.id === row.id))])
             setCountsByRightsHolder(current => ({ ...current, ...result.countsByRightsHolder }))
             setHasMore(result.hasMore)
+            setFilteredResultCount(result.filteredCount)
         } catch (error) {
             toast.error(errorMessage(error))
         } finally { setLoadingMore(false) }
@@ -268,7 +334,7 @@ export default function RettighedshavereAdminPage() {
                 let accumulatedCounts = { ...countsByRightsHolder }
                 let more = hasMore
                 while (more) {
-                    const result = await getAdminRightsHolders({ offset: accumulatedRows.length, limit: 200 })
+                    const result = await getAdminRightsHolders({ offset: accumulatedRows.length, limit: 200, search: search.trim(), includeSummary: false })
                     accumulatedRows = [...accumulatedRows, ...result.rows.filter(row => !accumulatedRows.some(existing => existing.id === row.id))]
                     accumulatedCounts = { ...accumulatedCounts, ...result.countsByRightsHolder }
                     more = result.hasMore
@@ -309,6 +375,15 @@ export default function RettighedshavereAdminPage() {
         const status = await getDfksMembersSyncStatus()
         if (status.success) {
             setMemberSyncStatus({ count: status.count ?? 0, syncedAt: status.syncedAt ?? null })
+        }
+    }
+
+    async function refreshBetaSummary() {
+        try {
+            const summary = await getBetaTestAdminSummary()
+            setBetaTesterCount(summary.count)
+        } catch {
+            setBetaTesterCount(0)
         }
     }
 
@@ -372,7 +447,7 @@ export default function RettighedshavereAdminPage() {
         toast.success(`${result.created} oprettet, ${result.updated} opdateret, ${result.skipped} sprunget over`)
         setImportOpen(false)
         setSelectedImportIds(new Set())
-        await load()
+        await load(search.trim())
         await refreshMemberSyncStatus()
     }
 
@@ -394,6 +469,50 @@ export default function RettighedshavereAdminPage() {
         if (!editTarget || editMemberNoTouched || editForm.member_no.trim() || !editMatchedMemberNo) return
         setEditForm(form => ({ ...form, member_no: editMatchedMemberNo, is_member: true }))
     }, [editMatchedMemberNo, editForm.member_no, editMemberNoTouched, editTarget])
+
+    useEffect(() => {
+        let cancelled = false
+        setPortalInvitePreview(null)
+        if (portalAction?.type !== "invite") {
+            setPortalInvitePreviewLoading(false)
+            return
+        }
+        setPortalInvitePreviewLoading(true)
+        void fetch("/api/admin/user", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "preview_invite", rhId: portalAction.rh.id }),
+        }).then(async response => {
+            const result = await response.json() as AdminUserResponse
+            if (!response.ok) throw new Error(result.error)
+            if (!cancelled) setPortalInvitePreview(result)
+        }).catch(error => {
+            if (!cancelled) toast.error(`Invitationen kunne ikke forhåndsvises: ${errorMessage(error)}`)
+        }).finally(() => {
+            if (!cancelled) setPortalInvitePreviewLoading(false)
+        })
+        return () => { cancelled = true }
+    }, [portalAction])
+
+    useEffect(() => {
+        let cancelled = false
+        if (!betaInviteOpen || betaInviteTargets.length !== 1 || !betaInviteEndDate) return
+        setBetaInvitePreviewLoading(true)
+        void fetch("/api/admin/user", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "preview_invite", invitationType: "beta", rhId: betaInviteTargets[0].id, betaEndDate: betaInviteEndDate }),
+        }).then(async response => {
+            const result = await response.json() as AdminUserResponse
+            if (!response.ok) throw new Error(result.error)
+            if (!cancelled) setBetaInvitePreview(result)
+        }).catch(error => {
+            if (!cancelled) toast.error(`Betainvitationen kunne ikke forhåndsvises: ${errorMessage(error)}`)
+        }).finally(() => {
+            if (!cancelled) setBetaInvitePreviewLoading(false)
+        })
+        return () => { cancelled = true }
+    }, [betaInviteEndDate, betaInviteOpen, betaInviteTargets])
 
     const visibleImportCandidates = useMemo(() => {
         const query = normalizeName(importSearch)
@@ -459,6 +578,7 @@ export default function RettighedshavereAdminPage() {
             }
             if (filter === "medlemmer" && !aff?.is_member) return false
             if (filter === "ikke-medlemmer" && aff?.is_member) return false
+            if (filter === "betatestere" && !aff?.beta_tester_since) return false
             if (filter === "inviteret" && !rh.user_id) return false
             if (filter === "alle-kontrakter-valideret" && !counts.allContractsValidated) return false
             const invStatus = rh.onboarding_completed_at && !rh.onboarding_required_at ? "registreret" : rh.user_id ? "afventer" : "ikke-inviteret"
@@ -494,6 +614,14 @@ export default function RettighedshavereAdminPage() {
             return result * direction
         })
     }, [rows, orgId, filter, search, countsByRightsHolder, sortKey, sortDirection, canSeeAllOrganisations])
+    const selectedMergeHolders = useMemo(
+        () => visible.filter(holder => selectedIds.has(holder.id)),
+        [visible, selectedIds],
+    )
+    const mergeHasConflictingUsers = selectedMergeHolders.length === 2
+        && Boolean(selectedMergeHolders[0].user_id)
+        && Boolean(selectedMergeHolders[1].user_id)
+        && selectedMergeHolders[0].user_id !== selectedMergeHolders[1].user_id
     const visibleIds = visible.map(rh => rh.id)
     const selectedVisibleCount = visibleIds.filter(id => selectedIds.has(id)).length
     const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
@@ -567,7 +695,7 @@ export default function RettighedshavereAdminPage() {
                 else if (json) toast.warning("Oprettet, men invitationsmailen kunne ikke sendes.")
             }
             setCreateSaving(false)
-            setCreateOpen(false); load()
+            setCreateOpen(false); void load(search.trim())
         } else {
             setCreateSaving(false)
             toast.error(result.error ?? "Kunne ikke oprette rettighedshaver")
@@ -622,7 +750,81 @@ export default function RettighedshavereAdminPage() {
         if (sent < targets.length) {
             toast.warning(`${targets.length - sent} adgangslink(s) blev ikke sendt${emailErrors[0] ? `: ${emailErrors[0]}` : "."}`)
         }
-        load()
+        void load(search.trim())
+    }
+
+    async function openBetaInvite(targets: RettighedshaverWithAffiliation[]) {
+        const eligible = targets.filter(holder => holder.email).slice(0, 50)
+        if (!eligible.length) { toast.info("Ingen af de valgte har en emailadresse."); return }
+        if (targets.length > 50) { toast.error("Der kan højst sendes 50 betainvitationer ad gangen."); return }
+        try {
+            const summary = await getBetaTestAdminSummary()
+            setBetaInviteTargets(eligible)
+            setBetaInviteStartDate(summary.startDate)
+            setBetaInviteEndDate(summary.suggestedEndDate)
+            setBetaInviteResult(null)
+            setBetaInvitePreview(null)
+            setBetaInviteOpen(true)
+        } catch (error) {
+            toast.error(errorMessage(error))
+        }
+    }
+
+    async function confirmBetaInvite() {
+        setBetaInviteSending(true)
+        let sent = 0
+        let marked = 0
+        let failed = 0
+        const emailErrors: string[] = []
+        const manualLinks: string[] = []
+        let workLookupIssues = 0
+        for (const holder of betaInviteTargets) {
+            try {
+                const response = await fetch("/api/admin/user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "beta_invite", rhId: holder.id, betaEndDate: betaInviteEndDate }) })
+                const result = await response.json() as AdminUserResponse
+                if (!response.ok) throw new Error(result.error)
+                if ((result.work_lookup?.warnings.length ?? 0) > 0) workLookupIssues += 1
+                marked += 1
+                if (result.email_sent) sent += 1
+                else {
+                    if (result.email_error) emailErrors.push(result.email_error)
+                    if (result.invite_url) manualLinks.push(result.invite_url)
+                }
+            } catch (error) {
+                failed += 1
+                toast.error(errorMessage(error))
+            }
+        }
+        setBetaInviteSending(false)
+        const result = {
+            marked,
+            sent,
+            failed,
+            emailError: emailErrors[0],
+            manualLink: betaInviteTargets.length === 1 ? manualLinks[0] : undefined,
+            workLookupIssues,
+        }
+        setBetaInviteResult(result)
+        if (sent === betaInviteTargets.length) {
+            setBetaInviteOpen(false)
+            toast.success(`${sent} betatest-invitation${sent === 1 ? "" : "er"} sendt`)
+            if (workLookupIssues > 0) toast.warning(`${workLookupIssues} værksopslag havde tvetydige matches eller en utilgængelig kilde.`)
+        } else {
+            toast.warning(`${marked} markeret som betatestere · ${sent} mails sendt · ${marked - sent + failed} kræver opfølgning`)
+        }
+        setSelectedIds(new Set())
+        await Promise.all([load(search.trim()), refreshBetaSummary()])
+    }
+
+    async function sendBetaTesterMessage() {
+        setBetaMessageSending(true)
+        const result = await createAdminBetaTesterMessage(betaMessage)
+        setBetaMessageSending(false)
+        if (!result.success) { toast.error(result.error ?? "Beskeden kunne ikke sendes."); return }
+        toast.success(`${result.count ?? 0} portalbeskeder og ${result.emailSent ?? 0} mails oprettet`)
+        if ((result.failed ?? 0) > 0 || (result.skippedWithoutPortalUser ?? 0) > 0) toast.warning(`${(result.failed ?? 0) + (result.skippedWithoutPortalUser ?? 0)} modtagere blev helt eller delvist sprunget over.`)
+        setBetaMessageOpen(false)
+        setBetaMessage({ subject: "", body: "" })
     }
 
     function handleArchiveSelected() {
@@ -644,7 +846,7 @@ export default function RettighedshavereAdminPage() {
             toast.warning(`${result.blocked.length} kunne ikke arkiveres: ${result.blocked.slice(0, 3).map(item => item.name).join(", ")}`)
         }
         setSelectedIds(new Set())
-        await load()
+        await load(search.trim())
     }
 
     async function handleRestoreSelected() {
@@ -658,7 +860,7 @@ export default function RettighedshavereAdminPage() {
         }
         toast.success(`${result.restoredCount} rettighedshaver(e) gendannet`)
         setSelectedIds(new Set())
-        await load()
+        await load(search.trim())
     }
 
     async function handlePermanentDeleteSelected() {
@@ -677,7 +879,31 @@ export default function RettighedshavereAdminPage() {
         setPermanentDeleteOpen(false)
         setDeleteConfirmation("")
         setSelectedIds(new Set())
-        await load()
+        await load(search.trim())
+    }
+
+    function openMergeSelected() {
+        if (selectedMergeHolders.length !== 2) return
+        setMergePrimaryId(selectedMergeHolders[0].id)
+        setMergeConfirmation("")
+        setMergeOpen(true)
+    }
+
+    async function handleMergeSelected() {
+        const duplicate = selectedMergeHolders.find(holder => holder.id !== mergePrimaryId)
+        if (!duplicate || mergeConfirmation !== "SAMMENLÆG") return
+        setMerging(true)
+        const result = await mergeDuplicateRightsHolders(mergePrimaryId, duplicate.id)
+        setMerging(false)
+        if (!result.success) {
+            toast.error(result.error)
+            return
+        }
+        toast.success("Rettighedshaverprofilerne er sammenlagt")
+        setMergeOpen(false)
+        setMergeConfirmation("")
+        setSelectedIds(new Set())
+        await load(search.trim())
     }
 
     function openEdit(rh: RettighedshaverWithAffiliation) {
@@ -754,7 +980,7 @@ export default function RettighedshavereAdminPage() {
         setEditSaving(false)
         toast.success("Gemt")
         setEditTarget(null)
-        load()
+        void load(search.trim())
     }
 
     async function handleOnboardingAction() {
@@ -772,7 +998,7 @@ export default function RettighedshavereAdminPage() {
         window.dispatchEvent(new Event("onboarding-requirement-changed"))
         setOnboardingAction(null)
         setEditTarget(null)
-        await load()
+        await load(search.trim())
     }
 
     async function toggleMember(rh: RettighedshaverWithAffiliation) {
@@ -782,7 +1008,7 @@ export default function RettighedshavereAdminPage() {
         await setMemberStatus(rh.id, orgId, next, aff?.member_no ?? undefined)
         if (!next) await setAffiliationEnd(rh.id, orgId, new Date().toISOString().slice(0, 10))
         toast.success(next ? `${rh.full_name} er nu medlem` : `${rh.full_name} er udmeldt`)
-        load()
+        void load(search.trim())
     }
 
     async function handlePortalAction() {
@@ -862,6 +1088,9 @@ export default function RettighedshavereAdminPage() {
                         <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
                             <Plus className="h-4 w-4 mr-1" />Indtast rettighedshaver manuelt
                         </Button>
+                        <Button size="sm" variant="outline" onClick={() => setBetaMessageOpen(true)} disabled={betaTesterCount === 0}>
+                            <Send className="mr-1 h-4 w-4" />Besked til betatestere ({betaTesterCount})
+                        </Button>
                     </div>
                 }
             />
@@ -891,7 +1120,7 @@ export default function RettighedshavereAdminPage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <div className="relative w-full sm:max-w-xs">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg navn, email, telefon..." className="pl-8" value={search} onChange={e => { setSearch(e.target.value); if (e.target.value.trim() && hasMore) void loadAllRightsHolders() }} />
+                    <Input placeholder="Søg navn, email, telefon eller medlemsnummer..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
                     {search && <button type="button" aria-label="Ryd søgning" className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSearch("")}><X className="h-4 w-4" /></button>}
                 </div>
                 <Select value={filter} onValueChange={v => applyListFilter(v as Filter)}>
@@ -900,6 +1129,7 @@ export default function RettighedshavereAdminPage() {
                         <SelectItem value="alle">Alle</SelectItem>
                         <SelectItem value="medlemmer">Kun medlemmer</SelectItem>
                         <SelectItem value="ikke-medlemmer">Ikke-medlemmer</SelectItem>
+                        <SelectItem value="betatestere">Betatestere</SelectItem>
                         <SelectItem value="inviteret">Inviteret</SelectItem>
                         <SelectItem value="afventer">Afventer onboarding</SelectItem>
                         <SelectItem value="ikke-inviteret">Ikke inviteret</SelectItem>
@@ -920,7 +1150,7 @@ export default function RettighedshavereAdminPage() {
             </div>
 
             <ListResultSummary
-                filteredCount={visible.length}
+                filteredCount={filter === "alle" ? filteredResultCount : visible.length}
                 totalCount={Math.max(rightsHolderSummary.total, visible.length)}
                 selectedCount={selectedIds.size}
                 loading={loadingMore}
@@ -931,9 +1161,17 @@ export default function RettighedshavereAdminPage() {
                     <div className="text-sm font-medium">{selectedIds.size} valgt</div>
                     <div className="flex flex-wrap gap-2">
                         <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
+                        {canSeeAllOrganisations && selectedIds.size === 2 && (
+                            <Button size="sm" variant="outline" onClick={openMergeSelected}>
+                                <GitMerge className="mr-1 h-4 w-4" />Sammenlæg dubletter
+                            </Button>
+                        )}
                         <Button size="sm" variant="outline" onClick={handleBulkSendInvitation} disabled={bulkSendingInvitations}>
                             {bulkSendingInvitations ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Mail className="mr-1 h-4 w-4" />}
                             Send invitation
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => void openBetaInvite(visible.filter(holder => selectedIds.has(holder.id)))} disabled={betaInviteSending || selectedIds.size > 50}>
+                            <FlaskConical className="mr-1 h-4 w-4" />Send betainvitation
                         </Button>
                         {filter === "arkiverede" ? (
                             <Button size="sm" variant="outline" onClick={handleRestoreSelected} disabled={restoringSelected}>
@@ -962,7 +1200,6 @@ export default function RettighedshavereAdminPage() {
                     </MobileDataCard>
                 ) : visible.map(rh => {
                     const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
-                    const hasLogin = !!rh.user_id
                     const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
                     const relationsExpanded = expandedRightsHolderId === rh.id
                     return (
@@ -997,6 +1234,17 @@ export default function RettighedshavereAdminPage() {
                                                 ? <><UserX className="h-3.5 w-3.5 mr-2 text-amber-500" />Udmeld</>
                                                 : <><UserCheck className="h-3.5 w-3.5 mr-2 text-green-600" />Indmeld</>}
                                         </DropdownMenuItem>
+                                        {rh.email && !rh.onboarding_completed_at && (
+                                            <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: rh.invite_sent_at ? "reminder" : "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
+                                                <Mail className="mr-2 h-3.5 w-3.5" />{rh.invite_sent_at ? "Gensend velkomstmail" : "Send invitation"}
+                                            </DropdownMenuItem>
+                                        )}
+                                        {rh.email && rh.onboarding_completed_at && (
+                                            <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "login" }); setPortalLink(null); setPortalEmailStatus(null) }}>
+                                                <KeyRound className="mr-2 h-3.5 w-3.5" />Send loginlink
+                                            </DropdownMenuItem>
+                                        )}
+                                        {rh.email && <DropdownMenuItem onClick={() => void openBetaInvite([rh])}><FlaskConical className="mr-2 h-3.5 w-3.5" />Send betainvitation</DropdownMenuItem>}
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </div>
@@ -1012,13 +1260,19 @@ export default function RettighedshavereAdminPage() {
                                         {aff?.is_member
                                             ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
                                             : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
+                                        {aff?.beta_tester_since && <Badge className="bg-violet-600 text-white text-xs">Betatester</Badge>}
                                         {counts.allContractsValidated && <Badge className="bg-emerald-600 text-white text-xs">Alle kontrakter valideret</Badge>}
                                     </div>
                                 </MobileMetaRow>
                                 <MobileMetaRow label="Portaladgang">
-                                    {hasLogin
-                                        ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Aktiv</Badge>
-                                        : <span className="text-muted-foreground">Ingen adgang</span>}
+                                    {(() => {
+                                        const status = invitationStatus(rh)
+                                        return status.state === "active"
+                                            ? <Badge className="gap-1 bg-emerald-600 text-xs text-white"><LogIn className="h-3 w-3" />{status.label}</Badge>
+                                            : status.state === "invited"
+                                                ? <Badge variant="outline" className="border-amber-300 text-xs text-amber-700">{status.label}</Badge>
+                                                : <Badge variant="outline" className="text-xs text-muted-foreground">{status.label}</Badge>
+                                    })()}
                                 </MobileMetaRow>
                             </div>
                             {relationsExpanded && <div className="mt-4 border-t pt-3"><RightsHolderRelations rightsHolderId={rh.id} workCount={counts.works} contractCount={counts.contracts} /></div>}
@@ -1087,15 +1341,19 @@ export default function RettighedshavereAdminPage() {
                                             {aff?.is_member
                                                 ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
                                                 : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
+                                            {aff?.beta_tester_since && <Badge className="bg-violet-600 text-white text-xs">Betatester</Badge>}
                                             {counts.allContractsValidated && <Badge className="bg-emerald-600 text-white text-xs">Alle kontrakter valideret</Badge>}
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        {rh.onboarding_completed_at
-                                            ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Registreret</Badge>
-                                            : rh.invite_sent_at
-                                                ? <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Afventer</Badge>
-                                                : <span className="text-xs text-muted-foreground">Ikke inviteret</span>}
+                                            {(() => {
+                                                const status = invitationStatus(rh)
+                                                return status.state === "active"
+                                                    ? <Badge className="gap-1 bg-emerald-600 text-xs text-white"><LogIn className="h-3 w-3" />{status.label}</Badge>
+                                                    : status.state === "invited"
+                                                        ? <Badge variant="outline" className="border-amber-300 text-xs text-amber-700">{status.label}</Badge>
+                                                        : <Badge variant="outline" className="text-xs text-muted-foreground">{status.label}</Badge>
+                                            })()}
                                     </TableCell>
                                     <TableCell>
                                         {!hasLogin
@@ -1127,7 +1385,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await restoreRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver gendannet")
-                                                            if (orgId) load()
+                                                            if (orgId) void load(search.trim())
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke gendanne")
                                                         }
@@ -1136,23 +1394,24 @@ export default function RettighedshavereAdminPage() {
                                                     </DropdownMenuItem>
                                                 )}
                                                 <DropdownMenuSeparator />
-                                                {rh.email && !hasPortalAccess(rh) && (
-                                                    <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
-                                                        <Mail className="h-3.5 w-3.5 mr-2" />Send invitation
+                                                {rh.email && !rh.onboarding_completed_at && (
+                                                    <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: rh.invite_sent_at ? "reminder" : "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
+                                                        <Mail className="h-3.5 w-3.5 mr-2" />{rh.invite_sent_at ? "Gensend velkomstmail" : "Send invitation"}
                                                     </DropdownMenuItem>
                                                 )}
-                                                {rh.email && hasPortalAccess(rh) && (
+                                                {rh.email && rh.onboarding_completed_at && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "login" }); setPortalLink(null); setPortalEmailStatus(null) }}>
                                                         <KeyRound className="h-3.5 w-3.5 mr-2" />Send loginlink
                                                     </DropdownMenuItem>
                                                 )}
+                                                {rh.email && <DropdownMenuItem onClick={() => void openBetaInvite([rh])}><FlaskConical className="mr-2 h-3.5 w-3.5" />Send betainvitation</DropdownMenuItem>}
                                                 <DropdownMenuSeparator />
                                                 {rh.archived_at ? (
                                                     <DropdownMenuItem onClick={async () => {
                                                         const result = await restoreRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver gendannet")
-                                                            if (orgId) load()
+                                                            if (orgId) void load(search.trim())
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke gendanne")
                                                         }
@@ -1164,7 +1423,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await archiveRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver arkiveret")
-                                                            if (orgId) load()
+                                                            if (orgId) void load(search.trim())
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke arkivere")
                                                         }
@@ -1247,9 +1506,11 @@ export default function RettighedshavereAdminPage() {
                                 <div>
                                     <h3 className="font-semibold">Portaladgang</h3>
                                     <p className="text-xs text-muted-foreground">
-                                        {hasPortalAccess(editTarget)
+                                        {editTarget.onboarding_completed_at
                                             ? "Send et nyt loginlink uden at oprette en ekstra bruger."
-                                            : "Send en invitation, så rettighedshaveren kan oprette sin adgang."}
+                                            : editTarget.invite_sent_at
+                                                ? `Invitation sendt ${formatInvitationDate(editTarget.invite_sent_at)}. Du kan gensende velkomstmailen med et nyt sikkert link.`
+                                                : "Send en invitation, så rettighedshaveren kan oprette sin adgang."}
                                     </p>
                                 </div>
                                 {(!editForm.email.trim() || editForm.email.trim() !== (editTarget.email ?? "").trim() || editForm.full_name.trim() !== editTarget.full_name.trim()) && (
@@ -1271,17 +1532,29 @@ export default function RettighedshavereAdminPage() {
                                         setPortalEmailStatus(null)
                                         setPortalAction({
                                             rh: editTarget,
-                                            type: hasPortalAccess(editTarget) ? "login" : "invite",
+                                            type: rightsHolderPortalAction(editTarget),
                                         })
                                     }}
                                 >
-                                    {hasPortalAccess(editTarget) ? <KeyRound className="mr-2 h-4 w-4" /> : <Mail className="mr-2 h-4 w-4" />}
-                                    {hasPortalAccess(editTarget)
+                                    {editTarget.onboarding_completed_at ? <KeyRound className="mr-2 h-4 w-4" /> : <Mail className="mr-2 h-4 w-4" />}
+                                    {editTarget.onboarding_completed_at
                                         ? "Send nyt loginlink"
-                                        : editTarget.invite_sent_at ? "Send ny invitation" : "Send invitation"}
+                                        : editTarget.invite_sent_at ? "Gensend velkomstmail" : "Send invitation"}
                                 </Button>
                                 {portalAction?.rh.id === editTarget.id && portalLink && (
                                     <p className="break-all rounded-md bg-muted px-3 py-2 text-xs">{portalLink}</p>
+                                )}
+                                {orgId && getAffiliation(editTarget, orgId)?.beta_tester_since && (
+                                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-violet-200 bg-violet-50 p-3 dark:border-violet-900 dark:bg-violet-950/30">
+                                        <div><Badge className="bg-violet-600 text-white">Betatester</Badge><p className="mt-1 text-xs text-muted-foreground">Markeringen udløber ikke automatisk.</p></div>
+                                        <Button type="button" size="sm" variant="outline" onClick={async () => {
+                                            const result = await removeBetaTester(editTarget.id)
+                                            if (!result.success) { toast.error(result.error); return }
+                                            toast.success("Betatesterstatus fjernet. Portaladgangen er uændret.")
+                                            setEditTarget(null)
+                                            await Promise.all([load(search.trim()), refreshBetaSummary()])
+                                        }}>Fjern betatesterstatus</Button>
+                                    </div>
                                 )}
                             </section>
                         )}
@@ -1635,6 +1908,70 @@ export default function RettighedshavereAdminPage() {
                 </DialogContent>
             </Dialog>
 
+            <Dialog open={betaInviteOpen} onOpenChange={open => { if (!betaInviteSending) { setBetaInviteOpen(open); if (!open) setBetaInviteResult(null) } }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Send betatest-invitation</DialogTitle>
+                        <DialogDescription>{betaInviteTargets.length} rettighedshaver(e) markeres som betatestere og får almindelig portaladgang.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div className="space-y-1"><Label>Startdato</Label><Input type="date" value={betaInviteStartDate} disabled /></div>
+                        <div className="space-y-1"><Label htmlFor="beta-end-date">Slutdato i invitationsteksten</Label><Input id="beta-end-date" type="date" min={betaInviteStartDate ? addCalendarDays(betaInviteStartDate, 1) : undefined} value={betaInviteEndDate} onChange={event => setBetaInviteEndDate(event.target.value)} /></div>
+                        <p className="text-xs text-muted-foreground">Slutdatoen er kun information. Betatesterstatus og adgang fortsætter, indtil en administrator ændrer dem.</p>
+                        {betaInviteTargets.length === 1 && (
+                            <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-sm">
+                                <p className="font-medium">Forhåndsvisning og værksopslag</p>
+                                {betaInvitePreviewLoading ? (
+                                    <p className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter mulige krediteringer fra Portal, DFI og TMDb…</p>
+                                ) : betaInvitePreview ? (
+                                    <>
+                                        <p className="font-medium">{betaInvitePreview.subject}</p>
+                                        <p className="max-h-36 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{betaInvitePreview.bodyText}</p>
+                                        <p className="text-xs">{betaInvitePreview.work_lookup?.counts.local ?? 0} lokale · {betaInvitePreview.work_lookup?.counts.external ?? 0} eksterne mulige krediteringer</p>
+                                        {betaInvitePreview.work_lookup?.warnings.map(warning => <p key={warning} className="text-xs text-amber-700 dark:text-amber-300">{warning}</p>)}
+                                    </>
+                                ) : <p className="text-xs text-muted-foreground">Ingen forhåndsvisning tilgængelig.</p>}
+                            </div>
+                        )}
+                        {betaInviteTargets.length > 1 && <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">Værker hentes sikkert for hver modtager ved udsendelsen. Resultatet opsummeres bagefter.</p>}
+                        {betaInviteResult && betaInviteResult.sent < betaInviteTargets.length && (
+                            <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100" role="alert">
+                                <p className="font-medium">Betatesterstatus er gemt, men ikke alle mails blev sendt.</p>
+                                <p>{betaInviteResult.sent} sendt · {betaInviteResult.marked - betaInviteResult.sent} mailfejl · {betaInviteResult.failed} øvrige fejl.</p>
+                                {betaInviteResult.emailError && <p>{betaInviteResult.emailError}</p>}
+                                {betaInviteResult.workLookupIssues > 0 && <p>{betaInviteResult.workLookupIssues} værksopslag havde tvetydige matches eller en utilgængelig kilde.</p>}
+                                {betaInviteResult.manualLink && (
+                                    <div className="space-y-2">
+                                        <Label htmlFor="beta-manual-link">Manuelt invitationslink</Label>
+                                        <div className="flex gap-2">
+                                            <Input id="beta-manual-link" value={betaInviteResult.manualLink} readOnly className="font-mono text-xs" />
+                                            <Button type="button" variant="outline" onClick={() => { void navigator.clipboard.writeText(betaInviteResult.manualLink ?? ""); toast.success("Link kopieret") }}>Kopiér</Button>
+                                        </div>
+                                        <p className="text-xs">Generér helst et nyt link ved genudsendelse, når mailopsætningen er rettet.</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setBetaInviteOpen(false)} disabled={betaInviteSending}>{betaInviteResult ? "Luk" : "Annuller"}</Button>
+                        <Button onClick={confirmBetaInvite} disabled={betaInviteSending || !betaInviteEndDate}>{betaInviteSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{betaInviteResult ? "Prøv at sende igen" : "Send invitation"}</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={betaMessageOpen} onOpenChange={open => { if (!betaMessageSending) setBetaMessageOpen(open) }}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader><DialogTitle>Besked til alle betatestere</DialogTitle><DialogDescription>Opretter en privat portalbesked og sender en individuel driftsmail til op til {betaTesterCount} betatestere i organisationen.</DialogDescription></DialogHeader>
+                    <div className="space-y-3">
+                        <div className="space-y-1"><Label htmlFor="beta-message-subject">Emne</Label><Input id="beta-message-subject" maxLength={200} value={betaMessage.subject} onChange={event => setBetaMessage(current => ({ ...current, subject: event.target.value }))} /></div>
+                        <div className="space-y-1"><Label htmlFor="beta-message-body">Besked</Label><Textarea id="beta-message-body" rows={8} maxLength={10000} value={betaMessage.body} onChange={event => setBetaMessage(current => ({ ...current, body: event.target.value }))} /></div>
+                        <p className="text-xs text-muted-foreground">Mailen er driftskommunikation om betaprogrammet og sendes individuelt. Modtagerne kan ikke se hinandens adresser.</p>
+                    </div>
+                    <DialogFooter><Button variant="outline" onClick={() => setBetaMessageOpen(false)} disabled={betaMessageSending}>Annuller</Button><Button onClick={sendBetaTesterMessage} disabled={betaMessageSending || !betaMessage.subject.trim() || !betaMessage.body.trim()}>{betaMessageSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send til {betaTesterCount}</Button></DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             {/* Arkivér dialog */}
             <Dialog open={archiveConfirmOpen} onOpenChange={open => { if (!archivingSelected) setArchiveConfirmOpen(open) }}>
                 <DialogContent className="max-w-md">
@@ -1703,19 +2040,68 @@ export default function RettighedshavereAdminPage() {
             </Dialog>
 
             {/* Portal adgang dialog */}
+            <Dialog open={mergeOpen} onOpenChange={open => { if (!open && !merging) setMergeOpen(false) }}>
+                <DialogContent className="max-w-xl">
+                    <DialogHeader>
+                        <DialogTitle>Sammenlæg dubletprofiler</DialogTitle>
+                        <DialogDescription>
+                            Vælg den profil, der skal bevares. Relationer og manglende oplysninger flyttes til den valgte profil; den anden profil slettes permanent.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        {selectedMergeHolders.map(holder => {
+                            const status = invitationStatus(holder)
+                            return (
+                                <label key={holder.id} className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${mergePrimaryId === holder.id ? "border-primary bg-primary/5" : ""}`}>
+                                    <input type="radio" name="merge-primary" value={holder.id} checked={mergePrimaryId === holder.id} onChange={() => setMergePrimaryId(holder.id)} className="mt-1" />
+                                    <span className="min-w-0">
+                                        <span className="block font-medium">{holder.full_name}</span>
+                                        <span className="block truncate text-sm text-muted-foreground">{holder.email ?? "Ingen e-mail"}</span>
+                                        <span className="block text-xs text-muted-foreground">{holder.organisation_names.join(", ") || "Ingen organisation"} · {status.label}</span>
+                                    </span>
+                                </label>
+                            )
+                        })}
+                        {mergeHasConflictingUsers ? (
+                                <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                                    Begge profiler har hver sin loginbruger. De kan ikke sammenlægges automatisk.
+                                </p>
+                            ) : null}
+                        <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                            Kontrakter, værker, medlemskaber og sikre relationer bevares. Sammenlægningen afvises uden ændringer ved modstridende login-, CPR-, bank-, person-id-, medlems-, arve-, økonomi- eller fordelingsdata.
+                        </div>
+                        <div className="space-y-1">
+                            <Label>Skriv SAMMENLÆG for at bekræfte</Label>
+                            <Input value={mergeConfirmation} onChange={event => setMergeConfirmation(event.target.value)} autoComplete="off" />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" disabled={merging} onClick={() => setMergeOpen(false)}>Annuller</Button>
+                        <Button
+                            variant="destructive"
+                            disabled={merging || mergeConfirmation !== "SAMMENLÆG" || mergeHasConflictingUsers}
+                            onClick={() => void handleMergeSelected()}
+                        >
+                            {merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Sammenlæg profiler
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             <Dialog open={!!portalAction} onOpenChange={open => { if (!open) { setPortalAction(null); setPortalLink(null); setPortalEmailStatus(null) } }}>
                 <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>
                             {portalAction?.type === "login"
                                 ? "Send loginlink"
-                                : portalAction?.type === "invite" || portalAction?.type === "reminder" ? "Inviter til portal" : "Nulstil password"}
+                                : portalAction?.type === "reminder" ? "Gensend velkomstmail" : portalAction?.type === "invite" ? "Inviter til portal" : "Nulstil password"}
                         </DialogTitle>
                         <DialogDescription>
                             {portalAction?.type === "login"
                                 ? `Send et nyt loginlink til ${portalAction.rh.full_name} (${portalAction.rh.email}). Personen kan vælge et nyt password og logge ind igen.`
                                 : portalAction?.type === "invite" || portalAction?.type === "reminder"
-                                ? `Send en invitation til ${portalAction.rh.full_name} (${portalAction.rh.email}). Hvis mailen ikke kan sendes, vises linket til manuel deling.`
+                                ? `${portalAction.type === "reminder" ? "Gensend velkomstmailen" : "Send en invitation"} til ${portalAction.rh.full_name} (${portalAction.rh.email}). Hvis mailen ikke kan sendes, vises linket til manuel deling.`
                                 : `Generér et nulstillingslink til ${portalAction?.rh.full_name}. Del linket med dem direkte.`}
                         </DialogDescription>
                         {(portalAction?.type === "invite" || portalAction?.type === "reminder") && portalAction.rh.invite_sent_at && !portalLink && (
@@ -1763,12 +2149,27 @@ export default function RettighedshavereAdminPage() {
                             </p>
                         </div>
                     ) : (
-                        <div className="py-2">
+                        <div className="space-y-3 py-2">
                             <p className="text-sm text-muted-foreground">
                                 {portalAction?.rh.email
                                     ? `Email: ${portalAction.rh.email}`
                                     : <span className="text-destructive">Ingen email registreret — tilføj email først</span>}
                             </p>
+                            {portalAction?.type === "invite" && (
+                                <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-sm">
+                                    <p className="font-medium">Forhåndsvisning og værksopslag</p>
+                                    {portalInvitePreviewLoading ? (
+                                        <p className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter mulige krediteringer…</p>
+                                    ) : portalInvitePreview ? (
+                                        <>
+                                            <p className="font-medium">{portalInvitePreview.subject}</p>
+                                            <p className="max-h-36 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{portalInvitePreview.bodyText}</p>
+                                            <p className="text-xs">{portalInvitePreview.work_lookup?.counts.local ?? 0} lokale · {portalInvitePreview.work_lookup?.counts.external ?? 0} eksterne mulige krediteringer</p>
+                                            {portalInvitePreview.work_lookup?.warnings.map(warning => <p key={warning} className="text-xs text-amber-700 dark:text-amber-300">{warning}</p>)}
+                                        </>
+                                    ) : <p className="text-xs text-muted-foreground">Ingen forhåndsvisning tilgængelig.</p>}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -1781,7 +2182,7 @@ export default function RettighedshavereAdminPage() {
                                 {portalLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                                 {portalAction?.type === "login"
                                     ? "Send loginlink"
-                                    : portalAction?.type === "invite" || portalAction?.type === "reminder" ? "Send invitation" : "Generér nulstillingslink"}
+                                    : portalAction?.type === "reminder" ? "Gensend velkomstmail" : portalAction?.type === "invite" ? "Send invitation" : "Generér nulstillingslink"}
                             </Button>
                         )}
                     </DialogFooter>

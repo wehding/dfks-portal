@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 
-import { FatalProcessingError, processOne } from "./processor.mjs";
+import { createProcessor, FatalProcessingError } from "./processor.mjs";
+
+const processOne = createProcessor({ executionMode: "service" });
 
 createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
@@ -17,6 +19,12 @@ createServer(async (request, response) => {
     if (result.outcome === "empty") {
       response.writeHead(204, { "Cache-Control": "no-store" }).end();
       return;
+    }
+    if (result.outcome === "handled_failure" && result.diagnosticCode) {
+      console.warn(JSON.stringify({
+        event: "document_job_handled_failure",
+        code: result.diagnosticCode,
+      }));
     }
     response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     response.end(JSON.stringify({ outcome: result.outcome }));

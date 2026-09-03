@@ -1,0 +1,77 @@
+steps:
+  - id: build-test-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --target
+      - test
+      - --tag
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE}:test-${BUILD_ID}
+      - cloud-run/contract-document-worker
+
+  - id: test
+    name: gcr.io/cloud-builders/docker
+    args:
+      - run
+      - --rm
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE}:test-${BUILD_ID}
+
+  - id: build-production-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --target
+      - production
+      - --tag
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE}:${COMMIT_SHA}
+      - cloud-run/contract-document-worker
+
+  - id: push-production-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE}:${COMMIT_SHA}
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE}:${COMMIT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --service-account=${_RUNTIME_SERVICE_ACCOUNT}
+      - --no-allow-unauthenticated
+      - --quiet
+
+  # Keep the dormant batch job on the exact tested image. Updating the image
+  # does not execute the job or change its task, memory, env or retry settings.
+  - id: update-backfill-image
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - jobs
+      - update
+      - ${_BACKFILL_JOB}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE}:${COMMIT_SHA}
+      - --region=${_REGION}
+      - --quiet
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE}:${COMMIT_SHA}
+
+substitutions:
+  _REGION: europe-north1
+  _ARTIFACT_REPOSITORY: dfks-workers
+  _IMAGE: contract-document-worker
+  _SERVICE: dfks-contract-document-worker
+  _BACKFILL_JOB: dfks-contract-document-backfill
+  _RUNTIME_SERVICE_ACCOUNT: dfks-pdf-worker@dfks-portal.iam.gserviceaccount.com
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s

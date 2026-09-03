@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
 import type { PayrollExportBatch } from "@/app/actions/rights-settlements"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -102,7 +103,7 @@ async function fetchExportRows(
             payable_amount,
             currency,
             below_threshold,
-            rettighedshavere ( full_name, member_number ),
+            rettighedshavere ( full_name, org_affiliations ( member_no ) ),
             settlements ( label, rights_funds ( name ) )
         `)
         .eq("settlement_id", settlement_id)
@@ -112,7 +113,7 @@ async function fetchExportRows(
     if (error) throw error
 
     // Hent lønsystem-referencer
-    const holderIds = [...new Set((items ?? []).map((i: any) => i.rights_holder_id))]
+    const holderIds = [...new Set((items ?? []).map((i) => i.rights_holder_id))]
     const { data: refs } = await db
         .from("payroll_recipient_references")
         .select("rights_holder_id, recipient_id")
@@ -122,17 +123,18 @@ async function fetchExportRows(
         .in("rights_holder_id", holderIds)
 
     const refMap = new Map<string, string>(
-        (refs ?? []).map((r: any) => [r.rights_holder_id, r.recipient_id])
+        (refs ?? []).map((r) => [r.rights_holder_id, r.recipient_id])
     )
 
     // Summér pr. rettighedshaver (kan have flere poster pr. run)
     const byHolder = new Map<string, ExportRow>()
-    for (const item of (items ?? []) as any[]) {
+    for (const item of items ?? []) {
         const existing = byHolder.get(item.rights_holder_id)
         const amount = Number(item.payable_amount)
         const settlement = Array.isArray(item.settlements) ? item.settlements[0] : item.settlements
         const fund = Array.isArray(settlement?.rights_funds) ? settlement.rights_funds[0] : settlement?.rights_funds
         const rh = Array.isArray(item.rettighedshavere) ? item.rettighedshavere[0] : item.rettighedshavere
+        const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
 
         if (existing) {
             existing.payable_amount_minor += amount
@@ -140,7 +142,7 @@ async function fetchExportRows(
             byHolder.set(item.rights_holder_id, {
                 rights_holder_id: item.rights_holder_id,
                 rights_holder_name: rh?.full_name ?? "Ukendt",
-                member_number: rh?.member_number ?? null,
+                member_number: aff?.member_no ?? null,
                 payroll_recipient_id: refMap.get(item.rights_holder_id) ?? null,
                 payable_amount_minor: amount,
                 currency: item.currency ?? "DKK",
@@ -172,6 +174,14 @@ export async function previewExport(
         const csv = system === "datalon"
             ? buildDataLonCsv(rows, lønart)
             : buildGenericCsv(rows)
+
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "download", component: "admin.rights_export_preview", entityType: "settlement", entityId: settlement_id,
+            targetMemberUuids: rows.map(row => row.rights_holder_id), purposeCode: "payroll_export",
+            legalBasis: "gdpr_art_6_1_f", dataCategories: ["financial_data", "membership_data"],
+            counts: { rows: rows.length, skipped },
+        })
 
         return {
             success: true,
@@ -256,6 +266,14 @@ export async function exportSettlement(
             })
         }
 
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "download", component: "admin.rights_export", entityType: "payroll_export_batch", entityId: batch.id,
+            targetMemberUuids: exportableRows.map(row => row.rights_holder_id), purposeCode: "payroll_export",
+            legalBasis: "gdpr_art_6_1_f", dataCategories: ["financial_data", "membership_data"],
+            counts: { rows: exportableRows.length, skipped },
+        })
+
         revalidatePath("/admin/rettighedsmidler/afregning")
         return {
             success: true,
@@ -294,7 +312,7 @@ export async function getExportBatches(settlement_id?: string): Promise<{
         const { data, error } = await q
         if (error) throw error
 
-        const batches = (data ?? []).map((b: any) => ({
+        const batches = (data ?? []).map((b) => ({
             ...b,
             settlement_label: Array.isArray(b.settlements) ? b.settlements[0]?.label : b.settlements?.label,
         }))
@@ -336,4 +354,3 @@ export async function redownloadExport(
         return { success: false, error: String(err) }
     }
 }
-

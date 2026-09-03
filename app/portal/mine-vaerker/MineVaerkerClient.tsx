@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import dynamic from "next/dynamic";
-import { ChevronLeft, ChevronRight, Film, Plus, Search, X, Trash2, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Film, Plus, Search, X, Trash2, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -20,16 +20,18 @@ import { WORK_TYPES } from "@/lib/work-types";
 import { ExpandableListTrigger, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { ListResultSummary } from "@/components/list-result-summary";
-import { fetchMemberCoEditorSuggestions, fetchMemberShareTaskTarget } from "@/app/actions/work-share-cases";
+import { fetchMemberCoEditorSuggestions, fetchMemberShareTaskTarget, respondToWorkShareTask } from "@/app/actions/work-share-cases";
 import { confirmNoCoeditors, fetchMemberCollaborationReviews, fetchMemberWorkReviewTasks } from "@/app/actions/work-collaboration-reviews";
 import type { Contract } from "../mine-kontrakter/MineKontrakterClient";
 import { resolveWorkEditorRelation } from "@/lib/work-editor-roles";
-import type { MemberWorkReviewCoEditor, MemberWorkReviewTask } from "@/lib/member-work-review";
+import { uniqueMemberWorkReviewCount, type MemberWorkReviewCoEditor, type MemberWorkReviewTask } from "@/lib/member-work-review";
 import { collaborationReviewIndicator } from "@/lib/work-collaboration-review";
 import { memberOverviewItemsToAssignments } from "@/lib/member-work-overview";
 import type { MemberOverviewItem } from "@/lib/member-work-overview";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
 import { createClientId } from "@/lib/client-id";
+import { fetchMemberContractsForWorks } from "@/app/actions/member-contracts";
+import { SourcePictogram } from "@/components/source-pictogram";
 
 const AddWorkModal = dynamic(() => import("./components/AddWorkModal").then(module => module.AddWorkModal), { ssr: false });
 const EditWorkModal = dynamic(() => import("./components/EditWorkModal").then(module => module.EditWorkModal), { ssr: false });
@@ -44,6 +46,7 @@ type Work = {
   title: string;
   type: string;
   year: number | null;
+  production_year?: number | null;
   duration_minutes: number | null;
   episode_count: number | null;
   parent_work_id?: string | null;
@@ -79,6 +82,18 @@ type WorkProductionNumber = { tv_station: string | null; number: string | null }
 export type BroadcasterLogo = { name: string; logo_path: string | null };
 type SortKey = "date" | "title" | "year" | "type" | "role" | "episode" | "coEditors" | "contract";
 type EditReturnContext = "list" | "review" | "contract";
+type LinkedShareTask = {
+  id: string;
+  workId: string;
+  title: string;
+  type: string | null;
+  year: number | null;
+  seasonNumber: number | null;
+  episodeNumber: number | null;
+  status: string;
+  relationshipStatus: string;
+  proposedPercent: number | null;
+};
 const ADD_WORK_PREFILL_KEY = "dfks_add_work_prefill";
 
 type RequestComment = {
@@ -100,6 +115,14 @@ type ChangeRequest = {
 };
 
 type SortValue = string | number;
+
+function matchesQuickWorkType(workType: string, filter: string) {
+  if (filter === "all") return true;
+  if (filter === "film") return ["spillefilm", "kortfilm"].includes(workType);
+  if (filter === "series") return ["tv-serie", "tv-program", "reality", "sport"].includes(workType);
+  if (filter === "documentary") return ["dokumentarfilm", "dokumentar-serie"].includes(workType);
+  return workType === filter;
+}
 type ReviewCoEditorDraft = {
   id: string;
   name: string;
@@ -241,8 +264,14 @@ function isSeriesType(type: string | null | undefined) {
   return label === "TV-serie" || label === "Dokumentarserie";
 }
 
+function parseSharePercent(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number(value.trim().replace(",", "."));
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
+}
+
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName, defaultRoleLabel, coeditorWord, pageResult, initialQuery,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, legacyDeclarationRequiredWorkIds, legacyDeclaredWorkIds, summaryCounts, firstUnresolvedShareTaskId, contracts: initialContracts, organisationShortName, defaultRoleLabel, coeditorWord, pageResult, initialQuery,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
@@ -250,6 +279,10 @@ export default function MineVaerkerClient({
   rightsHolderId: string | null;
   dfiPersonId: number | null;
   contractedWorkIds: string[];
+  legacyDeclarationRequiredWorkIds: string[];
+  legacyDeclaredWorkIds: string[];
+  summaryCounts: { totalWorks: number; withContract: number; missingContract: number; reviewWorks: number; unresolvedShares: number };
+  firstUnresolvedShareTaskId: string | null;
   contracts: Contract[];
   organisationShortName: string;
   defaultRoleLabel: string;
@@ -260,6 +293,9 @@ export default function MineVaerkerClient({
   const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
   const [allAssignments, setAllAssignments] = useState(initialAllAssignments);
+  const [contracts, setContracts] = useState(initialContracts);
+  const legacyRequired = React.useMemo(() => new Set(legacyDeclarationRequiredWorkIds), [legacyDeclarationRequiredWorkIds]);
+  const legacyDeclared = React.useMemo(() => new Set(legacyDeclaredWorkIds), [legacyDeclaredWorkIds]);
 
   const broadcasterLogoMap = React.useMemo(() => {
     const map: Record<string, string> = {};
@@ -326,6 +362,12 @@ export default function MineVaerkerClient({
   const [collaborationFeedback, setCollaborationFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [contractChoices, setContractChoices] = useState<Contract[]>([]);
   const [editingContractId, setEditingContractId] = useState<string | null>(null);
+  const [linkedShareTask, setLinkedShareTask] = useState<LinkedShareTask | null>(null);
+  const [linkedSharePercent, setLinkedSharePercent] = useState("");
+  const [linkedShareTaskSaving, setLinkedShareTaskSaving] = useState(false);
+  const [reviewWorkCount, setReviewWorkCount] = useState(summaryCounts.reviewWorks);
+  const [unresolvedShareCount, setUnresolvedShareCount] = useState(summaryCounts.unresolvedShares);
+  const [nextUnresolvedShareTaskId, setNextUnresolvedShareTaskId] = useState(firstUnresolvedShareTaskId);
 
   // Dialoger og modaler
   const [isAdding, setIsAdding]             = useState(false);
@@ -351,6 +393,11 @@ export default function MineVaerkerClient({
   React.useEffect(() => {
     if (!reviewDialogOpen) setAssignments(initialAssignments);
   }, [initialAssignments, reviewDialogOpen]);
+  React.useEffect(() => {
+    setReviewWorkCount(summaryCounts.reviewWorks);
+    setUnresolvedShareCount(summaryCounts.unresolvedShares);
+    setNextUnresolvedShareTaskId(firstUnresolvedShareTaskId);
+  }, [firstUnresolvedShareTaskId, summaryCounts.reviewWorks, summaryCounts.unresolvedShares]);
   React.useEffect(() => {
     const timeout = window.setTimeout(() => {
       const params = new URLSearchParams(searchParams?.toString() ?? "");
@@ -380,6 +427,7 @@ export default function MineVaerkerClient({
     }
     setCollaborationReviews(reviewResult.reviews as unknown as CollaborationReview[]);
     setReviewTasks(taskResult.tasks);
+    setReviewWorkCount(uniqueMemberWorkReviewCount(taskResult.tasks));
     setReviewTaskIndex(index => Math.min(index, Math.max(0, taskResult.tasks.length - 1)));
   }, [rightsHolderId]);
 
@@ -391,15 +439,29 @@ export default function MineVaerkerClient({
       return false;
     }
     setReviewTasks(result.tasks);
+    setReviewWorkCount(uniqueMemberWorkReviewCount(result.tasks));
     setReviewTaskIndex(0);
     setReviewRefreshDeferred(true);
     return true;
   }, [rightsHolderId]);
 
   React.useEffect(() => {
-    const timer = window.setTimeout(() => { void loadCollaborationReviews(); }, 0);
+    const requestedReview = searchParams?.get("review") === "1" || searchParams?.get("collaborationReview") === "1";
+    if (requestedReview) {
+      void loadCollaborationReviews();
+      return;
+    }
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      const idleId = idleWindow.requestIdleCallback(() => { void loadCollaborationReviews(); }, { timeout: 1_500 });
+      return () => idleWindow.cancelIdleCallback?.(idleId);
+    }
+    const timer = window.setTimeout(() => { void loadCollaborationReviews(); }, 1_000);
     return () => window.clearTimeout(timer);
-  }, [loadCollaborationReviews]);
+  }, [loadCollaborationReviews, searchParams]);
 
   React.useEffect(() => {
     if (searchParams?.get("review") === "1" || searchParams?.get("collaborationReview") === "1") {
@@ -439,21 +501,25 @@ export default function MineVaerkerClient({
       if (!w) return false;
       const t = search.toLowerCase();
       if (t && !w.title.toLowerCase().includes(t)) return false;
-      if (catFilter !== "all" && w.type !== catFilter) return false;
+      if (!matchesQuickWorkType(w.type, catFilter)) return false;
       const requests = w.work_change_requests ?? [];
       const hasUnread = (w.overview_unread_count ?? 0) > 0 || requests.some(request => (request.work_change_request_comments ?? []).some(comment => comment.author_role === "admin" && !comment.member_read_at));
       const hasPending = (w.overview_pending_count ?? 0) > 0 || requests.some(request => request.status === "pending") || w.status === "til_godkendelse";
       const hasRejected = requests.some(request => request.status === "rejected");
       const hasContract = (w.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(w.id);
+      const documentationScopeIds = w.is_season_group ? w.child_work_ids ?? [] : [w.id];
+      const hasAlternativeDocumentation = documentationScopeIds.some(id => legacyRequired.has(id) || legacyDeclared.has(id));
       const missingData = !w.year || !w.type || !w.title?.trim();
       const missingEpisodes = isSeriesType(w.type) && w.episode_selection_status === "pending";
       if (statusFilter === "messages" && !hasUnread) return false;
       if (statusFilter === "pending" && !hasPending) return false;
       if (statusFilter === "rejected" && !hasRejected) return false;
-      if (statusFilter === "missingContract" && hasContract) return false;
+      if (statusFilter === "missingContract" && (hasContract || hasAlternativeDocumentation)) return false;
       if (statusFilter === "hasContract" && !hasContract) return false;
       if (statusFilter === "missingData" && !missingData) return false;
       if (statusFilter === "missingEpisodes" && !missingEpisodes) return false;
+      // Uafklarede arbejdsandele er allerede afgrænset server-side. Det
+      // detaljerede opgavegrundlag streames ind efter den synlige liste.
       return true;
     })
     .sort((a, b) => {
@@ -486,8 +552,6 @@ export default function MineVaerkerClient({
       return 0;
     });
   const collaborationReviewByWork = new Map(collaborationReviews.map(review => [review.work_id, review]));
-  const disputedCollaborationReviews = collaborationReviews.filter(review => review.status === "disputed");
-
   const collaborationStatusBadge = (review?: CollaborationReview) => {
     if (!review) return null;
     const indicator = collaborationReviewIndicator(review.status);
@@ -503,16 +567,15 @@ export default function MineVaerkerClient({
   }, [loadCollaborationReviews]);
 
   const finishReviewTaskLocally = React.useCallback((taskKey: string) => {
-    const hasRemainingTasks = reviewTasks.some(task => task.key !== taskKey);
-    setReviewTasks(current => {
-      const next = current.filter(task => task.key !== taskKey);
-      setReviewTaskIndex(index => Math.min(index, Math.max(0, next.length - 1)));
-      if (next.length === 0) {
-        setReviewDialogOpen(false);
-        setCollaborationFeedback({ type: "success", text: "Værksgennemgangen er færdig." });
-      }
-      return next;
-    });
+    const remainingTasks = reviewTasks.filter(task => task.key !== taskKey);
+    const hasRemainingTasks = remainingTasks.length > 0;
+    setReviewTasks(remainingTasks);
+    setReviewWorkCount(uniqueMemberWorkReviewCount(remainingTasks));
+    setReviewTaskIndex(index => Math.min(index, Math.max(0, remainingTasks.length - 1)));
+    if (!hasRemainingTasks) {
+      setReviewDialogOpen(false);
+      setCollaborationFeedback({ type: "success", text: "Værksgennemgangen er færdig." });
+    }
     setReviewCompletedCount(count => count + 1);
     setReviewCoEditorDrafts([]);
     setReviewSelfSharePercent("");
@@ -707,8 +770,7 @@ export default function MineVaerkerClient({
     return contracts.filter(contract => contract.work_id && workIds.has(contract.work_id));
   };
 
-  const openContractForWork = (work: Work) => {
-    const matches = contractsForWork(work);
+  const showContractMatches = (work: Work, matches: Contract[]) => {
     if (matches.length === 0) {
       router.push(`/portal/mine-kontrakter?upload=true&workId=${work.id}&workTitle=${encodeURIComponent(work.title)}`);
       return;
@@ -718,6 +780,28 @@ export default function MineVaerkerClient({
       return;
     }
     setContractChoices(matches);
+  };
+
+  const openContractForWork = async (work: Work) => {
+    const cachedMatches = contractsForWork(work);
+    if (cachedMatches.length > 0) {
+      showContractMatches(work, cachedMatches);
+      return;
+    }
+    if ((work.overview_contract_count ?? 0) < 1 || !rightsHolderId) {
+      showContractMatches(work, []);
+      return;
+    }
+    const workIds = [work.id, work.parent_work_id, ...(work.child_work_ids ?? [])]
+      .filter((id): id is string => Boolean(id));
+    const result = await fetchMemberContractsForWorks({ rightsHolderId, workIds });
+    if (!result.success) {
+      setMsg({ type: "error", text: result.error ?? "Kontrakterne kunne ikke hentes." });
+      return;
+    }
+    const matches = result.contracts as unknown as Contract[];
+    setContracts(current => [...new Map([...current, ...matches].map(contract => [contract.id, contract])).values()]);
+    showContractMatches(work, matches);
   };
 
   const renderSeriesEpisodes = (work: Work, children: Assignment[], isLoadingChildren: boolean, className = "px-14") => (
@@ -755,6 +839,10 @@ export default function MineVaerkerClient({
                 <span className="flex shrink-0 flex-col items-end gap-1">
                   {(ep.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(ep.id) ? (
                     <button type="button" className="text-xs font-medium text-foreground" onClick={() => openContractForWork(ep)}>Kontrakt tilknyttet</button>
+                  ) : legacyDeclared.has(ep.id) ? (
+                    <span className="text-xs font-medium text-emerald-700">{t("works.legacy.declared")}</span>
+                  ) : legacyRequired.has(ep.id) ? (
+                    <button type="button" className="text-xs font-medium text-amber-700 underline underline-offset-2" onClick={() => router.push("/portal/mine-vaerker?declaration=1")}>{t("works.legacy.required")}</button>
                   ) : (
                     <button type="button" className="text-xs font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractForWork(ep)}>Mangler kontrakt</button>
                   )}
@@ -809,13 +897,11 @@ export default function MineVaerkerClient({
     if (!isOpen) void loadMemberSeason(work);
   };
 
-  const totalWorks = assignments.reduce((sum, assignment) => sum + (assignment.works?.is_season_group ? assignment.works.episode_count ?? 0 : 1), 0);
-  const withContract = assignments.reduce((sum, assignment) => sum + (assignment.works?.is_season_group ? assignment.works.overview_contract_count ?? 0 : contractedWorkIds.includes(assignment.works?.id ?? "") ? 1 : 0), 0);
-  const missingContract = Math.max(totalWorks - withContract, 0);
+  const { totalWorks, withContract, missingContract } = summaryCounts;
 
 
 
-  const reloadAssignments = async () => {
+  const reloadAssignments = async ({ refreshReviews = false }: { refreshReviews?: boolean } = {}) => {
     if (!rightsHolderId) return;
     const overview = await fetchMemberWorkOverview({
       rightsHolderId,
@@ -832,7 +918,7 @@ export default function MineVaerkerClient({
       setSeriesEpisodes({});
       setSeriesErrors({});
       setExpandedSeries(new Set());
-      await loadCollaborationReviews();
+      if (refreshReviews) await loadCollaborationReviews();
     }
   };
 
@@ -959,18 +1045,49 @@ export default function MineVaerkerClient({
         setMsg({ type: "error", text: result.error });
         return;
       }
-      const target = result.target;
-      const assignment = assignments.find(item => item.works?.id === target.work_id || item.works?.parent_work_id === target.work_id);
-      if (!assignment?.works) {
-        setMsg({ type: "error", text: "Værket til procentopgaven kunne ikke findes under Mine værker." });
-        return;
-      }
-      if (target.season_number && (assignment.works.parent_work_id || assignment.works.id === target.work_id)) void openSeasonEdit({ ...assignment.works, parent_work_id: target.work_id, season_number: target.season_number });
-      else void openEdit(assignment);
+      setLinkedShareTask(result.target as LinkedShareTask);
+      setLinkedSharePercent(result.target.proposedPercent == null ? "" : String(result.target.proposedPercent));
     });
-    // Deep-link handling intentionally uses the current assignment state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignments, rightsHolderId, searchParams]);
+  }, [rightsHolderId, searchParams]);
+
+  const closeLinkedShareTask = () => {
+    setLinkedShareTask(null);
+    setLinkedSharePercent("");
+    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    params.delete("shareTask");
+    const next = params.toString();
+    router.replace(next ? `/portal/mine-vaerker?${next}` : "/portal/mine-vaerker", { scroll: false });
+  };
+
+  const submitLinkedShareTask = async (declined: boolean) => {
+    if (!linkedShareTask || !rightsHolderId) return;
+    const percent = declined ? null : parseSharePercent(linkedSharePercent);
+    if (!declined && percent === null) {
+      setMsg({ type: "error", text: t("works.shareTask.invalidPercent") });
+      return;
+    }
+    setLinkedShareTaskSaving(true);
+    try {
+      const result = await respondToWorkShareTask({
+        rightsHolderId,
+        caseId: linkedShareTask.id,
+        percent,
+        declined,
+        responseScope: linkedShareTask.episodeNumber != null ? "episode" : linkedShareTask.seasonNumber != null ? "season" : "work",
+      });
+      if (!result.success) throw new Error(result.error);
+      setMsg({ type: "success", text: t(declined ? "works.shareTask.declined" : "works.shareTask.saved") });
+      closeLinkedShareTask();
+      await reloadAssignments({ refreshReviews: true });
+      setUnresolvedShareCount(count => Math.max(0, count - 1));
+      setNextUnresolvedShareTaskId(null);
+      router.refresh();
+    } catch (error) {
+      setMsg({ type: "error", text: error instanceof Error ? error.message : t("works.shareTask.saveError") });
+    } finally {
+      setLinkedShareTaskSaving(false);
+    }
+  };
 
   async function markRequestCommentsRead(a: Assignment) {
     const requests = a.works?.work_change_requests ?? [];
@@ -1252,7 +1369,6 @@ export default function MineVaerkerClient({
   return (
     <div className="flex flex-col gap-6">
       <ListReadinessMarker route="member-works" stage="primary" />
-      {assignments.length > 0 && <ListReadinessMarker route="member-works" stage="first-row" />}
       <ListReadinessMarker route="member-works" stage="secondary" />
       <ListReadinessMarker route="member-works" stage="complete" />
 
@@ -1264,6 +1380,23 @@ export default function MineVaerkerClient({
             <Plus className="h-4 w-4" /> {t("works.addWork")}
           </Button>}
       />
+
+      {reviewWorkCount > 0 && (
+        <section className="rounded-lg border border-amber-300 bg-amber-50/80 p-4 text-amber-950 dark:border-amber-700 dark:bg-amber-950/25 dark:text-amber-100">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <Users className="mt-0.5 h-5 w-5 shrink-0" />
+              <div>
+                <h2 className="font-semibold">{t("works.review.taskTitle").replace("{count}", String(reviewWorkCount))}</h2>
+                <p className="mt-1 text-sm leading-relaxed">{t("works.review.taskDescription")}</p>
+              </div>
+            </div>
+            <Button type="button" onClick={() => { setReviewCompletedCount(0); setReviewTaskIndex(0); void loadCollaborationReviews().then(() => setReviewDialogOpen(true)); }}>
+              {t("works.review.start")}
+            </Button>
+          </div>
+        </section>
+      )}
 
       {/* Statistik */}
       <SummaryGrid>
@@ -1285,7 +1418,28 @@ export default function MineVaerkerClient({
           active={!search && catFilter === "all" && statusFilter === "missingContract"}
           onClick={() => { setSearch(""); setCatFilter("all"); setStatusFilter("missingContract"); }}
         />
+        <SummaryCard
+          label={t("works.unresolvedShares")}
+          value={unresolvedShareCount}
+          active={!search && catFilter === "all" && statusFilter === "unresolvedShares"}
+          onClick={() => {
+            if (nextUnresolvedShareTaskId) {
+              router.push(`/portal/mine-vaerker?shareTask=${nextUnresolvedShareTaskId}`);
+              return;
+            }
+            setSearch("");
+            setCatFilter("all");
+            setStatusFilter("unresolvedShares");
+          }}
+        />
       </SummaryGrid>
+
+      <section aria-label={t("works.filmographyExport")} className="flex justify-end gap-2">
+        <div className="flex shrink-0 gap-2">
+          <Button asChild type="button" size="sm" variant="outline"><a href="/api/portal/filmography/export?format=pdf"><Download className="h-4 w-4" />PDF</a></Button>
+          <Button asChild type="button" size="sm" variant="outline"><a href="/api/portal/filmography/export?format=csv"><Download className="h-4 w-4" />CSV</a></Button>
+        </div>
+      </section>
 
       {/* Toast */}
       {msg && (
@@ -1297,24 +1451,6 @@ export default function MineVaerkerClient({
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
-      )}
-
-      {(reviewTasks.length > 0 || disputedCollaborationReviews.length > 0) && (
-        <section className="rounded-lg border border-blue-200 bg-blue-50/70 p-4 text-blue-950 dark:border-blue-800 dark:bg-blue-950/20 dark:text-blue-100">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <Users className="mt-0.5 h-5 w-5 shrink-0" />
-              <div>
-                <h2 className="font-semibold">{t("works.review.title")}</h2>
-                <p className="mt-1 text-sm leading-relaxed">{t("works.review.description")}</p>
-                <p className="mt-1 text-xs opacity-80">{reviewTasks.length} {t("works.review.remaining")}{disputedCollaborationReviews.length ? ` · ${disputedCollaborationReviews.length} ${t("works.review.awaitingDfks")}` : ""}</p>
-              </div>
-            </div>
-            <Button type="button" disabled={!reviewTasks.length} onClick={() => { setReviewCompletedCount(0); setReviewTaskIndex(0); setReviewDialogOpen(true); }}>
-              {t("works.review.start")}
-            </Button>
-          </div>
-        </section>
       )}
 
       {collaborationFeedback && (
@@ -1379,6 +1515,7 @@ export default function MineVaerkerClient({
                   <SelectItem value="hasContract">Har kontrakt</SelectItem>
                   <SelectItem value="missingData">Mangler værksdata</SelectItem>
                   <SelectItem value="missingEpisodes">Serie mangler afsnit</SelectItem>
+                  <SelectItem value="unresolvedShares">{t("works.unresolvedShareStatus")}</SelectItem>
                 </SelectContent>
               </Select>
               </>
@@ -1447,10 +1584,13 @@ export default function MineVaerkerClient({
         {/* Rækker */}
         {filtered.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
+            <ListReadinessMarker route="member-works" stage="first-row" />
             <Film className="mx-auto h-10 w-10 text-muted-foreground/50 mb-3" />
             <p>{assignments.length === 0 ? t("works.emptyHint") : t("works.noSearchResults")}</p>
           </div>
-        ) : visibleAssignments.map(a => {
+        ) : <>
+          <ListReadinessMarker route="member-works" stage="first-row" />
+          {visibleAssignments.map(a => {
           const w = a.works;
           if (!w) return null;
           const posterSrc = w.poster_url
@@ -1464,6 +1604,12 @@ export default function MineVaerkerClient({
           const broadcaster = getWorkBroadcaster(w);
           const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
           const isSeriesParent = Boolean(w.is_season_group);
+          const documentationScopeIds = w.is_season_group ? w.child_work_ids ?? [] : [w.id];
+          const needsLegacyDeclaration = documentationScopeIds.some(id => legacyRequired.has(id));
+          const declaredScopeCount = documentationScopeIds.filter(id => legacyDeclared.has(id)).length;
+          const undocumentedScopeCount = Math.max(documentationScopeIds.length - contractCount, 0);
+          const hasLegacyDeclaration = !needsLegacyDeclaration && declaredScopeCount > 0 && declaredScopeCount >= undocumentedScopeCount;
+          const needsYear = !hasAllContracts && !needsLegacyDeclaration && !hasLegacyDeclaration && w.year == null && w.production_year == null;
           const needsEpisodeSelection = w.episode_selection_status === "pending";
           const isExpanded = expandedSeries.has(w.id);
           const children = seriesEpisodes[w.id] ?? [];
@@ -1558,11 +1704,17 @@ export default function MineVaerkerClient({
               <button
                 type="button"
                 className="flex justify-end rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={e => { e.stopPropagation(); openContractForWork(w); }}
-                aria-label={hasAllContracts ? `Åbn kontrakt for ${w.title}` : `Upload kontrakt til ${w.title}`}
+                onClick={e => { e.stopPropagation(); if (needsLegacyDeclaration) router.push("/portal/mine-vaerker?declaration=1"); else openContractForWork(w); }}
+                aria-label={needsLegacyDeclaration ? `Bekræft ${w.title} på tro og love` : hasAllContracts ? `Åbn kontrakt for ${w.title}` : `Upload kontrakt til ${w.title}`}
               >
                 {hasAllContracts ? (
                   <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
+                ) : hasLegacyDeclaration ? (
+                  <Badge variant="outline" className={`${TAG_CLASS} border-emerald-300 text-emerald-700`}>{t("works.legacy.declared")}</Badge>
+                ) : needsLegacyDeclaration ? (
+                  <Badge variant="outline" className={`${TAG_CLASS} border-amber-300 text-amber-700`}>{t("works.legacy.required")}</Badge>
+                ) : needsYear ? (
+                  <Badge variant="outline" className={`${TAG_CLASS} border-amber-300 text-amber-700`}>{t("works.legacy.dateRequired")}</Badge>
                 ) : isSeriesParent && hasContract ? (
                   <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-blue-300 text-blue-700`}>Delvis</Badge>
                 ) : (
@@ -1614,11 +1766,17 @@ export default function MineVaerkerClient({
                     <button
                       type="button"
                       className="shrink-0 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={e => { e.stopPropagation(); openContractForWork(w); }}
-                      aria-label={hasAllContracts ? `Åbn kontrakt for ${w.title}` : `Upload kontrakt til ${w.title}`}
+                      onClick={e => { e.stopPropagation(); if (needsLegacyDeclaration) router.push("/portal/mine-vaerker?declaration=1"); else openContractForWork(w); }}
+                      aria-label={needsLegacyDeclaration ? `Bekræft ${w.title} på tro og love` : hasAllContracts ? `Åbn kontrakt for ${w.title}` : `Upload kontrakt til ${w.title}`}
                     >
                       {hasAllContracts ? (
                         <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
+                      ) : hasLegacyDeclaration ? (
+                        <Badge variant="outline" className={`${TAG_CLASS} border-emerald-300 text-emerald-700`}>{t("works.legacy.declared")}</Badge>
+                      ) : needsLegacyDeclaration ? (
+                        <Badge variant="outline" className={`${TAG_CLASS} border-amber-300 text-amber-700`}>{t("works.legacy.required")}</Badge>
+                      ) : needsYear ? (
+                        <Badge variant="outline" className={`${TAG_CLASS} border-amber-300 text-amber-700`}>{t("works.legacy.dateRequired")}</Badge>
                       ) : isSeriesParent && hasContract ? (
                         <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-blue-300 text-blue-700`}>Delvis</Badge>
                       ) : (
@@ -1681,6 +1839,7 @@ export default function MineVaerkerClient({
             </React.Fragment>
           );
         })}
+        </>}
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 border-t px-5 py-3 text-xs text-muted-foreground">
@@ -2017,7 +2176,7 @@ export default function MineVaerkerClient({
                                 <span className="font-medium">{suggestion.name}</span>
                                 <span className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                                   <span>{suggestion.role}</span>
-                                  {suggestion.sources.map(source => <Badge key={source} variant="outline" className="h-5 px-1.5 text-[10px]">{source === "local" ? "Portal" : source === "member" ? "Indtastet" : source.toUpperCase()}</Badge>)}
+                                  {suggestion.sources.map(source => <SourcePictogram key={source} source={source} />)}
                                 </span>
                               </span>
                             </label>
@@ -2095,6 +2254,61 @@ export default function MineVaerkerClient({
                 </div>
               </DialogFooter>
             </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(linkedShareTask)} onOpenChange={open => { if (!open && !linkedShareTaskSaving) closeLinkedShareTask(); }}>
+        <DialogContent className="w-[min(480px,calc(100vw-2rem))]">
+          <DialogHeader>
+            <DialogTitle>{t("works.shareTask.title")}</DialogTitle>
+            <DialogDescription>
+              {t("works.shareTask.description").replace("{title}", linkedShareTask?.title ?? "")}
+            </DialogDescription>
+          </DialogHeader>
+          {linkedShareTask && (
+            <div className="space-y-4">
+              <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                <p className="font-medium">{linkedShareTask.title}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {[
+                    linkedShareTask.year,
+                    linkedShareTask.seasonNumber != null ? `${t("works.shareQueue.season")} ${linkedShareTask.seasonNumber}` : null,
+                    linkedShareTask.episodeNumber != null ? `${t("works.shareQueue.episode")} ${linkedShareTask.episodeNumber}` : null,
+                  ].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+              {linkedShareTask.relationshipStatus === "pending" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="linked-share-percent">{t("works.shareTask.percentLabel")}</Label>
+                    <Input
+                      id="linked-share-percent"
+                      inputMode="decimal"
+                      value={linkedSharePercent}
+                      onChange={event => setLinkedSharePercent(event.target.value)}
+                      placeholder={t("works.shareTask.percentPlaceholder")}
+                    />
+                    <p className="text-xs text-muted-foreground">{t("works.shareTask.percentHint")}</p>
+                  </div>
+                  <DialogFooter className="gap-2 sm:justify-between">
+                    <Button type="button" variant="outline" disabled={linkedShareTaskSaving} onClick={() => void submitLinkedShareTask(true)}>
+                      {t("works.shareTask.decline")}
+                    </Button>
+                    <Button type="button" disabled={linkedShareTaskSaving || parseSharePercent(linkedSharePercent) === null} onClick={() => void submitLinkedShareTask(false)}>
+                      {t("works.shareTask.save")}
+                    </Button>
+                  </DialogFooter>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">{t("works.shareTask.alreadyAnswered")}</p>
+                  <DialogFooter>
+                    <Button type="button" onClick={closeLinkedShareTask}>{t("works.shareTask.close")}</Button>
+                  </DialogFooter>
+                </>
+              )}
+            </div>
           )}
         </DialogContent>
       </Dialog>
@@ -2192,7 +2406,7 @@ export default function MineVaerkerClient({
           onClose={() => { setIsAdding(false); setInitialManualWork(null); }}
           rightsHolderId={rightsHolderId}
           onWorkAdded={(message, success) => setMsg({ type: success ? "success" : "error", text: message })}
-          reloadAssignments={reloadAssignments}
+          reloadAssignments={() => reloadAssignments({ refreshReviews: true })}
           locale={locale}
           initialQuery={initialAddQuery}
           initialManualWork={initialManualWork}

@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Loader2, Lock, Sparkles, Unlock } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { CalendarDays, Check, ChevronDown, Loader2, Lock, Pencil, ShieldCheck, Signature, Sparkles, Unlock, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   getContractValidationSection,
   getContractValidationSummary,
@@ -17,11 +19,26 @@ import { findContractWorkExternalIds } from "@/app/actions/work-identity";
 import { SourceBtn } from "@/components/source-btn";
 import { SeasonStepper } from "@/components/works/season-stepper";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { ContractSourceBadge } from "@/components/contracts/contract-source-badge";
+import type { ContractFieldSource } from "@/lib/contract-workbench";
+import type { ContractEvidenceBbox, ContractEvidenceCoordinateSource } from "@/lib/contract-workbench";
 import type { SeriesEpisodeOption } from "@/lib/series-episodes";
 
-type FieldType = "text" | "number" | "bool" | "triState" | "signatureMethod" | "textarea";
+type FieldType = "text" | "number" | "bool" | "triState" | "signatureMethod" | "textarea" | "date";
 type Field = { key: string; label: string; type: FieldType; readOnly?: boolean };
 type FormValues = Record<string, string | boolean>;
+export type ContractEvidenceActivation = {
+  fieldKey: string;
+  label?: string;
+  sourceKey: string;
+  quote: string;
+  focusText?: string | null;
+  clauseId?: string | null;
+  page?: number | null;
+  bbox?: ContractEvidenceBbox | null;
+  coordinateSource?: ContractEvidenceCoordinateSource | null;
+  confidence?: number | null;
+};
 type SummaryData = {
   rights: { copydan: string; streaming: string; signature: string };
   dates: string;
@@ -45,13 +62,25 @@ const ARRAY_KEYS = new Set(["distribution", "productionCountries", "creditedRole
 const NUMBER_KEYS = new Set(["salary", "workingDays", "workingWeeks", "pensionPercent", "pensionSupplement", "pensionEmployerPercent", "pensionEmployeePercent", "pensionTotalPercent", "pensionBasisAmount", "personalSupplement", "royaltyPercent", "holidayPayRate", "betaRate", "signaturePage", "duration", "premiereYear"]);
 const SOURCE_KEYS: Record<string, string> = {
   salary: "salary", pensionPercent: "pension", personalSupplement: "supplements",
-  otherSupplements: "otherSupplements", signatureStatus: "signature", signatureMethod: "signature", signatureDate: "signature",
-  signatureEvidence: "signature", signaturePage: "signature", workingWeeks: "workingWeeks",
+  otherSupplements: "otherSupplements", signatureStatus: "signatureEvidence", signatureMethod: "signatureEvidence", signatureDate: "signatureEvidence",
+  signatureEvidence: "signatureEvidence", signaturePage: "signatureEvidence", workingWeeks: "workingWeeks",
   agreementReferenceStatus: "collectiveAgreement", copydan: "copydan", svod: "svod",
+  hasCreditClause: "creditedRoles", royalty: "royalty", royaltyPercent: "royalty",
+  contractDate: "contractDate",
   workTitle: "workTitle",
 };
 
 const FIELDS: Partial<Record<ContractValidationSectionKey, Field[]>> = {
+  approval: [
+    { key: "copydan", label: "Copydan", type: "triState" },
+    { key: "hasCreditClause", label: "Krediteringsklausul", type: "bool" },
+    { key: "royalty", label: "Royalty", type: "bool" },
+    { key: "royaltyPercent", label: "Royalty %", type: "number" },
+    { key: "svod", label: "Streaming-forbehold", type: "triState" },
+    { key: "signatureStatus", label: "Underskrevet", type: "triState" },
+    { key: "contractDate", label: "Kontraktdato", type: "date" },
+    { key: "signatureDate", label: "Underskriftsdato", type: "text" },
+  ],
   rights: [
     { key: "copydan", label: "Copydan", type: "triState" },
     { key: "svod", label: "Streaming-forbehold", type: "triState" },
@@ -89,9 +118,7 @@ const FIELDS: Partial<Record<ContractValidationSectionKey, Field[]>> = {
     { key: "betaRate", label: "BETA-sats", type: "number" },
   ],
   signature: [
-    { key: "signatureStatus", label: "Underskrift", type: "triState" },
     { key: "signatureMethod", label: "Underskriftstype", type: "signatureMethod" },
-    { key: "signatureDate", label: "Underskriftsdato", type: "text" },
     { key: "signatureEvidence", label: "Evidens for underskrift", type: "textarea" },
     { key: "signaturePage", label: "Side for underskrift", type: "number" },
   ],
@@ -127,6 +154,45 @@ function triState(value: unknown) {
   if (["no", "nej", "false", "ikke underskrevet"].includes(normalized)) return "no";
   if (normalized.includes("implicit")) return "implicit";
   return "unknown";
+}
+
+const EVIDENCE_FOCUS_TERMS: Record<string, string[]> = {
+  copydan: ["Copydan"],
+  hasCreditClause: ["krediter"],
+  royalty: ["royalty"],
+  svod: ["streaming", "SVOD"],
+  signatureStatus: ["signeret", "underskrift"],
+};
+
+function evidenceFocusText(field: Field, quote: string | null, value: unknown) {
+  if (field.type === "text" || field.type === "number" || field.type === "date") {
+    return value == null ? null : String(value);
+  }
+  const normalizedQuote = quote?.toLocaleLowerCase("da") ?? "";
+  return EVIDENCE_FOCUS_TERMS[field.key]?.find(term => normalizedQuote.includes(term.toLocaleLowerCase("da"))) ?? null;
+}
+
+function CompactYesNo({ value, onChange, label }: { value: unknown; onChange: (value: "yes" | "no") => void; label: string }) {
+  const state = triState(value);
+  const yes = state === "yes" || state === "implicit";
+  return <div className="inline-flex h-8 items-center rounded-md border bg-background p-0.5" role="group" aria-label={label}>
+    <button
+      type="button"
+      className={`flex h-7 w-8 items-center justify-center rounded-sm transition-colors ${yes ? "bg-emerald-600 text-white" : "text-muted-foreground hover:bg-muted"}`}
+      aria-label={`${label}: Ja`}
+      aria-pressed={yes}
+      title={state === "implicit" ? "Ja, via overenskomst" : "Ja"}
+      onClick={() => onChange("yes")}
+    ><Check className="h-4 w-4" /></button>
+    <button
+      type="button"
+      className={`flex h-7 w-8 items-center justify-center rounded-sm transition-colors ${state === "no" ? "bg-rose-600 text-white" : "text-muted-foreground hover:bg-muted"}`}
+      aria-label={`${label}: Nej`}
+      aria-pressed={state === "no"}
+      title="Nej"
+      onClick={() => onChange("no")}
+    ><X className="h-4 w-4" /></button>
+  </div>;
 }
 
 function toFormValues(data: Record<string, unknown>): FormValues {
@@ -193,6 +259,15 @@ export type ContractAiDataEditorProps = {
   workingTitle?: string;
   onWorkingTitleChange?: (value: string) => void;
   registerFlush?: (handler: (() => Promise<boolean>) | null) => void;
+  section?: ContractValidationSectionKey;
+  includeFieldKeys?: string[];
+  excludeFieldKeys?: string[];
+  requiredFieldKeys?: string[];
+  bare?: boolean;
+  onEvidenceActivate?: (evidence: ContractEvidenceActivation) => void;
+  activeEvidenceFieldKey?: string | null;
+  initialData?: Record<string, unknown>;
+  onSeriesDataLoaded?: (options: SeriesEpisodeOption[], selectedEpisodes: number[]) => void;
 };
 
 export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
@@ -201,8 +276,12 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
   const [summaries, setSummaries] = useState<SummaryData | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [open, setOpen] = useState<Set<ContractValidationSectionKey>>(new Set());
-  const [values, setValues] = useState<Partial<Record<ContractValidationSectionKey, FormValues>>>({});
-  const [rawData, setRawData] = useState<Partial<Record<ContractValidationSectionKey, Record<string, unknown>>>>({});
+  const [values, setValues] = useState<Partial<Record<ContractValidationSectionKey, FormValues>>>(() => props.section && props.initialData
+    ? { [props.section]: toFormValues(props.initialData) }
+    : {});
+  const [rawData, setRawData] = useState<Partial<Record<ContractValidationSectionKey, Record<string, unknown>>>>(() => props.section && props.initialData
+    ? { [props.section]: props.initialData }
+    : {});
   const [loading, setLoading] = useState<Set<ContractValidationSectionKey>>(new Set());
   const [errors, setErrors] = useState<Partial<Record<ContractValidationSectionKey, string>>>({});
   const [locks, setLocks] = useState<Partial<Record<ContractValidationSectionKey, Set<string>>>>({});
@@ -211,6 +290,12 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
   const timers = useRef<Partial<Record<ContractValidationSectionKey, number>>>({});
   const pendingSaves = useRef<Partial<Record<ContractValidationSectionKey, { values: FormValues; locks: Set<string> }>>>({});
   const inFlightSaves = useRef<Partial<Record<ContractValidationSectionKey, Promise<boolean>>>>({});
+  const loadingSections = useRef(new Set<ContractValidationSectionKey>());
+
+  const activateEvidence = (event: MouseEvent, evidence: ContractEvidenceActivation | null) => {
+    if (!evidence || (event.target as Element).closest("button,input,select,textarea,a,[role='combobox']")) return;
+    props.onEvidenceActivate?.(evidence);
+  };
 
   const loadSummary = async () => {
     setSummaryLoading(true);
@@ -221,22 +306,47 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
   };
 
   // State is intentionally synchronized when the external dialog, storage, or server source changes.
-  useEffect(() => { void loadSummary(); }, [props.contractId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!props.bare) void loadSummary();
+  }, [props.bare, props.contractId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => Object.values(timers.current).forEach(timer => timer && window.clearTimeout(timer)), []);
+  useEffect(() => {
+    if (!props.section) return;
+    if (props.section === "series") props.onSeriesOpen?.();
+    if (!props.initialData) void loadSection(props.section);
+    // The section loader is stable around refs and intentionally runs when the tab changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.contractId, props.section, season]);
 
-  const loadSection = async (section: ContractValidationSectionKey) => {
-    if (values[section] || loading.has(section)) return;
+  const loadSection = async (section: ContractValidationSectionKey, refreshRelations = false) => {
+    if ((!refreshRelations && values[section]) || loadingSections.current.has(section)) return;
+    loadingSections.current.add(section);
     setLoading(current => new Set(current).add(section));
     setErrors(current => ({ ...current, [section]: undefined }));
-    const result = await getContractValidationSection({ contractId: props.contractId, section });
-    if (result.success && "data" in result) {
-      const data = result.data as Record<string, unknown>;
-      setRawData(current => ({ ...current, [section]: data }));
-      setValues(current => ({ ...current, [section]: toFormValues(data) }));
-      const allLocks = Array.isArray(data._lockedFields) ? data._lockedFields.filter((key): key is string => typeof key === "string") : [];
-      setLocks(current => ({ ...current, [section]: new Set(allLocks) }));
-    } else setErrors(current => ({ ...current, [section]: ("error" in result ? result.error : null) ?? "Sektionen kunne ikke hentes" }));
-    setLoading(current => { const next = new Set(current); next.delete(section); return next; });
+    try {
+      const result = await getContractValidationSection({ contractId: props.contractId, section });
+      if (result.success && "data" in result) {
+        const data = result.data as Record<string, unknown>;
+        setRawData(current => ({ ...current, [section]: data }));
+        setValues(current => ({ ...current, [section]: toFormValues(data) }));
+        const allLocks = Array.isArray(data._lockedFields) ? data._lockedFields.filter((key): key is string => typeof key === "string") : [];
+        setLocks(current => ({ ...current, [section]: new Set(allLocks) }));
+        if (section === "series" && "episodeOptions" in result) {
+          const options = (result.episodeOptions ?? [])
+            .filter(option => option.seasonNumber === season)
+            .map(option => ({ number: option.episodeNumber, title: option.title }));
+          const selectedEpisodes = (result.linkedEpisodes ?? [])
+            .filter(episode => episode.seasonNumber === season)
+            .map(episode => episode.episodeNumber);
+          props.onSeriesDataLoaded?.(options, selectedEpisodes);
+        }
+      } else setErrors(current => ({ ...current, [section]: ("error" in result ? result.error : null) ?? "Sektionen kunne ikke hentes" }));
+    } catch (error) {
+      setErrors(current => ({ ...current, [section]: error instanceof Error ? error.message : "Sektionen kunne ikke hentes" }));
+    } finally {
+      loadingSections.current.delete(section);
+      setLoading(current => { const next = new Set(current); next.delete(section); return next; });
+    }
   };
 
   const toggleSection = (section: ContractValidationSectionKey) => {
@@ -312,8 +422,7 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
     props.registerFlush?.(flushPendingSaves);
     return () => props.registerFlush?.(null);
     // Handleren skal altid afspejle den aktuelle kontrakt og de aktuelle refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.contractId, props.registerFlush]);
+  }, [props.contractId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scheduleSave = (section: ContractValidationSectionKey, nextValues: FormValues, nextLocks: Set<string>) => {
     const fields = FIELDS[section];
@@ -345,6 +454,7 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
 
   const summaryText = (section: ContractValidationSectionKey) => {
     if (!summaries) return "";
+    if (section === "approval") return "";
     if (section === "rights") return `Copydan: ${statusLabel(summaries.rights.copydan)} · streaming: ${statusLabel(summaries.rights.streaming)} · underskrift: ${statusLabel(summaries.rights.signature)}`;
     if (section === "dates") return dates.contractDate || "Ingen kontraktdato";
     if (section === "series") {
@@ -362,42 +472,155 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
     const pensionTag = section === "salary" ? String(sectionRaw.pensionTag ?? "") : "";
     const pensionUrl = section === "salary" ? String(sectionRaw.pensionAgreementSourceUrl ?? "") : "";
     const pensionStatus = section === "salary" ? String(sectionRaw.pensionStatus ?? "") : "";
-    return <div className="grid gap-3 sm:grid-cols-2">
+    if (section === "approval") {
+      const makeEvidence = (fieldKey: string, label: string): ContractEvidenceActivation => {
+        const sourceKey = SOURCE_KEYS[fieldKey] ?? fieldKey;
+        const quote = sources[sourceKey] ?? "";
+        const pageValue = sources[`${sourceKey}_page`];
+        return {
+          fieldKey,
+          label,
+          sourceKey,
+          quote,
+          focusText: evidenceFocusText({ key: fieldKey, label, type: fieldKey === "royaltyPercent" ? "number" : "triState" }, quote, sectionValues[fieldKey]),
+          clauseId: sources[`${sourceKey}_clause_id`] ?? null,
+          page: pageValue && Number.isFinite(Number(pageValue)) ? Number(pageValue) : null,
+        };
+      };
+      const sourceFor = (fieldKey: string): ContractFieldSource => {
+        const sourceKey = SOURCE_KEYS[fieldKey] ?? fieldKey;
+        if (locks.approval?.has(fieldKey)) return "manual";
+        if (["royalty", "royaltyPercent"].includes(fieldKey) && sectionRaw.royaltySourceType === "collective_agreement") return "agreement";
+        return sources[sourceKey] ? "contract" : "unknown";
+      };
+      const evidenceButton = (fieldKey: string, label: string, text: string) => {
+        const evidence = makeEvidence(fieldKey, label);
+        return <button key={fieldKey} type="button" onClick={event => { event.stopPropagation(); props.onEvidenceActivate?.(evidence); }} className="inline-flex h-7 items-center gap-1 rounded-sm border bg-background px-2 text-[10px] font-medium hover:bg-muted">
+          {text}<ContractSourceBadge source={sourceFor(fieldKey)} />
+        </button>;
+      };
+      const rights = [
+        triState(sectionValues.copydan) !== "no" && triState(sectionValues.copydan) !== "unknown" ? evidenceButton("copydan", "Copydan", "Copydan") : null,
+        triState(sectionValues.svod) !== "no" && triState(sectionValues.svod) !== "unknown" ? evidenceButton("svod", "Streaming", "Streaming") : null,
+        sectionValues.royalty === true || triState(sectionValues.royalty) === "yes" ? evidenceButton("royalty", "Royalty", `Royalty${sectionValues.royaltyPercent ? ` ${sectionValues.royaltyPercent} %` : ""}`) : null,
+        sectionValues.hasCreditClause === true ? evidenceButton("hasCreditClause", "Krediteringsklausul", "Kreditering") : null,
+      ].filter(Boolean);
+      const unknownRights = ["copydan", "svod", "royalty", "hasCreditClause"].filter(key => {
+        const value = sectionValues[key];
+        return value === undefined || value === null || value === "" || value === "unknown";
+      });
+      const signatureState = triState(sectionValues.signatureStatus);
+      const compactChoice = (key: string, label: string) => <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">{label}</Label><select className="h-8 rounded-md border bg-background px-2 text-xs" value={triState(sectionValues[key])} onChange={event => setField(section, key, event.target.value)}><option value="unknown">Ukendt</option><option value="yes">Ja</option><option value="no">Nej</option><option value="implicit">Via overenskomst</option></select></div>;
+      return <div className="divide-y">
+        <div id="field-rights" className={`grid min-h-11 grid-cols-[88px_minmax(0,1fr)_auto] items-center gap-1.5 px-2 py-1.5 sm:grid-cols-[105px_minmax(0,1fr)_auto] ${unknownRights.length ? "bg-amber-50/70 dark:bg-amber-950/15" : ""}`}>
+          <div className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5" /><Label className="text-[11px] font-medium">Rettigheder</Label>{unknownRights.length > 0 && <Badge className="h-4 rounded-sm bg-amber-500 px-1 text-[8px] text-white">{unknownRights.length}</Badge>}</div>
+          <div className="flex min-w-0 flex-wrap gap-1">{rights.length ? rights : <span className="text-xs text-muted-foreground">Ingen registrerede rettigheder</span>}</div>
+          <Popover><PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-[10px]"><Pencil className="h-3 w-3" />Rediger</Button></PopoverTrigger><PopoverContent align="end" className="w-72 space-y-2">
+            {compactChoice("copydan", "Copydan")}{compactChoice("svod", "Streaming")}
+            <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">Royalty</Label><CompactYesNo value={sectionValues.royalty} label="Royalty" onChange={next => setField(section, "royalty", next === "yes")} /></div>
+            <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">Royalty %</Label><Input className="h-8 text-xs" inputMode="decimal" value={String(sectionValues.royaltyPercent ?? "")} onChange={event => setField(section, "royaltyPercent", event.target.value)} /></div>
+            <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">Kreditering</Label><CompactYesNo value={sectionValues.hasCreditClause} label="Kreditering" onChange={next => setField(section, "hasCreditClause", next === "yes")} /></div>
+          </PopoverContent></Popover>
+        </div>
+        <div id="field-signature" className={`grid min-h-11 grid-cols-[88px_minmax(0,1fr)_auto] items-center gap-1.5 px-2 py-1.5 sm:grid-cols-[105px_minmax(0,1fr)_auto] ${signatureState === "unknown" || !dates.contractDate || !sectionValues.signatureDate ? "bg-amber-50/70 dark:bg-amber-950/15" : ""}`}>
+          <div className="flex items-center gap-1"><Signature className="h-3.5 w-3.5" /><Label className="text-[11px] font-medium">Underskrift</Label></div>
+          <button type="button" onClick={() => props.onEvidenceActivate?.(makeEvidence("signatureStatus", "Underskrift"))} className="flex min-w-0 flex-wrap items-center gap-1 text-left">
+            <Badge variant="outline" className={`h-6 rounded-sm text-[10px] ${signatureState === "yes" ? "border-emerald-400 bg-emerald-50 text-emerald-800" : "border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-950/20 dark:text-rose-100"}`}>{signatureState === "yes" ? "Underskrevet" : "Kontrakt ikke underskrevet"}</Badge>
+            {dates.contractDate && <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><CalendarDays className="h-3 w-3" />Kontrakt {dates.contractDate}</span>}
+            {sectionValues.signatureDate && <span className="text-[10px] text-muted-foreground">Underskrift {String(sectionValues.signatureDate)}</span>}
+            <ContractSourceBadge source={sourceFor("signatureStatus")} />
+          </button>
+          <Popover><PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-[10px]"><Pencil className="h-3 w-3" />Rediger</Button></PopoverTrigger><PopoverContent align="end" className="w-72 space-y-2">
+            {compactChoice("signatureStatus", "Underskrevet")}
+            <div className="space-y-1"><Label className="text-xs">Kontraktdato</Label><Input className="h-8 text-xs" type="date" value={dates.contractDate} onChange={event => props.onDatesChange?.({ ...dates, contractDate: event.target.value })} /></div>
+            <div className="space-y-1"><Label className="text-xs">Underskriftsdato</Label><Input className="h-8 text-xs" type="date" value={String(sectionValues.signatureDate ?? "").slice(0, 10)} onChange={event => setField(section, "signatureDate", event.target.value)} /></div>
+          </PopoverContent></Popover>
+        </div>
+      </div>;
+    }
+    const filteredFields = (FIELDS[section] ?? [])
+      .filter(field => !props.includeFieldKeys || props.includeFieldKeys.includes(field.key))
+      .filter(field => !props.excludeFieldKeys?.includes(field.key));
+    const configuredFields = filteredFields.sort((left, right) => {
+        const hasLeft = sectionValues[left.key] !== undefined && sectionValues[left.key] !== null && sectionValues[left.key] !== "";
+        const hasRight = sectionValues[right.key] !== undefined && sectionValues[right.key] !== null && sectionValues[right.key] !== "";
+        return Number(hasRight) - Number(hasLeft);
+      });
+    return <div className="space-y-3">
       {pensionTag && <div className={`rounded-md border px-3 py-2 text-sm sm:col-span-2 ${pensionStatus === "inferred_agreement" ? "border-emerald-300 bg-emerald-50 text-emerald-900" : pensionStatus === "review_required" ? "border-amber-300 bg-amber-50 text-amber-900" : "bg-muted/40"}`}>
         <div className="font-medium">{pensionTag}</div>
         {pensionUrl && <a className="mt-1 inline-block text-xs underline underline-offset-2" href={pensionUrl} target="_blank" rel="noreferrer">Se den officielle kilde</a>}
       </div>}
-      {(FIELDS[section] ?? []).map(field => {
-      const quote = sources[SOURCE_KEYS[field.key]];
+      {configuredFields.map(field => {
+      const sourceKey = SOURCE_KEYS[field.key] ?? field.key;
+      const signatureEvidence = section === "signature" && typeof sectionRaw.signatureEvidence === "string"
+        ? sectionRaw.signatureEvidence
+        : null;
+      const quote = sources[sourceKey] ?? (section === "signature" ? sources.signature ?? signatureEvidence : null);
       const locked = locks[section]?.has(field.key) ?? false;
-      return <div key={field.key} className={field.type === "textarea" ? "space-y-1 sm:col-span-2" : "space-y-1"}>
-        <div className="flex items-center justify-between gap-2">
-          <Label className="text-xs">{field.label}</Label>
-          {!field.readOnly && <div className="flex items-center gap-1">
-            {quote && <SourceBtn quote={quote} active={props.activeHighlight === quote} onClick={() => props.onHighlightClick(quote)} />}
+      const value = field.key === "contractDate" ? dates.contractDate : sectionValues[field.key];
+      const missingRequired = Boolean(props.requiredFieldKeys?.includes(field.key))
+        && (value === undefined || value === null || value === "" || value === "unknown");
+      const royaltyFromAgreement = ["royalty", "royaltyPercent"].includes(field.key)
+        && sectionRaw.royaltySourceType === "collective_agreement";
+      const source: ContractFieldSource = locked
+        ? "manual"
+        : royaltyFromAgreement
+          ? "agreement"
+          : field.key === "agreementReferenceStatus" || quote
+            ? "contract"
+            : field.readOnly
+              ? "work_archive"
+              : "unknown";
+      const focusValue = evidenceFocusText(field, quote, value);
+      const pageValue = sources[`${sourceKey}_page`];
+      const evidence: ContractEvidenceActivation = {
+        fieldKey: field.key,
+        label: field.label,
+        sourceKey,
+        quote: quote ?? "",
+        focusText: focusValue == null ? null : String(focusValue),
+        clauseId: sources[`${sourceKey}_clause_id`] ?? null,
+        page: pageValue && Number.isFinite(Number(pageValue)) ? Number(pageValue) : null,
+      };
+      return <div id={`field-${field.key}`} key={field.key} onClick={event => activateEvidence(event, evidence)} className={`${props.onEvidenceActivate ? "grid min-h-10 cursor-pointer grid-cols-[minmax(82px,0.4fr)_minmax(0,1.6fr)_auto] items-center gap-1 border-b px-2 py-1 transition-colors hover:bg-muted/40 min-[760px]:grid-cols-[minmax(96px,0.4fr)_minmax(0,1.6fr)_auto]" : "space-y-1"} ${props.activeEvidenceFieldKey === field.key ? "bg-amber-50 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/20" : ""} ${missingRequired ? "bg-amber-50/70 dark:bg-amber-950/15" : ""}`}>
+        <div className="flex min-w-0 items-center gap-1"><Label className="truncate text-[11px] font-medium">{field.label}</Label>{missingRequired ? <Badge className="h-4 rounded-sm bg-amber-500 px-1 text-[8px] text-white">Mangler</Badge> : null}</div>
+        <div className="min-w-0">
+        {field.type === "date" ? <Input className="h-8 text-xs" type="date" value={dates.contractDate} onChange={event => props.onDatesChange?.({ ...dates, contractDate: event.target.value })} />
+          : field.type === "textarea" ? <Textarea className="min-h-16 text-xs" disabled={field.readOnly} value={String(sectionValues[field.key] ?? "")} onChange={event => setField(section, field.key, event.target.value)} />
+          : field.type === "triState" ? <select className="h-8 w-full rounded-md border bg-background px-2 text-sm" value={triState(sectionValues[field.key])} onChange={event => setField(section, field.key, event.target.value)}><option value="unknown">Ukendt</option><option value="yes">Ja</option><option value="no">Nej</option>{field.key !== "agreementReferenceStatus" && <option value="implicit">Implicit via overenskomst</option>}</select>
+          : field.type === "signatureMethod" ? <select className="h-8 w-full rounded-md border bg-background px-2 text-sm" value={String(sectionValues[field.key] || "unknown")} onChange={event => setField(section, field.key, event.target.value)}><option value="unknown">Ukendt</option><option value="handwritten">Håndskrevet</option><option value="digital">Digital</option><option value="none">Ingen</option></select>
+          : field.type === "bool" ? <button type="button" onClick={() => setField(section, field.key, sectionValues[field.key] === undefined ? true : !sectionValues[field.key])} className={`h-8 w-full rounded-md border px-2 text-left text-sm ${sectionValues[field.key] === true ? "border-emerald-500 bg-emerald-50 text-emerald-700" : sectionValues[field.key] === false ? "bg-background text-foreground" : "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/20 dark:text-amber-100"}`}>{sectionValues[field.key] === undefined ? "Ikke vurderet" : sectionValues[field.key] ? "Ja" : "Nej"}</button>
+          : <Input className="h-8 text-xs" disabled={field.readOnly} inputMode={field.type === "number" ? "decimal" : undefined} value={String(sectionValues[field.key] ?? "")} onChange={event => setField(section, field.key, event.target.value)} />}
+        </div>
+        <div className="flex items-center justify-end gap-1">
+          <ContractSourceBadge source={source} />
+          {!field.readOnly && <>
+            {quote && !props.onEvidenceActivate && <SourceBtn quote={quote} active={props.activeHighlight === quote} onClick={() => props.onHighlightClick(quote)} />}
             <button type="button" title={locked ? "Feltet er låst for AI-overskrivning" : "Lås felt for AI-overskrivning"} aria-label={locked ? "Lås feltet op for AI-overskrivning" : "Beskyt feltet mod AI-overskrivning"} onClick={() => toggleLock(section, field.key)} className="p-1 text-muted-foreground hover:text-foreground">
               {locked ? <Lock className="h-3.5 w-3.5 text-amber-600" /> : <Unlock className="h-3.5 w-3.5 opacity-30" />}
             </button>
-          </div>}
+          </>}
         </div>
-        {field.type === "textarea" ? <Textarea disabled={field.readOnly} value={String(sectionValues[field.key] ?? "")} onChange={event => setField(section, field.key, event.target.value)} />
-          : field.type === "triState" ? <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={triState(sectionValues[field.key])} onChange={event => setField(section, field.key, event.target.value)}><option value="unknown">Ukendt</option><option value="yes">Ja</option><option value="no">Nej</option>{field.key !== "agreementReferenceStatus" && <option value="implicit">Implicit via overenskomst</option>}</select>
-          : field.type === "signatureMethod" ? <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={String(sectionValues[field.key] || "unknown")} onChange={event => setField(section, field.key, event.target.value)}><option value="unknown">Ukendt</option><option value="handwritten">Håndskrevet</option><option value="digital">Digital</option><option value="none">Ingen</option></select>
-          : field.type === "bool" ? <button type="button" onClick={() => setField(section, field.key, !sectionValues[field.key])} className={`h-9 w-full rounded-md border px-3 text-left text-sm ${sectionValues[field.key] ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "bg-background text-muted-foreground"}`}>{sectionValues[field.key] ? "Ja" : "Nej"}</button>
-          : <Input disabled={field.readOnly} inputMode={field.type === "number" ? "decimal" : undefined} value={String(sectionValues[field.key] ?? "")} onChange={event => setField(section, field.key, event.target.value)} />}
       </div>;
     })}</div>;
   };
 
   const renderSection = (section: ContractValidationSectionKey) => {
-    if (section === "dates") return <div className="grid gap-3 sm:grid-cols-3">
-      <div className="space-y-1"><Label>Kontraktdato</Label><Input type="date" value={dates.contractDate} onChange={event => props.onDatesChange?.({ ...dates, contractDate: event.target.value })} /></div>
-      <div className="space-y-1"><Label>Startdato</Label><Input type="date" value={dates.startDate} onChange={event => props.onDatesChange?.({ ...dates, startDate: event.target.value })} /></div>
-      <div className="space-y-1"><Label>Slutdato</Label><Input type="date" value={dates.endDate} onChange={event => props.onDatesChange?.({ ...dates, endDate: event.target.value })} /></div>
-    </div>;
+    if (section === "dates") return <div className="space-y-3">{[
+      ["startDate", "Startdato", dates.startDate],
+      ["endDate", "Slutdato", dates.endDate],
+    ].map(([key, label, value]) => {
+      const dateSources = (rawData.dates?._sources as Record<string, string | null> | undefined) ?? {};
+      const quote = dateSources[key] ?? dateSources.dates ?? null;
+      const pageValue = dateSources[`${key}_page`] ?? dateSources.dates_page;
+      const evidence: ContractEvidenceActivation = { fieldKey: key, label, sourceKey: key, quote: quote ?? "", focusText: value, clauseId: dateSources[`${key}_clause_id`] ?? dateSources.dates_clause_id ?? null, page: pageValue && Number.isFinite(Number(pageValue)) ? Number(pageValue) : null };
+      return <div key={key} onClick={event => activateEvidence(event, evidence)} className={props.onEvidenceActivate ? `grid min-h-11 cursor-pointer grid-cols-[minmax(88px,0.4fr)_minmax(0,1.6fr)_auto] items-center gap-1.5 border-b px-2 py-1.5 transition-colors hover:bg-muted/40 last:border-b-0 sm:grid-cols-[minmax(105px,0.45fr)_minmax(0,1.55fr)_auto] sm:gap-2 ${props.activeEvidenceFieldKey === key ? "bg-amber-50 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/20" : ""}` : "space-y-1"}>
+      <Label className="truncate text-[11px] font-medium">{label}</Label><Input className="h-8 text-xs" type="date" value={value} onChange={event => props.onDatesChange?.({ ...dates, [key]: event.target.value })} /><ContractSourceBadge source={quote ? "contract" : "unknown"} />
+    </div>})}</div>;
     if (section === "series") return <div className="space-y-3">
       <SeasonStepper value={season} onChange={value => props.onSeasonChange?.(value)} compact />
-      {props.episodesLoading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter afsnit…</div>
+      {props.episodesLoading || loading.has("series") ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter afsnit…</div>
         : props.episodesError ? <p className="text-sm text-destructive">{props.episodesError}</p>
         : <SeriesEpisodeSelector season={season} onSeasonChange={value => props.onSeasonChange?.(value)} options={props.episodeOptions ?? []} selected={props.selectedEpisodes ?? []} onSelectedChange={values => props.onSelectedEpisodesChange?.(values)} showSeason={false} compact />}
       {renderFields(section)}
@@ -405,16 +628,27 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
     if (section === "ids") {
       const sectionValues = values.ids ?? {};
       const hasExternalId = ["dfiId", "tmdbId", "imdbId"].some(key => String(sectionValues[key] ?? "").trim());
-      return <div className="space-y-3"><div className="grid gap-3 sm:grid-cols-3">{[["dfiId", "DFI-id"], ["tmdbId", "TMDB-id"], ["imdbId", "IMDb-id"]].map(([key, label]) => <div key={key} className="space-y-1"><Label>{label}</Label><Input readOnly value={String(sectionValues[key] ?? "")} className="bg-muted/30" /></div>)}</div>{!hasExternalId && <Button type="button" variant="outline" disabled={findingIds} onClick={async () => { setFindingIds(true); try { const result = await findContractWorkExternalIds(props.contractId); if (!result.success || !result.ids) toast.error(result.error ?? "ID-opslaget gav intet sikkert match"); else { setValues(current => ({ ...current, ids: { ...(current.ids ?? {}), ...result.ids } })); toast.success("Eksterne ID’er blev fundet og gemt"); } } finally { setFindingIds(false); } }}>{findingIds && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Find ID’er i eksterne databaser</Button>}</div>;
+      return <div>{[["dfiId", "DFI-id"], ["tmdbId", "TMDB-id"], ["imdbId", "IMDb-id"]].map(([key, label]) => <div key={key} className="grid min-h-11 grid-cols-[minmax(105px,0.45fr)_minmax(0,1.55fr)_auto] items-center gap-2 border-b px-2 py-1.5"><Label className="text-xs">{label}</Label><Input readOnly value={String(sectionValues[key] ?? "")} className="h-8 bg-muted/30" /><ContractSourceBadge source={sectionValues[key] ? "work_archive" : "unknown"} /></div>)}{!hasExternalId && <div className="p-2"><Button type="button" variant="outline" disabled={findingIds} onClick={async () => { setFindingIds(true); try { const result = await findContractWorkExternalIds(props.contractId); if (!result.success || !result.ids) toast.error(result.error ?? "ID-opslaget gav intet sikkert match"); else { setValues(current => ({ ...current, ids: { ...(current.ids ?? {}), ...result.ids } })); toast.success("Eksterne ID’er blev fundet og gemt"); } } finally { setFindingIds(false); } }}>{findingIds && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Find ID’er i eksterne databaser</Button></div>}</div>;
     }
-    if (section === "work") return <div className="space-y-4">
-      <div className="space-y-1"><Label>Arbejdstitel</Label><Input value={props.workingTitle ?? ""} placeholder="Produktionens arbejdstitel…" onChange={event => props.onWorkingTitleChange?.(event.target.value)} /></div>
+    if (section === "work") return <div>
+      <div onClick={event => {
+        const sources = ((rawData.work?._sources ?? {}) as Record<string, string | null>);
+        const quote = sources.workTitle;
+        activateEvidence(event, { fieldKey: "workingTitle", label: "Arbejdstitel", sourceKey: "workTitle", quote: quote ?? "", focusText: props.workingTitle, clauseId: sources.workTitle_clause_id ?? null, page: sources.workTitle_page && Number.isFinite(Number(sources.workTitle_page)) ? Number(sources.workTitle_page) : null });
+      }} className={props.onEvidenceActivate ? `grid min-h-11 cursor-pointer grid-cols-[minmax(88px,0.4fr)_minmax(0,1.6fr)_auto] items-center gap-1.5 border-b px-2 py-1.5 transition-colors hover:bg-muted/40 sm:grid-cols-[minmax(105px,0.45fr)_minmax(0,1.55fr)_auto] sm:gap-2 ${props.activeEvidenceFieldKey === "workingTitle" ? "bg-amber-50 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/20" : ""}` : "space-y-1"}>
+        <Label className="truncate text-xs">Arbejdstitel</Label><Input className="h-8" value={props.workingTitle ?? ""} placeholder="Produktionens arbejdstitel…" onChange={event => props.onWorkingTitleChange?.(event.target.value)} /><ContractSourceBadge source={props.workingTitle ? "contract" : "unknown"} />
+      </div>
       {renderFields(section)}
     </div>;
     return renderFields(section);
   };
 
   const sections = useMemo(() => SECTION_ORDER.filter(section => section.key !== "series" || props.isSeries), [props.isSeries]);
+  if (props.section && props.bare) {
+    if (loading.has(props.section) && !values[props.section]) return <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter data…</div>;
+    if (errors[props.section]) return <div className="space-y-2 p-4"><p className="text-sm text-destructive">{errors[props.section]}</p><Button type="button" variant="outline" size="sm" onClick={() => void loadSection(props.section!)}>Prøv igen</Button></div>;
+    return <div className="p-1">{renderSection(props.section)}</div>;
+  }
   return <div className="rounded-lg border bg-card">
     <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
       <div><h3 className="font-semibold">Aflæst fra kontrakt</h3><p className="text-xs text-muted-foreground">Fold en sektion ud for at se eller redigere de aflæste oplysninger.</p></div>

@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import {
   DEFAULT_LEGAL_DOCUMENT_COPY,
   LEGAL_DOCUMENT_AUDIENCES,
@@ -52,4 +54,16 @@ test("ældre publicerede tekster vises med dansk stavning uden at ændre version
     normalizeDanishLegalText("Brugervilkaar: Laes om loen og raadgivning, foer du vaelger."),
     "Brugervilkår: Læs om løn og rådgivning, før du vælger.",
   );
+});
+
+test("juridisk onboarding bruger rettighedshaverens eksisterende tidsstempel", () => {
+  const migration = fs.readFileSync(
+    path.join(process.cwd(), "supabase/migrations/20260901203139_fix_legal_onboarding_timestamp.sql"),
+    "utf8",
+  );
+  assert.match(migration, /set onboarding_required_at = required_at/);
+  assert.doesNotMatch(migration, /set onboarding_required_at = required_at,\s*updated_at/);
+  assert.match(migration, /security invoker/);
+  assert.match(migration, /revoke all on function[\s\S]*authenticated/);
+  assert.match(migration, /grant execute on function[\s\S]*service_role/);
 });

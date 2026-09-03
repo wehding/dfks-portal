@@ -5,14 +5,13 @@ import { useRouter } from "next/navigation"
 import {
     ArrowLeft, Plus, CheckCircle2, Clock, Ban, Wallet,
     AlertTriangle, Settings, RotateCcw, ChevronDown, ChevronUp,
-    Download, ExternalLink
+    Download
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
 import {
     Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
@@ -75,12 +74,10 @@ const NEXT_LABEL: Record<string, string> = {
 
 function ThresholdDialog({
     current,
-    currency,
     onClose,
     onSaved,
 }: {
     current: number
-    currency: string
     onClose: () => void
     onSaved: () => void
 }) {
@@ -460,7 +457,10 @@ export default function AfregningPage() {
         setLoading(false)
     }, [])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => void load(), 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
 
     const activeSettlements = settlements.filter(s => !["paid_out", "cancelled"].includes(s.status))
     const completedSettlements = settlements.filter(s => s.status === "paid_out")
@@ -587,7 +587,7 @@ export default function AfregningPage() {
                             <TableBody>
                                 {batches.map(b => (
                                     <TableRow key={b.id}>
-                                        <TableCell className="text-sm">{(b as any).settlement_label ?? "—"}</TableCell>
+                                        <TableCell className="text-sm">{b.settlement_label ?? "—"}</TableCell>
                                         <TableCell className="text-sm font-mono">{b.export_system}</TableCell>
                                         <TableCell className="text-sm">{fmtDate(b.exported_at)}</TableCell>
                                         <TableCell className="text-right">{b.row_count}</TableCell>
@@ -621,7 +621,7 @@ export default function AfregningPage() {
                 <TabsContent value="referencer" className="mt-4">
                     {references.length === 0 ? (
                         <p className="text-sm text-muted-foreground py-4">
-                            Ingen DataLøn-referencer registreret. Tilføj modtager-ID'er fra lønsystemet for at aktivere eksport.
+                            Ingen DataLøn-referencer registreret. Tilføj modtager-ID&apos;er fra lønsystemet for at aktivere eksport.
                         </p>
                     ) : (
                         <Table>
@@ -658,7 +658,6 @@ export default function AfregningPage() {
             {thresholdOpen && (
                 <ThresholdDialog
                     current={threshold}
-                    currency={currency}
                     onClose={() => setThresholdOpen(false)}
                     onSaved={load}
                 />

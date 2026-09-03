@@ -42,6 +42,7 @@ async function wikidataFetch(url: string) {
       Accept: "application/json",
       "User-Agent": USER_AGENT,
     },
+    signal: AbortSignal.timeout(8000),
     cache: "force-cache",
     next: { revalidate: 60 * 60 * 24 },
   });

@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { firstRelated } from "@/lib/supabase/relations"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -101,23 +103,37 @@ export async function getRightsAllocations(run_id: string): Promise<{
             .from("rights_allocations")
             .select(`
                 *,
-                rettighedshavere ( full_name, member_number ),
-                works ( title ),
-                episodes ( title )
+                rettighedshavere ( full_name, org_affiliations ( member_no ) ),
+                rights_work_allocations (
+                    work_id,
+                    episode_id,
+                    works ( title ),
+                    episodes ( title )
+                )
             `)
             .eq("run_id", run_id)
             .eq("org_id", caller.orgId)
-            .order("individual_net", { ascending: false })
+            .order("created_at", { ascending: false })
 
         if (error) throw error
 
-        const allocations: RightsAllocation[] = (data ?? []).map((r: any) => ({
-            ...r,
-            rights_holder_name: r.rettighedshavere?.full_name,
-            rights_holder_member_number: r.rettighedshavere?.member_number,
-            work_title: r.works?.title,
-            episode_title: r.episodes?.title,
-        }))
+        const allocations: RightsAllocation[] = (data ?? []).map((r) => {
+            const rh = firstRelated(r.rettighedshavere)
+            const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
+            const wa = firstRelated(r.rights_work_allocations)
+            const work = firstRelated(wa?.works)
+            const episode = firstRelated(wa?.episodes)
+            return {
+                ...r,
+                individual_net: Number(r.individual_net ?? r.individual_amount ?? r.net_amount ?? 0),
+                rights_holder_name: rh?.full_name,
+                rights_holder_member_number: aff?.member_no ?? null,
+                work_title: work?.title,
+                episode_title: episode?.title,
+            }
+        })
+
+        await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "read", component: "admin.rights.allocations", entityType: "rights_allocations", entityId: run_id, targetMemberUuids: allocations.map(item => item.rights_holder_id), orgIds: [caller.orgId], purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"], counts: { results: allocations.length } })
 
         return { success: true, allocations }
     } catch (err) {
@@ -188,6 +204,8 @@ export async function createRightsAllocations(
 
         if (error) throw error
 
+        await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "create", component: "admin.rights.allocations-create", entityType: "rights_allocations", entityId: run_id, targetMemberUuids: items.map(item => item.rights_holder_id), orgIds: [caller.orgId], purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"], counts: { created: rows.length } })
+
         revalidatePath("/admin/rettighedsmidler")
         return { success: true, count: rows.length }
     } catch (err) {
@@ -232,6 +250,8 @@ export async function createWithheldPosition(payload: {
             .eq("rights_holder_id", payload.rights_holder_id)
             .eq("org_id", caller.orgId)
 
+        await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "create", component: "admin.rights.withheld-create", entityType: "withheld_beneficiary_positions", entityId: payload.work_allocation_id, targetMemberUuid: payload.rights_holder_id, orgIds: [caller.orgId], purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"] })
+
         revalidatePath("/admin/rettighedsmidler")
         return { success: true }
     } catch (err) {
@@ -255,18 +275,24 @@ export async function getWithheldPositions(run_id: string): Promise<{
 
         const { data, error } = await db
             .from("withheld_beneficiary_positions")
-            .select(`*, rettighedshavere ( full_name, member_number )`)
+            .select(`*, rettighedshavere ( full_name, org_affiliations ( member_no ) )`)
             .eq("run_id", run_id)
             .eq("org_id", caller.orgId)
             .order("created_at", { ascending: false })
 
         if (error) throw error
 
-        const positions: WithheldPosition[] = (data ?? []).map((r: any) => ({
-            ...r,
-            rights_holder_name: r.rettighedshavere?.full_name,
-            rights_holder_member_number: r.rettighedshavere?.member_number,
-        }))
+        const positions: WithheldPosition[] = (data ?? []).map((r) => {
+            const rh = firstRelated(r.rettighedshavere)
+            const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
+            return {
+                ...r,
+                rights_holder_name: rh?.full_name,
+                rights_holder_member_number: aff?.member_no ?? null,
+            }
+        })
+
+        await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "read", component: "admin.rights.withheld-list", entityType: "withheld_beneficiary_positions", entityId: run_id, targetMemberUuids: positions.map(item => item.rights_holder_id), orgIds: [caller.orgId], purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"], counts: { results: positions.length } })
 
         return { success: true, positions }
     } catch (err) {
@@ -286,6 +312,7 @@ export async function resolveWithheldPosition(
         const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES)
         if (!caller) throw new Error("Ingen adgang")
         const db = createServiceClient()
+        const { data: position } = await db.from("withheld_beneficiary_positions").select("rights_holder_id").eq("id", id).eq("org_id", caller.orgId).maybeSingle()
 
         const { error } = await db
             .from("withheld_beneficiary_positions")
@@ -298,6 +325,8 @@ export async function resolveWithheldPosition(
             .eq("org_id", caller.orgId)
 
         if (error) throw error
+
+        await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "update", component: "admin.rights.withheld-resolve", entityType: "withheld_beneficiary_positions", entityId: id, targetMemberUuid: position?.rights_holder_id ?? null, orgIds: [caller.orgId], purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"] })
 
         revalidatePath("/admin/rettighedsmidler")
         return { success: true }
@@ -320,6 +349,7 @@ export async function createRightsAdjustment(payload: {
         const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES)
         if (!caller) throw new Error("Ingen adgang")
         const db = createServiceClient()
+        const { data: allocation } = await db.from("rights_allocations").select("rights_holder_id").eq("id", payload.allocation_id).eq("org_id", caller.orgId).maybeSingle()
 
         const { error } = await db
             .from("rights_adjustments")
@@ -333,6 +363,8 @@ export async function createRightsAdjustment(payload: {
             })
 
         if (error) throw error
+
+        await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "update", component: "admin.rights.adjustment", entityType: "rights_allocations", entityId: payload.allocation_id, targetMemberUuid: allocation?.rights_holder_id ?? null, orgIds: [caller.orgId], purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"] })
 
         revalidatePath("/admin/rettighedsmidler")
         return { success: true }
@@ -368,9 +400,10 @@ export async function getRightsHolderSummary(run_id: string): Promise<{
             .from("rights_allocations")
             .select(`
                 rights_holder_id,
-                individual_net,
+                individual_net:individual_amount,
+                net_amount,
                 status,
-                rettighedshavere ( full_name, member_number )
+                rettighedshavere ( full_name, org_affiliations ( member_no ) )
             `)
             .eq("run_id", run_id)
             .eq("org_id", caller.orgId)
@@ -379,13 +412,15 @@ export async function getRightsHolderSummary(run_id: string): Promise<{
 
         // Aggregér per rettighedshaver
         const map = new Map<string, RightsHolderSummary>()
-        for (const row of (data ?? []) as any[]) {
+        for (const row of data ?? []) {
             const id = row.rights_holder_id
+            const holder = firstRelated(row.rettighedshavere)
+            const aff = Array.isArray(holder?.org_affiliations) ? holder.org_affiliations[0] : holder?.org_affiliations
             if (!map.has(id)) {
                 map.set(id, {
                     rights_holder_id: id,
-                    rights_holder_name: row.rettighedshavere?.full_name ?? "—",
-                    member_number: row.rettighedshavere?.member_number ?? null,
+                    rights_holder_name: holder?.full_name ?? "—",
+                    member_number: aff?.member_no ?? null,
                     allocation_count: 0,
                     total_individual_net: 0,
                     has_withheld: false,
@@ -393,17 +428,19 @@ export async function getRightsHolderSummary(run_id: string): Promise<{
             }
             const entry = map.get(id)!
             entry.allocation_count++
-            entry.total_individual_net += Number(row.individual_net)
+            entry.total_individual_net += Number(row.individual_net ?? row.net_amount ?? 0)
             if (["partially_withheld", "fully_withheld"].includes(row.status)) {
                 entry.has_withheld = true
             }
         }
 
+        const summary = Array.from(map.values()).sort(
+            (a, b) => b.total_individual_net - a.total_individual_net
+        )
+        await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "read", component: "admin.rights.holder-summary", entityType: "rights_allocations", entityId: run_id, targetMemberUuids: summary.map(item => item.rights_holder_id), orgIds: [caller.orgId], purposeCode: "rights_distribution", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "union_membership_data"], counts: { results: summary.length } })
         return {
             success: true,
-            summary: Array.from(map.values()).sort(
-                (a, b) => b.total_individual_net - a.total_individual_net
-            ),
+            summary,
         }
     } catch (err) {
         console.error("[rights-allocations] getRightsHolderSummary fejlede:", err)

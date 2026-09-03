@@ -8,7 +8,7 @@ import { runContractExtraction } from "@/lib/contract-extract-core";
 import { attachmentChanges } from "@/lib/attachment-ai";
 import { matchRightsHolder, matchSharedWork, type ContractMatchResult } from "@/lib/server/contract-import-matching";
 import { resolveContractImportWork } from "@/lib/server/contract-import-work-resolver";
-import { attachContractEmployers, matchContractEmployers } from "@/lib/server/contract-import-employers";
+import { matchContractEmployers } from "@/lib/server/contract-import-employers";
 import { CONTRACT_MATCH_VERSION, contractProductionTypeToWorkType, titleSimilarity } from "@/lib/contract-import";
 import {
   CONTRACT_IMPORT_MAX_CONCURRENCY,
@@ -17,7 +17,7 @@ import {
   classifyContractImportFailure,
   type ContractImportJobStage,
 } from "@/lib/contract-import-job";
-import { resolveSeriesScopeTarget, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
+import { resolveSeriesScopeTarget } from "@/lib/server/member-series-episode-scopes";
 import { getAiRuntimeConfig } from "@/lib/ai-runtime";
 import { getContractAiModel, type AiProvider } from "@/lib/ai-models";
 import { recordAuditEvent } from "@/lib/audit-log-server";
@@ -39,9 +39,9 @@ export type ContractJob = {
   result_data: Record<string, unknown> | null;
   lease_expires_at: string | null;
   created_by: string | null;
+  lease_token: string;
+  input_storage_path: string;
 };
-
-type DirectContractJob = ContractJob & { id: "__direct__" };
 
 function yearFromValue(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) return Math.round(value);
@@ -74,9 +74,13 @@ async function fileFromStoragePath(path: string) {
   return { buffer, ext, text };
 }
 
-async function setItemStage(admin: ServiceClient, jobId: string, status: "analysing" | "matching") {
-  if (jobId === "__direct__") return;
-  const result = await admin.from("contract_import_items").update({ status, updated_at: new Date().toISOString() }).eq("ai_job_id", jobId);
+async function setItemStage(admin: ServiceClient, job: ContractJob, status: "analysing" | "matching") {
+  const result = await admin.rpc("set_contract_ai_import_item_stage_v2", {
+    p_job_id: job.id,
+    p_lease_token: job.lease_token,
+    p_input_storage_path: job.input_storage_path,
+    p_status: status,
+  });
   assertDatabase(result, "Importstatus kunne ikke opdateres");
 }
 
@@ -93,14 +97,16 @@ async function runtimeForJob(admin: ServiceClient, job: ContractJob) {
   } : current;
   const promptVersion = job.prompt_version ?? CONTRACT_IMPORT_PROMPT_VERSION;
   const schemaVersion = job.schema_version ?? CONTRACT_IMPORT_SCHEMA_VERSION;
-  if (job.id !== "__direct__" && (!stored || !job.prompt_version || !job.schema_version)) {
-    const updated = await admin.from("contract_ai_jobs").update({
-      provider: config.provider,
-      model: config.model,
-      prompt_version: promptVersion,
-      schema_version: schemaVersion,
-      updated_at: new Date().toISOString(),
-    }).eq("id", job.id).eq("status", "processing");
+  if (!stored || !job.prompt_version || !job.schema_version) {
+    const updated = await admin.rpc("set_contract_ai_job_runtime_v2", {
+      p_job_id: job.id,
+      p_lease_token: job.lease_token,
+      p_input_storage_path: job.input_storage_path,
+      p_provider: config.provider,
+      p_model: config.model,
+      p_prompt_version: promptVersion,
+      p_schema_version: schemaVersion,
+    });
     assertDatabase(updated, "AI-konfigurationen kunne ikke fastlåses");
   }
   job.provider = config.provider;
@@ -133,7 +139,7 @@ async function extractForJob(admin: ServiceClient, job: ContractJob) {
     throw new Error("Det gemte AI-resultat mangler; vælg genanalyse i stedet for nyt match");
   }
   if (!job.pdf_url) throw new Error("Kontrakten mangler filsti");
-  await setItemStage(admin, job.id, "analysing");
+  await setItemStage(admin, job, "analysing");
   const file = await fileFromStoragePath(job.pdf_url);
   const maskedText = maskPersonalData(file.text);
   const runtime = await runtimeForJob(admin, job);
@@ -145,22 +151,26 @@ async function extractForJob(admin: ServiceClient, job: ContractJob) {
     runtimeConfig: runtime.config,
     promptVersion: runtime.promptVersion,
     schemaVersion: runtime.schemaVersion,
-    onProgress: job.id === "__direct__" ? null : async () => {
-      const renewed = await admin.rpc("renew_contract_ai_job_lease", { p_job_id: job.id });
+    onProgress: async () => {
+      const renewed = await admin.rpc("renew_contract_ai_job_lease_v2", {
+        p_job_id: job.id,
+        p_lease_token: job.lease_token,
+        p_input_storage_path: job.input_storage_path,
+      });
       assertDatabase(renewed, "AI-jobbets lease kunne ikke fornyes");
     },
   });
   if (!result.ok || !result.data) throw result.errorCause ?? new Error(result.error ?? "AI-aflæsning fejlede");
-  if (job.id !== "__direct__") {
-    const saved = await admin.rpc("save_contract_ai_extraction", {
-      p_job_id: job.id,
-      p_result_data: result.data,
-      p_provider_request_id: result.meta?.providerRequestId ?? null,
-    });
-    assertDatabase(saved, "AI-resultatet kunne ikke gemmes");
-    job.stage = "matching";
-    job.result_data = result.data;
-  }
+  const saved = await admin.rpc("save_contract_ai_extraction_v2", {
+    p_job_id: job.id,
+    p_lease_token: job.lease_token,
+    p_input_storage_path: job.input_storage_path,
+    p_result_data: result.data,
+    p_provider_request_id: result.meta?.providerRequestId ?? null,
+  });
+  assertDatabase(saved, "AI-resultatet kunne ikke gemmes");
+  job.stage = "matching";
+  job.result_data = result.data;
   return result.data;
 }
 
@@ -172,10 +182,17 @@ async function runAttachmentJob(admin: ServiceClient, job: ContractJob, extracte
     (validation.data?.extracted_data ?? {}) as Record<string, unknown>,
     extracted,
   );
-  const attachment = await admin.from("contract_attachments").update({
-    ai_status: "klar",
-    ai_result: { extracted: changes.extracted, changes: changes.changes, analyzedAt: new Date().toISOString(), includedInPayments: false },
-  }).eq("id", job.attachment_id);
+  const attachment = await admin.rpc("apply_contract_attachment_extraction_v2", {
+    p_job_id: job.id,
+    p_lease_token: job.lease_token,
+    p_input_storage_path: job.input_storage_path,
+    p_ai_result: {
+      extracted: changes.extracted,
+      changes: changes.changes,
+      analyzedAt: new Date().toISOString(),
+      includedInPayments: false,
+    },
+  });
   assertDatabase(attachment, "Allongeresultatet kunne ikke gemmes");
 }
 
@@ -233,7 +250,7 @@ async function possibleDuplicate(admin: ServiceClient, input: {
 }
 
 async function applyContractExtraction(admin: ServiceClient, job: ContractJob, extracted: Record<string, unknown>) {
-  await setItemStage(admin, job.id, "matching");
+  await setItemStage(admin, job, "matching");
   const contract = await admin.from("contracts")
     .select("rights_holder_id,work_id,working_title,employer_id,contract_date")
     .eq("id", job.contract_id).maybeSingle();
@@ -249,14 +266,16 @@ async function applyContractExtraction(admin: ServiceClient, job: ContractJob, e
     ? { id: existing.work_id, score: 100, evidence: [{ signal: "existing_manual_link", points: 100 }], version: CONTRACT_MATCH_VERSION, candidates: [] }
     : await matchSharedWork(admin, { title: extractedTitle, premiereYear: extractedYear, contractDate: timingDate, type });
   let workId: string | null = existing.work_id ?? workMatch.id;
-  let ownerMatch = existing.rights_holder_id
-    ? { id: existing.rights_holder_id, score: 100, evidence: [{ signal: "existing_manual_link", points: 100 }], version: CONTRACT_MATCH_VERSION, candidates: [] }
-    : await matchRightsHolder(admin, {
-      orgId: job.org_id,
-      name: extracted.rightsHolderName ? String(extracted.rightsHolderName) : null,
-      workId,
-    });
-  let rightsHolderId: string | null = existing.rights_holder_id ?? ownerMatch.id;
+  let ownerMatch = await matchRightsHolder(admin, {
+    orgId: job.org_id,
+    name: extracted.rightsHolderName ? String(extracted.rightsHolderName) : null,
+    workId,
+  });
+  // AI matching is evidence, never authority. Only the already assigned owner
+  // may influence contract/work relations until an administrator uses the
+  // revision-checked ownership review RPC.
+  const rightsHolderId: string | null = existing.rights_holder_id;
+  let ownerCandidateId: string | null = ownerMatch.id;
 
   if (!workId) {
     workMatch = await resolveContractImportWork(admin, {
@@ -265,7 +284,7 @@ async function applyContractExtraction(admin: ServiceClient, job: ContractJob, e
       year: extractedYear,
       contractDate: timingDate,
       type,
-      rightsHolderId,
+      rightsHolderId: rightsHolderId ?? ownerCandidateId,
       allowExternalCreate: true,
     });
     workId = workMatch.id;
@@ -274,13 +293,13 @@ async function applyContractExtraction(admin: ServiceClient, job: ContractJob, e
   // Et værk fundet via de eksterne kilder kan være det signal, der gør et
   // alternativt krediteringsnavn sikkert nok. Kør derfor ejermatchet én gang
   // mere med værkrelationen, men kun når første forsøg ikke valgte en ejer.
-  if (!rightsHolderId && workId) {
+  if (!ownerCandidateId && workId) {
     ownerMatch = await matchRightsHolder(admin, {
       orgId: job.org_id,
       name: extracted.rightsHolderName ? String(extracted.rightsHolderName) : null,
       workId,
     });
-    rightsHolderId = ownerMatch.id;
+    ownerCandidateId = ownerMatch.id;
   }
 
   let employerMatches: Awaited<ReturnType<typeof matchContractEmployers>> = { matches: [], candidates: [] };
@@ -288,66 +307,18 @@ async function applyContractExtraction(admin: ServiceClient, job: ContractJob, e
     const names = [extracted.employerName, extracted.parentCompanyName]
       .filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
     employerMatches = await matchContractEmployers(admin, names);
-    await attachContractEmployers(admin, { contractId: job.contract_id, matches: employerMatches.matches });
   }
 
   const previousValidation = await admin.from("contract_validations")
     .select("extracted_data").eq("contract_id", job.contract_id).maybeSingle();
   assertDatabase(previousValidation, "Tidligere kontraktdata kunne ikke hentes");
   const merged = mergeLockedFields(extracted, previousValidation.data?.extracted_data);
-  const validation = await admin.from("contract_validations").upsert({
-    contract_id: job.contract_id,
-    org_id: job.org_id,
-    holiday_pay_rate: merged.holidayPayRate ?? null,
-    beta_rate: merged.betaRate ?? null,
-    has_credit_clause: Boolean(merged.hasCreditClause || merged.creditedRoles || merged.creditedFunction),
-    has_termination_clause: Boolean(merged.hasTerminationClause),
-    termination_days_editor: merged.terminationDaysEditor ?? null,
-    termination_days_producer: merged.terminationDaysProducer ?? null,
-    has_indemnification: Boolean(merged.hasIndemnification),
-    has_overenskomst_incorporation: Boolean(merged.hasOverenskomstIncorporation || merged.collectiveAgreement),
-    extracted_data: merged,
-  }, { onConflict: "contract_id" });
-  assertDatabase(validation, "Kontraktens udtræksdata kunne ikke gemmes");
-
   const locked = new Set(Array.isArray(merged._lockedFields) ? merged._lockedFields as string[] : []);
-  const updates: Record<string, unknown> = { status: "kladde" };
-  if (!locked.has("contractType")) updates.type = merged.contractType ?? "a-løn";
-  if (!locked.has("overenskomst")) updates.overenskomst = merged.overenskomst === "ingen" ? null : (merged.overenskomst ?? null);
-  if (!locked.has("workTitle")) updates.working_title = extractedTitle ?? existing.working_title ?? null;
-  if (!locked.has("contractDate")) updates.contract_date = merged.contractDate ?? null;
-  if (!locked.has("startDate")) updates.start_date = merged.startDate ?? null;
-  if (!locked.has("endDate")) updates.end_date = merged.endDate ?? null;
-  if (rightsHolderId) updates.rights_holder_id = rightsHolderId;
-  if (workId) updates.work_id = workId;
-  if (!existing.employer_id && employerMatches.matches[0]) updates.employer_id = employerMatches.matches[0].id;
-  const contractUpdate = await admin.from("contracts").update(updates).eq("id", job.contract_id);
-  assertDatabase(contractUpdate, "Kontrakten kunne ikke opdateres");
-
-  let seriesPending = false;
+  let series: { seriesWorkId: string; seasonNumber: number } | null = null;
   if (rightsHolderId && workId) {
     const season = Math.max(1, Math.floor(Number(merged.seasonNumber ?? merged.season ?? 1) || 1));
     const target = await resolveSeriesScopeTarget(admin, workId, season);
-    if (target) {
-      const scopeResult = await upsertMemberSeriesEpisodeScope(admin, {
-        orgId: job.org_id,
-        rightsHolderId,
-        seriesWorkId: target.seriesWorkId,
-        seasonNumber: target.seasonNumber,
-        status: "pending",
-        source: "contract_upload",
-      });
-      if (!scopeResult.success) throw new Error(scopeResult.error);
-      const scopeUpdate = await admin.from("contracts").update({
-        episode_scope_id: scopeResult.scope.id,
-        season_number: scopeResult.scope.season_number,
-        episode_numbers: scopeResult.scope.status === "confirmed"
-          ? scopeResult.scope.covers_whole_season ? [] : scopeResult.scope.episode_numbers
-          : null,
-      }).eq("id", job.contract_id);
-      assertDatabase(scopeUpdate, "Afsnitsopgaven kunne ikke gemmes");
-      seriesPending = scopeResult.scope.status !== "confirmed";
-    }
+    if (target) series = target;
   }
 
   const duplicate = await possibleDuplicate(admin, {
@@ -361,45 +332,74 @@ async function applyContractExtraction(admin: ServiceClient, job: ContractJob, e
   const itemStatus = duplicate ? "possible_duplicate"
     : !rightsHolderId ? "missing_owner"
       : !workId ? "missing_work"
-        : seriesPending ? "awaiting_episode_confirmation" : "ready_for_review";
+        : "ready_for_review";
 
-  if (job.id !== "__direct__") {
-    const item = await admin.from("contract_import_items").update({
-      status: itemStatus,
-      owner_match_score: ownerMatch.score,
-      work_match_score: workMatch.score,
-      producer_match_score: employerMatches.matches[0]?.score ?? employerMatches.candidates[0]?.score ?? null,
-      owner_match_evidence: ownerMatch.evidence,
-      work_match_evidence: workMatch.evidence,
-      producer_match_evidence: employerMatches.matches.flatMap(match => match.evidence),
-      owner_candidate_ids: uuidCandidates(ownerMatch.candidates),
-      work_candidate_ids: uuidCandidates(workMatch.candidates),
-      producer_candidate_ids: employerMatches.candidates.map(candidate => candidate.id),
-      possible_duplicate_of: duplicate?.id ?? null,
-      duplicate_evidence: duplicate?.evidence ?? [],
-      match_version: CONTRACT_MATCH_VERSION,
-      error_code: null,
-      error_message: null,
-      updated_at: new Date().toISOString(),
-    }).eq("ai_job_id", job.id);
-    assertDatabase(item, "Importresultatet kunne ikke gemmes");
-  }
+  const applied = await admin.rpc("apply_contract_ai_extraction_v2", {
+    p_job_id: job.id,
+    p_lease_token: job.lease_token,
+    p_input_storage_path: job.input_storage_path,
+    p_payload: {
+      extractedData: merged,
+      validation: {
+        holidayPayRate: merged.holidayPayRate ?? null,
+        betaRate: merged.betaRate ?? null,
+        hasCreditClause: Boolean(merged.hasCreditClause || merged.creditedRoles || merged.creditedFunction),
+        hasTerminationClause: Boolean(merged.hasTerminationClause),
+        terminationDaysEditor: merged.terminationDaysEditor ?? null,
+        terminationDaysProducer: merged.terminationDaysProducer ?? null,
+        hasIndemnification: Boolean(merged.hasIndemnification),
+        hasOverenskomstIncorporation: Boolean(merged.hasOverenskomstIncorporation || merged.collectiveAgreement),
+      },
+      contract: {
+        applyType: !locked.has("contractType"),
+        type: merged.contractType ?? "a-løn",
+        applyOverenskomst: !locked.has("overenskomst"),
+        overenskomst: merged.overenskomst === "ingen" ? null : (merged.overenskomst ?? null),
+        applyWorkingTitle: !locked.has("workTitle"),
+        workingTitle: extractedTitle ?? existing.working_title ?? null,
+        applyContractDate: !locked.has("contractDate"),
+        contractDate: merged.contractDate ?? null,
+        applyStartDate: !locked.has("startDate"),
+        startDate: merged.startDate ?? null,
+        applyEndDate: !locked.has("endDate"),
+        endDate: merged.endDate ?? null,
+        rightsHolderId: null,
+        ownerSuggestionId: ownerCandidateId,
+        workId,
+        employerId: !existing.employer_id ? employerMatches.matches[0]?.id ?? null : null,
+      },
+      employerIds: !existing.employer_id ? employerMatches.matches.map(match => match.id) : [],
+      series,
+      import: {
+        status: itemStatus,
+        ownerMatchScore: ownerMatch.score,
+        workMatchScore: workMatch.score,
+        producerMatchScore: employerMatches.matches[0]?.score ?? employerMatches.candidates[0]?.score ?? null,
+        ownerMatchEvidence: ownerMatch.evidence,
+        workMatchEvidence: workMatch.evidence,
+        producerMatchEvidence: employerMatches.matches.flatMap(match => match.evidence),
+        ownerCandidateIds: uuidCandidates(ownerMatch.candidates),
+        workCandidateIds: uuidCandidates(workMatch.candidates),
+        producerCandidateIds: employerMatches.candidates.map(candidate => candidate.id),
+        possibleDuplicateOf: duplicate?.id ?? null,
+        duplicateEvidence: duplicate?.evidence ?? [],
+        matchVersion: CONTRACT_MATCH_VERSION,
+      },
+    },
+  });
+  assertDatabase(applied, "Kontraktens udtræksdata kunne ikke gemmes atomisk");
 }
 
 export async function runContractJob(admin: ServiceClient, job: ContractJob) {
   const extracted = await extractForJob(admin, job);
   if (job.attachment_id) await runAttachmentJob(admin, job, extracted);
   else await applyContractExtraction(admin, job, extracted);
-  if (job.id !== "__direct__") {
-    const advanced = await admin.rpc("advance_contract_ai_job", { p_job_id: job.id, p_stage: "finalizing" });
-    assertDatabase(advanced, "AI-jobbet kunne ikke færdiggøres");
-  }
   await recordAuditEvent({
     context: {
       actorUserId: job.created_by,
       actorOrgId: job.org_id,
-      source: job.id === "__direct__" ? "admin" : "import",
-      correlationId: job.id === "__direct__" ? crypto.randomUUID() : job.id,
+      source: "import",
+      correlationId: job.id,
       mode: "summary",
     },
     action: "ai_analysis",
@@ -419,18 +419,21 @@ export async function runContractJob(admin: ServiceClient, job: ContractJob) {
       schemaVersion: job.schema_version,
     },
   });
-  if (job.id !== "__direct__") {
-    const finalized = await admin.rpc("finalize_contract_ai_job", { p_job_id: job.id });
-    assertDatabase(finalized, "AI-jobbet kunne ikke afsluttes");
-  }
+  const finalized = await admin.rpc("finalize_contract_ai_job_v2", {
+    p_job_id: job.id,
+    p_lease_token: job.lease_token,
+    p_input_storage_path: job.input_storage_path,
+  });
+  assertDatabase(finalized, "AI-jobbet kunne ikke afsluttes");
   return { jobId: job.id, contractId: job.contract_id, attachmentId: job.attachment_id };
 }
 
 async function failContractJob(admin: ServiceClient, job: ContractJob, error: unknown) {
-  if (job.id === "__direct__") throw error;
   const decision = classifyContractImportFailure(error, job.attempts);
-  const failed = await admin.rpc("fail_contract_ai_job", {
+  const failed = await admin.rpc("fail_contract_ai_job_v2", {
     p_job_id: job.id,
+    p_lease_token: job.lease_token,
+    p_input_storage_path: job.input_storage_path,
     p_status: decision.status,
     p_failure_class: decision.failureClass,
     p_error_code: decision.errorCode,
@@ -439,6 +442,9 @@ async function failContractJob(admin: ServiceClient, job: ContractJob, error: un
     p_refund_attempt: decision.refundAttempt,
   });
   assertDatabase(failed, "Jobfejlen kunne ikke registreres");
+  // A false result means OCR (or a newer worker generation) superseded this
+  // worker. Never let the stale worker write import-item/attachment errors.
+  if (failed.data !== true) return decision;
   const item = await admin.from("contract_import_items").update({
     status: decision.itemStatus,
     error_code: decision.errorCode,
@@ -518,27 +524,40 @@ export async function processPendingContractJobs(orgId?: string | null) {
 
 export async function runDirectContractJob(input: { contractId: string; orgId?: string | null; actorUserId?: string | null }) {
   const admin = createServiceClient({ audit: { actorUserId: input.actorUserId, actorOrgId: input.orgId, source: "admin", correlationId: crypto.randomUUID(), mode: "summary" } });
-  let query = admin.from("contracts").select("id,org_id,pdf_url,processed_pdf_url").eq("id", input.contractId);
+  let query = admin.from("contracts").select("id,org_id,pdf_url,processed_pdf_url,document_processing_status").eq("id", input.contractId);
   if (input.orgId) query = query.eq("org_id", input.orgId);
   const contract = await query.maybeSingle();
   assertDatabase(contract, "Kontrakten kunne ikke hentes");
   if (!contract.data) throw new Error("Kontrakten blev ikke fundet");
-  return runContractJob(admin, {
-    id: "__direct__",
+  if (["pdf", "doc", "docx"].includes(contract.data.pdf_url?.split("?")[0]?.split(".").pop()?.toLowerCase() ?? "")
+    && !["ready", "not_required"].includes(contract.data.document_processing_status)) {
+    throw new Error("PDF'en skal færdigbehandles, før AI-aflæsningen kan startes");
+  }
+  const runtime = await getAiRuntimeConfig("contract_extraction");
+  const inserted = await admin.from("contract_ai_jobs").insert({
     contract_id: contract.data.id,
     org_id: contract.data.org_id,
-    attempts: 0,
-    pdf_url: contract.data.processed_pdf_url ?? contract.data.pdf_url,
-    attachment_id: null,
+    created_by: input.actorUserId ?? null,
+    status: "queued",
     stage: "extraction",
-    provider: null,
-    model: null,
+    priority: 0,
+    provider: runtime.provider,
+    model: runtime.model,
     prompt_version: CONTRACT_IMPORT_PROMPT_VERSION,
     schema_version: CONTRACT_IMPORT_SCHEMA_VERSION,
-    result_data: null,
-    lease_expires_at: null,
-    created_by: input.actorUserId ?? null,
-  } satisfies DirectContractJob);
+    next_attempt_at: new Date().toISOString(),
+  }).select("id").single();
+  assertDatabase(inserted, "Det indhegnede AI-job kunne ikke oprettes");
+  if (!inserted.data?.id) throw new Error("Det indhegnede AI-job mangler id");
+  const processed = await processSpecificContractJob({ jobId: inserted.data.id, orgId: contract.data.org_id });
+  if (!processed.ok || !processed.processed) {
+    throw new Error(processed.error ?? "AI-jobbet kunne ikke behandles");
+  }
+  return {
+    jobId: processed.jobId,
+    contractId: processed.contractId,
+    attachmentId: processed.attachmentId,
+  };
 }
 
 export async function processSpecificContractJob(input: { jobId: string; orgId?: string | null }) {

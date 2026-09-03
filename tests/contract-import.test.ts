@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   MAX_CONTRACT_IMPORT_BYTES,
-  contractFileHash,
   hasImplausibleFilmTiming,
   normalizeMatchText,
   premiereWindowScore,
@@ -11,6 +10,7 @@ import {
   titleSimilarity,
   validateContractImportFile,
 } from "../lib/contract-import";
+import { contractFileHash } from "../lib/server/contract-file-hash";
 
 test("contract imports accept supported files and enforce the 25 MB boundary", () => {
   assert.equal(validateContractImportFile({ name: "kontrakt.PDF", size: MAX_CONTRACT_IMPORT_BYTES }), null);

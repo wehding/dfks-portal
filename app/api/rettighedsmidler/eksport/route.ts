@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { exportSettlement, redownloadExport, type ExportSystem } from "@/app/actions/rights-export"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -50,6 +51,8 @@ export async function GET(req: NextRequest) {
         // BOM for korrekt tegnkodning i Excel (æøå)
         const bom = "﻿"
         const body = bom + csv
+
+        await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "download", component: "admin.rights.export-download", entityType: batchId ? "rights_export_batches" : "rights_settlements", entityId: batchId ?? settlementId, orgIds: [caller.orgId], purposeCode: "rights_payment_export", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["rights_data", "financial_data", "identity_data"], counts: { rows: rowCount } })
 
         return new NextResponse(body, {
             status: 200,

@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { firstRelated } from "@/lib/supabase/relations"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -105,12 +107,19 @@ export async function getReserveEntries(run_id: string): Promise<{
 
         if (error) throw error
 
-        const entries: ReserveEntry[] = (data ?? []).map((r: any) => ({
+        const entries: ReserveEntry[] = (data ?? []).map((r) => ({
             ...r,
             amount: Number(r.amount),
             fund_name: r.rights_funds?.name,
             period_label: r.rights_calculation_runs?.period_label,
         }))
+
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "read", component: "admin.rights_reserves", entityType: "rights_calculation_run", entityId: run_id,
+            purposeCode: "rights_administration", legalBasis: "gdpr_art_6_1_f",
+            dataCategories: ["rights_data", "financial_data"], counts: { results: entries.length },
+        })
 
         return { success: true, entries }
     } catch (err) {
@@ -170,7 +179,7 @@ export async function getRightsClaims(fund_id?: string, run_id?: string): Promis
             .from("rights_claims")
             .select(`
                 *,
-                rettighedshavere ( full_name, member_number ),
+                rettighedshavere ( full_name, org_affiliations ( member_no ) ),
                 rights_funds ( name ),
                 rights_calculation_runs ( period_label )
             `)
@@ -183,14 +192,20 @@ export async function getRightsClaims(fund_id?: string, run_id?: string): Promis
         const { data, error } = await q
         if (error) throw error
 
-        const claims: RightsClaim[] = (data ?? []).map((r: any) => ({
-            ...r,
-            claim_amount: Number(r.claim_amount),
-            rights_holder_name: r.rettighedshavere?.full_name,
-            member_number: r.rettighedshavere?.member_number,
-            fund_name: r.rights_funds?.name,
-            period_label: r.rights_calculation_runs?.period_label,
-        }))
+        const claims: RightsClaim[] = (data ?? []).map((r) => {
+            const rh = firstRelated(r.rettighedshavere)
+            const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
+            const fund = firstRelated(r.rights_funds)
+            const run = firstRelated(r.rights_calculation_runs)
+            return {
+                ...r,
+                claim_amount: Number(r.claim_amount),
+                rights_holder_name: rh?.full_name,
+                member_number: aff?.member_no ?? null,
+                fund_name: fund?.name,
+                period_label: run?.period_label,
+            }
+        })
 
         return { success: true, claims }
     } catch (err) {
@@ -337,7 +352,7 @@ export async function getUndistributableActions(run_id: string): Promise<{
 
         if (error) throw error
 
-        const actions: UndistributableAction[] = (data ?? []).map((r: any) => ({
+        const actions: UndistributableAction[] = (data ?? []).map((r) => ({
             ...r,
             amount: Number(r.amount),
             fund_name: r.rights_funds?.name,

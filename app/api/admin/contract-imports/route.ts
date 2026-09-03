@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
+import { requireContractImportWriteAccess } from "@/lib/server/contract-import-access";
 
 export const dynamic = "force-dynamic";
 
@@ -15,9 +15,9 @@ function decodeCursor(value: string | null) {
 }
 
 export async function GET(request: NextRequest) {
-  const session = await createClient();
-  const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin"]);
-  if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const auth = await requireContractImportWriteAccess();
+  if (!auth) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const { caller } = auth;
   const limit = Math.min(100, Math.max(1, Number(request.nextUrl.searchParams.get("limit")) || 20));
   const cursor = decodeCursor(request.nextUrl.searchParams.get("cursor"));
   const db = createServiceClient();
@@ -33,13 +33,14 @@ export async function GET(request: NextRequest) {
   const nextCursor = rows.length > limit && last
     ? Buffer.from(JSON.stringify({ createdAt: last.created_at, id: last.id })).toString("base64url")
     : null;
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "read", component: "admin.contract-imports.list", entityType: "contract_import_batches", orgIds: [caller.orgId], purposeCode: "contract_import_review", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["contract_data", "document_data"], counts: { results: batches.length } });
   return NextResponse.json({ batches, nextCursor });
 }
 
 export async function POST(request: NextRequest) {
-  const session = await createClient();
-  const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin"]);
-  if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const auth = await requireContractImportWriteAccess();
+  if (!auth) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
+  const { caller } = auth;
   const body = await request.json().catch(() => ({})) as { source?: string; discoveredCount?: number };
   const allowedSources = new Set(["computer", "google_drive", "onedrive", "dropbox", "gmail", "api"]);
   const source = typeof body.source === "string" && allowedSources.has(body.source) ? body.source : "computer";
@@ -53,5 +54,6 @@ export async function POST(request: NextRequest) {
     discovered_count: discoveredCount,
   }).select("id,status,created_at").single();
   if (error || !data) return NextResponse.json({ error: "Importbatch kunne ikke oprettes" }, { status: 500 });
+  await recordSensitiveFlow({ actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" }, action: "create", component: "admin.contract-imports.create", entityType: "contract_import_batches", entityId: data.id, orgIds: [caller.orgId], purposeCode: "contract_import", legalBasis: "GDPR Art. 6(1)(c)/(f) og 9(2)(d)", dataCategories: ["contract_data", "document_data"], counts: { discovered: discoveredCount } });
   return NextResponse.json({ batch: data });
 }

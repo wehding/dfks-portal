@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { firstRelated } from "@/lib/supabase/relations"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -78,7 +80,7 @@ export async function getRightsNotifications(opts?: {
 
         let q = db
             .from("rights_notifications")
-            .select(`*, rettighedshavere ( full_name, member_number )`)
+            .select(`*, rettighedshavere ( full_name, org_affiliations ( member_no ) )`)
             .eq("org_id", caller.orgId)
             .order("scheduled_at", { ascending: false })
             .limit(opts?.limit ?? 200)
@@ -90,11 +92,23 @@ export async function getRightsNotifications(opts?: {
         const { data, error } = await q
         if (error) throw error
 
-        const notifications: RightsNotification[] = (data ?? []).map((r: any) => ({
-            ...r,
-            rights_holder_name: r.rettighedshavere?.full_name,
-            member_number: r.rettighedshavere?.member_number,
-        }))
+        const notifications: RightsNotification[] = (data ?? []).map((r) => {
+            const rh = firstRelated(r.rettighedshavere)
+            const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
+            return {
+                ...r,
+                rights_holder_name: rh?.full_name,
+                member_number: aff?.member_no ?? null,
+            }
+        })
+
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "read", component: "admin.rights_notifications", entityType: "rights_notification",
+            targetMemberUuids: [...new Set(notifications.map(item => item.rights_holder_id).filter((id): id is string => Boolean(id)))],
+            purposeCode: "rights_administration", legalBasis: "gdpr_art_6_1_f",
+            dataCategories: ["rights_data", "contact_data"], counts: { results: notifications.length },
+        })
 
         return { success: true, notifications }
     } catch (err) {
@@ -174,7 +188,7 @@ export async function scheduleSettlementNotifications(
 
         // Summér pr. rettighedshaver
         const byHolder = new Map<string, number>()
-        for (const item of (items ?? []) as any[]) {
+        for (const item of items ?? []) {
             const prev = byHolder.get(item.rights_holder_id) ?? 0
             byHolder.set(item.rights_holder_id, prev + Number(item.payable_amount))
         }
@@ -333,9 +347,9 @@ export async function getNotificationStats(): Promise<{
         const notifs = nRes.data ?? []
         return {
             success: true,
-            pending: notifs.filter((n: any) => n.status === "pending").length,
-            sent: notifs.filter((n: any) => n.status === "sent").length,
-            failed: notifs.filter((n: any) => n.status === "failed").length,
+            pending: notifs.filter((n) => n.status === "pending").length,
+            sent: notifs.filter((n) => n.status === "sent").length,
+            failed: notifs.filter((n) => n.status === "failed").length,
             open_tasks: tRes.data?.length ?? 0,
         }
     } catch (err) {

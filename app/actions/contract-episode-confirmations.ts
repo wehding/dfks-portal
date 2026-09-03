@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncMemberEpisodeAssignments } from "@/app/actions/member-works";
 import { resolveSeriesScopeTarget, syncScopeToDraftContracts, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export async function confirmContractEpisodes(input: {
   contractId: string;
@@ -65,6 +66,7 @@ export async function confirmContractEpisodes(input: {
   await db.from("contracts").update({ episode_scope_id: scopeResult.scope.id, season_number: seasonNumber, episode_numbers: input.entireSeason ? [] : episodeNumbers }).eq("id", contract.id);
   await syncScopeToDraftContracts(db, scopeResult.scope);
   await db.from("contract_import_items").update({ status: "ready_for_review" }).eq("contract_id", contract.id).eq("org_id", contract.org_id);
+  await recordSensitiveFlow({ actor: { userId: user.id, orgId: contract.org_id, role: "member", source: "portal" }, action: "update", component: "portal.contracts.episode-confirmation", entityType: "contracts", entityId: contract.id, targetMemberUuid: holder.id, orgIds: [contract.org_id], purposeCode: "member_contract_management", legalBasis: "GDPR Art. 6(1)(b) og 9(2)(d)", dataCategories: ["contract_data", "union_membership_data"], counts: { episodeCount: episodeNumbers.length, entireSeason: Boolean(input.entireSeason) } });
   revalidatePath("/portal/mine-kontrakter");
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/portal");

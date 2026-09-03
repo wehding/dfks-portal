@@ -17,6 +17,7 @@ import {
   type LegalDocumentType,
 } from "@/lib/legal-documents";
 import { hashLegalDocumentBody } from "@/lib/server/legal-document-records";
+import { unknownBasicPlaceholders } from "@/lib/organisation-text-templates";
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const;
 const MAX_LEGAL_DOCUMENT_BODY_LENGTH = 30_000;
@@ -84,6 +85,8 @@ function cleanDocumentInput(input: { documentType: unknown; audience: unknown; t
   const body = normalizeDanishLegalText(typeof input.body === "string" ? input.body.trim() : "");
   if (!body) throw new Error("Teksten må ikke være tom.");
   if (body.length > MAX_LEGAL_DOCUMENT_BODY_LENGTH) throw new Error("Teksten er for lang.");
+  const unknownPlaceholders = unknownBasicPlaceholders(title, body);
+  if (unknownPlaceholders.length) throw new Error(`Ukendte dynamiske felter: ${unknownPlaceholders.map(value => `{${value}}`).join(", ")}.`);
   return { documentType: input.documentType, audience: input.audience, title, body };
 }
 
@@ -243,12 +246,14 @@ export async function publishLegalDocumentVersion(input: {
     .neq("document_version_id", draft.id);
   if (supersedeError) throw new Error(supersedeError.message);
 
-  const { error: requirementError } = await db.rpc("require_legal_onboarding_for_audience", {
-    target_org_id: orgId,
-    target_audience: document.audience,
-    required_at: now,
-  });
-  if (requirementError) throw new Error(requirementError.message);
+  if (document.documentType !== "legacy_work_declaration") {
+    const { error: requirementError } = await db.rpc("require_legal_onboarding_for_audience", {
+      target_org_id: orgId,
+      target_audience: document.audience,
+      required_at: now,
+    });
+    if (requirementError) throw new Error(requirementError.message);
+  }
 
   await recordAuditEvent({
     context: { actorUserId: userId, actorOrgId: orgId, actorRole: "admin", source: "admin" },

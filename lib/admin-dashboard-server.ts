@@ -3,6 +3,7 @@ import "server-only";
 import { createServiceClient } from "@/lib/supabase/service";
 import type { AdminDashboardMetrics, ResponseEvent } from "@/lib/admin-dashboard";
 import { calculateResponseTimeStats } from "@/lib/admin-dashboard";
+import { isActionableAdminWorkShareCase } from "@/lib/work-share-admin";
 
 export async function loadAdminDashboardMetrics(orgId: string, userId: string): Promise<AdminDashboardMetrics> {
   void userId;
@@ -22,7 +23,7 @@ export async function loadAdminDashboardMetrics(orgId: string, userId: string): 
     db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "valideret"),
     db.from("org_affiliations").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("is_member", true),
     db.from("work_change_requests").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
-    db.from("work_share_cases").select("id", { count: "exact", head: true }).eq("org_id", orgId).neq("status", "resolved"),
+    db.from("work_share_cases").select("id,work_share_participants(rights_holder_id,invited_by_rights_holder_id,source_tags,excluded_at)").eq("org_id", orgId).neq("status", "resolved"),
     db.from("member_work_collaboration_reviews").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "disputed"),
     db.from("screening_claims").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
     db.from("contract_reviews").select("id", { count: "exact", head: true }).eq("org_id", orgId).in("status", ["afventer", "behandling"]),
@@ -63,7 +64,7 @@ export async function loadAdminDashboardMetrics(orgId: string, userId: string): 
     tasks: {
       contractValidationsPending: drafts.count ?? 0,
       workRequests: workRequests.count ?? 0,
-      workShareCases: (workShareCases.count ?? 0) + (workShareDisputes.count ?? 0),
+      workShareCases: (workShareCases.data ?? []).filter(isActionableAdminWorkShareCase).length + (workShareDisputes.count ?? 0),
       screeningClaims: screeningClaims.count ?? 0,
       contractReviews: reviews.count ?? 0,
     },

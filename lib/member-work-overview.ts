@@ -18,6 +18,7 @@ export type MemberOverviewItem =
       title: string;
       type: string;
       year: number | null;
+      productionYear: number | null;
       posterUrl: string | null;
       episodeCount: number;
       workIds: string[];
@@ -57,6 +58,7 @@ export function memberOverviewItemsToAssignments(items: MemberOverviewItem[]): A
         title: item.title,
         type: item.type,
         year: item.year,
+        production_year: item.productionYear,
         duration_minutes: null,
         episode_count: item.episodeCount,
         parent_work_id: item.parentWorkId,

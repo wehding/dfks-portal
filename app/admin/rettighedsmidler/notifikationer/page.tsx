@@ -421,7 +421,10 @@ export default function RettighedsmidlerNotifikationerPage() {
         setLoading(false)
     }
 
-    useEffect(() => { loadData() }, [])
+    useEffect(() => {
+        const timer = window.setTimeout(() => void loadData(), 0)
+        return () => window.clearTimeout(timer)
+    }, [])
 
     const pendingNotifs = notifications.filter(n => n.status === "pending")
     const sentNotifs = notifications.filter(n => n.status === "sent")
@@ -510,7 +513,7 @@ export default function RettighedsmidlerNotifikationerPage() {
                             {stats.failed} notifikation{stats.failed !== 1 ? "er" : ""} fejlede
                         </p>
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                            Tjek fanen "Fejlede" og vurder om de skal sendes igen manuelt.
+                            Tjek fanen &quot;Fejlede&quot; og vurder om de skal sendes igen manuelt.
                         </p>
                     </div>
                 </div>

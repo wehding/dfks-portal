@@ -24,9 +24,14 @@ export interface DbOrganisation {
     from_email: string | null
     invite_email_text: string | null
     invite_reminder_text: string | null
+    beta_invite_subject: string | null
+    beta_invite_text: string | null
+    beta_default_duration_days: number
     statistics_minimum_group_size: number
     statistics_dominance_limit: number
     statistics_low_sample_threshold: number
+    legacy_contract_declaration_enabled: boolean
+    legacy_contract_cutoff_year: number | null
 }
 
 export interface OrgBranding {
@@ -94,6 +99,12 @@ export interface DbOrgAffiliation {
     statistics_participation_source: "member_default" | "member_reenrollment" | "onboarding_choice" | "non_member_onboarding_choice" | "profile_choice" | "non_member_profile_choice" | "admin_choice" | "legacy_migration" | null
     statistics_participation_updated_at: string | null
     statistics_participation_updated_by: string | null
+    economy_overview_viewed_at: string | null
+    beta_tester_since: string | null
+    beta_designated_by_user_id: string | null
+    beta_last_invite_sent_at: string | null
+    beta_last_period_start_date: string | null
+    beta_last_period_end_date: string | null
     created_at: string
 }
 
@@ -156,6 +167,8 @@ export interface DbContract {
     overenskomst: string | null
     status: string
     pdf_url: string | null
+    original_view_pdf_url: string | null
+    processed_pdf_url: string | null
     working_title: string | null
     contract_date: string | null
     start_date: string | null
@@ -328,6 +341,7 @@ export interface DbWork {
     title: string
     type: string
     year: number | null
+    production_year: number | null
     duration_minutes: number | null
     episode_count: number | null
     season_count: number | null

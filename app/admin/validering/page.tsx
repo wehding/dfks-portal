@@ -1,5 +1,7 @@
 "use client"
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- This legacy editor normalizes dynamic AI extraction and untyped Supabase relation payloads at the UI boundary. */
+
 import { useState, useRef, useMemo, useEffect, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
@@ -24,9 +26,11 @@ import { Separator } from "@/components/ui/separator"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { maskPersonalData } from "@/lib/mask-text"
 import { getContractValidationData } from "@/app/actions/contract-imports"
+import { getContractSignedUrl } from "@/app/actions/member-contracts"
 import { normaliseSources } from "@/lib/ai-sources"
 import { resolveAnker } from "@/lib/resolveAnker"
 import { SourceBtn } from "@/components/source-btn"
+import { SourcePictogram } from "@/components/source-pictogram"
 import { resolveOtherSupplements } from "@/lib/contract-supplements"
 import { resolvePensionSupplement } from "@/lib/contract-pension"
 import { resolveContractSalary } from "@/lib/contract-salary"
@@ -69,7 +73,6 @@ const WORK_PHASE_PAYMENT_LABELS: Record<string, string> = {
 const CREDIT_STATUS_LABELS: Record<string, string> = { precise: "Præcis klausul", vague: "Upræcis klausul", role_only: "Kun arbejdsfunktion", conditional: "Betinget kreditering", absent: "Ingen klausul", unclear: "Kræver manuel kontrol" }
 
 const ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
-const BUCKET = "kontrakter"
 
 // ── Fuzzy matching ────────────────────────────────────────────
 const LEGAL_SUFFIXES = /\b(aps|a\/s|as|ivs|i\/s|fmba|smba|productions?|film|media|company|group|entertainment|studios?|international|denmark|dk)\b/g
@@ -159,9 +162,6 @@ function AdminValideringPageInner() {
 
     // Producer matching
     const [employers, setEmployers] = useState<{ id: string; name: string; dfi_company_id: number | null }[]>([])
-    const [rettighedshavere, setRettighedshavere] = useState<{ id: string; full_name: string; gender?: string | null }[]>([])
-    const [rhSuggestions, setRhSuggestions] = useState<{ id: string; name: string; score: number }[]>([])
-    const [selectedRhId, setSelectedRhId] = useState<string | null>(null)
     const [employerSuggestions, setEmployerSuggestions] = useState<{
         id: string | null; name: string; source: "db" | "dfi"; score: number; dfi_id?: number
     }[]>([])
@@ -206,7 +206,7 @@ function AdminValideringPageInner() {
             .then(({ data }: { data: Array<{ broadcaster: string | null; distribution_type: string | null }> | null }) => {
                 if (data?.length) setWorkDistributions((data as any[]).map(d => ({ broadcaster: d.broadcaster, distributionType: d.distribution_type })))
             })
-    }, [reviewingId, contracts]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [reviewingId, contracts])
 
     // Opret ny producent dialog
     const [showNewEmployer, setShowNewEmployer] = useState(false)
@@ -250,9 +250,6 @@ function AdminValideringPageInner() {
         const supabase = createClient()
         supabase.from("employers").select("id, name, dfi_company_id").order("name")
             .then(({ data }) => { if (data) setEmployers(data) })
-        supabase.from("rettighedshavere").select("id, full_name, gender").order("full_name")
-            .then(({ data }) => { if (data) setRettighedshavere(data) })
-
         // Hent overenskomster via server-rute (service-role omgår RLS på agreements-tabellen)
         fetch("/api/admin/agreements?dropdownList=1")
             .then(r => r.ok ? r.json() : null)
@@ -309,32 +306,6 @@ function AdminValideringPageInner() {
                 .finally(() => setSearchingDfi(false))
         }
     }, [formData.producerName, employers])
-
-    // Rettighedshaver-matching når rightsHolderName ændres
-    useEffect(() => {
-        const name = formData.rightsHolderName?.trim()
-        if (!name || name.length < 3) { setRhSuggestions([]); return }
-        const matches = rettighedshavere
-            .map(rh => ({ id: rh.id, name: rh.full_name, score: tokenOverlapScore(rh.full_name, name) }))
-            .filter(x => x.score >= 0.4)
-            .sort((a, b) => b.score - a.score)
-            .slice(0, 4)
-        setRhSuggestions(matches)
-        if (matches.length === 1 && matches[0].score >= 0.8) {
-            setSelectedRhId(matches[0].id)
-        }
-    }, [formData.rightsHolderName, rettighedshavere])
-
-    // Auto-udfyld gender fra rettighedshaverprofil når kobling sættes
-    useEffect(() => {
-        if (!selectedRhId) return
-        const rh = rettighedshavere.find(r => r.id === selectedRhId)
-        if (!rh?.gender) return
-        // Kun auto-udfyld hvis feltet ikke er manuelt redigeret
-        if (!brugerRedigerede.has("gender")) {
-            setField("gender", rh.gender)
-        }
-    }, [selectedRhId, rettighedshavere])
 
     // Moderselskab: søg DFI + vis eksisterende parent når employer vælges
     useEffect(() => {
@@ -398,9 +369,8 @@ function AdminValideringPageInner() {
         const mapped: ValidatingContract[] = await Promise.all(data.map(async (c: any) => {
             let signedPdfUrl: string | null = null
             if (c.pdf_url) {
-                const { data: sd, error: signErr } = await supabase.storage.from(BUCKET).createSignedUrl(c.pdf_url, 3600)
-                if (signErr) console.error("[validering] createSignedUrl fejl:", signErr.message, "path:", c.pdf_url)
-                signedPdfUrl = sd?.signedUrl ?? null
+                const signed = await getContractSignedUrl(c.pdf_url)
+                signedPdfUrl = signed.url
             }
             return {
                 ...c,
@@ -680,7 +650,6 @@ function AdminValideringPageInner() {
                     employerId: resolvedEmployerId ?? null,
                     contractType: contractType ?? null,
                     overenskomst: overenskomstVal ?? null,
-                    rightsHolderId: (selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id) ? selectedRhId : null,
                 }),
             }).then(async r => {
                 const json = await r.json().catch(() => ({}))
@@ -791,20 +760,6 @@ function AdminValideringPageInner() {
             isFreelanceContract:           !!ed.isFreelanceContract,
             collectiveAgreementByReference:!!ed.collectiveAgreementByReference,
         }
-    }
-
-    // Udfyld kun felter brugeren ikke selv har redigeret
-    const mergeWithAi = (ed: Record<string, any>) => {
-        const ai = buildFormFromAi(ed)
-        setFormData(prev => {
-            const next: typeof prev = { ...prev }
-            for (const key of Object.keys(ai) as (keyof typeof ai)[]) {
-                if (!brugerRedigerede.has(key)) {
-                    (next as any)[key] = ai[key]
-                }
-            }
-            return next
-        })
     }
 
     // Overskriv AI-felter — respektér stadig manuelt redigerede felter
@@ -1315,9 +1270,7 @@ setActiveField(fieldId)
                                                                 className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 flex items-center justify-between gap-2"
                                                                 onClick={() => { setField("producerName", s.name); setSelectedEmployerId(s.id); setEmployerSuggestions([]) }}>
                                                                 <span className="font-medium">{s.name}</span>
-                                                                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${s.source === "db" ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"}`}>
-                                                                    {s.source === "db" ? "DB" : "DFI"}
-                                                                </span>
+                                                                <SourcePictogram source={s.source} />
                                                             </button>
                                                         ))}
                                                     </div>
@@ -1356,7 +1309,7 @@ setActiveField(fieldId)
                                                 <button key={i} type="button" className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 flex items-center justify-between gap-2"
                                                     onClick={() => { if (s.id) { setSelectedParentId(s.id); setSelectedDfiParent(null) } else if (s.dfi_id) { setSelectedDfiParent({ id: s.dfi_id, name: s.name }); setSelectedParentId(null) } setParentSuggestions([]) }}>
                                                     <span className="font-medium">{s.name}</span>
-                                                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${s.source === "db" ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"}`}>{s.source === "db" ? "DB" : "DFI"}</span>
+                                                    <SourcePictogram source={s.source} />
                                                 </button>
                                             ))}
                                             <button type="button" className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 text-muted-foreground italic"
@@ -1379,28 +1332,12 @@ setActiveField(fieldId)
                                             <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
                                             <Input
                                                 value={String(formData.rightsHolderName ?? "")}
-                                                onChange={(e) => { setField("rightsHolderName", e.target.value); setSelectedRhId(null) }}
-                                                placeholder="Klipperens fulde navn..."
+                                                onChange={(e) => setField("rightsHolderName", e.target.value)}
+                                                placeholder="Klipperens navn som skrevet i kontrakten..."
                                             />
-                                            {selectedRhId && (
-                                                <div className="mt-1.5 flex items-center gap-2 text-xs text-green-700 font-medium">
-                                                    <span>✓ Koblet til rettighedshaver</span>
-                                                    <button type="button" className="underline text-muted-foreground" onClick={() => setSelectedRhId(null)}>Fjern</button>
-                                                </div>
-                                            )}
-                                            {!selectedRhId && rhSuggestions.length > 0 && (
-                                                <div className="mt-1.5 space-y-1">
-                                                    {rhSuggestions.map(s => (
-                                                        <button key={s.id} type="button" className="w-full text-left px-3 py-1.5 rounded border text-xs hover:bg-muted transition-colors"
-                                                            onClick={() => setSelectedRhId(s.id)}>
-                                                            {s.name} <span className="text-muted-foreground">({Math.round(s.score * 100)}% match)</span>
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            )}
-                                            {!selectedRhId && formData.rightsHolderName && rhSuggestions.length === 0 && (formData.rightsHolderName as string).length > 2 && (
-                                                <p className="mt-1 text-xs text-amber-600">Ikke fundet i rettighedshavere</p>
-                                            )}
+                                            <p className="mt-1 text-xs text-muted-foreground">
+                                                Feltet beskriver kontraktens tekst. Kontraktens ejer administreres på fanen Ejerskab i Rediger kontrakt.
+                                            </p>
                                             </F>
                                         )}
                                         <div className="h-full [&>div]:h-full">
@@ -1832,7 +1769,7 @@ setActiveField(fieldId)
                                             {/* Opsummering */}
                                             <div className="rounded-md border divide-y text-xs">
                                                 <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Producent</span><span className="font-medium">{formData.producerName || "—"}{selectedEmployerId && " ✓"}</span></div>
-                                                <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Klipper</span><span className="font-medium">{formData.rightsHolderName || "—"}{selectedRhId && " ✓"}</span></div>
+                                                <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Klipper</span><span className="font-medium">{formData.rightsHolderName || "—"}</span></div>
                                                 <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Produktionstype</span><span className="font-medium">{formData.productionType || "—"}</span></div>
                                                 <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Kontrakttype</span><span className="font-medium">{formData.contractType || "—"}</span></div>
                                                 <div className="flex justify-between px-3 py-2"><span className="text-muted-foreground">Overenskomst</span><span className="font-medium">{formData.overenskomst || "—"}</span></div>
@@ -1892,7 +1829,7 @@ setActiveField(fieldId)
                             <p className="text-sm text-muted-foreground">Ingen personoplysninger fundet med automatisk detektion.</p>
                         )}
                         <p className="text-xs text-muted-foreground border-t pt-3">
-                            Automatisk maskering er ikke 100% pålidelig. Brug "Rediger maskeret tekst" for at tjekke og tilføje yderligere maskeringer inden afsendelse.
+                            Automatisk maskering er ikke 100% pålidelig. Brug &quot;Rediger maskeret tekst&quot; for at tjekke og tilføje yderligere maskeringer inden afsendelse.
                         </p>
                     </div>
                     <DialogFooter className="flex-col sm:flex-row gap-2">
@@ -1946,13 +1883,13 @@ setActiveField(fieldId)
                                                     onClick={() => setNewEmpRelation(r => r?.id === m.id && r.role === "child" ? null : { role: "child", id: m.id, name: m.name })}
                                                     className={`w-full text-left text-[11px] rounded px-2.5 py-1.5 border transition-colors ${newEmpRelation?.id === m.id && newEmpRelation.role === "child" ? "bg-blue-100 text-blue-900 border-blue-400 font-medium" : "bg-blue-50 text-blue-800 border-blue-200 hover:bg-blue-100"}`}>
                                                     {newEmpRelation?.id === m.id && newEmpRelation.role === "child" ? "✓ Valgt — " : ""}
-                                                    "{newEmpName || "Ny"}" er underselskab af "{m.name}"
+                                                    &quot;{newEmpName || "Ny"}&quot; er underselskab af &quot;{m.name}&quot;
                                                 </button>
                                                 <button type="button"
                                                     onClick={() => setNewEmpRelation(r => r?.id === m.id && r.role === "parent" ? null : { role: "parent", id: m.id, name: m.name })}
                                                     className={`w-full text-left text-[11px] rounded px-2.5 py-1.5 border transition-colors ${newEmpRelation?.id === m.id && newEmpRelation.role === "parent" ? "bg-purple-100 text-purple-900 border-purple-400 font-medium" : "bg-purple-50 text-purple-800 border-purple-200 hover:bg-purple-100"}`}>
                                                     {newEmpRelation?.id === m.id && newEmpRelation.role === "parent" ? "✓ Valgt — " : ""}
-                                                    "{m.name}" er underselskab af "{newEmpName || "Ny"}"
+                                                    &quot;{m.name}&quot; er underselskab af &quot;{newEmpName || "Ny"}&quot;
                                                 </button>
                                             </div>
                                         </div>

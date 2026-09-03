@@ -7,17 +7,12 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { syncRetsinformation } from "@/scripts/sync-retsinformation"
-import { requireStaffModuleApi } from "@/lib/api-auth"
+import { requireCronOrAdminApi } from "@/lib/api-auth"
+import { USER_ADMIN_ROLES } from "@/lib/admin-roles"
 
 export async function POST(req: NextRequest) {
-    // Tillad cron-kald fra Vercel (Authorization header) og autentificerede admins
-    const authHeader = req.headers.get("authorization")
-    const isCron = authHeader === `Bearer ${process.env.CRON_SECRET}`
-
-    if (!isCron) {
-        const auth = await requireStaffModuleApi("organisation", "write")
-        if (!auth.ok) return auth.response
-    }
+    const auth = await requireCronOrAdminApi(req, USER_ADMIN_ROLES)
+    if (!auth.ok) return auth.response
 
     try {
         const result = await syncRetsinformation()
@@ -29,11 +24,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-    // Cron-kald fra Vercel
-    const authHeader = req.headers.get("authorization")
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-        return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
-    }
+    const auth = await requireCronOrAdminApi(req, USER_ADMIN_ROLES)
+    if (!auth.ok) return auth.response
+
     try {
         const result = await syncRetsinformation()
         return NextResponse.json(result)

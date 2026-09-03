@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { firstRelated } from "@/lib/supabase/relations"
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
 
@@ -94,12 +96,19 @@ export async function getSearchPublications(status?: SearchPublicationStatus): P
         const { data, error } = await q
         if (error) throw error
 
-        const publications: SearchPublication[] = (data ?? []).map((r: any) => ({
+        const publications: SearchPublication[] = (data ?? []).map((r) => ({
             ...r,
             withheld_amount: r.withheld_amount != null ? Number(r.withheld_amount) : null,
             fund_name: r.rights_funds?.name,
             period_label: r.rights_calculation_runs?.period_label,
         }))
+
+        await recordSensitiveFlow({
+            actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
+            action: "search", component: "admin.rights_holder_search_publications", entityType: "rights_holder_search_publication",
+            purposeCode: "rights_holder_identification", legalBasis: "gdpr_art_6_1_f",
+            dataCategories: ["rights_data", "identity_data"], counts: { results: publications.length, filtered: Boolean(status) },
+        })
 
         return { success: true, publications }
     } catch (err) {
@@ -216,7 +225,7 @@ export async function getInheritanceRelations(rights_holder_id?: string): Promis
 
         let q = db
             .from("inheritance_relations")
-            .select(`*, rettighedshavere ( full_name, member_number )`)
+            .select(`*, rettighedshavere ( full_name, org_affiliations ( member_no ) )`)
             .eq("org_id", caller.orgId)
             .order("created_at", { ascending: false })
 
@@ -226,12 +235,16 @@ export async function getInheritanceRelations(rights_holder_id?: string): Promis
         if (error) throw error
 
         // Returner aldrig krypteret CPR til klienten
-        const relations: InheritanceRelation[] = (data ?? []).map((r: any) => ({
-            ...r,
-            heir_cpr_encrypted: null,   // bevidst udeladt
-            rights_holder_name: r.rettighedshavere?.full_name,
-            member_number: r.rettighedshavere?.member_number,
-        }))
+        const relations: InheritanceRelation[] = (data ?? []).map((r) => {
+            const rh = firstRelated(r.rettighedshavere)
+            const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
+            return {
+                ...r,
+                heir_cpr_encrypted: null,   // bevidst udeladt
+                rights_holder_name: rh?.full_name,
+                member_number: aff?.member_no ?? null,
+            }
+        })
 
         return { success: true, relations }
     } catch (err) {

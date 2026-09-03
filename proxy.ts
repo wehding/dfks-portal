@@ -11,10 +11,21 @@ export async function proxy(req: NextRequest) {
     // Server-til-server jobs og webhooks sender normalt ingen Origin-header og
     // godkendes fortsat af deres egne secrets/signaturer i de enkelte ruter.
     if (pathname.startsWith("/api/") && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+        const fetchSite = req.headers.get("sec-fetch-site")
+        if (fetchSite && !["same-origin", "same-site"].includes(fetchSite)) {
+            return NextResponse.json({ error: "Ugyldig forespørgselskilde" }, { status: 403 })
+        }
         const origin = req.headers.get("origin")
         if (origin) {
             let allowed = false
-            try { allowed = new URL(origin).origin === req.nextUrl.origin } catch { allowed = false }
+            try {
+                const reqOrigin = new URL(origin).origin
+                const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim()
+                const expectedOrigin = configured ? new URL(configured).origin : req.nextUrl.origin
+                allowed = reqOrigin === expectedOrigin || reqOrigin === req.nextUrl.origin
+            } catch {
+                allowed = false
+            }
             if (!allowed) return NextResponse.json({ error: "Ugyldig forespørgselskilde" }, { status: 403 })
         }
     }

@@ -18,9 +18,11 @@ import { isRightBearingOnboardingRole } from "@/lib/onboarding-credit-role";
 import { upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
 import { isInternalWorkerSecret } from "@/lib/api-auth";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 // DFI org_id bruges ved import — DFKS default
 import { requireMemberContext } from "@/lib/org";
+import { isAllowedPortraitSource } from "@/lib/person-portrait";
 const MAX_DFI_POSTER_BYTES = 2 * 1024 * 1024;
 
 type DfiCredit = {
@@ -302,7 +304,9 @@ export async function ensureOnboardingEpisodes(params: {
   return episodeRows ?? [];
 }
 
-async function fetchDFI(endpoint: string) {
+export type DfiRequestOptions = { timeoutMs?: number };
+
+async function fetchDFI(endpoint: string, options: DfiRequestOptions = {}) {
   const username = process.env.DFI_API_USERNAME;
   const password = process.env.DFI_API_PASSWORD;
   if (!username || !password) {
@@ -312,7 +316,8 @@ async function fetchDFI(endpoint: string) {
   const url = `https://data.dfi.dk${endpoint}`;
   const authHeader = "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(url, {
@@ -334,15 +339,19 @@ async function fetchDFI(endpoint: string) {
   } catch (error: unknown) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === "AbortError") {
-      return { success: false, error: "Tidsafbrydelse: DFI API svarede ikke inden for 15 sekunder." };
+      return { success: false, timeout: true, error: `Tidsafbrydelse: DFI API svarede ikke inden for ${timeoutMs} ms.` };
     }
     return { success: false, error: error instanceof Error ? error.message : "Netværksfejl ved DFI API-kald" };
   }
 }
 
 export async function downloadDfiPosterDataUrl(metadata: unknown) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
   const posterUrl = extractDfiPosterUrl(metadata);
-  if (!posterUrl) return null;
+  if (!posterUrl || !isAllowedPortraitSource(posterUrl)) return null;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -375,7 +384,8 @@ export async function downloadDfiPosterDataUrl(metadata: unknown) {
 export async function searchDFIPerson(
   firstName?: string,
   lastName?: string,
-  fullName?: string
+  fullName?: string,
+  options: DfiRequestOptions = {}
 ) {
   let query = "";
   if (fullName?.trim()) {
@@ -395,7 +405,7 @@ export async function searchDFIPerson(
     return { success: false, error: "Angiv fornavn og efternavn eller fuldt navn." };
   }
 
-  const result = await fetchDFI(`/v1/person${query}`);
+  const result = await fetchDFI(`/v1/person${query}`, options);
   if (!result.success || !result.data) {
     return { success: false, error: result.error || "Ingen data fra DFI." };
   }
@@ -403,8 +413,8 @@ export async function searchDFIPerson(
   return { success: true, results: result.data.PersonList || [] };
 }
 
-export async function getDFIPersonCredits(personId: number) {
-  const result = await fetchDFI(`/v1/person/${personId}`);
+export async function getDFIPersonCredits(personId: number, options: DfiRequestOptions = {}) {
+  const result = await fetchDFI(`/v1/person/${personId}`, options);
   if (!result.success || !result.data) {
     return { success: false, error: result.error || "Kunne ikke hente person-detaljer." };
   }
@@ -425,7 +435,7 @@ export async function getDFIPersonCredits(personId: number) {
   };
 }
 
-export async function searchDFIFilms(title: string) {
+export async function searchDFIFilms(title: string, options: DfiRequestOptions = {}) {
   if (!title?.trim()) return { success: false, error: "Angiv en søgetitel." };
 
   const cleanedTitle = title.trim().replace(/^["'»«'"'""]/, "").replace(/["'»«'"'""]$/, "").trim();
@@ -440,7 +450,7 @@ export async function searchDFIFilms(title: string) {
 
   const results = await Promise.all(
     Array.from(new Set(searchQueries.filter(Boolean))).map(searchQuery =>
-      fetchDFI(`/v1/film?Title=${encodeURIComponent(searchQuery)}`)
+      fetchDFI(`/v1/film?Title=${encodeURIComponent(searchQuery)}`, options)
     )
   );
 
@@ -483,8 +493,8 @@ export async function searchDFIFilms(title: string) {
   return { success: true, results: filmList };
 }
 
-export async function getDFIFilmDetails(filmId: number) {
-  const result = await fetchDFI(`/v1/film/${filmId}`);
+export async function getDFIFilmDetails(filmId: number, options: DfiRequestOptions = {}) {
+  const result = await fetchDFI(`/v1/film/${filmId}`, options);
   if (!result.success || !result.data) {
     return { success: false, error: result.error || "Kunne ikke hente filmdetaljer." };
   }
@@ -881,7 +891,7 @@ function isDfiSeriesParent(c: any): boolean {
   return !hasParent && !hasEpisodeInfo;
 }
 
-export async function normalizeDfiSeriesResults(credits: DfiCredit[]) {
+export async function normalizeDfiSeriesResults(credits: DfiCredit[], options: DfiRequestOptions = {}) {
   const parents = new Map<string, DfiCredit>();
   const parentRequests = new Map<string, Promise<DfiCredit | null>>();
   const seriesTitle = (title: string | null | undefined) => cleanDfiTitle(title)
@@ -902,7 +912,7 @@ export async function normalizeDfiSeriesResults(credits: DfiCredit[]) {
   const fetchParent = (id: string) => {
     const existing = parentRequests.get(id);
     if (existing) return existing;
-    const request = fetchDFI(`/v1/film/${id}`).then(result => result.success && result.data ? result.data as DfiCredit : null);
+    const request = fetchDFI(`/v1/film/${id}`, options).then(result => result.success && result.data ? result.data as DfiCredit : null);
     parentRequests.set(id, request);
     return request;
   };
@@ -1566,6 +1576,14 @@ export async function searchNewCreditsForCurrentMember(fullName: string) {
 
     if (isAssigned) skippedAlreadyAssignedCount += 1;
     return !isAssigned;
+  });
+
+  await recordSensitiveFlow({
+    actor: { userId: context.userId, orgId: context.orgId, role: "member", source: "portal" }, action: "search",
+    component: "portal.external_work_credit_search", entityType: "external_work_credit", targetMemberUuid: context.rightsHolderId,
+    purposeCode: "member_work_import", legalBasis: "gdpr_art_6_1_b",
+    dataCategories: ["work_data", "professional_data"],
+    counts: { results: credits.length, skippedAlreadyAssigned: skippedAlreadyAssignedCount },
   });
 
   return {

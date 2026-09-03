@@ -5,11 +5,16 @@ import { after, NextRequest, NextResponse } from "next/server";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { getInternalWorkerSecret, requireInternalSecretApi } from "@/lib/api-auth";
+import { createServiceClient } from "@/lib/supabase/service";
 import {
   processPendingContractJobs,
   processSpecificContractJob,
   runDirectContractJob,
 } from "@/lib/server/contract-import-processor";
+import {
+  processClaimedContractUploadIntentCleanup,
+  type ClaimedContractUploadIntentCleanup,
+} from "@/lib/server/contract-upload-intent-cleanup";
 
 function hasCronSecret(request: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -37,8 +42,53 @@ async function triggerNextWorkerRun() {
   }
 }
 
+async function cleanupContractUploadIntents(
+  db: ReturnType<typeof createServiceClient>,
+  cleanupKind: "expired" | "purge",
+) {
+  const claim = await db.rpc("claim_contract_upload_intent_cleanup", {
+    p_cleanup_kind: cleanupKind,
+    p_limit: 100,
+    p_claim_ttl_seconds: 300,
+  });
+  if (claim.error) {
+    console.warn("[contract-import] Uploadoprydning kunne ikke claime kandidater");
+    return;
+  }
+
+  const claims = Array.isArray(claim.data)
+    ? claim.data as ClaimedContractUploadIntentCleanup[]
+    : [];
+  const result = await processClaimedContractUploadIntentCleanup({
+    claims,
+    removeStorageObject: async path => {
+      const removal = await db.storage.from("kontrakter").remove([path]);
+      return { error: removal.error };
+    },
+    finishClaim: async (claimedIntent, success) => {
+      const completion = await db.rpc("finish_contract_upload_intent_cleanup", {
+        p_intent_id: claimedIntent.intent_id,
+        p_cleanup_claim_token: claimedIntent.cleanup_claim_token,
+        p_cleanup_kind: claimedIntent.cleanup_kind,
+        p_success: success,
+      });
+      return { completed: completion.data === true, error: completion.error };
+    },
+  });
+  if (result.storageRemovalFailed || result.completionFailed || result.invalidClaims) {
+    console.warn("[contract-import] Uploadoprydning efterlod kandidater til sikkert retry", {
+      storageRemovalFailed: result.storageRemovalFailed,
+      completionFailed: result.completionFailed,
+      invalidClaims: result.invalidClaims,
+    });
+  }
+}
+
 async function drainAndContinue(orgId: string | null) {
   try {
+    const db = createServiceClient({ audit: { source: "cron", mode: "summary" } });
+    await cleanupContractUploadIntents(db, "expired");
+    await cleanupContractUploadIntents(db, "purge");
     const result = await processPendingContractJobs(orgId);
     if (result.hasMore) await triggerNextWorkerRun();
   } catch (error) {

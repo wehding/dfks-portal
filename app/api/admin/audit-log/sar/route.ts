@@ -23,7 +23,7 @@ async function callerForSar() {
   return { db, caller };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const { caller } = await callerForSar();
   if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
   const service = createServiceClient();
@@ -61,6 +61,18 @@ export async function GET() {
         orgName: organisationRelation?.name ?? organisationNames.get(affiliation.org_id) ?? "Ukendt organisation",
       };
     });
+  });
+  await recordAuditEvent({
+    context: auditRequestContext(request, caller, "admin", "admin.audit.sar-list"),
+    action: "security_review",
+    entityType: "subject_access_requests",
+    entityLabel: "Indsigtsanmodninger vist",
+    targetMemberUuids: memberIds,
+    purposeCode: "gdpr_article_15_administration",
+    legalBasis: "GDPR Art. 15 og 24",
+    dataCategories: ["audit_metadata", "identity_data"],
+    orgIds: caller.role === "superadmin" ? organisationIds : [caller.orgId],
+    metadata: { resultCount: requests?.length ?? 0 },
   });
   return NextResponse.json({
     items: (requests ?? []).map(item => ({

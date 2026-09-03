@@ -1,6 +1,7 @@
 import { fetchAdminContractsPage } from "@/app/actions/member-contracts";
 import ContractArchiveClient from "./ContractArchiveClient";
 import type { AdminContractsPageParams } from "@/app/actions/member-contracts";
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
 
 export const dynamic = "force-dynamic";
 
@@ -16,11 +17,26 @@ export default async function AdminKontrakterPage({ searchParams }: { searchPara
     search: value(query.q, ""),
     status: value(query.status, "all"),
     type: value(query.type, "all"),
+    ownership: value(query.ownership, "all") as AdminContractsPageParams["ownership"],
     sortKey: value(query.sort, "status") as AdminContractsPageParams["sortKey"],
     sortDir: value(query.direction, "asc") === "desc" ? "desc" : "asc",
     includeLookups: false,
     includeSummary: true,
   };
-  const initialResult = await fetchAdminContractsPage(initialQuery);
-  return <ContractArchiveClient initialResult={initialResult} initialQuery={initialQuery} />;
+  const access = await getRequestAppAccessContext();
+  const canManageOwnership = Boolean(
+    access?.canUseAdmin
+    && access.modules?.contract_ownership?.read,
+  );
+  const requestedTab = value(query.tab, "arkiv");
+  const supportedNonArchiveTab = requestedTab === "valideringskoe"
+    || requestedTab === "upload";
+  const initialResult = supportedNonArchiveTab
+    ? undefined
+    : await fetchAdminContractsPage(initialQuery);
+  return <ContractArchiveClient
+    initialResult={initialResult}
+    initialQuery={initialQuery}
+    canManageOwnership={canManageOwnership}
+  />;
 }

@@ -4,7 +4,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDB, getTMDBWorkDetails, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
+import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDBWithStatus, getTMDBWorkDetails, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { getDFIFilmDetails, normalizeDfiSeriesResults, searchDFIFilms } from "@/app/actions/dfi";
 import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
@@ -12,7 +12,6 @@ import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 import { buildCompleteEpisodeOptions, episodeOptionsFromLocalChildren, isSeriesType, mergeEpisodeOptionsByPriority, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
 import { isExactManualWorkMatch, manualWorkDuplicateDecision } from "@/lib/manual-work";
-import { groupWorksBySeason, stripSeasonEpisodes, type SeasonGroupingRow } from "@/lib/work-season-groups";
 import { contractCoversEpisode } from "@/lib/contract-work-scope";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncWorkProducerRelations } from "@/lib/server/production-company-relations";
@@ -25,8 +24,13 @@ import { MEMBER_SERIES_PARENT_SELECT } from "@/lib/series-work-ownership";
 import { registerShareSuggestions } from "@/lib/server/work-share-cases";
 import { normalizeSharePercent } from "@/lib/work-share-distribution";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
+import { isEligibleWorkShareRole } from "@/lib/work-share-reconciliation";
 import { ensureMemberCollaborationReviews, markCollaborationReviewsCoeditorsReported, resolveCollaborationReviewWorkIds } from "@/lib/server/work-collaboration-reviews";
 import { collaborationReviewStatusForSoloClaim } from "@/lib/work-collaboration-review";
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
+import { INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS, runExternalLookup, type ExternalLookupStatus } from "@/lib/external-lookup";
+import { loadMemberWorkOverview, type MemberWorkOverviewParams } from "@/lib/server/member-work-overview";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 import { requireMemberContext } from "@/lib/org";
 
@@ -152,7 +156,7 @@ async function findDfiSeriesByTitle(title: string, year: number | null | undefin
   return null;
 }
 
-async function resolveExternalSeriesEpisodesForTitle(params: {
+export async function resolveExternalSeriesEpisodesForTitle(params: {
   title: string;
   year?: number | null;
   dfiId?: string | null;
@@ -236,8 +240,9 @@ async function currentOrgId(db: ReturnType<typeof createServiceClient>, userId: 
 }
 
 async function ensureOwnRightsHolder(db: ReturnType<typeof createServiceClient>, rightsHolderId: string) {
-  const user = await currentUser();
-  const context = await requireMemberContext(db, user.id);
+  const context = await getRequestAppAccessContext();
+  if (!context) throw new Error("Du skal være logget ind.");
+  const user = { id: context.userId };
   if (context.rightsHolderId !== rightsHolderId) throw new Error("Du er ikke rettighedshaver i den aktive organisation.");
   const { data, error } = await db
     .from("rettighedshavere")
@@ -249,205 +254,14 @@ async function ensureOwnRightsHolder(db: ReturnType<typeof createServiceClient>,
   return { user, rightsHolder: data, context };
 }
 
-type MemberOverviewAssignmentRow = {
-  id: string;
-  role: string | null;
-  contract_id: string | null;
-  episode_id: string | null;
-  created_at: string | null;
-  works: {
-    id: string;
-    title: string;
-    type: string;
-    year: number | null;
-    duration_minutes: number | null;
-    episode_count: number | null;
-    parent_work_id: string | null;
-    season_number: number | null;
-    episode_number: number | null;
-    status: string | null;
-    poster_url: string | null;
-    description: string | null;
-  } | null;
-};
-
-export async function fetchMemberWorkOverview(params: {
-  rightsHolderId: string;
-  page?: number;
-  pageSize?: number;
-  search?: string;
-  workType?: string;
-  status?: string;
-  sortKey?: string;
-  sortDir?: "asc" | "desc";
-}) {
+export async function fetchMemberWorkOverview(params: MemberWorkOverviewParams & { rightsHolderId: string }) {
   const db = createServiceClient();
   const { rightsHolder, context } = await ensureOwnRightsHolder(db, params.rightsHolderId);
-  const page = Math.max(1, Math.floor(params.page ?? 1));
-  const pageSize = [20, 50, 100].includes(params.pageSize ?? 20) ? params.pageSize ?? 20 : 20;
-  const { data: pageKeys, error: pageError } = await db.rpc("list_member_work_page", {
-    p_org_id: context.orgId,
-    p_rights_holder_id: rightsHolder.id,
-    p_search: params.search?.trim() ?? "",
-    p_work_type: params.workType ?? "all",
-    p_status: params.status ?? "all",
-    p_sort: params.sortKey ?? "date",
-    p_direction: params.sortDir ?? "desc",
-    p_page: page,
-    p_page_size: pageSize,
-  });
-  if (pageError) return { success: false, error: pageError.message, items: [] };
-  const keyRows = (pageKeys ?? []) as Array<{
-    logical_key: string | null;
-    work_ids: string[] | null;
-    assignment_ids: string[] | null;
-    scope_ids: string[] | null;
-    filtered_count: number | string;
-    total_count: number | string;
-  }>;
-  const filteredCount = Number(keyRows[0]?.filtered_count ?? 0);
-  const totalCount = Number(keyRows[0]?.total_count ?? 0);
-  const logicalKeys = new Set(keyRows.map(row => row.logical_key).filter((value): value is string => Boolean(value)));
-  const assignmentIds = [...new Set(keyRows.flatMap(row => row.assignment_ids ?? []))];
-  const scopeIds = [...new Set(keyRows.flatMap(row => row.scope_ids ?? []))];
-  if (!logicalKeys.size) {
-    return { success: true, items: [], page, pageSize, filteredCount, totalCount, hasNextPage: false };
-  }
-  const { data, error } = await db
-    .from("work_assignments")
-    .select("id, role, contract_id, episode_id, created_at, works!inner(id, title, type, year, duration_minutes, episode_count, parent_work_id, season_number, episode_number, status, poster_url, description)")
-    .eq("org_id", context.orgId)
-    .eq("rights_holder_id", rightsHolder.id)
-    .in("id", assignmentIds)
-    .order("created_at", { ascending: false });
-  if (error) return { success: false, error: error.message, items: [] };
-
-  const assignments = (data ?? []) as unknown as MemberOverviewAssignmentRow[];
-  const { data: episodeScopes, error: scopesError } = await db
-    .from("member_series_episode_scopes")
-    .select("id,org_id,rights_holder_id,series_work_id,season_number,status,episode_numbers,covers_whole_season,source,confirmed_at")
-    .eq("org_id", context.orgId)
-    .eq("rights_holder_id", rightsHolder.id)
-    .in("id", scopeIds.length ? scopeIds : ["00000000-0000-0000-0000-000000000000"]);
-  if (scopesError) return { success: false, error: scopesError.message, items: [] };
-  const scopes = episodeScopes ?? [];
-  const workIds = assignments.map(item => item.works?.id).filter((id): id is string => Boolean(id));
-  const parentIds = [...new Set([
-    ...assignments.map(item => item.works?.parent_work_id).filter((id): id is string => Boolean(id)),
-    ...scopes.map(scope => scope.series_work_id),
-  ])];
-
-  const contractWorkIds = [...new Set([...workIds, ...parentIds])];
-  const [parentsResult, contractsResult, requestsResult, unreadResult] = await Promise.all([
-    parentIds.length
-      ? db.from("works").select("id,title,type,year,poster_url").in("id", parentIds)
-      : Promise.resolve({ data: [], error: null }),
-    contractWorkIds.length
-      ? db.from("contracts").select("id,work_id,season_number,episode_numbers").eq("org_id", context.orgId).eq("rights_holder_id", rightsHolder.id).in("work_id", contractWorkIds)
-      : Promise.resolve({ data: [], error: null }),
-    workIds.length
-      ? db.from("work_change_requests").select("id,work_id,status").eq("org_id", context.orgId).eq("requested_by_rights_holder_id", rightsHolder.id).in("work_id", workIds)
-      : Promise.resolve({ data: [], error: null }),
-    workIds.length
-      ? db.from("work_change_request_comments")
-          .select("id,work_change_requests!inner(work_id)")
-          .eq("author_role", "admin")
-          .is("member_read_at", null)
-          .eq("work_change_requests.org_id", context.orgId)
-          .eq("work_change_requests.requested_by_rights_holder_id", rightsHolder.id)
-          .in("work_change_requests.work_id", workIds)
-      : Promise.resolve({ data: [], error: null }),
-  ]);
-  const overviewError = parentsResult.error ?? contractsResult.error ?? requestsResult.error ?? unreadResult.error;
-  if (overviewError) return { success: false, error: overviewError.message, items: [] };
-
-  const parentMap = new Map((parentsResult.data ?? []).map(parent => [parent.id, parent]));
-  const contracts = contractsResult.data ?? [];
-  const pendingCounts = new Map<string, number>();
-  for (const request of requestsResult.data ?? []) {
-    if (!request.work_id || request.status !== "pending") continue;
-    pendingCounts.set(request.work_id, (pendingCounts.get(request.work_id) ?? 0) + 1);
-  }
-  const unreadCounts = new Map<string, number>();
-  for (const comment of unreadResult.data ?? []) {
-    const relation = comment.work_change_requests as unknown as { work_id?: string | null } | Array<{ work_id?: string | null }> | null;
-    const workId = Array.isArray(relation) ? relation[0]?.work_id : relation?.work_id;
-    if (!workId) continue;
-    unreadCounts.set(workId, (unreadCounts.get(workId) ?? 0) + 1);
-  }
-
-  const rows = assignments.flatMap(assignment => {
-    const work = assignment.works;
-    if (!work) return [];
-    return [{
-      ...work,
-      assignment_id: assignment.id,
-      role: assignment.role,
-      created_at: assignment.created_at,
-      contract_count: contracts.some(contract => contractCoversEpisode(contract, work)) ? 1 : 0,
-      pending_count: pendingCounts.get(work.id) ?? 0,
-      unread_count: unreadCounts.get(work.id) ?? 0,
-      parent: work.parent_work_id ? parentMap.get(work.parent_work_id) ?? null : null,
-      assignment,
-    } satisfies SeasonGroupingRow & { assignment: MemberOverviewAssignmentRow }];
-  });
-
-  const scopeBySeason = new Map(scopes.map(scope => [`${scope.series_work_id}:${scope.season_number}`, scope]));
-  const scopedSeriesIds = new Set(scopes.map(scope => scope.series_work_id));
-  const groupedItems = groupWorksBySeason(rows).filter(group => group.kind === "season" || !scopedSeriesIds.has(group.work.id)).map(group => {
-    if (group.kind === "season") {
-      const scope = scopeBySeason.get(`${group.parentWorkId}:${group.seasonNumber}`);
-      return {
-        ...stripSeasonEpisodes(group),
-        episodeSelectionStatus: scope?.status ?? "confirmed",
-        episodeScopeId: scope?.id ?? null,
-        coversWholeSeason: Boolean(scope?.covers_whole_season),
-      };
-    }
-    return {
-      ...group,
-      contractCount: group.work.contract_count ?? 0,
-      pendingCount: group.work.pending_count ?? 0,
-      unreadCount: group.work.unread_count ?? 0,
-    };
-  });
-  const existingSeasonKeys = new Set(groupedItems.filter(item => item.kind === "season").map(item => `${item.parentWorkId}:${item.seasonNumber}`));
-  const pendingSeasonItems = scopes.flatMap(scope => {
-    const key = `${scope.series_work_id}:${scope.season_number}`;
-    if (existingSeasonKeys.has(key)) return [];
-    const parent = parentMap.get(scope.series_work_id);
-    const parentAssignment = assignments.find(item => item.works?.id === scope.series_work_id);
-    if (!parent || !parentAssignment) return [];
-    return [{
-      kind: "season" as const,
-      key: `season:${key}`,
-      parentWorkId: scope.series_work_id,
-      seasonNumber: scope.season_number,
-      title: parent.title,
-      type: parent.type ?? parentAssignment.works?.type ?? "tv-serie",
-      year: parent.year,
-      posterUrl: parent.poster_url,
-      episodeCount: scope.episode_numbers.length,
-      workIds: [],
-      assignmentIds: [parentAssignment.id],
-      contractCount: contracts.filter(contract => contract.work_id === scope.series_work_id && contract.season_number === scope.season_number).length,
-      pendingCount: 0,
-      unreadCount: 0,
-      roleSummary: parentAssignment.role,
-      createdAt: parentAssignment.created_at,
-      episodeSelectionStatus: scope.status,
-      episodeScopeId: scope.id,
-      coversWholeSeason: scope.covers_whole_season,
-    }];
-  });
-  const items = [...groupedItems, ...pendingSeasonItems]
-    .filter(item => logicalKeys.has(item.kind === "season" ? item.key : `work:${item.work.id}`))
-    .sort((left, right) => {
-      const leftKey = left.kind === "season" ? left.key : `work:${left.work.id}`;
-      const rightKey = right.kind === "season" ? right.key : `work:${right.work.id}`;
-      return [...logicalKeys].indexOf(leftKey) - [...logicalKeys].indexOf(rightKey);
-    });
-  return { success: true, items, page, pageSize, filteredCount, totalCount, hasNextPage: (page - 1) * pageSize + items.length < filteredCount };
+  return loadMemberWorkOverview({
+    orgId: context.orgId,
+    rightsHolderId: rightsHolder.id,
+    userId: rightsHolder.user_id,
+  }, params);
 }
 
 export async function fetchMemberSeasonEpisodes(params: { rightsHolderId: string; parentWorkId: string; seasonNumber: number }) {
@@ -1799,9 +1613,15 @@ export type UnifiedSearchWorkResult = {
   raw_tmdb?: any;
 };
 
-export async function searchWorksUnified(query: string, options: { preferLocalOnly?: boolean } = {}) {
+export type UnifiedWorkSearchResponse = {
+  success: true;
+  results: UnifiedSearchWorkResult[];
+  externalLookup: Record<"dfi" | "tmdb", ExternalLookupStatus>;
+};
+
+export async function searchWorksUnified(query: string, options: { preferLocalOnly?: boolean } = {}): Promise<UnifiedWorkSearchResponse> {
   const q = query.trim();
-  if (!q) return { success: true, results: [] };
+  if (!q) return { success: true, results: [], externalLookup: { dfi: "success", tmdb: "success" } };
 
   const db = createServiceClient();
   const user = await currentUser();
@@ -1917,17 +1737,30 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
   if (options.preferLocalOnly && results.length > 0) {
     results.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
-    return { success: true, results };
+    return { success: true, results, externalLookup: { dfi: "success", tmdb: "success" } };
   }
 
-  // Fetch in parallel: DFI, TMDB
-  const [dfiRes, tmdbRes] = await Promise.all([
-    searchDFIFilms(q).catch(() => ({ success: false, results: [] })),
-    searchTMDB(q).catch(() => []),
+  // Hele kildearbejdet har én kort interaktiv deadline. Det omfatter også
+  // DFI's serie-normalisering, som ellers kan hente flere forældreværker.
+  const [dfiLookup, tmdbLookup] = await Promise.all([
+    runExternalLookup("dfi", async () => {
+      const response = await searchDFIFilms(q, { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS });
+      if (!response.success && response.error !== "Ingen film fundet.") throw new Error(response.error ?? "DFI-opslag fejlede");
+      return normalizeDfiSeriesResults((response.success ? response.results ?? [] : []) as any[], { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS });
+    }),
+    runExternalLookup("tmdb", async () => {
+      const response = await searchTMDBWithStatus(q, { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS, retry: false });
+      if (!response.success) throw new Error(response.error);
+      return response.results;
+    }),
   ]);
 
-  const dfiFilms = await normalizeDfiSeriesResults((dfiRes.success ? dfiRes.results ?? [] : []) as any[]);
-  const tmdbItems = (Array.isArray(tmdbRes) ? tmdbRes : []) as any[];
+  const dfiFilms = dfiLookup.status === "success" ? dfiLookup.value : [];
+  const tmdbItems = (tmdbLookup.status === "success" ? tmdbLookup.value : []) as any[];
+  const externalLookup: Record<"dfi" | "tmdb", ExternalLookupStatus> = {
+    dfi: dfiLookup.status,
+    tmdb: tmdbLookup.status,
+  };
 
   // 2. Merge DFI results
   dfiFilms.forEach((film: any) => {
@@ -2017,7 +1850,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
   });
 
   results.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
-  return { success: true, results };
+  return { success: true, results, externalLookup };
 }
 
 export async function searchRightsHoldersForMember(query: string) {
@@ -2287,6 +2120,23 @@ export async function updateMemberCoEditors(params: {
 
   const memberRole = cleanText(params.memberRole);
   const selfSharePercent = normalizeSharePercent(params.selfSharePercent);
+  if (params.completeReview !== false && selfSharePercent === null) {
+    const { data: existingCoEditors, error: existingCoEditorsError } = await db.from("work_assignments")
+      .select("role")
+      .eq("org_id", orgId)
+      .in("work_id", targetWorkIds)
+      .neq("rights_holder_id", ownHolder.id)
+      .not("rights_holder_id", "is", null);
+    if (existingCoEditorsError) return { success: false, error: existingCoEditorsError.message };
+    const addsCoEditor = params.changes.some(change =>
+      change.action === "add"
+      && Boolean(change.rightsHolderId || cleanText(change.name))
+      && isEligibleWorkShareRole(change.role),
+    );
+    if (addsCoEditor || (existingCoEditors ?? []).some(assignment => isEligibleWorkShareRole(assignment.role))) {
+      return { success: false, error: "Angiv din egen arbejdsandel, før medklippergennemgangen afsluttes." };
+    }
+  }
   const ownUpdate: Record<string, string | number | null> = {};
   if (memberRole) ownUpdate.role = normalizeWorkEditorRole(memberRole);
   if (selfSharePercent !== null) ownUpdate.share_percent = selfSharePercent;
@@ -2370,22 +2220,49 @@ export async function updateMemberCoEditors(params: {
       return { success: false, error: "Indtast medklipperens navn." };
     }
   }
-  if (pendingAdminSuggestions.length > 0) {
-    if (selfSharePercent === null) {
-      return { success: false, error: "Angiv din egen arbejdsandel, før en ukendt medklipper sendes til kontrol hos DFKS." };
+  let linkedRightsHolderIds: string[] = [];
+  if (params.completeReview !== false) {
+    const { data: linkedCoeditorAssignments, error: linkedCoeditorError } = await db.from("work_assignments")
+      .select("rights_holder_id,role,rettighedshavere(full_name)")
+      .eq("org_id", orgId)
+      .in("work_id", targetWorkIds)
+      .neq("rights_holder_id", ownHolder.id)
+      .not("rights_holder_id", "is", null);
+    if (linkedCoeditorError) return { success: false, error: linkedCoeditorError.message };
+    const linkedSuggestions = new Map<string, { name: string; role: string; rightsHolderId: string }>();
+    for (const assignment of linkedCoeditorAssignments ?? []) {
+      if (!assignment.rights_holder_id || !isEligibleWorkShareRole(assignment.role)) continue;
+      const relation = assignment.rettighedshavere as unknown;
+      const holder = Array.isArray(relation)
+        ? relation[0] as { full_name?: string | null } | undefined
+        : relation as { full_name?: string | null } | null;
+      const name = cleanText(holder?.full_name);
+      if (!name || linkedSuggestions.has(assignment.rights_holder_id)) continue;
+      linkedSuggestions.set(assignment.rights_holder_id, {
+        name,
+        role: normalizeWorkEditorRole(assignment.role),
+        rightsHolderId: assignment.rights_holder_id,
+      });
     }
-    await registerShareSuggestions(db, {
-      orgId,
-      workId: params.editScope === "season" ? work.parent_work_id ?? work.id : work.id,
-      seasonNumber: params.editScope === "season" ? params.seasonNumber ?? work.season_number : null,
-      episodeNumber: params.editScope === "episode" ? work.episode_number : null,
-      episodeNumbers: params.editScope === "season" ? params.episodeNumbers ?? [] : [],
-      actorUserId: user.id,
-      actorRightsHolderId: ownHolder.id,
-      actorRole: memberRole ?? ownAssignments?.[0]?.role ?? "Klipper",
-      actorPercent: selfSharePercent,
-      suggestions: pendingAdminSuggestions,
-    });
+    linkedRightsHolderIds = [...linkedSuggestions.keys()];
+    const shareSuggestions = [...linkedSuggestions.values(), ...pendingAdminSuggestions];
+    if (shareSuggestions.length > 0) {
+      if (selfSharePercent === null) {
+        return { success: false, error: "Angiv din egen arbejdsandel, før medklippergennemgangen afsluttes." };
+      }
+      await registerShareSuggestions(db, {
+        orgId,
+        workId: params.editScope === "season" ? work.parent_work_id ?? work.id : work.id,
+        seasonNumber: params.editScope === "season" ? params.seasonNumber ?? work.season_number : null,
+        episodeNumber: params.editScope === "episode" ? work.episode_number : null,
+        episodeNumbers: params.editScope === "season" ? params.episodeNumbers ?? [] : [],
+        actorUserId: user.id,
+        actorRightsHolderId: ownHolder.id,
+        actorRole: memberRole ?? ownAssignments?.[0]?.role ?? "Klipper",
+        actorPercent: selfSharePercent,
+        suggestions: shareSuggestions,
+      });
+    }
   }
   if (params.completeReview !== false && (params.changes.length > 0 || selfSharePercent !== null)) {
     await markCollaborationReviewsCoeditorsReported(db, {
@@ -2397,6 +2274,23 @@ export async function updateMemberCoEditors(params: {
       episodeNumbers: params.editScope === "season" ? params.episodeNumbers ?? [] : null,
     });
   }
+  await recordSensitiveFlow({
+    actor: { userId: user.id, orgId, role: "member", source: "portal" },
+    action: "update",
+    component: "portal.member_work_collaboration",
+    entityType: "work_share_case",
+    entityId: params.workId,
+    targetMemberUuid: ownHolder.id,
+    targetMemberUuids: [ownHolder.id, ...linkedRightsHolderIds],
+    purposeCode: "work_rights_distribution",
+    legalBasis: "gdpr_art_6_1_b",
+    dataCategories: ["work_data", "rights_data"],
+    counts: {
+      affected_works: targetWorkIds.length,
+      linked_coeditors: linkedRightsHolderIds.length,
+      unmatched_coeditors: pendingAdminSuggestions.length,
+    },
+  });
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
   return { success: true, requiresAdminReview: pendingAdminSuggestions.length };

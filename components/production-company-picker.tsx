@@ -31,12 +31,14 @@ type Props = {
   suggestedNames?: string[];
   autoSelectHighConfidence?: boolean;
   canManageRegistry?: boolean;
+  hideLabel?: boolean;
+  compact?: boolean;
 };
 
-export function ProductionCompanyPicker({ value, onChange, disabled = false, label, suggestedName = "", suggestedNames = [], autoSelectHighConfidence = false, canManageRegistry = false }: Props) {
+export function ProductionCompanyPicker({ value, onChange, disabled = false, label, suggestedName = "", suggestedNames = [], autoSelectHighConfidence = false, canManageRegistry = false, hideLabel = false, compact = false }: Props) {
   const { locale } = useI18n();
   const da = locale === "da";
-  const [query, setQuery] = useState(suggestedName);
+  const [query, setQuery] = useState(compact ? "" : suggestedName);
   const [options, setOptions] = useState<ProductionCompanyOption[]>([]);
   const [cvrOptions, setCvrOptions] = useState<CvrSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -196,14 +198,14 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
   }
 
   const showResults = Boolean(query.trim() || loading);
-  return <div className="min-w-0 space-y-2">
-    <Label>{label ?? (da ? "Producent" : "Producer")}</Label>
-    {value.length > 0 && <div className="space-y-2">
-      {value.map(selection => <div key={selectionKey(selection)} className="flex items-start gap-2 rounded-md border bg-muted/20 p-2 text-sm">
+  return <div className={`min-w-0 ${compact ? "space-y-1" : "space-y-2"}`}>
+    {!hideLabel && <Label>{label ?? (da ? "Producent" : "Producer")}</Label>}
+    {value.length > 0 && <div className={compact ? "space-y-1" : "space-y-2"}>
+      {value.map(selection => <div key={selectionKey(selection)} className={`flex items-center gap-2 rounded-md border bg-muted/20 text-sm ${compact ? "h-8 px-2" : "items-start p-2"}`}>
         <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1">
           <span className="block font-medium">{selection.canonicalName}</span>
-          {selection.legalName && <span className="block text-xs text-muted-foreground">
+          {!compact && selection.legalName && <span className="block text-xs text-muted-foreground">
             {selection.legalName}{selection.registrationNumber ? ` · CVR ${selection.registrationNumber}` : ""}
           </span>}
         </span>
@@ -213,7 +215,31 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
       </div>)}
     </div>}
 
-    {contractSuggestions.length > 0 && <div className="space-y-1 rounded-md border border-dashed p-2">
+    {compact && value.length === 0 && contractSuggestions.length > 0 && <div className="space-y-1">
+      {contractSuggestions.slice(0, 2).map(item => item.option ? <button
+        key={`${item.sourceName}:${item.option.employerId}`}
+        type="button"
+        disabled={disabled}
+        onClick={() => addSelection({ employerId: item.option!.employerId, canonicalName: item.option!.canonicalName, matchScore: item.option!.matchScore, matchMethod: "admin" })}
+        className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-2 text-left text-xs text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100"
+      >
+        <Building2 className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{da ? "Foreslået" : "Suggested"}: {item.option.canonicalName}</span>
+        <span className="shrink-0 font-medium">{da ? "Vælg" : "Select"}</span>
+      </button> : <button
+        key={item.sourceName}
+        type="button"
+        disabled={disabled}
+        onClick={() => setQuery(item.sourceName)}
+        className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md border border-dashed px-2 text-left text-xs hover:bg-muted disabled:opacity-50"
+      >
+        <Building2 className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{da ? "Aflæst" : "Read"}: {item.sourceName}</span>
+        <span className="shrink-0 font-medium">{da ? "Søg" : "Search"}</span>
+      </button>)}
+    </div>}
+
+    {!compact && contractSuggestions.length > 0 && <div className="space-y-1 rounded-md border border-dashed p-2">
       <p className="px-1 text-xs font-medium text-muted-foreground">{da ? "Aflæst fra kontrakten" : "Read from the contract"}</p>
       {contractSuggestions.map(item => item.option ? <button
         key={`${item.sourceName}:${item.option.employerId}`}
@@ -232,11 +258,11 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
       </button>)}
     </div>}
 
-    <div className="relative">
+    {(!compact || value.length === 0) && <div className="relative">
       <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-      <Input value={query} disabled={disabled} onChange={event => setQuery(event.target.value)} className="pl-9" placeholder={da ? "Tilføj producent" : "Add producer"} />
-    </div>
-    {showResults && <div className="max-h-72 min-w-0 space-y-1 overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+      <Input value={query} disabled={disabled} onChange={event => setQuery(event.target.value)} className={`${compact ? "h-8" : ""} pl-9`} placeholder={da ? "Tilføj producent" : "Add producer"} />
+    </div>}
+    {(!compact || value.length === 0) && showResults && <div className="max-h-72 min-w-0 space-y-1 overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
       {loading && <div className="flex items-center gap-2 p-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{da ? "Søger lokalt og i CVR-registeret…" : "Searching locally and in the company register…"}</div>}
       {!loading && options.map(option => <div key={option.employerId} className="min-w-0 rounded-md border p-1">
         <button type="button" disabled={selected.has(`${option.employerId}:canonical`)} onClick={() => addSelection({ employerId: option.employerId, canonicalName: option.canonicalName, matchScore: option.matchScore, matchMethod: "admin" })} className="block w-full min-w-0 rounded px-2 py-2 text-left hover:bg-muted disabled:opacity-60">

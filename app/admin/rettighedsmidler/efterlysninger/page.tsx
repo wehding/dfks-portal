@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import {
-    ArrowLeft, Plus, Search, CheckCircle2, Clock,
+    ArrowLeft, Plus, Search, Clock,
     MessageSquare, X, ShieldCheck, UserSearch, Users
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
 import {
     Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
@@ -368,7 +367,10 @@ export default function EfterlysningerPage() {
         setLoading(false)
     }, [])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => void load(), 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
 
     const handleAdvancePub = async (pub: SearchPublication, next: SearchPublicationStatus) => {
         if (next === "responded") { setRespondDialog(pub); return }

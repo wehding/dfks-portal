@@ -335,7 +335,10 @@ export function RightsReservesPanel({
         setLoading(false)
     }, [runId])
 
-    useEffect(() => { load() }, [load])
+    useEffect(() => {
+        const timer = window.setTimeout(() => void load(), 0)
+        return () => window.clearTimeout(timer)
+    }, [load])
 
     const pendingClaims = claims.filter(c => ["submitted", "under_review"].includes(c.status))
     const totalReserve = entries

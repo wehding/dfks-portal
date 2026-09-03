@@ -7,6 +7,8 @@ import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from "lucide-re
 import { Button } from "@/components/ui/button"
 import { norm, buildNeedles as resolveNeedles } from "@/lib/resolveAnker"
 import type { ContractLayout } from "@/lib/contract-layout"
+import { contractEvidencePage, evidenceBboxToViewportRect, type ContractEvidenceBbox, type ContractFieldEvidence, type PdfViewportDimensions } from "@/lib/contract-workbench"
+import { calculatePdfEvidenceScale, calculatePdfFitWidthScale } from "@/lib/contract-workbench-responsive"
 import "react-pdf/dist/Page/AnnotationLayer.css"
 import "react-pdf/dist/Page/TextLayer.css"
 
@@ -24,32 +26,34 @@ interface PdfViewerProps {
     sectionHighlights?: string[]
     activeHighlight?: string | null
     pageNavigationHint?: string
+    activePage?: number | null
     // Lag 5: koordinatbaseret highlight
     layout?: ContractLayout | null
     activeClauseId?: string | null
+    activeEvidence?: ContractFieldEvidence | null
+    resetViewToken?: number
 }
-
-type PageViewport = { pdfWidth: number; pdfHeight: number; renderedWidth: number; renderedHeight: number }
 
 /** Konverter PDF-bounding-box (y=0 ved bund) til CSS-position i en rendered side. */
 function bboxToScreenStyle(
-    bbox: { x: number; y: number; width: number; height: number },
-    vp: PageViewport,
+    bbox: ContractEvidenceBbox,
+    vp: PdfViewportDimensions,
 ): React.CSSProperties {
-    const scaleX = vp.renderedWidth / vp.pdfWidth
-    const scaleY = vp.renderedHeight / vp.pdfHeight
-    const left = bbox.x * scaleX
-    const top = vp.renderedHeight - (bbox.y + bbox.height) * scaleY
-    const width = bbox.width * scaleX
-    const height = bbox.height * scaleY
-    return { position: "absolute", left, top, width, height, pointerEvents: "none" }
+    return { position: "absolute", ...evidenceBboxToViewportRect(bbox, vp), pointerEvents: "none" }
 }
 
 // norm() og buildNeedles importeret fra lib/resolveAnker.ts
 
 function buildNeedles(quote: string): string[] {
     // Delegér til resolveAnker.buildNeedles (inkl. tal-prioritering og date-variants)
-    return resolveNeedles(quote)
+    const delegated = resolveNeedles(quote)
+    const exact = norm(quote)
+    const variants = [
+        exact,
+        exact.replace(/\s*&\s*/g, "&"),
+        exact.replace(/\s*&\s*/g, " & "),
+    ].filter(value => value.length >= 2)
+    return [...new Set([...variants, ...delegated])]
 }
 
 
@@ -85,14 +89,98 @@ function ensureHighlightCSS() {
             box-shadow: 0 0 0 1px rgba(202,138,4,0.45) !important;
         }
         .react-pdf__Page__textContent span[data-hl="active"] {
-            background: rgba(74,222,128,0.55) !important;
-            box-shadow: 0 0 0 1px rgba(21,128,61,0.55) !important;
+            background: rgba(250,204,21,0.65) !important;
+            box-shadow: 0 0 0 2px rgba(202,138,4,0.65) !important;
+        }
+        .react-pdf__Page [data-exact-hl="active"] {
+            position: absolute;
+            z-index: 12;
+            pointer-events: none;
+            border: 2px solid rgba(202,138,4,0.75);
+            border-radius: 2px;
+            background: rgba(250,204,21,0.42);
         }
     `
     document.head.appendChild(style)
 }
 
-function applyHighlights(container: HTMLElement, highlights: string[], activeHighlight: string | null, sectionHighlights: string[] = []) {
+const DATE_MONTHS = ["januar", "februar", "marts", "april", "maj", "juni", "juli", "august", "september", "oktober", "november", "december"]
+
+function preciseTextPatterns(value: string) {
+    const escaped = value.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+")
+    const patterns = escaped ? [new RegExp(escaped, "iu")] : []
+    const isoDate = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (!isoDate) return patterns
+    const [, year, rawMonth, rawDay] = isoDate
+    const day = String(Number(rawDay))
+    const month = String(Number(rawMonth))
+    const monthName = DATE_MONTHS[Number(rawMonth) - 1]
+    if (monthName) {
+        patterns.unshift(new RegExp(`${day}\\.?\\s+${monthName}(?:\\s+${year})?`, "iu"))
+    }
+    patterns.unshift(new RegExp(`${day}\\s*[./-]\\s*0?${month}\\s*[./-]\\s*${year}`, "u"))
+    return patterns
+}
+
+function renderPreciseTextOverlay(pageEl: Element, spans: HTMLElement[], focusText: string) {
+    pageEl.querySelectorAll('[data-exact-hl="active"]').forEach(element => element.remove())
+    const patterns = preciseTextPatterns(focusText)
+    for (const span of spans) {
+        const textNode = Array.from(span.childNodes).find(node => node.nodeType === Node.TEXT_NODE)
+        const text = textNode?.textContent ?? ""
+        if (!textNode || !text) continue
+        for (const pattern of patterns) {
+            const match = pattern.exec(text)
+            if (!match || match.index == null) continue
+            const range = document.createRange()
+            range.setStart(textNode, match.index)
+            range.setEnd(textNode, match.index + match[0].length)
+            const pageRect = pageEl.getBoundingClientRect()
+            const rects = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0)
+            if (!rects.length) continue
+            const bounds = rects.reduce((result, rect) => ({
+                left: Math.min(result.left, rect.left),
+                top: Math.min(result.top, rect.top),
+                right: Math.max(result.right, rect.right),
+                bottom: Math.max(result.bottom, rect.bottom),
+            }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity })
+            const overlay = document.createElement("div")
+            overlay.dataset.exactHl = "active"
+            overlay.style.left = `${bounds.left - pageRect.left}px`
+            overlay.style.top = `${bounds.top - pageRect.top}px`
+            overlay.style.width = `${bounds.right - bounds.left}px`
+            overlay.style.height = `${bounds.bottom - bounds.top}px`
+            pageEl.appendChild(overlay)
+            overlay.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" })
+            return true
+        }
+    }
+    return false
+}
+
+function renderTextRangeOverlay(pageEl: Element, spans: HTMLElement[]) {
+    pageEl.querySelectorAll('[data-exact-hl="active"]').forEach(element => element.remove())
+    const pageRect = pageEl.getBoundingClientRect()
+    const rects = spans.flatMap(span => Array.from(span.getClientRects())).filter(rect => rect.width > 0 && rect.height > 0)
+    if (!rects.length) return false
+    const bounds = rects.reduce((result, rect) => ({
+        left: Math.min(result.left, rect.left),
+        top: Math.min(result.top, rect.top),
+        right: Math.max(result.right, rect.right),
+        bottom: Math.max(result.bottom, rect.bottom),
+    }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity })
+    const overlay = document.createElement("div")
+    overlay.dataset.exactHl = "active"
+    overlay.style.left = `${bounds.left - pageRect.left}px`
+    overlay.style.top = `${bounds.top - pageRect.top}px`
+    overlay.style.width = `${bounds.right - bounds.left}px`
+    overlay.style.height = `${bounds.bottom - bounds.top}px`
+    pageEl.appendChild(overlay)
+    overlay.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" })
+    return true
+}
+
+function applyHighlights(container: HTMLElement, highlights: string[], activeHighlight: string | null, sectionHighlights: string[] = [], preciseFocusText = "") {
     ensureHighlightCSS()
 
     container.querySelectorAll("span[data-hl]").forEach((el) => {
@@ -102,9 +190,11 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     // Find text layer inside the current page element
     const pageEl = container.querySelector(".react-pdf__Page")
     const textLayer = pageEl?.querySelector(".react-pdf__Page__textContent")
-    if (!textLayer) return
+    if (!pageEl || !textLayer) return
     const spans = Array.from(textLayer.querySelectorAll("span")) as HTMLElement[]
     if (!spans.length) return
+    const preciseMatch = preciseFocusText ? renderPreciseTextOverlay(pageEl, spans, preciseFocusText) : false
+    if (!preciseFocusText) pageEl.querySelectorAll('[data-exact-hl="active"]').forEach(element => element.remove())
 
     let normFull = ""
     const spanMap: { start: number; end: number; span: HTMLElement }[] = []
@@ -139,7 +229,7 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     const allHighlights = [
         ...highlights,
         ...sectionHighlights.flatMap(s => s.split("||").map(x => x.trim())),
-        ...activeCandidates.filter(c => c.length >= 2),
+        ...(!preciseMatch ? activeCandidates.filter(c => c.length >= 2) : []),
     ]
 
     allHighlights.forEach((quote) => {
@@ -170,12 +260,8 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
                     const snEnd = snIdx + sn.length
                     const matched = spanMap.filter(({ start, end }) => start < snEnd && end > snIdx)
                     if (!matched.length) continue
-                    matched.forEach(({ span }) => {
-                        span.setAttribute("data-hl", isActive ? "active" : "match")
-                    })
-                    if (isActive && matched[0]) {
-                        matched[0].span.scrollIntoView({ behavior: "smooth", block: "center" })
-                    }
+                    if (isActive) renderTextRangeOverlay(pageEl, matched.map(({ span }) => span))
+                    else matched.forEach(({ span }) => span.setAttribute("data-hl", "match"))
                     found = true
                     break
                 }
@@ -186,27 +272,54 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
                 // Remove last span if it starts after the needle ends (partial overlap)
                 const trimmed = matched.filter(({ start }) => start < matchEnd)
                 if (!trimmed.length) continue
-                trimmed.forEach(({ span }) => {
-                    span.setAttribute("data-hl", isActive ? "active" : "match")
-                })
-                if (isActive && trimmed[0]) {
-                    trimmed[0].span.scrollIntoView({ behavior: "smooth", block: "center" })
-                }
+                if (isActive) renderTextRangeOverlay(pageEl, trimmed.map(({ span }) => span))
+                else trimmed.forEach(({ span }) => span.setAttribute("data-hl", "match"))
             }
             break
         }
     })
 }
 
-export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint, layout, activeClauseId }: PdfViewerProps) {
+export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint, activePage = null, layout, activeClauseId, activeEvidence = null, resetViewToken = 0 }: PdfViewerProps) {
     const [numPages, setNumPages] = useState(0)
     const [pageNumber, setPageNumber] = useState(1)
     const [scale, setScale] = useState(1.0)
+    const [fitMode, setFitMode] = useState<"width" | "page" | "manual">("width")
     const [error, setError] = useState(false)
     const [pageRendered, setPageRendered] = useState(false)
     const [pdfDoc, setPdfDoc] = useState<any>(null)
-    const [pageViewport, setPageViewport] = useState<PageViewport | null>(null)
+    const [pageViewport, setPageViewport] = useState<PdfViewportDimensions | null>(null)
     const containerRef = useRef<HTMLDivElement>(null)
+
+    useEffect(() => {
+        const container = containerRef.current
+        if (!container || !pdfDoc || fitMode === "manual") return
+
+        let cancelled = false
+        let animationFrame = 0
+        const fitPage = async () => {
+            const page = await pdfDoc.getPage(pageNumber)
+            if (cancelled) return
+            const viewport = page.getViewport({ scale: 1 })
+            const widthScale = calculatePdfFitWidthScale(container.clientWidth, viewport.width)
+            const heightScale = Math.min(1, Math.max(0.25, (container.clientHeight - 32) / viewport.height))
+            const nextScale = fitMode === "page" ? Math.min(widthScale, heightScale) : widthScale
+            setScale(current => Math.abs(current - nextScale) < 0.005 ? current : nextScale)
+        }
+        const scheduleFit = () => {
+            cancelAnimationFrame(animationFrame)
+            animationFrame = requestAnimationFrame(() => void fitPage())
+        }
+
+        scheduleFit()
+        const observer = new ResizeObserver(scheduleFit)
+        observer.observe(container)
+        return () => {
+            cancelled = true
+            cancelAnimationFrame(animationFrame)
+            observer.disconnect()
+        }
+    }, [fitMode, pageNumber, pdfDoc])
 
     const activeHighlightRef = useRef(activeHighlight)
     const highlightsRef = useRef(highlights)
@@ -215,16 +328,21 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     highlightsRef.current = highlights
     sectionHighlightsRef.current = sectionHighlights
 
-    // Lag 5 og tekst-søgning er gensidigt udelukkende: hvis koordinat-boksen
-    // findes for det aktive felt, skal HVERKEN den grønne ord-markering ELLER
-    // sectionHighlights' gule paragraf-markering vises. Løftet til komponent-
-    // niveau, så begge effekter (tekst-søgnings-navigation og highlighting)
-    // bruger samme, konsistente beregning.
-    const hasCoordinateBox = !!(
-        activeClauseId && layout &&
-        layout.clauses.find(c => c.id === activeClauseId)?.pdfBbox
-    )
+    // Den præcise tekstmarkering har førsteprioritet. Koordinatboksen fungerer
+    // samtidig som fallback, hvis OCR-teksten er opdelt på en måde der ikke kan matches.
+    const preciseFocusText = activeEvidence?.focusText?.trim() ?? ""
+    const hasPreciseFocus = preciseFocusText.length >= 2 && preciseFocusText.length <= 64
+    const legacyBbox = activeClauseId && layout
+        ? layout.clauses.find(c => c.id === activeClauseId)?.pdfBbox
+        : null
+    const activeBbox: ContractEvidenceBbox | null = useMemo(() => activeEvidence?.bbox
+        ?? (legacyBbox ? { ...legacyBbox, space: "pdf_bottom_left" } : null), [activeEvidence?.bbox, legacyBbox])
+    const activeBboxes = useMemo(() => activeEvidence?.bboxes?.length ? activeEvidence.bboxes : activeBbox ? [activeBbox] : [], [activeBbox, activeEvidence?.bboxes])
+    const hasCoordinateBox = Boolean(activeBbox)
+    // En verificeret koordinatboks er den autoritative markering. Tekstlaget
+    // må ikke samtidig tegne ekstra bokse over de enkelte ord eller linjer.
     const effectiveActiveHighlight = hasCoordinateBox ? null : activeHighlight
+    const effectivePreciseFocusText = hasCoordinateBox ? "" : preciseFocusText
     const effectiveSectionHighlights = useMemo(
         () => hasCoordinateBox ? [] : sectionHighlights,
         [hasCoordinateBox, sectionHighlights],
@@ -235,11 +353,29 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     effectiveSectionHighlightsRef.current = effectiveSectionHighlights
 
     useEffect(() => {
-        // Koordinat-boksen håndterer sin egen sidenavigation (Lag 5 nedenfor) —
-        // den ældre tekst-søgnings-navigation skal ikke også køre og potentielt
-        // navigere et andet sted hen eller efterlade en gul/grøn tekst-markering.
-        if (hasCoordinateBox) return
+        if (activeHighlight && !hasCoordinateBox) setFitMode("width")
+    }, [activeHighlight, hasCoordinateBox, hasPreciseFocus, preciseFocusText])
+
+    const previousResetToken = useRef(resetViewToken)
+    useEffect(() => {
+        if (resetViewToken === previousResetToken.current) return
+        previousResetToken.current = resetViewToken
+        setFitMode("page")
+    }, [resetViewToken])
+
+    const navigationRequest = useRef(0)
+    useEffect(() => {
+        const request = ++navigationRequest.current
         if (!activeHighlight || !pdfDoc || !numPages) return
+        if (activePage && activePage >= 1 && activePage <= numPages) {
+            if (activePage !== pageNumber) {
+                setPageRendered(false)
+                setPageNumber(activePage)
+            } else if (containerRef.current) {
+                applyHighlights(containerRef.current, highlightsRef.current, effectiveActiveHighlightRef.current, effectiveSectionHighlightsRef.current, effectivePreciseFocusText)
+            }
+            return
+        }
         const navSource = pageNavigationHint ?? activeHighlight
         const candidates = navSource.split("||").map(s => s.trim()).filter(Boolean)
         const tryNext = async (idx: number): Promise<number> => {
@@ -248,24 +384,41 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             return page > 0 ? page : tryNext(idx + 1)
         }
         tryNext(0).then((page) => {
+            if (request !== navigationRequest.current) return
             const targetPage = page > 0 ? page : 1
             if (targetPage !== pageNumber) {
                 setPageRendered(false)
                 setPageNumber(targetPage)
             } else {
                 if (containerRef.current) {
-                    applyHighlights(containerRef.current, highlightsRef.current, effectiveActiveHighlightRef.current, effectiveSectionHighlightsRef.current)
+                    applyHighlights(containerRef.current, highlightsRef.current, effectiveActiveHighlightRef.current, effectiveSectionHighlightsRef.current, effectivePreciseFocusText)
                 }
             }
         })
-    }, [activeHighlight, pageNavigationHint, pdfDoc, numPages, hasCoordinateBox]) // eslint-disable-line
+    }, [activeHighlight, activePage, pageNavigationHint, pdfDoc, numPages, hasCoordinateBox]) // eslint-disable-line
+
+    const zoomedEvidence = useRef<string | null>(null)
+    useEffect(() => {
+        if (!activeBbox || !pageViewport || !containerRef.current || !activeEvidence) return
+        const key = `${activeEvidence.fieldKey}:${activeEvidence.page ?? activeEvidence.clause?.page ?? pageNumber}:${JSON.stringify(activeBbox)}`
+        if (zoomedEvidence.current === key) return
+        const boxWidth = activeBbox.space === "normalized_top_left" ? activeBbox.width * pageViewport.pdfWidth : activeBbox.width
+        const boxHeight = activeBbox.space === "normalized_top_left" ? activeBbox.height * pageViewport.pdfHeight : activeBbox.height
+        const targetScale = calculatePdfEvidenceScale({
+            containerWidth: containerRef.current.clientWidth,
+            containerHeight: containerRef.current.clientHeight,
+            boxWidth,
+            boxHeight,
+        })
+        zoomedEvidence.current = key
+        setFitMode("manual")
+        setScale(targetScale)
+    }, [activeBbox, activeEvidence, pageNumber, pageViewport])
 
     // Lag 5: naviger til klausulens side ved activeClauseId-skift
     useEffect(() => {
         if (!activeClauseId || !layout) return
         const clause = layout.clauses.find(c => c.id === activeClauseId)
-        // [LAG5-C] Trin 3: findes klausulen og har den pdfBbox?
-        console.log(`[LAG5-C] activeClauseId=${activeClauseId}, fundet=${!!clause}, pdfBbox=${clause?.pdfBbox ? JSON.stringify(clause.pdfBbox) : "MANGLER"}, pageViewport=${pageViewport ? `${pageViewport.renderedWidth}x${pageViewport.renderedHeight}` : "NULL"}`)
         if (!clause) return
         const targetPage = clause.page ?? 1
         if (targetPage !== pageNumber) {
@@ -274,7 +427,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         }
     }, [activeClauseId, layout]) // eslint-disable-line
 
-    // Lag 5: hent sidedimensioner fra pdfDoc via PDF-viewport * scale (ingen DOM-måling)
+    // Hent sidedimensioner fra PDF-viewporten ved den aktuelle skala.
     // Kører når pdfDoc skifter ELLER side/scale ændres — kræver IKKE pageRendered
     // (DOM-måling via offsetWidth var upålidelig og skabte race condition med pageRendered)
     useEffect(() => {
@@ -288,9 +441,8 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                 renderedWidth: vp.width * scale,
                 renderedHeight: vp.height * scale,
             }
-            console.log(`[LAG5-D] pageViewport sat: ${newVp.renderedWidth.toFixed(0)}x${newVp.renderedHeight.toFixed(0)}px (PDF: ${newVp.pdfWidth}x${newVp.pdfHeight}pt, scale=${scale})`)
             setPageViewport(newVp)
-        }).catch((e: unknown) => console.warn("[LAG5-D] getPage fejl:", e))
+        }).catch((error: unknown) => console.warn("PDF-siden kunne ikke måles:", error))
     }, [pdfDoc, pageNumber, scale])
 
     const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
@@ -316,11 +468,30 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             if (!hasPageContent) {
                 if (attempts++ < 15) { timer = setTimeout(tryApply, 200); return }
             }
-            applyHighlights(containerRef.current, highlights, effectiveActiveHighlight, effectiveSectionHighlights)
+            applyHighlights(containerRef.current, highlights, effectiveActiveHighlight, effectiveSectionHighlights, effectivePreciseFocusText)
         }
         timer = setTimeout(tryApply, 300)
         return () => clearTimeout(timer)
-    }, [highlights, effectiveActiveHighlight, effectiveSectionHighlights, pageNumber, pageRendered, activeClauseId, layout])
+    }, [highlights, effectiveActiveHighlight, effectiveSectionHighlights, pageNumber, pageRendered, activeClauseId, layout, effectivePreciseFocusText])
+
+    useEffect(() => {
+        if (!pageRendered || !activeBbox || !containerRef.current) return
+        const frame = requestAnimationFrame(() => {
+            const container = containerRef.current
+            const highlight = container?.querySelector<HTMLElement>('[data-coordinate-hl="active"]')
+            if (!container || !highlight) return
+            const containerRect = container.getBoundingClientRect()
+            const highlightRect = highlight.getBoundingClientRect()
+            const targetLeft = container.scrollLeft + highlightRect.left - containerRect.left - (container.clientWidth - highlightRect.width) / 2
+            const targetTop = container.scrollTop + highlightRect.top - containerRect.top - (container.clientHeight - highlightRect.height) / 2
+            container.scrollTo({
+                left: Math.max(0, Math.min(targetLeft, container.scrollWidth - container.clientWidth)),
+                top: Math.max(0, Math.min(targetTop, container.scrollHeight - container.clientHeight)),
+                behavior: "smooth",
+            })
+        })
+        return () => cancelAnimationFrame(frame)
+    }, [activeBbox, pageNumber, pageRendered, scale])
 
 
     if (error) {
@@ -338,7 +509,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     )
 
     return (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full" data-pdf-viewer>
             <div className="flex items-center gap-1 border-b px-2 py-1.5 shrink-0">
                 <Button variant="ghost" size="icon" className="h-7 w-7"
                     onClick={() => { setPageNumber(p => Math.max(1, p - 1)); setPageRendered(false) }}
@@ -348,15 +519,10 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                     onClick={() => { setPageNumber(p => Math.min(numPages, p + 1)); setPageRendered(false) }}
                     disabled={pageNumber >= numPages}><ChevronRight className="h-4 w-4" /></Button>
                 <div className="mx-1 h-4 w-px bg-border" />
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(s => Math.max(0.4, s - 0.2))}><ZoomOut className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setFitMode("manual"); setScale(s => Math.max(0.25, s - 0.2)) }}><ZoomOut className="h-3.5 w-3.5" /></Button>
                 <span className="text-xs tabular-nums text-muted-foreground min-w-[40px] text-center">{Math.round(scale * 100)}%</span>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(s => Math.min(2.5, s + 0.2))}><ZoomIn className="h-3.5 w-3.5" /></Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(1.0)}><Maximize2 className="h-3.5 w-3.5" /></Button>
-                {activeHighlight && !activeClauseId && (
-                    <span className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-yellow-50 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800">
-                        Aktiv kilde markeres med gul
-                    </span>
-                )}
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setFitMode("manual"); setScale(s => Math.min(2.5, s + 0.2)) }}><ZoomIn className="h-3.5 w-3.5" /></Button>
+                <Button variant={fitMode === "width" ? "secondary" : "ghost"} size="icon" className="h-7 w-7" title="Tilpas PDF til bredden" aria-label="Tilpas PDF til bredden" onClick={() => setFitMode("width")}><Maximize2 className="h-3.5 w-3.5" /></Button>
             </div>
             <div ref={containerRef} className="flex-1 overflow-auto bg-muted/30">
                 <div className="flex justify-center p-4">
@@ -365,19 +531,17 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                             <Page pageNumber={pageNumber} scale={scale} className="shadow-sm"
                                 renderTextLayer={true} renderAnnotationLayer={false}
                                 onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
-                            {/* Lag 5: koordinatbaseret overlay — kun aktiv klausul (grøn) */}
-                            {pageViewport && layout && activeClauseId && (() => {
-                                const clause = layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)
-                                if (!clause?.pdfBbox) return null
-                                const style = bboxToScreenStyle(clause.pdfBbox, pageViewport)
+                            {/* Koordinatbaseret fallback — den aktive kilde markeres altid gult. */}
+                            {pageViewport && activeBboxes.length > 0 && contractEvidencePage(activeEvidence) === pageNumber && activeBboxes.map((box, index) => {
+                                const style = bboxToScreenStyle(box, pageViewport)
                                 return (
-                                    <div key={activeClauseId}
-                                        ref={(el) => { if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }) }}
-                                        style={{ ...style, background: "rgba(74,222,128,0.25)", border: "1px solid rgba(21,128,61,0.35)", borderRadius: 2, zIndex: 10 }}
-                                        title={`Klausul ${activeClauseId}`}
+                                    <div key={`${activeEvidence?.fieldKey ?? activeClauseId}-${pageNumber}-${index}`}
+                                        data-coordinate-hl="active"
+                                        style={{ ...style, scrollMargin: 80, background: "rgba(250,204,21,0.3)", border: "2px solid rgba(202,138,4,0.7)", borderRadius: 2, zIndex: 10 }}
+                                        title="Kilde i kontrakten"
                                     />
                                 )
-                            })()}
+                            })}
                         </div>
                     </Document>
                 </div>

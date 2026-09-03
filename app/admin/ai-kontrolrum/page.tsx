@@ -2,7 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { errorMessage } from "@/lib/error-message";
-import { useEffect, useState, useMemo } from "react"
+import { useCallback, useEffect, useState, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -1041,13 +1041,13 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
         finally { setHenterOkChunks(false) }
     }
 
-    const hentBilag = async () => {
+    const hentBilag = useCallback(async () => {
         const r = await fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
         const d = await r.json()
         setIndekseredeBilag(d.bilag ?? [])
-    }
+    }, [ok, ver.gyldig_fra])
 
-    useEffect(() => { hentBilag().catch(() => {}) }, [ok, ver.gyldig_fra])
+    useEffect(() => { hentBilag().catch(() => {}) }, [hentBilag])
 
     const sletBilag = async (type: string) => {
         setSletterBilag(type)
@@ -1158,7 +1158,7 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
                                 <DialogTitle className="text-sm">{ok} — indekserede sektioner ({okChunks.length})</DialogTitle>
                             </DialogHeader>
                             <div className="overflow-y-auto flex-1 space-y-3 pr-1">
-                                {okChunks.map((c, i) => (
+                                {okChunks.map((c) => (
                                     <div key={c.id} className="rounded border p-3 space-y-2">
                                         <div className="flex items-center gap-2">
                                             <Badge variant="outline" className="text-[10px] font-normal px-1.5 shrink-0">{c.kategori}</Badge>
@@ -2205,7 +2205,7 @@ function OverenskomsterTab() {
                                         <DialogContent className="max-w-lg">
                                             <DialogHeader><DialogTitle className="text-sm">Ny lønregel — {agreement.title}</DialogTitle></DialogHeader>
                                             <div className="space-y-2 text-xs">
-                                                <div><Label className="text-[10px]">Rate key (unikt ID, fx "editor-normallon-2026")</Label><Input className="h-7 text-xs" value={newWageForm.rate_key} onChange={e => setNewWageForm(f => ({ ...f, rate_key: e.target.value }))} /></div>
+                                                <div><Label className="text-[10px]">Rate key (unikt ID, fx &quot;editor-normallon-2026&quot;)</Label><Input className="h-7 text-xs" value={newWageForm.rate_key} onChange={e => setNewWageForm(f => ({ ...f, rate_key: e.target.value }))} /></div>
                                                 <div className="grid grid-cols-2 gap-1.5">
                                                     <div><Label className="text-[10px]">Funktion *</Label><Input className="h-7 text-xs" value={newWageForm.profession_role} onChange={e => setNewWageForm(f => ({ ...f, profession_role: e.target.value }))} /></div>
                                                     <div><Label className="text-[10px]">Løngruppe</Label><Input className="h-7 text-xs" value={newWageForm.wage_group} onChange={e => setNewWageForm(f => ({ ...f, wage_group: e.target.value }))} /></div>
@@ -2336,7 +2336,7 @@ function OverenskomsterTab() {
                                                                         <div className="flex-1 space-y-1.5">
                                                                             <div className="flex gap-1.5 items-center flex-wrap">
                                                                                 <Badge variant={k.confidence === "høj" ? "default" : "outline"} className="text-[9px] px-1.5 py-0">{k.confidence} tillid</Badge>
-                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">"{k.citation}"</span>}
+                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">&quot;{k.citation}&quot;</span>}
                                                                             </div>
                                                                             <div className="grid grid-cols-2 gap-1">
                                                                                 <div><Label className="text-[9px]">Funktion</Label><Input className="h-5 text-[10px]" value={k.profession_role} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, profession_role: e.target.value } : c))} /></div>
@@ -2375,7 +2375,7 @@ function OverenskomsterTab() {
                                                                         <div className="flex-1 space-y-1.5">
                                                                             <div className="flex gap-1.5 items-center flex-wrap">
                                                                                 <Badge variant={k.confidence === "høj" ? "default" : "outline"} className="text-[9px] px-1.5 py-0">{k.confidence} tillid</Badge>
-                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">"{k.citation}"</span>}
+                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">&quot;{k.citation}&quot;</span>}
                                                                             </div>
                                                                             <div className="grid grid-cols-2 gap-1">
                                                                                 <div><Label className="text-[9px]">Ansættelsesform</Label>
@@ -2414,7 +2414,7 @@ function OverenskomsterTab() {
                                                                             <div className="flex gap-1.5 items-center flex-wrap">
                                                                                 <Badge variant={k.confidence === "høj" ? "default" : "outline"} className="text-[9px] px-1.5 py-0">{k.confidence} tillid</Badge>
                                                                                 <Badge variant="outline" className="text-[9px] px-1.5 py-0">{k.category}</Badge>
-                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">"{k.citation}"</span>}
+                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">&quot;{k.citation}&quot;</span>}
                                                                             </div>
                                                                             <p className="text-[10px] text-muted-foreground">Af: {k.basis} · Gælder: {k.trigger_condition}</p>
                                                                             <div className="grid grid-cols-2 gap-1">

@@ -15,3 +15,12 @@ test("lader kun kontraktworkerens præcise route passere invite-gaten", () => {
   assert.equal(isPublicPath("/api/contracts/jobs/process/ekstra"), false);
   assert.equal(isPublicPath("/api/contracts/jobs/process-ukendt"), false);
 });
+
+test("lader kun OCR-workerens præcise OIDC-routes passere invite-gaten", () => {
+  for (const action of ["claim", "complete", "heartbeat", "upload-authorisation"]) {
+    assert.equal(isPublicPath(`/api/internal/document-processing/${action}`), true);
+    assert.equal(isPublicPath(`/api/internal/document-processing/${action}/ekstra`), false);
+  }
+  assert.equal(isPublicPath("/api/internal/document-processing"), false);
+  assert.equal(isPublicPath("/api/internal/document-processing/ukendt"), false);
+});

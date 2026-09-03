@@ -1,5 +1,5 @@
 begin;
-select plan(15);
+select plan(19);
 
 select ok(
   exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'audit_events' and column_name = 'target_member_uuid')
@@ -49,6 +49,54 @@ select ok(
   and not has_function_privilege('authenticated', 'public.append_audit_event(text,text,text,text,uuid,text,text,text,text,uuid,text,uuid,text,jsonb,jsonb,boolean,uuid,text,text,text[],inet,text,text,text,uuid[])', 'EXECUTE'),
   'browser roles cannot call the privileged append function'
 );
+
+select ok(
+  not has_function_privilege('anon', 'public.append_audit_event_v2(text,text,text,text,uuid,text,text,text,text,uuid,text,uuid,text,jsonb,jsonb,boolean,uuid,uuid[],text,text,text[],inet,text,text,text,uuid[])', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'public.append_audit_event_v2(text,text,text,text,uuid,text,text,text,text,uuid,text,uuid,text,jsonb,jsonb,boolean,uuid,uuid[],text,text,text[],inet,text,text,text,uuid[])', 'EXECUTE'),
+  'browser roles cannot call the multi-subject append function'
+);
+
+select ok(
+  not has_table_privilege('anon', 'public.audit_event_subjects', 'SELECT,INSERT,UPDATE,DELETE')
+  and not has_table_privilege('authenticated', 'public.audit_event_subjects', 'INSERT,UPDATE,DELETE'),
+  'browser roles cannot append or change audit subject links'
+);
+
+create temporary table c57921_subject_fixture(event_id uuid, first_member uuid, second_member uuid);
+do $$
+declare
+  created_event_id uuid;
+  first_member uuid := gen_random_uuid();
+  second_member uuid := gen_random_uuid();
+begin
+  created_event_id := public.append_audit_event_v2(
+    p_action => 'read',
+    p_entity_type => 'contract_search',
+    p_entity_label => 'Multi-subject test',
+    p_source => 'api',
+    p_target_member_uuids => array[first_member, second_member],
+    p_purpose_code => 'contract_case_management',
+    p_system_component => 'test.audit.multi-subject'
+  );
+  insert into c57921_subject_fixture values (created_event_id, first_member, second_member);
+end $$;
+
+select ok(
+  (select count(*) = 2 from public.audit_event_subjects where event_id = (select event_id from c57921_subject_fixture))
+  and public.verify_audit_event_subjects((select event_id from c57921_subject_fixture)),
+  'one semantic audit event binds all affected members with a verifiable subject hash'
+);
+
+do $$
+declare blocked boolean := false;
+begin
+  begin
+    delete from public.audit_event_subjects where event_id = (select event_id from c57921_subject_fixture);
+  exception when others then blocked := true;
+  end;
+  if not blocked then raise exception 'Audit subject link could be deleted'; end if;
+end $$;
+select pass('audit subject links remain append-only');
 
 select ok(
   not has_function_privilege('anon', 'public.register_subject_access_export(uuid,text,text,integer,boolean,uuid,timestamptz,text,text,text,bigint,text)', 'EXECUTE')

@@ -2,10 +2,12 @@ import type { StatisticsFilters } from "@/lib/admin-statistics";
 import {
   StatisticsQueryPlanError,
   type StatisticsComparisonDimension,
+  type StatisticsMetric,
   type StatisticsQueryPlan,
 } from "@/lib/statistics-query-plan";
+import type { ResolvedStatisticsProducer } from "@/lib/statistics-query-producers";
 
-export type ResolvedStatisticsProducer = { id: string; name: string };
+export type { ResolvedStatisticsProducer } from "@/lib/statistics-query-producers";
 
 export type StatisticsQuerySegment = {
   filters: StatisticsFilters;
@@ -30,7 +32,7 @@ const genderLabels: Record<string, string> = { female: "Kvinder", male: "Mænd",
 const membershipLabels: Record<string, string> = { member: "Medlem", associate: "Tilknyttet medlem", none: "Ikke medlem", unknown: "Ukendt medlemsstatus" };
 const experienceLabels: Record<string, string> = { new_graduate: "0–3 års erfaring", early_career: "4–7 års erfaring", experienced: "8–17 års erfaring", veteran: "18+ års erfaring" };
 
-type DimensionValue = { value: string; label: string; id?: string };
+type DimensionValue = { value: string; label: string; ids?: string[] };
 
 function valuesForDimension(
   dimension: StatisticsComparisonDimension,
@@ -39,7 +41,7 @@ function valuesForDimension(
 ): DimensionValue[] {
   if (dimension === "category") return plan.filters.categories.map(value => ({ value, label: categoryLabels[value] ?? value }));
   if (dimension === "contract_type") return plan.filters.contractTypes.map(value => ({ value, label: contractTypeLabels[value] ?? value }));
-  if (dimension === "producer") return producers.map(producer => ({ value: producer.name, label: producer.name, id: producer.id }));
+  if (dimension === "producer") return producers.map(producer => ({ value: producer.name, label: producer.name, ids: producer.ids }));
   if (dimension === "gender") return plan.filters.genders.map(value => ({ value, label: genderLabels[value] ?? value }));
   if (dimension === "producer_type") return plan.filters.producerTypeCodes.map(value => ({ value, label: value.replaceAll("_", " ") }));
   if (dimension === "membership_type") return plan.filters.membershipTypes.map(value => ({ value, label: membershipLabels[value] ?? value }));
@@ -76,9 +78,9 @@ export function buildStatisticsQuerySegments(
       genders: selected.has("gender") ? [selected.get("gender")!.value] : plan.filters.genders,
       categories: selected.has("category") ? [selected.get("category")!.value] : plan.filters.categories,
       contractTypes: selected.has("contract_type") ? [selected.get("contract_type")!.value] : plan.filters.contractTypes,
-      producerIds: producerSelection?.id
-        ? [producerSelection.id]
-        : producers.length ? producers.map(producer => producer.id) : [],
+      producerIds: producerSelection?.ids?.length
+        ? producerSelection.ids
+        : producers.length ? producers.flatMap(producer => producer.ids) : [],
       producerTypeCodes: selected.has("producer_type") ? [selected.get("producer_type")!.value] : plan.filters.producerTypeCodes,
       membershipTypes: selected.has("membership_type") ? [selected.get("membership_type")!.value] : plan.filters.membershipTypes,
       professionTypes: selected.has("profession_type") ? [selected.get("profession_type")!.value] : plan.filters.professionTypes,
@@ -112,4 +114,62 @@ export function describeStatisticsPlan(plan: StatisticsQueryPlan) {
     : years.length > 1 ? `${years[0]}–${years.at(-1)}`
       : "alle år";
   return `Resultatet er grupperet pr. år for ${period}${comparisons.length ? ` og sammenlignet efter ${comparisons.join(" og ")}` : ""}.`;
+}
+
+const metricInterpretationLabels: Record<StatisticsMetric, string> = {
+  median_monthly_salary: "medianløn",
+  average_monthly_salary: "gennemsnitsløn",
+  average_pension: "pension",
+  median_working_weeks: "median arbejdsuger",
+  average_working_weeks: "arbejdsuger",
+  contract_count: "antal kontrakter",
+  contributions: "producentbidrag",
+  copydan_share: "Copydan-forbehold",
+  streaming_share: "streamingforbehold",
+  royalty_share: "royalty",
+  ai_clause_share: "AI/data-mining-forbehold",
+};
+
+const comparisonInterpretationLabels: Record<StatisticsComparisonDimension, string> = {
+  category: "produktionstype",
+  contract_type: "kontrakttype",
+  producer: "producent",
+  gender: "køn",
+  producer_type: "producenttype",
+  membership_type: "medlemsstatus",
+  profession_type: "faggruppe",
+  experience_group: "erfaring",
+};
+
+function joinDanish(values: string[]) {
+  if (values.length <= 1) return values[0] ?? "";
+  if (values.length === 2) return `${values[0]} og ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")} og ${values.at(-1)}`;
+}
+
+function periodText(plan: StatisticsQueryPlan) {
+  const years = plan.filters.years;
+  if (plan.filters.yearFrom && plan.filters.yearTo) return plan.filters.yearTo === new Date().getFullYear()
+    ? `siden ${plan.filters.yearFrom}`
+    : `fra ${plan.filters.yearFrom} til ${plan.filters.yearTo}`;
+  if (years.length === 1) return `i ${years[0]}`;
+  if (years.length > 1) return `fra ${years[0]} til ${years.at(-1)}`;
+  return "for alle år";
+}
+
+export function interpretStatisticsQuestion(plan: StatisticsQueryPlan, producers: ResolvedStatisticsProducer[]) {
+  const metricText = joinDanish(plan.metrics.map(metric => metricInterpretationLabels[metric] ?? metric));
+  const producerTexts = producers.map(producer => producer.scope === "group" ? `${producer.name}-gruppen` : producer.name);
+  const filters = [
+    producerTexts.length ? `for ${joinDanish(producerTexts)}` : "",
+    plan.filters.categories.length ? `for ${joinDanish(plan.filters.categories.map(value => categoryLabels[value] ?? value))}` : "",
+    plan.filters.contractTypes.length ? `for ${joinDanish(plan.filters.contractTypes.map(value => contractTypeLabels[value] ?? value))}` : "",
+    plan.filters.experienceGroups.length ? `for ${joinDanish(plan.filters.experienceGroups.map(value => experienceLabels[value] ?? value))}` : "",
+    plan.filters.professionTypes.length ? `for ${joinDanish(plan.filters.professionTypes)}` : "",
+  ].filter(Boolean);
+  const compareText = plan.compareBy.length ? ` fordelt på ${joinDanish(plan.compareBy.map(dimension => comparisonInterpretationLabels[dimension]))}` : "";
+  const inflationText = plan.adjustForInflation && plan.metrics.some(metric => metric === "median_monthly_salary" || metric === "average_monthly_salary")
+    ? " som realløn"
+    : "";
+  return `${metricText.charAt(0).toLocaleUpperCase("da")}${metricText.slice(1)}${inflationText} ${filters.join(" ")} pr. år ${periodText(plan)}${compareText}.`.replace(/\s+/g, " ");
 }

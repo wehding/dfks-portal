@@ -60,6 +60,7 @@ export type AuditEvent = {
   correlationId: string | null;
   requestId: string | null;
   targetMemberUuid: string | null;
+  targetMemberUuids?: string[];
   purposeCode: string | null;
   legalBasis: string | null;
   dataCategories: string[];

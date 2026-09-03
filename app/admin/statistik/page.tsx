@@ -25,6 +25,7 @@ type YearRow = {
   suppressed?: boolean; suppressionReason?: SuppressionReason; outlierExcludedCount?: number;
 };
 type StatisticsPayload = {
+  dataSource: "production";
   suppressed: boolean; minimum: number; lowSampleThreshold: number; lowSample?: boolean; includeDrafts?: boolean; memberCount: number | null; contractCount?: number; validatedCount?: number; draftCount?: number; years: number[];
   minimumGroupSize?: number; dominanceLimit?: number; calculationVersion?: string;
   suppressionCount?: number; suppressionReasons?: Partial<Record<SuppressionReason, number>>; outlierExcludedCount?: number;
@@ -83,27 +84,23 @@ function hasVisibleStatisticRows(rows?: Array<{ suppressed?: boolean }>) {
   return (rows ?? []).some(row => !row.suppressed);
 }
 const querySuggestions = [
-  "Hvordan har medianlønnen for spillefilm og dokumentarfilm udviklet sig siden 2022?",
-  "Sammenlign gennemsnitslønnen for A-løn og leverandørkontrakter over alle år.",
-  "Sammenlign pension og arbejdsuger for spillefilm og dokumentarfilm siden 2022.",
-  "Hvor mange A-løns- og leverandørkontrakter er der registreret pr. år?",
-  "Hvordan har andelen med Copydan- og streamingforbehold udviklet sig over alle år sammenholdt med løn?",
+  "Er reallønnen faldet siden 2016?",
+  "Vis løn for fiktion og dokumentar siden 2016",
+  "Vis snitløn for A-løn og leverandør",
+  "Vis pension for A-løn",
+  "Hvor mange kontrakter pr. år?",
+  "Vis Copydan og streaming siden 2016",
+  "Hvilke producenter giver bedst snitløn?",
+  "Vis lønkurve for producent Nordisk Film",
+  "Vis løn efter erfaring",
+  "Vis løn og arbejdsuger for spillefilm",
 ];
 const chartLabels: Record<CombinedChartType, string> = { table: "Tabel", grouped_bar: "Grupperet søjlediagram", line: "Linjediagram", area: "Arealdiagram", composed: "Kombineret diagram", indexed_line: "Indekseret linjediagram" };
 const selectableCharts: CombinedChartType[] = ["line", "grouped_bar", "area", "composed", "indexed_line", "table"];
-const demoSalary = [
-  { year: 2022, feature: 46_000, documentary: 41_000 },
-  { year: 2023, feature: 48_500, documentary: 43_000 },
-  { year: 2024, feature: 51_000, documentary: 45_500 },
-];
-const demoRights = [
-  { name: "Copydan-forbehold", value: 72 },
-  { name: "Streamingforbehold", value: 54 },
-  { name: "Ukendt", value: 18 },
-];
-
+const printCardClass = "print:break-inside-avoid print:shadow-none";
+const printChartContentClass = "h-[360px] min-w-0 print:h-[320px] print:overflow-visible";
 function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<string | number>> }) {
-  return <div className="max-w-full overflow-x-auto rounded-lg border"><Table className="min-w-max"><TableHeader><TableRow>{headers.map((header, index) => <TableHead key={`${header}-${index}`}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.length ? rows.map((row, index) => <TableRow key={index}>{row.map((value, cell) => <TableCell key={cell}>{value}</TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={headers.length} className="text-muted-foreground">Ingen synlige datapunkter med de valgte filtre.</TableCell></TableRow>}</TableBody></Table></div>;
+  return <div className="max-w-full overflow-x-auto rounded-lg border print:break-inside-auto print:overflow-visible print:rounded-none"><Table className="min-w-max print:w-full print:min-w-0 print:text-[10px]"><TableHeader><TableRow className="print:break-inside-avoid">{headers.map((header, index) => <TableHead key={`${header}-${index}`} className="print:px-1 print:py-1">{header}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.length ? rows.map((row, index) => <TableRow key={index} className="print:break-inside-avoid">{row.map((value, cell) => <TableCell key={cell} className="print:px-1 print:py-1 print:align-top">{value}</TableCell>)}</TableRow>) : <TableRow className="print:break-inside-avoid"><TableCell colSpan={headers.length} className="text-muted-foreground">Ingen synlige datapunkter med de valgte filtre.</TableCell></TableRow>}</TableBody></Table></div>;
 }
 
 function formatStatisticsValue(value: number, unit: "dkk" | "percent" | "weeks" | "count") {
@@ -121,8 +118,17 @@ type AiSeriesRow = {
   sampleBand?: string; outlierExcludedCount?: number;
 };
 
+type OmittedStatisticsPoint = {
+  year: number | null;
+  seriesLabel: string;
+  metricLabel: string;
+  reason: SuppressionReason | "suppressed_segment";
+  memberCount: number | null;
+  contractCount: number | null;
+};
+
 type AiAnswer = {
-  suppressed?: boolean; minimum?: number; explanation?: string; understoodAs?: string; interpretedBy?: "rules" | "ai";
+  suppressed?: boolean; minimum?: number; explanation?: string; understoodAs?: string; interpretedQuestion?: string; interpretedBy?: "rules" | "ai";
   minimumGroupSize?: number; dominanceLimit?: number; calculationVersion?: string;
   suppressionCount?: number; suppressionReasons?: Partial<Record<SuppressionReason, number>>;
   caveats?: string[]; chart?: "line" | "bar" | "table";
@@ -131,7 +137,38 @@ type AiAnswer = {
   metricMeta?: Array<{ metric: string; label: string; unit: "dkk" | "percent" | "weeks" | "count"; additive: boolean }>;
   series?: AiSeriesRow[];
   visualization?: StatisticsVisualization;
+  omittedData?: OmittedStatisticsPoint[];
+  directAnswer?: {
+    kind: "yes_no";
+    shortAnswer: "Ja" | "Nej" | "Delvist" | "Kan ikke besvares";
+    sentence: string;
+    explanation: string;
+  } | null;
 };
+
+async function readJsonResponse(response: Response) {
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new Error(response.ok
+      ? "Statistikserveren svarede tomt."
+      : `Statistikserveren svarede uden fejltekst (${response.status}).`);
+  }
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new Error("Statistikserveren svarede ikke med gyldig JSON.");
+  }
+}
+
+function omittedPointText(point: OmittedStatisticsPoint) {
+  const reason = point.reason === "suppressed_segment"
+    ? "hele delgruppen blev skjult"
+    : suppressionDescriptions[point.reason] ?? "diskretionshensyn";
+  const basis = point.memberCount == null
+    ? ""
+    : ` · ${point.memberCount} ${point.memberCount === 1 ? "person" : "personer"}${point.contractCount == null ? "" : ` / ${point.contractCount} kontrakter`}`;
+  return `${point.year ?? "Ukendt år"} · ${point.seriesLabel || point.metricLabel}: ${reason}${basis}`;
+}
 
 function AiChartView({ chart, visualization }: { chart: CombinedChartType; visualization: StatisticsVisualization }) {
   const colors = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"];
@@ -179,7 +216,11 @@ export default function AdminStatistikPage() {
     if (contractType !== "all") params.set("contractType", contractType);
     if (experienceGroup !== "all") params.set("experienceGroup", experienceGroup);
     fetch(`/api/admin/statistics?${params}`, { signal: controller.signal, cache: "no-store" })
-      .then(async response => { const json = await response.json(); if (!response.ok) throw new Error(json.error ?? "Statistikken kunne ikke hentes"); return json; })
+      .then(async response => {
+        const json = await readJsonResponse(response) as Partial<StatisticsPayload> & { error?: string };
+        if (!response.ok) throw new Error(json.error ?? "Statistikken kunne ikke hentes");
+        return json as StatisticsPayload;
+      })
       .then(setData)
       .catch(fetchError => { if (fetchError.name !== "AbortError") setError(fetchError.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -195,7 +236,7 @@ export default function AdminStatistikPage() {
     data?.workingWeeks,
     data?.contributions,
   ].filter(rows => hasVisibleStatisticRows(rows)).length, [data]);
-  const showDemonstrations = Boolean(data?.suppressed) || availableStatisticsCount < 2;
+  const hasProductionStatistics = !data?.suppressed && availableStatisticsCount > 0;
   const dataProtectionSummary = suppressionSummaryText(data?.suppressionReasons);
   const salaryCategoryChart = useMemo(() => {
     const rows = new Map<number, { year: number; feature?: number; documentary?: number }>();
@@ -249,7 +290,7 @@ export default function AdminStatistikPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
       });
-      const result = await response.json();
+      const result = await readJsonResponse(response) as AiAnswer & { error?: string; reason?: string; suggestion?: string };
       if (!response.ok) {
         setAiError({
           title: result.error ?? "Forespørgslen kunne ikke gennemføres",
@@ -278,51 +319,35 @@ export default function AdminStatistikPage() {
   return <div className="space-y-6">
     <PageHeader title={t("admin.stats.title")} subtitle="Anonymiseret statistik for den aktive organisation" />
 
-    {showDemonstrations && <section className="space-y-4" aria-labelledby="demo-statistics-title">
-      <Alert>
-        <Sparkles className="h-4 w-4" />
-        <AlertTitle id="demo-statistics-title">Eksempler på statistikvisninger</AlertTitle>
-        <AlertDescription>Der er endnu ikke data nok til at vise mindst to reelle statistikker. Diagrammerne nedenfor bruger fiktive eksempeldata og indgår ikke i beregninger, forespørgsler eller eksport.</AlertDescription>
-      </Alert>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle className="text-base">Demonstration: lønudvikling</CardTitle></CardHeader>
-          <CardContent className="h-[300px]"><ResponsiveChartContainer><LineChart data={demoSalary}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${Number(value) / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle className="text-base">Demonstration: rettighedsforbehold</CardTitle></CardHeader>
-          <CardContent className="h-[300px]"><ResponsiveChartContainer><BarChart data={demoRights} layout="vertical"><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" domain={[0, 100]} tickFormatter={value => `${value}%`} /><YAxis type="category" dataKey="name" width={130} /><Tooltip contentStyle={tooltipStyle} formatter={value => `${value}%`} /><Bar dataKey="value" name="Andel" fill="#8b5cf6" /></BarChart></ResponsiveChartContainer></CardContent>
-        </Card>
-      </div>
-    </section>}
-
-    <Card>
+    <Card className="print:break-inside-auto print:shadow-none">
       <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-4 w-4" />Spørg statistikken</CardTitle></CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-sm text-muted-foreground">Spørg databasen, skriv fx: “Hvordan har gennemsnitslønnen udviklet sig siden 2022?”</p>
-        <Textarea value={aiQuestion} onChange={event => setAiQuestion(event.target.value)} placeholder="Skriv et spørgsmål om de anonymiserede data…" />
-        <div className="flex flex-wrap gap-2">{querySuggestions.map(suggestion => <Button key={suggestion} type="button" size="sm" variant="outline" className="h-auto whitespace-normal text-left" onClick={() => void askStatistics(suggestion)} disabled={aiLoading}>{suggestion}</Button>)}</div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap"><Button className="w-full sm:w-auto" onClick={() => void askStatistics()} disabled={aiLoading || aiQuestion.trim().length < 5}>{aiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Undersøg</Button><Select value={selectedChart} onValueChange={value => setSelectedChart(value as "auto" | CombinedChartType)}><SelectTrigger className="w-full sm:w-64"><SelectValue placeholder="Resultatvisning" /></SelectTrigger><SelectContent><SelectItem value="auto">Resultatvisning: Automatisk</SelectItem>{selectableCharts.map(chart => <SelectItem key={chart} value={chart}>{chartLabels[chart]}</SelectItem>)}</SelectContent></Select></div>
-        {aiError && <Alert variant="destructive"><AlertTitle>{aiError.title}</AlertTitle><AlertDescription><span className="block">{aiError.reason}</span>{aiError.suggestion && <span className="mt-1 block">Forslag: {aiError.suggestion}</span>}</AlertDescription></Alert>}
-        {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Ikke nok data til et sikkert resultat</AlertTitle><AlertDescription>Det valgte udsnit indeholder færre end {aiAnswer.minimum ?? 3} forskellige personer. Prøv en længere periode, færre filtre eller en bredere produktionstype.</AlertDescription></Alert>}
-        {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4">
-          <div className="space-y-1 text-sm"><p className="font-medium">Sådan blev spørgsmålet forstået</p><p>{aiAnswer.understoodAs}</p><p className="text-muted-foreground">{aiAnswer.explanation}</p></div>
+        <p className="text-sm text-muted-foreground print:hidden">Spørg databasen, skriv fx: “Hvordan har gennemsnitslønnen udviklet sig siden 2022?”</p>
+        <Textarea value={aiQuestion} onChange={event => setAiQuestion(event.target.value)} placeholder="Skriv et spørgsmål om de anonymiserede data…" className="print:hidden" />
+        <div className="grid grid-cols-1 gap-2 print:hidden sm:grid-cols-2">{querySuggestions.map(suggestion => <Button key={suggestion} type="button" size="sm" variant="outline" className="h-full min-h-10 w-full justify-start whitespace-normal px-3 py-2 text-left text-xs leading-snug sm:text-sm" onClick={() => void askStatistics(suggestion)} disabled={aiLoading}><span className="min-w-0 break-words">{suggestion}</span></Button>)}</div>
+        <div className="flex flex-col gap-2 print:hidden sm:flex-row sm:flex-wrap"><Button className="w-full sm:w-auto" onClick={() => void askStatistics()} disabled={aiLoading || aiQuestion.trim().length < 5}>{aiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Undersøg</Button><Select value={selectedChart} onValueChange={value => setSelectedChart(value as "auto" | CombinedChartType)}><SelectTrigger className="w-full sm:w-64"><SelectValue placeholder="Resultatvisning" /></SelectTrigger><SelectContent><SelectItem value="auto">Resultatvisning: Automatisk</SelectItem>{selectableCharts.map(chart => <SelectItem key={chart} value={chart}>{chartLabels[chart]}</SelectItem>)}</SelectContent></Select></div>
+        {aiError && <Alert variant="destructive" className="print:break-inside-avoid"><AlertTitle>{aiError.title}</AlertTitle><AlertDescription><span className="block">{aiError.reason}</span>{aiError.suggestion && <span className="mt-1 block">Forslag: {aiError.suggestion}</span>}</AlertDescription></Alert>}
+        {aiAnswer?.suppressed && <Alert className="print:break-inside-avoid"><ShieldCheck className="h-4 w-4" /><AlertTitle>Ikke nok data til et sikkert resultat</AlertTitle><AlertDescription>Det valgte udsnit indeholder færre end {aiAnswer.minimum ?? 3} forskellige personer. Prøv en længere periode, færre filtre eller en bredere produktionstype.</AlertDescription></Alert>}
+        {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4 print:border-0 print:p-0">
+          <div className="space-y-1 text-sm"><p className="font-medium">Sådan blev spørgsmålet forstået</p><p className="font-semibold">{aiAnswer.interpretedQuestion ?? aiAnswer.understoodAs}</p>{aiAnswer.interpretedQuestion && <p className="text-muted-foreground">{aiAnswer.understoodAs}</p>}<p className="text-muted-foreground">{aiAnswer.explanation}</p></div>
+          {aiAnswer.directAnswer && <Alert className="print:break-inside-avoid"><AlertTitle>{aiAnswer.directAnswer.shortAnswer}</AlertTitle><AlertDescription><span className="block">{aiAnswer.directAnswer.sentence}</span><span className="mt-1 block">{aiAnswer.directAnswer.explanation}</span></AlertDescription></Alert>}
           <p className="text-xs text-muted-foreground">
             Beregnet med mindst {aiAnswer.minimumGroupSize ?? aiAnswer.minimum ?? 3} personer pr. gruppe og dominansgrænse på {Math.round((aiAnswer.dominanceLimit ?? 0.8) * 100)} %. Beregningsversion: {aiAnswer.calculationVersion ?? "union-stats-v1"}.
           </p>
           {aiAnswer.visualization && <section className="space-y-3" aria-labelledby="combined-statistics-result">
             <div><h3 id="combined-statistics-result" className="font-semibold">Samlet statistik</h3><p className="text-sm text-muted-foreground">{aiAnswer.visualization.explanation}</p></div>
-            {chartSelectionError && <Alert><AlertTitle>Den valgte graf kan ikke bruges</AlertTitle><AlertDescription>{chartSelectionError}</AlertDescription></Alert>}
-            {!chartSelectionError && activeAiChart !== "table" && <Card><CardHeader><CardTitle className="text-sm">{chartLabels[activeAiChart]}</CardTitle></CardHeader><CardContent className="h-[360px] min-w-0"><ResponsiveChartContainer minWidth={0}><AiChartView chart={activeAiChart} visualization={aiAnswer.visualization} /></ResponsiveChartContainer></CardContent></Card>}
+            {chartSelectionError && <Alert className="print:break-inside-avoid"><AlertTitle>Den valgte graf kan ikke bruges</AlertTitle><AlertDescription>{chartSelectionError}</AlertDescription></Alert>}
+            {!chartSelectionError && activeAiChart !== "table" && <Card className={printCardClass}><CardHeader><CardTitle className="text-sm">{chartLabels[activeAiChart]}</CardTitle></CardHeader><CardContent className={printChartContentClass}><ResponsiveChartContainer minWidth={0}><AiChartView chart={activeAiChart} visualization={aiAnswer.visualization} /></ResponsiveChartContainer></CardContent></Card>}
             <DataTable headers={["Serie", "År", "Resultat", "Kontrakter", "Grundlag", "Reel værdi", "Realændring"]} rows={(aiAnswer.series ?? []).map(row => [row.seriesLabel, row.year, formatStatisticsValue(row.value, row.unit), row.contractCount, aiBasisText(row), row.realValue == null ? "—" : formatStatisticsValue(row.realValue, row.unit), row.realChangePercent == null ? "—" : `${row.realChangePercent}%`])} />
           </section>}
-          {Boolean(aiAnswer.caveats?.length) && <Alert><AlertTitle>Forbehold ved resultatet</AlertTitle><AlertDescription><ul className="list-disc space-y-1 pl-5">{aiAnswer.caveats?.map(caveat => <li key={caveat}>{caveat}</li>)}</ul></AlertDescription></Alert>}
-          {aiAnswer.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Mindst ét datapunkt ligger under den valgte advarselsgrænse for små grupper. Tolk derfor udviklingen forsigtigt.</AlertDescription></Alert>}
+          {Boolean(aiAnswer.omittedData?.length) && <Alert className="print:break-inside-avoid"><ShieldCheck className="h-4 w-4" /><AlertTitle>Data udeladt af diskretionshensyn</AlertTitle><AlertDescription><p className="mb-2">Nogle år eller delgrupper findes i datagrundlaget, men vises ikke, fordi anonymiseringsreglerne skal beskytte små grupper og forhindre bagudregning.</p><ul className="list-disc space-y-1 pl-5">{aiAnswer.omittedData?.slice(0, 12).map((point, index) => <li key={`${point.year}-${point.seriesLabel}-${point.metricLabel}-${index}`}>{omittedPointText(point)}</li>)}</ul>{(aiAnswer.omittedData?.length ?? 0) > 12 && <p className="mt-2">{(aiAnswer.omittedData?.length ?? 0) - 12} yderligere datapunkt(er) er udeladt af samme årsager.</p>}</AlertDescription></Alert>}
+          {Boolean(aiAnswer.caveats?.length) && <Alert className="print:break-inside-avoid"><AlertTitle>Forbehold ved resultatet</AlertTitle><AlertDescription><ul className="list-disc space-y-1 pl-5">{aiAnswer.caveats?.map(caveat => <li key={caveat}>{caveat}</li>)}</ul></AlertDescription></Alert>}
+          {aiAnswer.lowSample && <Alert className="print:break-inside-avoid"><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Mindst ét datapunkt ligger under den valgte advarselsgrænse for små grupper. Tolk derfor udviklingen forsigtigt.</AlertDescription></Alert>}
         </div>}
       </CardContent>
     </Card>
 
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="grid gap-3 print:hidden sm:grid-cols-2 lg:grid-cols-5">
       <Popover><PopoverTrigger asChild><Button variant="outline" className="w-full justify-start"><CalendarDays className="mr-2 h-4 w-4" />{years.length ? `${years.length} valgte år` : "Alle år"}</Button></PopoverTrigger><PopoverContent align="start" className="w-72 space-y-3">
         <div className="flex justify-between gap-2"><Button size="sm" variant="outline" onClick={() => setYears(data?.years ?? [])}>Vælg alle</Button><Button size="sm" variant="ghost" onClick={() => setYears([])}>Alle år</Button></div>
         <div className="max-h-44 space-y-1 overflow-y-auto">{(data?.years ?? []).map(year => <label key={year} className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted"><input type="checkbox" checked={years.includes(year)} onChange={event => setYears(current => event.target.checked ? [...new Set([...current, year])].sort() : current.filter(value => value !== year))} />{year}</label>)}</div>
@@ -332,9 +357,9 @@ export default function AdminStatistikPage() {
       <Select value={contractType} onValueChange={setContractType}><SelectTrigger className="w-full"><SelectValue placeholder="Kontrakttype" /></SelectTrigger><SelectContent><SelectItem value="all">Alle kontrakttyper</SelectItem><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandør</SelectItem></SelectContent></Select>
       <Select value={experienceGroup} onValueChange={setExperienceGroup}><SelectTrigger className="w-full"><SelectValue placeholder="Erfaringsgruppe" /></SelectTrigger><SelectContent><SelectItem value="all">Alle erfaringsgrupper</SelectItem>{EXPERIENCE_GROUPS.map(group => <SelectItem key={group.value} value={group.value}>{group.label} ({group.description})</SelectItem>)}</SelectContent></Select>
       <Select value={gender} onValueChange={setGender}><SelectTrigger className="w-full"><SelectValue placeholder="Køn" /></SelectTrigger><SelectContent><SelectItem value="all">Alle køn</SelectItem><SelectItem value="male">Mand</SelectItem><SelectItem value="female">Kvinde</SelectItem><SelectItem value="other">Andet</SelectItem></SelectContent></Select>
-      {!data?.suppressed && <Button variant="outline" className="w-full" onClick={exportCsv}><Download className="mr-2 h-4 w-4" />CSV</Button>}
+      {hasProductionStatistics && <Button variant="outline" className="w-full" onClick={exportCsv}><Download className="mr-2 h-4 w-4" />CSV</Button>}
     </div>
-    {data && <Alert>
+    {data && <Alert className="print:break-inside-avoid">
       <ShieldCheck className="h-4 w-4" />
       <AlertTitle>Statistikpolicy for denne visning</AlertTitle>
       <AlertDescription>
@@ -342,23 +367,25 @@ export default function AdminStatistikPage() {
       </AlertDescription>
     </Alert>}
 
-    {data?.suppressed ? <Card><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok personer til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} forskellige personer. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : <>
-      {((data?.suppressionCount ?? 0) > 0 || (data?.outlierExcludedCount ?? 0) > 0) && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Diskretionsregler er anvendt</AlertTitle><AlertDescription>{(data?.suppressionCount ?? 0) > 0 && <span className="block">Nogle felter vises som N/A, fordi de ikke må udleveres som statistik. {dataProtectionSummary}</span>}{(data?.outlierExcludedCount ?? 0) > 0 && <span className="block">{data?.outlierExcludedCount} åbenlyse afvigere er frasorteret før beregning af løn, medianer og bidrag.</span>}<span className="block">Grafer og CSV-eksport bruger de samme slørede tal som tabellerne.</span></AlertDescription></Alert>}
-      <div className="grid grid-cols-3 gap-2 sm:gap-4"><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.memberCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Samlet antal kontrakter</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.contractCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{salaryContractCount}</CardContent></Card></div>
-      <Tabs defaultValue="salary"><div className="-mx-3 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"><TabsList className="w-max min-w-full justify-start"><TabsTrigger value="salary">Løn</TabsTrigger><TabsTrigger value="pension">Pension</TabsTrigger><TabsTrigger value="weeks">Arbejdsuger</TabsTrigger><TabsTrigger value="rights">Rettigheder</TabsTrigger><TabsTrigger value="credits">Kreditering</TabsTrigger><TabsTrigger value="gender">Køn</TabsTrigger><TabsTrigger value="contracts">Kontrakter</TabsTrigger><TabsTrigger value="contributions">Bidrag</TabsTrigger><TabsTrigger value="ai">AI-forbehold</TabsTrigger><TabsTrigger value="individual">Individdata</TabsTrigger></TabsList></div>
-        <TabsContent value="salary" className="space-y-4"><Card><CardContent className="h-[360px] pt-6"><ResponsiveChartContainer><LineChart data={salaryCategoryChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${value / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line connectNulls dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line connectNulls dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent></Card><DataTable headers={["År", "Produktionstype", "Kontrakter", "Median månedsløn", "Grundlag"]} rows={(data?.salaryByCategory ?? []).map(row => [row.year, categoryLabels[row.category] ?? row.category, row.contractCount, formatSafeKr(row.monthlyRate), basisText(row)])} /></TabsContent>
+    <section data-statistics-source={data?.dataSource ?? "production"} data-exportable="true" className="space-y-6 print:space-y-4">
+    {data?.suppressed ? <Card className={printCardClass}><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok personer til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} forskellige personer. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : !hasProductionStatistics ? <Card className={printCardClass}><CardContent className="py-16 text-center"><h2 className="font-semibold">Ingen statistikdata</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Der findes endnu ingen beregnede data med de valgte filtre. Statistikken viser ikke eksempel- eller demonstrationsdata.</p></CardContent></Card> : <>
+      {((data?.suppressionCount ?? 0) > 0 || (data?.outlierExcludedCount ?? 0) > 0) && <Alert className="print:break-inside-avoid"><ShieldCheck className="h-4 w-4" /><AlertTitle>Diskretionsregler er anvendt</AlertTitle><AlertDescription>{(data?.suppressionCount ?? 0) > 0 && <span className="block">Nogle felter vises som N/A, fordi de ikke må udleveres som statistik. {dataProtectionSummary}</span>}{(data?.outlierExcludedCount ?? 0) > 0 && <span className="block">{data?.outlierExcludedCount} åbenlyse afvigere er frasorteret før beregning af løn, medianer og bidrag.</span>}<span className="block">Grupper kan også være udeladt, hvis de ikke har nok forskellige personer, mangler statistiktilvalg eller ikke har et årstal, som statistikmotoren kan bruge.</span><span className="block">Grafer og CSV-eksport bruger de samme slørede tal som tabellerne.</span></AlertDescription></Alert>}
+      <div className="grid grid-cols-3 gap-2 print:break-inside-avoid sm:gap-4"><Card className={printCardClass}><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.memberCount}</CardContent></Card><Card className={printCardClass}><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Kontrakter i statistikgrundlaget</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.contractCount}</CardContent></Card><Card className={printCardClass}><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{salaryContractCount}</CardContent></Card></div>
+      <Tabs defaultValue="salary"><div className="-mx-3 overflow-x-auto px-3 pb-1 print:hidden [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"><TabsList className="w-max min-w-full justify-start"><TabsTrigger value="salary">Løn</TabsTrigger><TabsTrigger value="pension">Pension</TabsTrigger><TabsTrigger value="weeks">Arbejdsuger</TabsTrigger><TabsTrigger value="rights">Rettigheder</TabsTrigger><TabsTrigger value="credits">Kreditering</TabsTrigger><TabsTrigger value="gender">Køn</TabsTrigger><TabsTrigger value="contracts">Kontrakter</TabsTrigger><TabsTrigger value="contributions">Bidrag</TabsTrigger><TabsTrigger value="ai">AI-forbehold</TabsTrigger><TabsTrigger value="individual">Individdata</TabsTrigger></TabsList></div>
+        <TabsContent value="salary" className="space-y-4 print:space-y-3"><Card className={printCardClass}><CardContent className={`${printChartContentClass} pt-6`}><ResponsiveChartContainer><LineChart data={salaryCategoryChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${value / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line connectNulls dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line connectNulls dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent></Card><DataTable headers={["År", "Produktionstype", "Kontrakter", "Median månedsløn", "Grundlag"]} rows={(data?.salaryByCategory ?? []).map(row => [row.year, categoryLabels[row.category] ?? row.category, row.contractCount, formatSafeKr(row.monthlyRate), basisText(row)])} /></TabsContent>
         <TabsContent value="pension"><DataTable headers={["År", "Medlemmer", "Gennemsnitlig pension", "Grundlag"]} rows={(data?.pension ?? []).map(row => [row.year, row.memberCount, formatSafeValue(row.avgPensionPercent, "%"), basisText(row)])} /></TabsContent>
         <TabsContent value="weeks"><DataTable headers={["År", "Medlemmer", "Gennemsnit", "Median", "Grundlag"]} rows={(data?.workingWeeks ?? []).map(row => [row.year, row.memberCount, formatSafeValue(row.avgWeeks, " uger"), formatSafeValue(row.medianWeeks, " uger"), basisText(row)])} /></TabsContent>
         <TabsContent value="rights"><DataTable headers={["Produktionstype", "Medlemmer", "Streaming", "Ukendt", "Copydan", "Ukendt", "Royalty", "Ukendt", "Grundlag"]} rows={(data?.rights ?? []).map(row => [categoryLabels[row.category] ?? row.category, row.memberCount, formatSafeValue(row.svodPercent, "%"), row.svodUnknown ?? "N/A", formatSafeValue(row.copydanPercent, "%"), row.copydanUnknown ?? "N/A", formatSafeValue(row.royaltyPercent, "%"), row.royaltyUnknown ?? "N/A", basisText(row)])} /></TabsContent>
-        <TabsContent value="credits" className="space-y-4"><DataTable headers={["År", "Præcise", "Upræcise", "Betingede", "Kun funktion", "Ingen", "Kræver manuel kontrol", "Andel præcise", "Grundlag"]} rows={(data?.creditClauses ?? []).map(row => [row.year, row.precise ?? "N/A", row.vague ?? "N/A", row.conditional ?? "N/A", row.roleOnly ?? "N/A", row.absent ?? "N/A", row.unclear ?? "N/A", formatSafeValue(row.precisePercent, "%"), basisText(row)])} /><DataTable headers={["Aftalt krediteringstitel", "Kontrakter", "Grundlag"]} rows={(data?.creditTitles ?? []).map(row => [row.title, row.count ?? "N/A", basisText(row)])} /></TabsContent>
+        <TabsContent value="credits" className="space-y-4 print:space-y-3"><DataTable headers={["År", "Præcise", "Upræcise", "Betingede", "Kun funktion", "Ingen", "Kræver manuel kontrol", "Andel præcise", "Grundlag"]} rows={(data?.creditClauses ?? []).map(row => [row.year, row.precise ?? "N/A", row.vague ?? "N/A", row.conditional ?? "N/A", row.roleOnly ?? "N/A", row.absent ?? "N/A", row.unclear ?? "N/A", formatSafeValue(row.precisePercent, "%"), basisText(row)])} /><DataTable headers={["Aftalt krediteringstitel", "Kontrakter", "Grundlag"]} rows={(data?.creditTitles ?? []).map(row => [row.title, row.count ?? "N/A", basisText(row)])} /></TabsContent>
         <TabsContent value="gender"><DataTable headers={["Køn", "Personer", "Gennemsnitlig registreret løn", "Grundlag"]} rows={(data?.gender ?? []).map(row => [row.gender === "female" ? "Kvinde" : row.gender === "male" ? "Mand" : "Andet", row.count, formatSafeKr(row.avgSalary), basisText(row)])} /></TabsContent>
-        <TabsContent value="contracts" className="space-y-4"><Card><CardContent className="h-[360px] pt-6">{contractCountsChart.length ? <ResponsiveChartContainer><BarChart data={contractCountsChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} /><Legend /><Bar dataKey="aLoen" name="A-løn" fill="#3b82f6" /><Bar dataKey="leverandoer" name="Leverandør" fill="#f59e0b" /></BarChart></ResponsiveChartContainer> : <div className="flex h-full items-center justify-center text-center text-sm text-muted-foreground">Ingen synlige kontrakttal med de valgte filtre.</div>}</CardContent></Card><DataTable headers={["År", "Medlemmer", "Kontrakter", "A-løn", "Leverandør", "Grundlag"]} rows={(data?.contractCounts ?? []).map(row => [row.year, row.memberCount, formatSafeValue(row.total), formatSafeValue(row.aLoen), formatSafeValue(row.leverandoer), basisText(row)])} /></TabsContent>
+        <TabsContent value="contracts" className="space-y-4 print:space-y-3"><Card className={printCardClass}><CardContent className={`${printChartContentClass} pt-6`}>{contractCountsChart.length ? <ResponsiveChartContainer><BarChart data={contractCountsChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} /><Legend /><Bar dataKey="aLoen" name="A-løn" fill="#3b82f6" /><Bar dataKey="leverandoer" name="Leverandør" fill="#f59e0b" /></BarChart></ResponsiveChartContainer> : <div className="flex h-full items-center justify-center text-center text-sm text-muted-foreground">Ingen synlige kontrakttal med de valgte filtre.</div>}</CardContent></Card><DataTable headers={["År", "Medlemmer", "Kontrakter", "A-løn", "Leverandør", "Grundlag"]} rows={(data?.contractCounts ?? []).map(row => [row.year, row.memberCount, formatSafeValue(row.total), formatSafeValue(row.aLoen), formatSafeValue(row.leverandoer), basisText(row)])} /></TabsContent>
         <TabsContent value="contributions"><DataTable headers={["År", "Medlemmer", "Kontrakter", "Feriepenge", "BETA", "I alt", "Grundlag"]} rows={(data?.contributions ?? []).map(row => [row.year, row.memberCount, row.contractCount, formatSafeKr(row.totalHolidayPayAmount), formatSafeKr(row.totalBetaAmount), formatSafeKr(safeTotal(row.totalHolidayPayAmount, row.totalBetaAmount)), basisText(row)])} /></TabsContent>
         <TabsContent value="ai"><DataTable headers={["År", "Medlemmer", "Med forbehold", "Uden forbehold", "Andel", "Grundlag"]} rows={(data?.aiClauses ?? []).map(row => [row.year, row.memberCount, row.withClause ?? "N/A", row.withoutClause ?? "N/A", formatSafeValue(row.pct, "%"), basisText(row)])} /></TabsContent>
-        <TabsContent value="individual"><Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Individrangering er deaktiveret</AlertTitle><AlertDescription>Årsindkomst og kontraktdata for enkelte personer vises ikke på adminsiden. Statistikken præsenteres kun som grupper med mindst {data?.minimum ?? 3} forskellige personer, og små grupper markeres som usikre.</AlertDescription></Alert></TabsContent>
+        <TabsContent value="individual"><Alert className="print:break-inside-avoid"><ShieldCheck className="h-4 w-4" /><AlertTitle>Individrangering er deaktiveret</AlertTitle><AlertDescription>Årsindkomst og kontraktdata for enkelte personer vises ikke på adminsiden. Statistikken præsenteres kun som grupper med mindst {data?.minimum ?? 3} forskellige personer, og små grupper markeres som usikre.</AlertDescription></Alert></TabsContent>
       </Tabs>
-      {data?.includeDrafts && <Alert><AlertTitle>Kladder indgår</AlertTitle><AlertDescription>Organisationens indstilling medtager kladekontrakter. De kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata.</AlertDescription></Alert>}
-      {data?.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Det valgte resultat bygger på {data.memberCount} forskellige personer. Vær forsigtig med konklusioner baseret på færre end {data.lowSampleThreshold} personer.</AlertDescription></Alert>}
+      {data?.includeDrafts && <Alert className="print:break-inside-avoid"><AlertTitle>Kladder indgår</AlertTitle><AlertDescription>Organisationens indstilling medtager kladekontrakter. De kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata.</AlertDescription></Alert>}
+      {data?.lowSample && <Alert className="print:break-inside-avoid"><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Det valgte resultat bygger på {data.memberCount} forskellige personer. Vær forsigtig med konklusioner baseret på færre end {data.lowSampleThreshold} personer.</AlertDescription></Alert>}
     </>}
+    </section>
   </div>;
 }
