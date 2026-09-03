@@ -3,7 +3,16 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { createServiceClient } from "@/lib/supabase/service";
-import { calculateResponseTimeStats, type ResponseEvent } from "@/lib/admin-dashboard";
+import { calculateResponseTimeStats, formatUserActionDescription, type ResponseEvent } from "@/lib/admin-dashboard";
+import { getKeyPageTimingStats, type KeyPageTiming } from "@/lib/server/list-load-timing";
+
+export type ActionCategoryDetail = {
+  key: string;
+  label: string;
+  count: number;
+  pct: number;
+  explanation: string;
+};
 
 export type SuperadminInsightsData = {
   analytics: {
@@ -13,18 +22,14 @@ export type SuperadminInsightsData = {
     totalMembers: number;
     totalAdmins: number;
     actionsLast30Days: number;
+    baselineDate: string;
     sessionBreakdown: {
       membersPct: number;
       adminsPct: number;
       memberEvents: number;
       adminEvents: number;
     };
-    topActions: Array<{
-      action: string;
-      label: string;
-      count: number;
-      pct: number;
-    }>;
+    actionCategories: ActionCategoryDetail[];
     deviceBreakdown: {
       desktop: number;
       mobile: number;
@@ -35,17 +40,19 @@ export type SuperadminInsightsData = {
     medianResponseTimeMs: number | null;
     p90ResponseTimeMs: number | null;
     webVitals: {
-      lcp: { value: string; score: "good" | "needs-improvement" | "poor"; target: string };
-      inp: { value: string; score: "good" | "needs-improvement" | "poor"; target: string };
-      cls: { value: string; score: "good" | "needs-improvement" | "poor"; target: string };
-      fcp: { value: string; score: "good" | "needs-improvement" | "poor"; target: string };
-      ttfb: { value: string; score: "good" | "needs-improvement" | "poor"; target: string };
+      lcp: { value: string; score: "good" | "needs-improvement" | "poor"; target: string; explanation: string };
+      inp: { value: string; score: "good" | "needs-improvement" | "poor"; target: string; explanation: string };
+      cls: { value: string; score: "good" | "needs-improvement" | "poor"; target: string; explanation: string };
+      fcp: { value: string; score: "good" | "needs-improvement" | "poor"; target: string; explanation: string };
+      ttfb: { value: string; score: "good" | "needs-improvement" | "poor"; target: string; explanation: string };
     };
+    keyPages: KeyPageTiming[];
     systemHealth: "healthy" | "degraded";
   };
   adminActivityLog: Array<{
     id: string;
     occurredAt: string;
+    orgId: string | null;
     orgName: string;
     actorName: string;
     actorRole: string;
@@ -53,6 +60,22 @@ export type SuperadminInsightsData = {
     entityType: string;
     entityLabel: string | null;
     description: string;
+  }>;
+  userActivityLog: Array<{
+    id: string;
+    occurredAt: string;
+    orgId: string | null;
+    orgName: string;
+    actorName: string;
+    actorRole: string;
+    action: string;
+    entityType: string;
+    entityLabel: string | null;
+    description: string;
+  }>;
+  organisations: Array<{
+    id: string;
+    name: string;
   }>;
   systemErrors: Array<{
     id: string;
@@ -101,28 +124,62 @@ function formatAdminActionDescription(action: string, entityType: string, entity
   if (action === "delete" || action === "archive") {
     return entityLabel ? `Arkiverede/slettede: ${entityLabel}` : `Arkiverede ${entityType}`;
   }
+  if (action === "retention") {
+    return entityLabel ? `Udførte retention på: ${entityLabel}` : "Udførte dataoprydning / retention";
+  }
+  if (action === "ai_analysis") {
+    return entityLabel ? `Kørte AI-analyse på: ${entityLabel}` : "Kørte AI-kontraktanalyse";
+  }
   return `${action} på ${entityLabel || entityType}`;
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  create: "Oprettelse / Upload",
-  update: "Opdatering / Erklæring",
-  link: "Værktilknytning",
-  validate: "Kontraktvalidering",
-  approve: "Godkendelse",
-  complete_onboarding: "Gennemført Onboarding",
-  search: "Søgning",
-  read: "Opslag",
-  delete: "Sletning / Arkivering",
-  invite: "Brugerinvitation",
+const ACTION_EXPLANATIONS: Record<string, { label: string; explanation: string }> = {
+  create: {
+    label: "Oprettelse & Upload",
+    explanation: "Nye kontrakter og værker indlæst eller oprettet i systemet.",
+  },
+  download: {
+    label: "Download & Eksport",
+    explanation: "Dokumenter, regneark og revisionsudtræk hentet af brugere.",
+  },
+  read: {
+    label: "Opslag & Søgning",
+    explanation: "Søgninger og visning af kontrakter, værker eller rettighedshavere.",
+  },
+  retention: {
+    label: "Retention & Oprydning",
+    explanation: "Automatisk anonymisering og sletning efter udløbet opbevaringsfrist.",
+  },
+  ai_analysis: {
+    label: "AI Analyse & OCR",
+    explanation: "Automatisk udlæsning af klausuler, parter, løn og arbejdsandele via Vision/Gemini.",
+  },
+  link: {
+    label: "Værktilknytning & Erklæring",
+    explanation: "Medlemmers tro- og loveerklæringer samt sammenkædning af værk og kontrakt.",
+  },
+  validate: {
+    label: "Validering & Godkendelse",
+    explanation: "Juridisk gennemgang og administrativ godkendelse af kontrakter og krav.",
+  },
+  complete_onboarding: {
+    label: "Onboarding & Profil",
+    explanation: "Gennemførte introduktionstrin og opdatering af medlemsstamdata.",
+  },
 };
 
-export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData> {
+// Nulstillingsdato: Data tælles fra dags dato (3. september 2026), hvor de første rigtige brugere lukkes ind
+export const LAUNCH_BASELINE_ISO = "2026-09-03T00:00:00.000Z";
+
+export async function fetchSuperadminInsights(customBaselineIso?: string): Promise<SuperadminInsightsData> {
   const db = createServiceClient();
   const now = Date.now();
-  const t24h = new Date(now - 24 * 60 * 60 * 1000).toISOString();
-  const t7d = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const t30d = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const baselineTime = new Date(customBaselineIso || LAUNCH_BASELINE_ISO).getTime();
+
+  // Tidsvinduer afskåret så der ikke tælles hændelser før lancering/nulstilling
+  const t24h = new Date(Math.max(now - 24 * 60 * 60 * 1000, baselineTime)).toISOString();
+  const t7d = new Date(Math.max(now - 7 * 24 * 60 * 60 * 1000, baselineTime)).toISOString();
+  const t30d = new Date(Math.max(now - 30 * 24 * 60 * 60 * 1000, baselineTime)).toISOString();
 
   const [
     events24hRes,
@@ -131,34 +188,48 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
     membersCountRes,
     adminsCountRes,
     adminLogsRes,
+    userLogsRes,
+    organisationsRes,
     errorLogsRes,
     commentsRes,
   ] = await Promise.all([
     db.from("audit_events").select("actor_user_id").gte("occurred_at", t24h),
     db.from("audit_events").select("actor_user_id").gte("occurred_at", t7d),
-    db.from("audit_events").select("id,action,actor_role,source").gte("occurred_at", t30d).limit(2000),
+    db.from("audit_events").select("id,action,actor_role,actor_user_id,source").gte("occurred_at", t30d).limit(5000),
     db.from("rettighedshavere").select("id", { count: "exact", head: true }),
     db.from("user_org_roles").select("id", { count: "exact", head: true }).in("role", ["superadmin", "admin", "org-admin", "jurist"]),
     db.from("audit_events")
       .select("id,occurred_at,action,entity_type,entity_id,entity_label,actor_display_name,actor_email,actor_role,source,audit_event_organisations(org_id,org_name)")
+      .gte("occurred_at", t30d)
       .neq("actor_role", "member")
+      .neq("source", "portal")
       .order("occurred_at", { ascending: false })
-      .limit(50),
+      .limit(60),
+    db.from("audit_events")
+      .select("id,occurred_at,action,entity_type,entity_id,entity_label,actor_display_name,actor_email,actor_role,source,audit_event_organisations(org_id,org_name)")
+      .gte("occurred_at", t30d)
+      .or("source.eq.portal,actor_role.eq.member")
+      .order("occurred_at", { ascending: false })
+      .limit(60),
+    db.from("organisations").select("id, name").order("name"),
     db.from("audit_events")
       .select("id,occurred_at,action,outcome,error_code,system_component,actor_display_name,entity_type,entity_label")
+      .gte("occurred_at", t30d)
       .or("outcome.eq.failed,action.eq.security_failure")
       .order("occurred_at", { ascending: false })
       .limit(30),
     db.from("contract_comments").select("id,contract_id,author_role,created_at").gte("created_at", t30d).limit(500),
   ]);
 
-  // Distinct active users
+  // Faktiske unikke brugere der har udført en hændelse
   const uniqueUsers24h = new Set((events24hRes.data ?? []).map(e => e.actor_user_id).filter(Boolean));
   const uniqueUsers7d = new Set((events7dRes.data ?? []).map(e => e.actor_user_id).filter(Boolean));
+  const uniqueUsers30d = new Set((events30dRes.data ?? []).map(e => e.actor_user_id).filter(Boolean));
+
   const totalMembers = membersCountRes.count ?? 0;
   const totalAdmins = adminsCountRes.count ?? 0;
 
-  // Events last 30d breakdown
+  // Hændelser opgjort fra baseline
   const events30d = events30dRes.data ?? [];
   let memberEventsCount = 0;
   let adminEventsCount = 0;
@@ -173,19 +244,36 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
     actionCounts[ev.action] = (actionCounts[ev.action] ?? 0) + 1;
   }
 
-  const totalEvents = events30d.length || 1;
-  const membersPct = Math.round((memberEventsCount / totalEvents) * 100);
-  const adminsPct = 100 - membersPct;
+  const totalEvents = events30d.length;
+  const membersPct = totalEvents > 0 ? Math.round((memberEventsCount / totalEvents) * 100) : 0;
+  const adminsPct = totalEvents > 0 ? 100 - membersPct : 0;
 
-  const topActions = Object.entries(actionCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([action, count]) => ({
-      action,
-      label: ACTION_LABELS[action] || action,
+  // Faktiske handlingskategorier (0 hvis ingen handlinger er sket)
+  const categoriesList: Array<{ key: string; actions: string[] }> = [
+    { key: "create", actions: ["create"] },
+    { key: "download", actions: ["download", "export", "sar_export"] },
+    { key: "read", actions: ["read", "search"] },
+    { key: "retention", actions: ["retention"] },
+    { key: "ai_analysis", actions: ["ai_analysis"] },
+    { key: "link", actions: ["link", "update", "unlink"] },
+    { key: "validate", actions: ["validate", "approve"] },
+    { key: "complete_onboarding", actions: ["complete_onboarding", "require_onboarding"] },
+  ];
+
+  const actionCategories: ActionCategoryDetail[] = categoriesList.map(cat => {
+    let count = 0;
+    for (const a of cat.actions) {
+      count += actionCounts[a] ?? 0;
+    }
+    const meta = ACTION_EXPLANATIONS[cat.key] || { label: cat.key, explanation: "Systemhandling" };
+    return {
+      key: cat.key,
+      label: meta.label,
       count,
-      pct: Math.round((count / totalEvents) * 100),
-    }));
+      pct: totalEvents > 0 ? Math.round((count / totalEvents) * 100) : 0,
+      explanation: meta.explanation,
+    };
+  });
 
   // Speed insights response times calculation
   const responseEvents: ResponseEvent[] = (commentsRes.data ?? []).map(c => ({
@@ -194,9 +282,10 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
     createdAt: c.created_at,
   }));
   const speedStats = calculateResponseTimeStats(responseEvents, t30d);
+  const keyPages = getKeyPageTimingStats();
 
   // Admin logs mapping
-  type RawAdminLogRow = {
+  type RawAuditLogRow = {
     id: string;
     occurred_at: string;
     action: string;
@@ -210,12 +299,13 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
     audit_event_organisations?: Array<{ org_id: string; org_name: string | null }>;
   };
 
-  const adminActivityLog = ((adminLogsRes.data ?? []) as unknown as RawAdminLogRow[]).map(row => {
-    const org = row.audit_event_organisations?.[0]?.org_name || "Generel administration";
+  const adminActivityLog = ((adminLogsRes.data ?? []) as unknown as RawAuditLogRow[]).map(row => {
+    const org = row.audit_event_organisations?.[0];
     return {
       id: row.id,
       occurredAt: row.occurred_at,
-      orgName: org,
+      orgId: org?.org_id ?? null,
+      orgName: org?.org_name || "Generel administration",
       actorName: row.actor_display_name || row.actor_email || "Administrator",
       actorRole: row.actor_role || "admin",
       action: row.action,
@@ -224,6 +314,29 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
       description: formatAdminActionDescription(row.action, row.entity_type, row.entity_label),
     };
   });
+
+  // User logs mapping
+  const userActivityLog = ((userLogsRes.data ?? []) as unknown as RawAuditLogRow[]).map(row => {
+    const org = row.audit_event_organisations?.[0];
+    return {
+      id: row.id,
+      occurredAt: row.occurred_at,
+      orgId: org?.org_id ?? null,
+      orgName: org?.org_name || "Dansk Filmklipperselskab",
+      actorName: row.actor_display_name || "Medlem",
+      actorRole: row.actor_role || "member",
+      action: row.action,
+      entityType: row.entity_type,
+      entityLabel: row.entity_label,
+      description: formatUserActionDescription(row.action, row.entity_type, row.entity_label),
+    };
+  });
+
+  // Organisations list
+  const organisations = (organisationsRes.data ?? []).map(o => ({
+    id: o.id,
+    name: o.name,
+  }));
 
   // System errors mapping
   const systemErrors = (errorLogsRes.data ?? []).map(row => ({
@@ -239,24 +352,20 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
 
   return {
     analytics: {
-      activeUsers24h: Math.max(uniqueUsers24h.size, 1),
-      activeUsers7d: Math.max(uniqueUsers7d.size, uniqueUsers24h.size, 1),
-      activeUsers30d: Math.max(uniqueUsers7d.size, totalMembers + totalAdmins > 0 ? Math.min(totalMembers + totalAdmins, 42) : 1),
+      activeUsers24h: uniqueUsers24h.size,
+      activeUsers7d: uniqueUsers7d.size,
+      activeUsers30d: uniqueUsers30d.size,
       totalMembers,
       totalAdmins,
-      actionsLast30Days: events30d.length,
+      actionsLast30Days: totalEvents,
+      baselineDate: customBaselineIso || LAUNCH_BASELINE_ISO,
       sessionBreakdown: {
-        membersPct: membersPct || 70,
-        adminsPct: adminsPct || 30,
+        membersPct,
+        adminsPct,
         memberEvents: memberEventsCount,
         adminEvents: adminEventsCount,
       },
-      topActions: topActions.length > 0 ? topActions : [
-        { action: "create", label: "Oprettelse / Upload", count: 12, pct: 40 },
-        { action: "link", label: "Værktilknytning", count: 8, pct: 27 },
-        { action: "validate", label: "Kontraktvalidering", count: 6, pct: 20 },
-        { action: "complete_onboarding", label: "Gennemført Onboarding", count: 4, pct: 13 },
-      ],
+      actionCategories,
       deviceBreakdown: {
         desktop: 74,
         mobile: 21,
@@ -267,15 +376,18 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
       medianResponseTimeMs: speedStats.medianMs,
       p90ResponseTimeMs: speedStats.p90Ms,
       webVitals: {
-        lcp: { value: "1.1s", score: "good", target: "< 2.5s" },
-        inp: { value: "34ms", score: "good", target: "< 200ms" },
-        cls: { value: "0.01", score: "good", target: "< 0.1" },
-        fcp: { value: "0.6s", score: "good", target: "< 1.8s" },
-        ttfb: { value: "115ms", score: "good", target: "< 800ms" },
+        lcp: { value: "1.1s", score: "good", target: "< 2.5s", explanation: "Indlæsningstid for sidens største element (f.eks. tabel/PDF)" },
+        inp: { value: "34ms", score: "good", target: "< 200ms", explanation: "Brugerens oplevede klik- og tastaturforsinkelse" },
+        cls: { value: "0.01", score: "good", target: "< 0.1", explanation: "Visuel layout-stabilitet under side-rendering" },
+        fcp: { value: "0.6s", score: "good", target: "< 1.8s", explanation: "Tidspunkt hvor det første indhold vises på skærmen" },
+        ttfb: { value: "115ms", score: "good", target: "< 800ms", explanation: "Serverens svartid fra forespørgsel til første datapakke" },
       },
+      keyPages,
       systemHealth: "healthy",
     },
     adminActivityLog,
+    userActivityLog,
+    organisations,
     systemErrors,
   };
 }
