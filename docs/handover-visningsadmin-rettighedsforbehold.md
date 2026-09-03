@@ -224,7 +224,7 @@ Hvis en kontrakt findes, skal relevante bilag og rettighedssagen kunne vises fra
 
 Ved værket vises en tydelig status, når dokumentationen mangler:
 
-> **Dokumentation for rettighedsforbehold mangler**  
+> **Dokumentation for rettighedsforbehold mangler**
 > Din mulige rettighedsposition er tilbageholdt på værket, mens sagen afklares.
 
 Brugeren skal kunne:
