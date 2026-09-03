@@ -17,7 +17,24 @@ export function buildConnectSources(supabaseUrl: string | undefined): string[] {
   return sources;
 }
 
+export function buildFrameSources(supabaseUrl: string | undefined): string[] {
+  // Kontrakt-PDF'er vises i <iframe> — enten som lokal blob-preview før upload
+  // eller som Supabase Storage signed URL. Begge skal tillades eksplicit, da
+  // default-src 'self' ellers blokerer visningen ("content is blocked").
+  const sources = ["'self'", "blob:"];
+  if (!supabaseUrl) return sources;
+
+  try {
+    sources.push(new URL(supabaseUrl).origin);
+  } catch {
+    // Malformed URL — environment validation reports it; keep the CSP closed here.
+  }
+
+  return sources;
+}
+
 const connectSources = buildConnectSources(process.env.NEXT_PUBLIC_SUPABASE_URL).join(" ");
+const frameSources = buildFrameSources(process.env.NEXT_PUBLIC_SUPABASE_URL).join(" ");
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["canvas"],
@@ -37,7 +54,7 @@ const nextConfig: NextConfig = {
         { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
         {
           key: "Content-Security-Policy",
-          value: `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src ${connectSources}; frame-ancestors 'none';`,
+          value: `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src ${connectSources}; frame-src ${frameSources}; frame-ancestors 'none';`,
         },
       ],
     }];
