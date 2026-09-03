@@ -21,7 +21,8 @@ import type { ContractEvidenceActivation } from "@/app/admin/kontrakter/Contract
 type Props = {
   contractId: string;
   canManage: boolean;
-  queueActive: boolean;
+  inOwnershipQueue: boolean;
+  hasNext: boolean;
   onEvidenceActivate: (evidence: ContractEvidenceActivation) => void;
   onCompleted: (goNext: boolean) => Promise<void>;
   commandTrigger?: number;
@@ -44,7 +45,8 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
 export function ContractOwnershipEditor({
   contractId,
   canManage,
-  queueActive,
+  inOwnershipQueue,
+  hasNext,
   onEvidenceActivate,
   onCompleted,
   commandTrigger = 0,
@@ -146,7 +148,7 @@ export function ContractOwnershipEditor({
       if (commandTrigger && !oneClickOwner) document.getElementById("ownership-search")?.focus();
       return;
     }
-    void applyOwner(oneClickOwner, queueActive);
+    void applyOwner(oneClickOwner, inOwnershipQueue && hasNext);
     // commandTrigger is the deliberate user action; other values are current guards.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commandTrigger]);
@@ -176,18 +178,18 @@ export function ContractOwnershipEditor({
       </dl>
     </details>
 
-    <div className="mt-3 flex flex-wrap gap-2">
-      {canConfirm && oneClickOwner ? <>
-        <Button disabled={saving} onClick={() => void applyOwner(oneClickOwner, false)}><CheckCircle2 className="h-4 w-4" />Godkend forslag</Button>
-        <Button disabled={saving || !queueActive} onClick={() => void applyOwner(oneClickOwner, true)}><UserRoundCheck className="h-4 w-4" />Godkend og næste</Button>
-      </> : null}
-      <Button variant="outline" onClick={() => document.getElementById("ownership-search")?.focus()}>Ret ejer</Button>
-    </div>
-
     <div className="mt-5 rounded-md border p-3">
       <label htmlFor="ownership-search" className="text-sm font-medium">Søg efter korrekt ejer</label>
       <div className="mt-2 flex gap-2"><Input id="ownership-search" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void search(); } }} placeholder="Søg navn…" /><Button variant="outline" disabled={searching || query.trim().length < 2} onClick={() => void search()}>{searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}Søg</Button></div>
-      {candidates.length ? <div className="mt-2 divide-y rounded-md border">{candidates.map(candidate => <div key={candidate.id} className="flex items-center justify-between gap-2 p-2"><button type="button" className="min-w-0 flex-1 truncate text-left text-sm" onClick={() => setSelectedOwner(candidate)}>{candidate.name}{candidate.secondaryLabel ? <span className="ml-1 text-xs text-muted-foreground">· {candidate.secondaryLabel}</span> : null}</button>{selectedOwner?.id === candidate.id ? <div className="flex gap-1"><Button size="sm" onClick={() => void applyOwner(candidate, false)}>Ret ejer</Button><Button size="sm" variant="outline" disabled={!queueActive} onClick={() => void applyOwner(candidate, true)}>Ret og næste</Button></div> : null}</div>)}</div> : null}
+      {candidates.length ? <div className="mt-2 divide-y rounded-md border">{candidates.map(candidate => <div key={candidate.id} className="flex items-center justify-between gap-2 p-2"><button type="button" className="min-w-0 flex-1 truncate text-left text-sm" onClick={() => setSelectedOwner(candidate)}>{candidate.name}{candidate.secondaryLabel ? <span className="ml-1 text-xs text-muted-foreground">· {candidate.secondaryLabel}</span> : null}</button>{selectedOwner?.id === candidate.id ? <div className="flex gap-1"><Button size="sm" onClick={() => void applyOwner(candidate, inOwnershipQueue && hasNext)}>Vælg ejer{inOwnershipQueue && hasNext ? " og næste" : ""}</Button></div> : null}</div>)}</div> : null}
+    </div>
+
+    <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t pt-3">
+      <Button variant="outline" onClick={() => document.getElementById("ownership-search")?.focus()}>Ret ejer</Button>
+      {canConfirm && oneClickOwner ? <Button disabled={saving} onClick={() => void applyOwner(oneClickOwner, inOwnershipQueue && hasNext)}>
+        {inOwnershipQueue && hasNext ? <UserRoundCheck className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+        {inOwnershipQueue && hasNext ? "Godkend ejerskab og gå til næste" : "Godkend ejerskab"}
+      </Button> : null}
     </div>
   </section>;
 }

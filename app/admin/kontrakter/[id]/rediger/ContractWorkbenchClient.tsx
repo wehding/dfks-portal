@@ -4,7 +4,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, BriefcaseBusiness, Building2, CheckCircle2, ChevronLeft, ChevronRight, Download, Loader2, Save, Scale, Sparkles, X, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BriefcaseBusiness, Building2, CheckCircle2, ChevronLeft, ChevronRight, Download, GripVertical, Loader2, Save, Scale, Sparkles, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { addAdminContractComment, getAdminContractSeriesEpisodeOptions, markContractCommentsRead, queueAdminContractAiExtraction, updateAdminContract } from "@/app/actions/member-contracts";
 import { createAdminContractWorkQueue, fetchAdminContractWorkQueue, markAdminContractQueueItem } from "@/app/actions/admin-contract-work-queues";
@@ -22,8 +22,8 @@ import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import { ContractSourceBadge } from "@/components/contracts/contract-source-badge";
 import { useAdminPageTitle } from "@/components/admin/admin-page-title";
 import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
-import { emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
-import type { ProductionCompanySelection } from "@/lib/production-companies";
+import { contractDataToManualWorkSeed, contractWorkTypeFilter, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
+import { extractedProductionCompanyNames, type ProductionCompanySelection } from "@/lib/production-companies";
 import { buildCompleteEpisodeOptions, mergeEpisodeOptionsByPriority, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 import { contractEpisodeNumbersFromLayout, contractEvidencePage, fieldEvidence, safeContractReturnTo, suggestLocalContractWork, type ContractDocumentVariant, type ContractFieldEvidence, type ContractFieldSource, type ContractValidationMissingField, type ContractWorkbenchData } from "@/lib/contract-workbench";
@@ -47,6 +47,8 @@ export type EditorData = ContractWorkbenchData<any>;
 
 const APPROVAL_RIGHT_KEYS = ["copydan", "hasCreditClause", "royalty", "royaltyPercent", "svod"];
 const APPROVAL_SIGNATURE_KEYS = ["signatureStatus", "signatureDate"];
+const CLAUSE_EVIDENCE_KEYS = new Set(["collectiveAgreement", "copydan", "svod", "royalty", "creditedRoles", "hasCreditClause", "aiDataMiningClause", "futureRightsReservation"]);
+const SPLIT_STORAGE_KEY = "dfks-contract-workbench-split";
 const SECTIONS: Array<{ key: string; label: string; section?: ContractValidationSectionKey }> = [
   { key: "approve", label: "Godkend" },
   { key: "ownership", label: "Ejerskab" },
@@ -200,6 +202,10 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   const markingCommentsReadRef = useRef(false);
   const [reply, setReply] = useState("");
   const [replySaving, setReplySaving] = useState(false);
+  const splitContainerRef = useRef<HTMLElement | null>(null);
+  const splitPercentRef = useRef(43);
+  const [splitPercent, setSplitPercent] = useState(43);
+  const [resizingSplit, setResizingSplit] = useState(false);
 
   const [workPickerOpen, setWorkPickerOpen] = useState(false);
   const [workQuery, setWorkQuery] = useState(form.workingTitle);
@@ -208,9 +214,24 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   const [workSearched, setWorkSearched] = useState(false);
   const [workError, setWorkError] = useState<string | null>(null);
   const [selectedWorkResult, setSelectedWorkResult] = useState<UnifiedSearchWorkResult | null>(null);
-  const [workTypeFilter, setWorkTypeFilter] = useState("all");
+  const [workTypeFilter, setWorkTypeFilter] = useState(() => contractWorkTypeFilter(typeof validationData.productionType === "string" ? validationData.productionType : null));
   const [manualWorkMode, setManualWorkMode] = useState(false);
-  const [manualWork, setManualWork] = useState<ManualWorkFormValue>(() => emptyManualWorkForm({ title: form.workingTitle, contract_id: contract.id }));
+  const extractedProducerNames = useMemo(() => extractedProductionCompanyNames(validationData), [validationData]);
+  const [manualWork, setManualWork] = useState<ManualWorkFormValue>(() => ({
+    ...emptyManualWorkForm(contractDataToManualWorkSeed({
+    title: typeof validationData.workTitle === "string" ? validationData.workTitle : form.workingTitle,
+    category: typeof validationData.productionType === "string" ? validationData.productionType : null,
+    duration: typeof validationData.duration === "string" || typeof validationData.duration === "number" ? validationData.duration : null,
+    premiereDate: typeof validationData.premiereDate === "string" ? validationData.premiereDate : null,
+    premiereYear: typeof validationData.premiereYear === "string" || typeof validationData.premiereYear === "number" ? validationData.premiereYear : null,
+    productionCompany: data.producerSelections[0]?.canonicalName ?? extractedProductionCompanyNames(validationData)[0] ?? null,
+    director: typeof validationData.director === "string" ? validationData.director : null,
+    seasonNumber: typeof validationData.seasonNumber === "string" || typeof validationData.seasonNumber === "number" ? validationData.seasonNumber : form.seasonNumber,
+    episodes: form.episodeNumbers.map((number: number) => ({ number })),
+      contractId: contract.id,
+    })),
+    production_companies: data.producerSelections,
+  }));
   const [episodeOptions, setEpisodeOptions] = useState<SeriesEpisodeOption[]>([]);
   const [episodesLoading, setEpisodesLoading] = useState(false);
   const [episodesError, setEpisodesError] = useState<string | null>(null);
@@ -218,6 +239,14 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   const editorInitialData = useMemo(() => ({ ...validationData, _sources: data.sources }), [data.sources, validationData]);
 
   useAdminPageTitle(form.workingTitle || linkedWork?.title || "Rediger kontrakt", "Rediger og valider kontrakt");
+
+  useEffect(() => {
+    const stored = Number(window.localStorage.getItem(SPLIT_STORAGE_KEY));
+    if (Number.isFinite(stored) && stored >= 25 && stored <= 70) {
+      splitPercentRef.current = stored;
+      setSplitPercent(stored);
+    }
+  }, []);
 
   const parentFieldsAreDirty = useCallback(() => initialEditableSnapshotRef.current !== JSON.stringify({ form, producerSelections }), [form, producerSelections]);
 
@@ -240,13 +269,20 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     }
     if (implicitQueueRequestedRef.current) return;
     implicitQueueRequestedRef.current = true;
-    void createAdminContractWorkQueue({ kind: "filtered", filters: queueFiltersFromReturnTo(returnTo) }).then(result => {
+    const kind = initialSection === "ownership" && data.canManageOwnership ? "ownership" : "filtered";
+    void createAdminContractWorkQueue({ kind, filters: queueFiltersFromReturnTo(returnTo) }).then(result => {
       if (!result.success) return;
       if (!result.queueId) return;
       setQueueId(result.queueId);
       void loadQueue(result.queueId);
     });
-  }, [loadQueue, queueId, returnTo]);
+  }, [data.canManageOwnership, initialSection, loadQueue, queueId, returnTo]);
+
+  useEffect(() => {
+    if (queue?.kind !== "ownership" || !data.canManageOwnership || tab === "ownership") return;
+    setVisitedTabs(current => new Set(current).add("ownership"));
+    setTab("ownership");
+  }, [data.canManageOwnership, queue?.kind, tab]);
 
   useEffect(() => {
     if (splitLayout && mobileSourceView !== "closed") setMobileSourceView("closed");
@@ -336,7 +372,11 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   const setActive = (evidence: ContractEvidenceActivation) => {
     const coordinateEvidence = data.evidence?.[evidence.sourceKey] ?? data.evidence?.[evidence.fieldKey];
     if ((evidence.bbox || coordinateEvidence?.bbox) && data.documents.commented?.url) setVariant("commented");
-    const highlight = evidence.quote ? evidence.focusText?.trim() || evidence.quote : "";
+    const highlight = evidence.quote
+      ? CLAUSE_EVIDENCE_KEYS.has(evidence.sourceKey)
+        ? evidence.quote
+        : evidence.focusText?.trim() || evidence.quote
+      : "";
     const next = { ...evidence, highlight };
     if (!evidence.quote.trim()) {
       setActiveField(next);
@@ -352,8 +392,14 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
       setMobileSourceView("preview");
       return;
     }
-    setActiveField(current => current?.fieldKey === evidence.fieldKey ? null : next);
+    setActiveField(next);
   };
+  const documentLastPage = useMemo(() => Math.max(1, ...(data.layout?.clauses ?? []).map(clause => Number(clause.page) || 1)), [data.layout]);
+  const activateEvidence = (evidence: ContractEvidenceActivation) => setActive(
+    evidence.fieldKey === "signatureStatus" && !evidence.page
+      ? { ...evidence, page: documentLastPage }
+      : evidence,
+  );
   const activeEvidenceBase = activeField ? fieldEvidence(activeField.fieldKey, activeField.sourceKey, {
     ...data.sources,
     [activeField.sourceKey]: activeField.quote,
@@ -408,8 +454,8 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     }
   }
 
-  async function searchWorks() {
-    const query = workQuery.trim();
+  async function searchWorks(queryOverride?: string) {
+    const query = (queryOverride ?? workQuery).trim();
     if (!query) return;
     setWorkSearching(true); setWorkError(null); setWorkSearched(true);
     try {
@@ -419,6 +465,27 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     } catch (error) {
       setWorkError(error instanceof Error ? error.message : "Søgningen fejlede");
     } finally { setWorkSearching(false); }
+  }
+
+  function openWorkSearch() {
+    const query = (workQuery || form.workingTitle).trim();
+    setWorkPickerOpen(true);
+    setManualWorkMode(false);
+    if (query) {
+      setWorkQuery(query);
+      void searchWorks(query);
+    }
+  }
+
+  function setManualMode(manual: boolean) {
+    if (manual) {
+      setManualWork(current => ({
+        ...current,
+        production_company: current.production_company || producerSelections[0]?.canonicalName || "",
+        production_companies: current.production_companies.length ? current.production_companies : producerSelections,
+      }));
+    }
+    setManualWorkMode(manual);
   }
 
   async function chooseWork(result: UnifiedSearchWorkResult) {
@@ -664,7 +731,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         const sourceKey = Object.entries(data.sources).find(([, value]) => value === quote)?.[0]?.replace(/_(?:clause_id|page)$/, "") ?? section;
         setActive({ fieldKey: sourceKey, sourceKey, quote, clauseId: data.sources[`${sourceKey}_clause_id`] ?? null, page: data.sources[`${sourceKey}_page`] && Number.isFinite(Number(data.sources[`${sourceKey}_page`])) ? Number(data.sources[`${sourceKey}_page`]) : null });
       }}
-      onEvidenceActivate={setActive}
+      onEvidenceActivate={activateEvidence}
       activeEvidenceFieldKey={activeField?.fieldKey ?? null}
       initialData={editorInitialData}
       dates={{ contractDate: form.contractDate, startDate: form.startDate, endDate: form.endDate }}
@@ -721,33 +788,72 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs" onClick={() => router.push(safeContractReturnTo(returnTo))}><ArrowLeft className="h-3.5 w-3.5" />Tilbage</Button>
         <div className="hidden min-w-0 flex-1 md:block"><p className="truncate text-xs font-semibold">{form.workingTitle || linkedWork?.title || "Kontrakt"}</p><p className="truncate text-[10px] text-muted-foreground">{producerSelections[0]?.canonicalName ?? employer?.name ?? "Ingen producent"} · {holder?.full_name ?? "Ingen rettighedshaver"}</p></div>
         <Badge variant="outline" className="h-6 shrink-0 rounded-sm px-1.5 text-[10px]">{contract.status === "valideret" ? "Valideret" : contract.status === "arkiveret" ? "Afvist" : "Afventer validering"}</Badge>
-        <div className="flex h-8 shrink-0 items-center rounded-sm border bg-background" aria-label="Listenavigation">
+        {queue?.kind === "ownership" && <span className="shrink-0 text-[11px] font-semibold text-amber-800 dark:text-amber-200">Ejerskab afklaring</span>}
+        <div className="flex h-8 shrink-0 items-center rounded-sm border bg-background" aria-label={queue?.kind === "ownership" ? "Ejerskab afklaring" : "Listenavigation"}>
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7" disabled={queueLoading || !queue?.previousContractId} onClick={() => requestNavigate(queue?.previousContractId ?? null)} aria-label="Forrige kontrakt"><ChevronLeft className="h-4 w-4" /></Button>
           <Button type="button" variant="ghost" className="h-7 min-w-14 px-1.5 text-[10px]" disabled={queueLoading || !queue} onClick={() => setQueueSheetOpen(true)} aria-label="Vis kontrakter på listen">{queueLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : queue ? `${queue.position} / ${queue.total}` : "– / –"}</Button>
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7" disabled={queueLoading || !queue?.nextContractId} onClick={() => requestNavigate(queue?.nextContractId ?? null)} aria-label="Næste kontrakt"><ChevronRight className="h-4 w-4" /></Button>
         </div>
         <div className="flex shrink-0 rounded-sm border bg-muted/30 p-0.5">
-          <Button size="sm" className="h-7 shrink-0 rounded-sm px-2 text-xs" variant={variant === "original" ? "secondary" : "ghost"} disabled={!data.documents.original?.url} onClick={() => setVariant("original")}>Original</Button>
+          <Button size="sm" className="h-7 shrink-0 rounded-sm px-2 text-xs" variant={variant === "original" ? "secondary" : "ghost"} disabled={!data.documents.original?.url} onClick={() => setVariant("original")}>{data.documents.original?.convertedForViewing ? "Original konverteret PDF" : "Original"}</Button>
           <Button size="sm" className="h-7 shrink-0 rounded-sm px-2 text-xs" variant={variant === "commented" ? "secondary" : "ghost"} disabled={!data.documents.commented?.url} onClick={() => setVariant("commented")}>Kommenteret PDF</Button>
         </div>
         {data.documents.original?.sourceUrl && <Button asChild size="icon" variant="outline" className="h-8 w-8 shrink-0" title="Download uændret original"><a href={data.documents.original.sourceUrl} download><Download className="h-3.5 w-3.5" /><span className="sr-only">Download uændret original</span></a></Button>}
         <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving || aiReading} onClick={() => void runAiReading()}>{aiReading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}AI-aflæsning</Button>
         <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving} onClick={() => void save()}>{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}Gem</Button>
-        <Button size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving} onClick={() => void validate()}><CheckCircle2 className="h-3.5 w-3.5" />Valider</Button>
+        <Button size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving} onClick={() => void validate()} title="Genvej: ⌘/Ctrl + Enter"><CheckCircle2 className="h-3.5 w-3.5" />Valider <kbd className="hidden rounded border px-1 font-mono text-[9px] sm:inline">⌘⏎</kbd></Button>
         <Button size="sm" variant="destructive" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving} onClick={() => setRejectOpen(true)}><XCircle className="h-3.5 w-3.5" />Afvis</Button>
       </div>
-      {data.documents.original?.convertedForViewing && variant === "original" && <p className="mt-1 text-[10px] text-muted-foreground">Original vises som en neutral PDF-konvertering af Word-filen. Download-knappen henter den uændrede original.</p>}
+      {data.documents.original?.convertedForViewing && variant === "original" && <p className="mt-1 text-[10px] text-muted-foreground">Original konverteret PDF vises som en neutral visningskopi af Word-filen. Download-knappen henter den uændrede original.</p>}
       {!splitLayout && <div className="mt-1 flex gap-1"><Button size="sm" className="h-7 text-xs" variant={mobilePane === "document" ? "default" : "outline"} onClick={() => setMobilePane("document")}>Dokument</Button><Button size="sm" className="h-7 text-xs" variant={mobilePane === "data" ? "default" : "outline"} onClick={() => setMobilePane("data")}>Kilder og data</Button></div>}
     </header>
 
-    <main className={`grid min-h-0 flex-1 ${splitLayout ? "grid-cols-[minmax(260px,0.85fr)_minmax(0,1.15fr)] min-[1200px]:grid-cols-[minmax(420px,1fr)_minmax(620px,1.2fr)]" : ""}`}>
+    <main
+      ref={splitContainerRef}
+      className={`grid min-h-0 flex-1 ${resizingSplit ? "select-none" : ""}`}
+      style={splitLayout ? { gridTemplateColumns: `minmax(260px, ${splitPercent}fr) 8px minmax(420px, ${100 - splitPercent}fr)` } : undefined}
+    >
       <section data-testid="contract-document-pane" className={`${splitLayout || mobilePane === "document" ? "block" : "hidden"} min-w-0 overflow-hidden border-r ${splitLayout ? "min-h-0" : "min-h-[70svh]"}`}>
         {documentUrl ? documentIsPdf ? <PdfViewer url={documentUrl} activeHighlight={activeField?.highlight ?? null} pageNavigationHint={activeField?.highlight ?? activeField?.quote ?? undefined} activePage={contractEvidencePage(activeEvidence)} layout={documentLayout} activeClauseId={documentLayout ? activeEvidence?.clauseId ?? null : null} activeEvidence={activeEvidence} resetViewToken={pdfResetToken} /> : <ContractDocViewer url={documentUrl} filename={selectedDocument?.path} activeHighlight={activeField?.highlight ?? null} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen dokumentfil</div>}
       </section>
 
+      {splitLayout ? <div
+        role="separator"
+        aria-label="Tilpas bredden mellem kontrakt og arbejdsområde"
+        aria-orientation="vertical"
+        aria-valuemin={25}
+        aria-valuemax={70}
+        aria-valuenow={Math.round(splitPercent)}
+        tabIndex={0}
+        className="group relative z-30 flex cursor-col-resize touch-none items-center justify-center border-x bg-muted/30 outline-none hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-ring"
+        onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); setResizingSplit(true); }}
+        onPointerMove={event => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId) || !splitContainerRef.current) return;
+          const bounds = splitContainerRef.current.getBoundingClientRect();
+          const next = Math.min(70, Math.max(25, ((event.clientX - bounds.left) / bounds.width) * 100));
+          splitPercentRef.current = next;
+          setSplitPercent(next);
+        }}
+        onPointerUp={event => {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+          setResizingSplit(false);
+          window.localStorage.setItem(SPLIT_STORAGE_KEY, String(splitPercentRef.current));
+        }}
+        onKeyDown={event => {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+          event.preventDefault();
+          setSplitPercent(current => {
+            const next = Math.min(70, Math.max(25, current + (event.key === "ArrowLeft" ? -2 : 2)));
+            splitPercentRef.current = next;
+            window.localStorage.setItem(SPLIT_STORAGE_KEY, String(next));
+            return next;
+          });
+        }}
+      ><GripVertical className="h-5 w-5 text-muted-foreground group-hover:text-foreground" /></div> : null}
+
       <section data-testid="contract-data-pane" className={`${splitLayout || mobilePane === "data" ? "block" : "hidden"} relative z-10 min-h-0 min-w-0 bg-background ${splitLayout ? "overflow-y-auto" : ""}`}>
         <DocumentProcessingReviewCard review={documentReview} loading={documentReviewLoading} activeAction={documentReviewAction} statusMessage={documentReviewStatus} onAction={action => void handleDocumentReviewAction(action)} />
-        <div className="hidden flex-wrap items-center gap-1 border-b bg-muted/20 px-3 py-1 min-[1440px]:flex"><span className="mr-1 text-[10px] font-medium">Datakilde:</span>{(["contract", "agreement", "member", "work_archive", "dfi", "tmdb", "wikidata", "manual"] as ContractFieldSource[]).map(source => <ContractSourceBadge key={source} source={source} />)}</div>
+        <div className="hidden flex-wrap items-center gap-1 border-b bg-muted/20 px-3 py-1 min-[1440px]:flex"><span className="mr-1 text-[10px] font-medium">Datakilde:</span>{(["contract", "agreement", "member", "work_archive", "dfi", "tmdb", "wikidata", "manual", "stored"] as ContractFieldSource[]).map(source => <ContractSourceBadge key={source} source={source} />)}</div>
         <Tabs value={tab} onValueChange={changeTab} className="min-h-0 gap-0">
           <TabsList variant="line" className="sticky top-0 z-20 h-8 w-full justify-start overflow-x-auto rounded-none border-b bg-background px-2 py-0.5">
             {SECTIONS.filter(item => item.key !== "ownership" || data.canManageOwnership).map(item => <TabsTrigger key={item.key} value={item.key} className="h-7 flex-none px-2 py-1 text-xs font-medium">{item.label}{tabCounts[item.key] > 0 && <Badge className="ml-1 h-3.5 min-w-3.5 rounded-sm bg-amber-500 px-0.5 text-[8px] font-medium leading-none text-white">{tabCounts[item.key]}</Badge>}</TabsTrigger>)}
@@ -757,15 +863,15 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
             {missing.length > 0 && <div className="m-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"><span className="font-medium">{missing.length} mangler:</span> {missing.map(item => item.label).join(" · ")}</div>}
             <div className="divide-y">
               {baseRow({ key: "rightsHolder", label: "Rettighedshaver", sourceKey: "rightsHolderName", focusText: holder?.full_name ?? null, source: "unknown", missing: !contract.rights_holder_id, children: <div className="flex min-h-8 flex-col justify-center rounded-md border bg-muted/30 px-2 py-1"><span className="truncate text-sm font-medium">{holder?.full_name ?? "Ingen rettighedshaver tilknyttet"}</span>{data.canManageOwnership ? <button type="button" className="w-fit text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => changeTab("ownership")}>Åbn Ejerskab</button> : null}</div> })}
-              {baseRow({ key: "producer", label: "Producent", sourceKey: "employerName", focusText: producerSelections[0]?.canonicalName ?? (String(validationData.employerName ?? employer?.name ?? "") || null), source: producerSelections.length ? (producerSelections[0]?.employerId === contract.employer_id ? "contract" : "manual") : data.sources.employerName ? "contract" : "unknown", missing: !producerSelections.length, children: <ProductionCompanyPicker value={producerSelections} onChange={setProducerSelections} suggestedName={String(validationData.employerName ?? employer?.name ?? "")} canManageRegistry hideLabel compact /> })}
-              {baseRow({ key: "work", label: "Tilknyttet værk", sourceKey: "workTitle", focusText: form.workingTitle || displayedWorkTitle, source: form.workId ? "work_archive" : data.sources.workTitle ? "contract" : "manual", missing: !form.workId && !selectedWorkResult && !manualWorkMode, children: <div className="space-y-1"><div className="flex min-h-8 items-center gap-1 rounded-md border px-2 text-xs"><span className="min-w-0 flex-1 truncate">{form.workId || selectedWorkResult ? displayedWorkLabel : `Arbejdstitel: ${form.workingTitle || "Ingen"}`}</span>{form.workId || selectedWorkResult ? <><Button size="sm" variant="ghost" className="h-7 shrink-0 px-1.5 text-xs" onClick={() => setWorkPickerOpen(open => !open)}>{workPickerOpen ? "Luk" : "Skift"}</Button><button type="button" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Fjern tilknyttet værk" onClick={() => { setForm(current => ({ ...current, workId: "" })); setSelectedWorkResult(null); setManualWorkMode(false); }}><X className="h-3.5 w-3.5" /></button></> : <Button size="sm" variant="ghost" className="h-7 shrink-0 px-1.5 text-xs" onClick={() => setWorkPickerOpen(open => !open)}>{workPickerOpen ? "Luk" : "Søg værk"}</Button>}</div>{localWorkSuggestion && !workPickerOpen && <button type="button" className="flex w-full items-center justify-between rounded-sm border border-emerald-300 bg-emerald-50 px-2 py-1 text-left text-xs text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" onClick={() => { setForm(current => ({ ...current, workId: localWorkSuggestion.id, seasonNumber: parseSeasonNumberFromTitle(current.workingTitle) ?? current.seasonNumber })); setWorkQuery(localWorkSuggestion.title); }}><span className="truncate">Foreslået: {localWorkSuggestion.title}{parseSeasonNumberFromTitle(form.workingTitle) ? ` · sæson ${parseSeasonNumberFromTitle(form.workingTitle)}` : ""}</span><span className="ml-2 shrink-0 font-medium">Tilknyt</span></button>}{workPickerOpen && <WorkSelectionPanel query={workQuery} onQueryChange={setWorkQuery} onSearch={() => void searchWorks()} isSearching={workSearching} hasSearched={workSearched} searchError={workError} results={workResults} selectedId={selectedWorkResult?.id} onSelect={result => void chooseWork(result)} typeFilter={workTypeFilter} onTypeFilterChange={setWorkTypeFilter} manualMode={manualWorkMode} onManualModeChange={setManualWorkMode} manualWork={manualWork} onManualWorkChange={setManualWork} locale="da" autoSelectManualProducer />}</div> })}
-              {baseRow({ key: "contractType", label: "Kontrakttype", sourceKey: "contractType", focusText: data.sources.contractType_focus, source: form.type !== contract.type ? "manual" : data.sources.contractType ? "contract" : "unknown", missing: !form.type, children: <Select value={form.type} onValueChange={type => setForm(current => ({ ...current, type }))}><SelectTrigger className="h-8 w-fit min-w-36 gap-2 text-xs" aria-label="Kontrakttype">{form.type === "leverandør" ? <Building2 className="h-3.5 w-3.5" /> : <BriefcaseBusiness className="h-3.5 w-3.5" />}<span>{form.type === "leverandør" ? "Leverandøraftale" : "A-løn"}</span></SelectTrigger><SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandøraftale</SelectItem></SelectContent></Select> })}
+              {baseRow({ key: "producer", label: "Producent", sourceKey: "employerName", focusText: producerSelections[0]?.canonicalName ?? (extractedProducerNames[0] || employer?.name || null), source: producerSelections.length ? (producerSelections[0]?.employerId === contract.employer_id ? "contract" : "manual") : data.sources.employerName ? "contract" : "unknown", missing: !producerSelections.length, children: <ProductionCompanyPicker value={producerSelections} onChange={setProducerSelections} suggestedNames={extractedProducerNames} canManageRegistry hideLabel compact /> })}
+              {baseRow({ key: "work", label: "Tilknyttet værk", sourceKey: "workTitle", focusText: form.workingTitle || displayedWorkTitle, source: form.workId ? "work_archive" : data.sources.workTitle ? "contract" : "manual", missing: !form.workId && !selectedWorkResult && !manualWorkMode, children: <div className="space-y-1"><div className="flex min-h-8 items-center gap-1 rounded-md border px-2 text-xs"><span className="min-w-0 flex-1 truncate">{form.workId || selectedWorkResult ? displayedWorkLabel : `Arbejdstitel: ${form.workingTitle || "Ingen"}`}</span>{form.workId || selectedWorkResult ? <><Button size="sm" variant="ghost" className="h-7 shrink-0 px-1.5 text-xs" onClick={() => setWorkPickerOpen(open => !open)}>{workPickerOpen ? "Luk" : "Skift"}</Button><button type="button" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Fjern tilknyttet værk" onClick={() => { setForm(current => ({ ...current, workId: "" })); setSelectedWorkResult(null); setManualWorkMode(false); }}><X className="h-3.5 w-3.5" /></button></> : <Button size="sm" variant="ghost" className="h-7 shrink-0 px-1.5 text-xs" onClick={workPickerOpen ? () => setWorkPickerOpen(false) : openWorkSearch}>{workPickerOpen ? "Luk" : "Søg værk"}</Button>}</div>{localWorkSuggestion && !workPickerOpen && <button type="button" className="flex w-full items-center justify-between rounded-sm border border-emerald-300 bg-emerald-50 px-2 py-1 text-left text-xs text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" onClick={() => { setForm(current => ({ ...current, workId: localWorkSuggestion.id, seasonNumber: parseSeasonNumberFromTitle(current.workingTitle) ?? current.seasonNumber })); setWorkQuery(localWorkSuggestion.title); }}><span className="truncate">Foreslået: {localWorkSuggestion.title}{parseSeasonNumberFromTitle(form.workingTitle) ? ` · sæson ${parseSeasonNumberFromTitle(form.workingTitle)}` : ""}</span><span className="ml-2 shrink-0 font-medium">Tilknyt</span></button>}{workPickerOpen && <WorkSelectionPanel query={workQuery} onQueryChange={setWorkQuery} onSearch={() => void searchWorks()} isSearching={workSearching} hasSearched={workSearched} searchError={workError} results={workResults} selectedId={selectedWorkResult?.id} onSelect={result => void chooseWork(result)} typeFilter={workTypeFilter} onTypeFilterChange={setWorkTypeFilter} manualMode={manualWorkMode} onManualModeChange={setManualMode} manualWork={manualWork} onManualWorkChange={setManualWork} locale="da" autoSelectManualProducer />}</div> })}
+              {baseRow({ key: "contractType", label: "Kontrakttype", sourceKey: "contractType", focusText: data.sources.contractType_focus, source: form.type !== contract.type ? "manual" : data.sources.contractType ? "contract" : contract.type ? "stored" : "unknown", missing: !form.type, children: <Select value={form.type} onValueChange={type => setForm(current => ({ ...current, type }))}><SelectTrigger className="h-8 w-fit min-w-36 gap-2 text-xs" aria-label="Kontrakttype">{form.type === "leverandør" ? <Building2 className="h-3.5 w-3.5" /> : <BriefcaseBusiness className="h-3.5 w-3.5" />}<span>{form.type === "leverandør" ? "Leverandøraftale" : "A-løn"}</span></SelectTrigger><SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandøraftale</SelectItem></SelectContent></Select> })}
               {baseRow({ key: "agreement", label: "Overenskomst", sourceKey: "collectiveAgreement", source: form.overenskomst === contract.overenskomst ? "contract" : "manual", missing: !form.overenskomst, children: <Select value={form.overenskomst} onValueChange={overenskomst => setForm(current => ({ ...current, overenskomst }))}><SelectTrigger className="h-8 w-fit min-w-36 text-xs"><Scale className="h-3.5 w-3.5" /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem><SelectItem value="faf">FAF (fiktion)</SelectItem><SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem><SelectItem value="dj">DJ</SelectItem><SelectItem value="metal">Metal</SelectItem><SelectItem value="ingen">Ingen</SelectItem></SelectContent></Select> })}
             </div>
             <div className="border-t">{renderEditor("approve", "approval")}</div>
-            <div className="flex flex-wrap gap-2 border-t p-3"><Button onClick={() => void validate(false)} disabled={saving}><CheckCircle2 className="h-4 w-4" />Validér kontrakt</Button><Button variant="outline" onClick={() => void validate(true)} disabled={saving || !queue?.nextContractId}><CheckCircle2 className="h-4 w-4" />Validér og næste</Button></div>
+            <div className="flex flex-wrap gap-2 border-t p-3"><Button onClick={() => void validate(false)} disabled={saving} title="Genvej: ⌘/Ctrl + Enter"><CheckCircle2 className="h-4 w-4" />Validér kontrakt <kbd className="rounded border px-1 font-mono text-[10px]">⌘⏎</kbd></Button><Button variant="outline" onClick={() => void validate(true)} disabled={saving || !queue?.nextContractId} title="Gemmer alle ændringer, validerer og åbner næste"><CheckCircle2 className="h-4 w-4" />Validér og næste <kbd className="rounded border px-1 font-mono text-[10px]">⌘⏎</kbd></Button></div>
           </TabsContent>
-          {data.canManageOwnership ? <TabsContent forceMount value="ownership" className="m-0 data-[state=inactive]:hidden">{visitedTabs.has("ownership") ? <ContractOwnershipEditor contractId={contract.id} canManage={data.canManageOwnership} queueActive={Boolean(queue?.nextContractId)} commandTrigger={ownershipCommand} onEvidenceActivate={setActive} onCompleted={handleOwnershipCompleted} /> : null}</TabsContent> : null}
+          {data.canManageOwnership ? <TabsContent forceMount value="ownership" className="m-0 data-[state=inactive]:hidden">{visitedTabs.has("ownership") ? <ContractOwnershipEditor contractId={contract.id} canManage={data.canManageOwnership} inOwnershipQueue={queue?.kind === "ownership"} hasNext={Boolean(queue?.nextContractId)} commandTrigger={ownershipCommand} onEvidenceActivate={setActive} onCompleted={handleOwnershipCompleted} /> : null}</TabsContent> : null}
           <TabsContent forceMount value="messages" className="m-0 p-3 data-[state=inactive]:hidden">
             {visitedTabs.has("messages") ? <MessageThread
               title="Beskeder"
@@ -817,7 +923,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
           <DialogTitle className="min-w-0 flex-1 truncate text-sm">{activeField?.label ?? "Kilde i kontrakten"}</DialogTitle>
           <DialogDescription className="sr-only">Hele kontrakten med den valgte dokumentkilde markeret.</DialogDescription>
           <div className="flex shrink-0 rounded-md border bg-muted/30 p-0.5">
-            <Button size="sm" variant={variant === "original" ? "secondary" : "ghost"} disabled={!data.documents.original?.url} onClick={() => setVariant("original")}>Original</Button>
+            <Button size="sm" variant={variant === "original" ? "secondary" : "ghost"} disabled={!data.documents.original?.url} onClick={() => setVariant("original")}>{data.documents.original?.convertedForViewing ? "Original konverteret PDF" : "Original"}</Button>
             <Button size="sm" variant={variant === "commented" ? "secondary" : "ghost"} disabled={!data.documents.commented?.url} onClick={() => setVariant("commented")}>Kommenteret PDF</Button>
           </div>
         </DialogHeader>

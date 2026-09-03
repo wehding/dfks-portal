@@ -153,13 +153,16 @@ export function WorkSelectionPanel({
 
           {hasSearched && !isSearching && !searchError && results.length === 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
-              {t("works.noDatabaseMatchManualHint")}
+              <p>{t("works.noDatabaseMatchManualHint")}</p>
+              <Button type="button" size="sm" variant="outline" className="mt-2" onClick={enterManual}>
+                {locale === "da" ? "Opret værk manuelt" : "Create work manually"}
+              </Button>
             </div>
           )}
 
-          <Button type="button" size="sm" variant="outline" onClick={enterManual}>
-            {t("works.enterManually")}
-          </Button>
+          {(!hasSearched || isSearching || Boolean(searchError) || results.length > 0) && <Button type="button" size="sm" variant="outline" onClick={enterManual}>
+              {t("works.enterManually")}
+          </Button>}
         </>
       ) : (
         <div className="rounded-lg border p-4">

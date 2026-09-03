@@ -24,6 +24,7 @@ const SOURCE_STYLE: Record<ContractFieldSource, { className: string; icon: typeo
   tmdb: { className: "border-teal-300 bg-teal-50 text-teal-800 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200", icon: Database },
   wikidata: { className: "border-orange-300 bg-orange-50 text-orange-800 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200", icon: Landmark },
   manual: { className: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200", icon: Pencil },
+  stored: { className: "border-slate-300 bg-slate-50 text-slate-800 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-200", icon: Database },
   unknown: { className: "border-border bg-muted/40 text-muted-foreground", icon: Building2 },
 };
 
