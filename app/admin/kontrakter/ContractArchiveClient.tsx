@@ -2744,6 +2744,12 @@ function AdminKontrakterPageInner({
     const [activeTab, setActiveTab] = useState<ContractArchiveTab>(initialTab)
     const [taskCounts, setTaskCounts] = useState<AdminContractTaskCounts>(initialTaskCounts ?? { validation: null, ownership: null, messages: null })
     const [openingTask, setOpeningTask] = useState<"validation" | "ownership" | "messages" | null>(null)
+
+    // Stabil callback + bail-out: ValideringskøTab kalder denne i en effect, så en
+    // ny closure eller et nyt state-objekt hver render giver en uendelig løkke.
+    const handleValideringskøCount = useCallback((count: number) => {
+        setTaskCounts(current => current.validation === count ? current : { ...current, validation: count })
+    }, [])
     const tabRefs = useRef<Partial<Record<ContractArchiveTab, HTMLButtonElement | null>>>({})
     const visibleContractTabs: ContractArchiveTab[] = ["arkiv", "valideringskoe", "upload"]
 
@@ -2963,7 +2969,7 @@ function AdminKontrakterPageInner({
                     ? <Suspense><AdminKontrakterContent view="archive" initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} /></Suspense>
                     : activeTab === "upload"
                         ? <Suspense><AdminKontrakterContent view="upload" canManageOwnership={canManageOwnership} /></Suspense>
-                        : <ValideringskøTab onAfventerCount={count => setTaskCounts(current => ({ ...current, validation: count }))} />
+                        : <ValideringskøTab onAfventerCount={handleValideringskøCount} />
                 }
             </div>
         </div>
