@@ -16,6 +16,7 @@
         "app/actions/beta-test.ts",
         "app/actions/contract-episode-confirmations.ts",
         "app/actions/contract-imports.ts",
+        "app/actions/contract-owner-candidates.ts",
         "app/actions/contract-owner-verifications.ts",
         "app/actions/dfi.ts",
         "app/actions/dfks-members.ts",
