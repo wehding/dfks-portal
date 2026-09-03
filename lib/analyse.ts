@@ -437,19 +437,10 @@ Kendte store selskaber (SF Film, Nordisk Film, DR, TV 2, Zentropa) behøver norm
 
 A-LØN vs. LEVERANDØRKONTRAKT — se KONTRAKTFAKTA øverst for denne kontrakts type.
 
-AI-klausul og TDM:
-- Eksplicit TDM-forbehold til ophavsmanden: POSITIVT (ophavsretslovens § 11b)
-- TDM-ret til producenten uden aftale: KRITISK
-- Ingen TDM-nævnelse: advarsel
-
 Royalty:
 - 1,5% af nettoindtægter er STANDARD for FAF dokumentar — flagger ALDRIG som lavt
 - Anbefal ALDRIG højere sats — det er branchepolitisk følsomt
 - Anbefal ALDRIG fjernelse af royalty-klausul
-
-Tavshedspligt og selvpromovering:
-- Acceptabel hvis kontrakten andetsteds giver ret til egenpromotion
-- Flagger kun som problematisk hvis der INGEN promoveringsundtagelse er
 
 Kontraktlæsning generelt:
 - Læs altid kontrakten som helhed — klausuler vurderes i sammenhæng
@@ -476,9 +467,7 @@ RETTIGHEDSKLAUSULER:
 5. Manglende streaming-/SVOD-forbehold (type: kritisk)
    — samme forbehold: dækket ved De4-standardformular / De4-henvisning → POSITIVT punkt.
      Udløs primært ved FAF-standardformular eller kontrakt uden standardformular.
-6. Manglende promoveringsret (type: advarsel)
-7. Manglende TDM/AI-klausul (type: advarsel)
-8. Overenskomstinkorporering i leverandørkontrakt (type: advarsel)
+6. Overenskomstinkorporering i leverandørkontrakt (type: advarsel)
 
 SKADESLØSHOLDELSE:
 9. Skadesløsholdelse ved skattemæssig omklassificering (type: advarsel)

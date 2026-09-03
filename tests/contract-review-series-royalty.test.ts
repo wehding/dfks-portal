@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   hasExplicitSeriesEpisodeScope,
@@ -71,4 +72,16 @@ test("spillefilmskontrollen bevares uden De4-fiktionsoverenskomsten", () => {
     agreementName: null,
     distributionChannels: ["streaming_svod"],
   }), /ROYALTY PÅKRÆVET/);
+});
+
+test("promoveringsret og TDM/AI er ikke hardcoded i analyseprompten", () => {
+  const source = readFileSync(new URL("../lib/analyse.ts", import.meta.url), "utf8");
+  for (const hardcodedRule of [
+    "Ingen TDM-nævnelse",
+    "Manglende TDM/AI-klausul",
+    "Manglende promoveringsret",
+    "Tavshedspligt og selvpromovering",
+  ]) {
+    assert.doesNotMatch(source, new RegExp(hardcodedRule.replace("/", "\\/"), "i"));
+  }
 });
