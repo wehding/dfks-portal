@@ -83,7 +83,7 @@ export function SegmentedControl<T extends string>({
 
 // ── ProducerCombobox ──────────────────────────────────────────
 
-interface ProducerHit { id: string; name: string; isOverenskomstBound?: boolean; source: "dfks" | "dfi" }
+interface ProducerHit { id: string; name: string; isOverenskomstBound?: boolean; boundViaParent?: boolean; parentName?: string; source: "dfks" | "dfi" }
 
 export function ProducerCombobox({
     value,
@@ -145,6 +145,8 @@ export function ProducerCombobox({
             dfksId: hit.source === "dfks" ? hit.id : undefined,
             dfiId: hit.source === "dfi" ? hit.id : undefined,
             isOverenskomstBound: hit.isOverenskomstBound,
+            boundViaParent: hit.boundViaParent,
+            parentName: hit.parentName,
             source: hit.source,
         })
     }
@@ -193,8 +195,11 @@ export function ProducerCombobox({
                                         >
                                             <span className="flex-1">{h.name}</span>
                                             {h.isOverenskomstBound && (
-                                                <span className="shrink-0 rounded-full bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 font-medium dark:bg-emerald-950 dark:text-emerald-300">
-                                                    Overenskomst
+                                                <span
+                                                    className="shrink-0 rounded-full bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 font-medium dark:bg-emerald-950 dark:text-emerald-300"
+                                                    title={h.boundViaParent && h.parentName ? `Bundet via moderselskab: ${h.parentName}` : undefined}
+                                                >
+                                                    {h.boundViaParent ? "Overenskomst (moderselskab)" : "Overenskomst"}
                                                 </span>
                                             )}
                                         </button>

@@ -624,6 +624,16 @@ AFSLUTNINGSVARIATIONER — brug på skift
 PRODUCENTFORENINGENS MEDLEMSKAB — FAST REGEL
 ═══════════════════════════════════════════════
 
+Denne regel gælder KUN når KONTRAKTFAKTA viser Overenskomstdækket: NEJ
+— ordret "NEJ" og intet andet.
+
+Hvis linjen viser "JA — producenten er underselskab af [moderselskab]"
+er producenten fuldt overenskomstdækket via moderselskabet. Så gælder
+"Overenskomstdækket: JA" (se nederst): nævn IKKE manglende medlemskab,
+skriv IKKE at overenskomsten ikke gælder automatisk, og brug
+overenskomsten som bindende hjemmel i de gule blokke på lige fod med
+en direkte ProF-producent.
+
 Når KONTRAKTFAKTA viser Overenskomstdækket: NEJ skal disse to afsnit
 altid indgå — ordret og i denne rækkefølge. Placer afsnit 1 i den
 overordnede vurdering øverst, inden punktlisten:
