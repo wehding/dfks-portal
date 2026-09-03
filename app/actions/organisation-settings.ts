@@ -7,6 +7,7 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import type { OrgBranding, OrgTerminology } from "@/lib/db/types";
 import { resolveDefaultRoleLabel } from "@/lib/branding";
 import { normalizeSingleEmail } from "@/lib/email/mime";
+import { getGmailConfigurationStatus } from "@/lib/email/gmail-core";
 import { getForeningLetIntegration, testForeningLetCredentials, upsertForeningLetIntegration } from "@/lib/org-integrations";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import type { FilterRule } from "@/lib/streaming-types";
@@ -152,6 +153,11 @@ export async function getOrganisationSettings() {
       primary_work_region: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.primary_work_region),
     },
     statistics_work_regions: (workRegionRows ?? []).map(row => row.name_da as string),
+    mail_delivery_status: getGmailConfigurationStatus({
+      GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL,
+      GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+      GOOGLE_GMAIL_SENDER: process.env.GOOGLE_GMAIL_SENDER,
+    }),
     foreninglet,
   };
 }

@@ -27,6 +27,8 @@ export interface GmailEnvironment {
   GOOGLE_GMAIL_SENDER?: string;
 }
 
+export type GmailConfigurationStatus = "configured" | "missing" | "invalid";
+
 export interface GmailDependencies {
   getAuthHeaders(config: GmailConfig): Promise<HeadersInit>;
   fetchImpl: typeof fetch;
@@ -48,6 +50,19 @@ export function readGmailConfig(env: GmailEnvironment): GmailConfig | null {
     privateKey: normalizePrivateKey(privateKeyValue),
     sender: normalizeSingleEmail(senderValue),
   };
+}
+
+export function getGmailConfigurationStatus(env: GmailEnvironment): GmailConfigurationStatus {
+  try {
+    const config = readGmailConfig(env);
+    if (!config) return "missing";
+    if (!config.privateKey.includes("-----BEGIN PRIVATE KEY-----") || !config.privateKey.includes("-----END PRIVATE KEY-----")) {
+      return "invalid";
+    }
+    return "configured";
+  } catch {
+    return "invalid";
+  }
 }
 
 function safeFailure(code: GmailErrorCode, error: string): GmailSendResult {

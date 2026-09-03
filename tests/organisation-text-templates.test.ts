@@ -36,3 +36,15 @@ test("organisationssiden henter lange tekster separat og lazy-loader editoren", 
   assert.match(onboarding, /component: "portal\.onboarding\.legal-texts"/);
   assert.match(onboarding, /targetMemberUuid: rh\.id/);
 });
+
+test("lange organisationstekster scroller inde i editoren", async () => {
+  const [editor, organisationEditor, legalEditor] = await Promise.all([
+    readFile(new URL("../components/ui/rich-text-editor.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/admin/organisation-text-editor.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/admin/legal-document-settings.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(editor, /h-80 min-h-60 max-h-\[60vh\] resize-y overflow-y-auto[\s\S]+field-sizing-fixed/);
+  assert.match(editor, /role="toolbar"/);
+  assert.match(organisationEditor, /max-h-80 overflow-y-auto/);
+  assert.match(legalEditor, /max-h-80 overflow-y-auto/);
+});

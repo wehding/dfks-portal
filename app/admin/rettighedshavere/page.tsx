@@ -53,6 +53,13 @@ type AdminUserResponse = {
     email_error?: string
     link_type?: "invite" | "recovery"
 }
+type BetaInviteResult = {
+    marked: number
+    sent: number
+    failed: number
+    emailError?: string
+    manualLink?: string
+}
 type DfksMemberOption = {
     display_id: string | null
     full_name: string
@@ -193,6 +200,7 @@ export default function RettighedshavereAdminPage() {
     const [betaInviteStartDate, setBetaInviteStartDate] = useState("")
     const [betaInviteEndDate, setBetaInviteEndDate] = useState("")
     const [betaInviteSending, setBetaInviteSending] = useState(false)
+    const [betaInviteResult, setBetaInviteResult] = useState<BetaInviteResult | null>(null)
     const [betaTesterCount, setBetaTesterCount] = useState(0)
     const [betaMessageOpen, setBetaMessageOpen] = useState(false)
     const [betaMessageSending, setBetaMessageSending] = useState(false)
@@ -697,6 +705,7 @@ export default function RettighedshavereAdminPage() {
             setBetaInviteTargets(eligible)
             setBetaInviteStartDate(summary.startDate)
             setBetaInviteEndDate(summary.suggestedEndDate)
+            setBetaInviteResult(null)
             setBetaInviteOpen(true)
         } catch (error) {
             toast.error(errorMessage(error))
@@ -707,6 +716,9 @@ export default function RettighedshavereAdminPage() {
         setBetaInviteSending(true)
         let sent = 0
         let marked = 0
+        let failed = 0
+        const emailErrors: string[] = []
+        const manualLinks: string[] = []
         for (const holder of betaInviteTargets) {
             try {
                 const response = await fetch("/api/admin/user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "beta_invite", rhId: holder.id, betaEndDate: betaInviteEndDate }) })
@@ -714,13 +726,30 @@ export default function RettighedshavereAdminPage() {
                 if (!response.ok) throw new Error(result.error)
                 marked += 1
                 if (result.email_sent) sent += 1
+                else {
+                    if (result.email_error) emailErrors.push(result.email_error)
+                    if (result.invite_url) manualLinks.push(result.invite_url)
+                }
             } catch (error) {
+                failed += 1
                 toast.error(errorMessage(error))
             }
         }
         setBetaInviteSending(false)
-        setBetaInviteOpen(false)
-        toast.success(`${marked} markeret som betatestere · ${sent} mail${sent === 1 ? "" : "s"} sendt`)
+        const result = {
+            marked,
+            sent,
+            failed,
+            emailError: emailErrors[0],
+            manualLink: betaInviteTargets.length === 1 ? manualLinks[0] : undefined,
+        }
+        setBetaInviteResult(result)
+        if (sent === betaInviteTargets.length) {
+            setBetaInviteOpen(false)
+            toast.success(`${sent} betatest-invitation${sent === 1 ? "" : "er"} sendt`)
+        } else {
+            toast.warning(`${marked} markeret som betatestere · ${sent} mails sendt · ${marked - sent + failed} kræver opfølgning`)
+        }
         setSelectedIds(new Set())
         await Promise.all([load(search.trim()), refreshBetaSummary()])
     }
@@ -1817,7 +1846,7 @@ export default function RettighedshavereAdminPage() {
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={betaInviteOpen} onOpenChange={open => { if (!betaInviteSending) setBetaInviteOpen(open) }}>
+            <Dialog open={betaInviteOpen} onOpenChange={open => { if (!betaInviteSending) { setBetaInviteOpen(open); if (!open) setBetaInviteResult(null) } }}>
                 <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>Send betatest-invitation</DialogTitle>
@@ -1827,8 +1856,28 @@ export default function RettighedshavereAdminPage() {
                         <div className="space-y-1"><Label>Startdato</Label><Input type="date" value={betaInviteStartDate} disabled /></div>
                         <div className="space-y-1"><Label htmlFor="beta-end-date">Slutdato i invitationsteksten</Label><Input id="beta-end-date" type="date" min={betaInviteStartDate ? addCalendarDays(betaInviteStartDate, 1) : undefined} value={betaInviteEndDate} onChange={event => setBetaInviteEndDate(event.target.value)} /></div>
                         <p className="text-xs text-muted-foreground">Slutdatoen er kun information. Betatesterstatus og adgang fortsætter, indtil en administrator ændrer dem.</p>
+                        {betaInviteResult && betaInviteResult.sent < betaInviteTargets.length && (
+                            <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100" role="alert">
+                                <p className="font-medium">Betatesterstatus er gemt, men ikke alle mails blev sendt.</p>
+                                <p>{betaInviteResult.sent} sendt · {betaInviteResult.marked - betaInviteResult.sent} mailfejl · {betaInviteResult.failed} øvrige fejl.</p>
+                                {betaInviteResult.emailError && <p>{betaInviteResult.emailError}</p>}
+                                {betaInviteResult.manualLink && (
+                                    <div className="space-y-2">
+                                        <Label htmlFor="beta-manual-link">Manuelt invitationslink</Label>
+                                        <div className="flex gap-2">
+                                            <Input id="beta-manual-link" value={betaInviteResult.manualLink} readOnly className="font-mono text-xs" />
+                                            <Button type="button" variant="outline" onClick={() => { void navigator.clipboard.writeText(betaInviteResult.manualLink ?? ""); toast.success("Link kopieret") }}>Kopiér</Button>
+                                        </div>
+                                        <p className="text-xs">Generér helst et nyt link ved genudsendelse, når mailopsætningen er rettet.</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
-                    <DialogFooter><Button variant="outline" onClick={() => setBetaInviteOpen(false)} disabled={betaInviteSending}>Annuller</Button><Button onClick={confirmBetaInvite} disabled={betaInviteSending || !betaInviteEndDate}>{betaInviteSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send invitation</Button></DialogFooter>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setBetaInviteOpen(false)} disabled={betaInviteSending}>{betaInviteResult ? "Luk" : "Annuller"}</Button>
+                        <Button onClick={confirmBetaInvite} disabled={betaInviteSending || !betaInviteEndDate}>{betaInviteSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{betaInviteResult ? "Prøv at sende igen" : "Send invitation"}</Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 

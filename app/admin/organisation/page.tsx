@@ -26,6 +26,7 @@ type FormState = {
   logo_url: string;
   primary_color: string;
   from_email: string;
+  mail_delivery_status: "configured" | "missing" | "invalid";
   coeditor_word: string;
   role_labels: string[];
   default_role_label: string;
@@ -62,6 +63,7 @@ const emptyForm: FormState = {
   logo_url: "",
   primary_color: "#111827",
   from_email: "",
+  mail_delivery_status: "missing",
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
   default_role_label: "Medskaber",
@@ -125,6 +127,7 @@ export default function OrganisationSettingsPage() {
           logo_url: settings.logo_url ?? "",
           primary_color: settings.primary_color,
           from_email: settings.from_email ?? "",
+          mail_delivery_status: settings.mail_delivery_status,
           coeditor_word: settings.coeditor_word,
           role_labels: settings.role_labels,
           default_role_label: settings.default_role_label,
@@ -560,7 +563,28 @@ export default function OrganisationSettingsPage() {
       </SettingsSection>
 
       <SettingsSection title="Mailafsender" description="Systemmails sendes gennem Google Workspace med organisationens navn som afsendernavn.">
-        <div className="max-w-xl space-y-2">
+        <div className="max-w-xl space-y-3">
+          <div className={`flex items-start gap-3 rounded-md border px-3 py-3 ${
+            form.mail_delivery_status === "configured"
+              ? "border-emerald-500/30 bg-emerald-500/5"
+              : "border-destructive/30 bg-destructive/5"
+          }`} role="status">
+            {form.mail_delivery_status === "configured"
+              ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+              : <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />}
+            <div>
+              <p className="text-sm font-medium">
+                {form.mail_delivery_status === "configured" ? "Mailtjenesten er konfigureret" : "Mailtjenesten er ikke klar"}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {form.mail_delivery_status === "missing"
+                  ? "En eller flere beskyttede Gmail-indstillinger mangler i driftsmiljøet. Invitationslinks kan stadig oprettes, men mailen bliver ikke sendt."
+                  : form.mail_delivery_status === "invalid"
+                    ? "Gmail-konfigurationen findes, men formatet er ugyldigt. Kontrollér driftsopsætningen."
+                    : "De nødvendige Gmail-indstillinger findes. En testudsendelse er stadig den endelige leveringskontrol."}
+              </p>
+            </div>
+          </div>
           <Label>Svaradresse (Reply-To)</Label>
           <Input type="email" value={form.from_email} onChange={event => setForm(f => ({ ...f, from_email: event.target.value }))} placeholder="kontakt@organisation.dk" />
         </div>

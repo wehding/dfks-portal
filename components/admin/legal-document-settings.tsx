@@ -241,12 +241,12 @@ export function LegalDocumentSettings() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="legal-document-body">Tekst</Label>
-            <RichTextEditor id="legal-document-body" textareaRef={bodyRef} value={body} onFocus={() => setActiveField("body")} onSelect={() => setActiveField("body")} onChange={setBody} rows={18} className="min-h-[420px] text-sm leading-6" />
+            <RichTextEditor id="legal-document-body" textareaRef={bodyRef} value={body} onFocus={() => setActiveField("body")} onSelect={() => setActiveField("body")} onChange={setBody} rows={18} className="text-sm leading-6" />
             <p className="text-xs text-muted-foreground">Markér tekst og brug værktøjslinjen til formatering. Links kan skrives som fulde URL&apos;er, fx https://danskfilmklipperselskab.dk/privatlivspolitik/.</p>
             {unknownPlaceholders.length > 0 && <p className="text-sm text-destructive">Ukendte dynamiske felter: {unknownPlaceholders.map(value => `{${value}}`).join(", ")}</p>}
           </div>
         </div>
-        <aside className="h-fit rounded-md border bg-muted/20 p-3">
+        <aside className="h-fit max-h-80 overflow-y-auto rounded-md border bg-muted/20 p-3 lg:sticky lg:top-4">
           <div className="flex items-center gap-2 text-sm font-medium"><Braces className="h-4 w-4" />Indsæt dynamisk felt</div>
           <div className="mt-3 flex flex-wrap gap-2 lg:flex-col lg:items-stretch">
             {BASIC_TEXT_PLACEHOLDERS.map(key => <Button key={key} type="button" variant="ghost" size="sm" className="justify-start font-mono text-xs" onMouseDown={event => event.preventDefault()} onClick={() => insertPlaceholder(key)}>{`{${key}}`}</Button>)}

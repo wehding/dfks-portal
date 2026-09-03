@@ -45,3 +45,11 @@ test("betainvitationen validerer perioden før Auth-sideeffekter og auditerer at
   assert.match(migration, /update public\.org_affiliations[\s\S]+public\.append_audit_event_v2/);
   assert.match(migration, /revoke all on function public\.set_beta_tester_status[\s\S]+from public, anon, authenticated/);
 });
+
+test("betainvitationens audit-event skelner mellem status og maillevering", () => {
+  const sql = readFileSync("supabase/migrations/20260903113000_beta_invite_delivery_outcome.sql", "utf8");
+  assert.match(sql, /'link_created_mail_failed'/);
+  assert.match(sql, /p_outcome => case when p_enabled and not p_email_delivered then 'partial'/);
+  assert.match(sql, /p_error_code => case when p_enabled and not p_email_delivered then 'email_delivery_failed'/);
+  assert.doesNotMatch(sql, /email_address|invite_url|private_key|provider_error/i);
+});
