@@ -52,9 +52,19 @@ export async function PATCH(req: NextRequest) {
     if (!existing || (existing.org_id === null ? auth.role !== "superadmin" : existing.org_id !== auth.orgId)) {
         return NextResponse.json({ error: "Noten blev ikke fundet" }, { status: 404 })
     }
-    const allowed = ["title", "body", "priority", "active", "gyldig_fra", "gyldig_til"]
+    const allowed = ["title", "body", "priority", "active", "gyldig_fra", "gyldig_til", "exclude_for_overenskomst"]
     const patch: Record<string, unknown> = {}
-    for (const k of allowed) if (k in updates) patch[k] = updates[k]
+    for (const k of allowed) {
+        if (!(k in updates)) continue
+        if (k === "exclude_for_overenskomst") {
+            const v = updates[k]
+            patch[k] = Array.isArray(v)
+                ? v.filter((x): x is string => typeof x === "string").slice(0, 20)
+                : []
+        } else {
+            patch[k] = updates[k]
+        }
+    }
     const { data, error } = await sb()
         .from("legal_notes")
         .update(patch)

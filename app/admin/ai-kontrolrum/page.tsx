@@ -305,14 +305,26 @@ function NoteringerTab() {
 
     useEffect(() => {
         fetch("/api/legal-notes").then(r => r.json())
-            .then(data => { setNotes(data ?? []); setLoading(false) })
+            .then((data: Record<string, unknown>[]) => {
+                // API'et returnerer exclude_for_overenskomst som text[] — normalisér til boolean for UI'et
+                const rows = (data ?? []).map(n => ({
+                    ...n,
+                    exclude_for_overenskomst: Array.isArray(n.exclude_for_overenskomst)
+                        ? n.exclude_for_overenskomst.length > 0
+                        : Boolean(n.exclude_for_overenskomst),
+                })) as LegalNote[]
+                setNotes(rows)
+                setLoading(false)
+            })
             .catch(() => setLoading(false))
     }, [])
 
     const apiPatch = async (id: string, updates: Record<string, unknown>) => {
         const res = await fetch("/api/legal-notes", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...updates }) })
         if (!res.ok) throw new Error((await res.json()).error)
-        return res.json() as Promise<LegalNote>
+        // Rå DB-række: exclude_for_overenskomst kommer tilbage som text[], ikke UI'ets boolean.
+        // Normalisér før den evt. flettes ind i state.
+        return res.json() as Promise<Record<string, unknown>>
     }
 
     const updateLocal = (id: string, patch: Partial<LegalNote>) =>

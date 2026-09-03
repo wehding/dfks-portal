@@ -138,8 +138,8 @@ export interface KontekstResultat {
     kategorier: KnowledgeChunk[]
     overenskomstSemantisk: KnowledgeChunk[]
     mønstre: { id: string; titel: string; regel: string; semantisk_beskrivelse: string; similaritet: number }[]
-    altid: { title: string; body: string }[]
-    baggrund: { title: string; body: string }[]
+    altid: { title: string; body: string; exclude_for_overenskomst: string[] }[]
+    baggrund: { title: string; body: string; exclude_for_overenskomst: string[] }[]
     detekteredeOverenskomster: string[]
     aftaleGrundlag: AgreementGrounding[]
 }
@@ -317,10 +317,10 @@ export async function hentKontekst(
         }),
 
         // 4. Altid-noteringer
-        supabase.from("legal_notes").select("title, body").or(`org_id.is.null,org_id.eq.${orgId}`).eq("priority", "altid").eq("active", true),
+        supabase.from("legal_notes").select("title, body, exclude_for_overenskomst").or(`org_id.is.null,org_id.eq.${orgId}`).eq("priority", "altid").eq("active", true),
 
         // 5. Baggrundsnoteringer
-        supabase.from("legal_notes").select("title, body").or(`org_id.is.null,org_id.eq.${orgId}`).eq("priority", "baggrund").eq("active", true),
+        supabase.from("legal_notes").select("title, body, exclude_for_overenskomst").or(`org_id.is.null,org_id.eq.${orgId}`).eq("priority", "baggrund").eq("active", true),
 
         // 6. Godkendte, strukturerede aftale-, løn- og pensionskilder
         hentStruktureretAftalegrundlag(detekterede, kontraktdato),
@@ -361,8 +361,8 @@ export async function hentKontekst(
         kategorier,
         overenskomstSemantisk,
         mønstre: (mønstreRes.data ?? []) as KontekstResultat["mønstre"],
-        altid: (altidRes.data ?? []) as { title: string; body: string }[],
-        baggrund: (baggrundRes.data ?? []) as { title: string; body: string }[],
+        altid: (altidRes.data ?? []) as KontekstResultat["altid"],
+        baggrund: (baggrundRes.data ?? []) as KontekstResultat["baggrund"],
         detekteredeOverenskomster: detekterede,
         aftaleGrundlag,
     }
