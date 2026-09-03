@@ -348,45 +348,62 @@ function AdminValideringPageInner() {
 
     const loadContracts = useCallback(async () => {
         setPageLoading(true)
-        const supabase = createClient()
+        try {
+            const supabase = createClient()
 
-        const { data, error } = await supabase
-            .from("contracts")
-            .select(`*, employers(id, name, cvr), rettighedshavere(id, full_name), works(id, title, type, dfi_id, dfi_metadata), contract_attachments(*)`)
-            .eq("org_id", ORG_ID)
-            .order("created_at", { ascending: false })
+            const { data, error } = await supabase
+                .from("contracts")
+                .select(`*, employers(id, name, cvr), rettighedshavere(id, full_name), works(id, title, type, dfi_id, dfi_metadata), contract_attachments(*)`)
+                .eq("org_id", ORG_ID)
+                .order("created_at", { ascending: false })
 
-        if (error || !data) { setPageLoading(false); return }
+            if (error || !data) return
 
-        const ids = data.map((c: any) => c.id)
-        const { data: validations } = ids.length > 0
-            ? await supabase.from("contract_validations").select("*").in("contract_id", ids)
-            : { data: [] }
-
-        const validationMap = new Map<string, any>()
-        validations?.forEach((v: any) => validationMap.set(v.contract_id, v))
-
-        const mapped: ValidatingContract[] = await Promise.all(data.map(async (c: any) => {
-            let signedPdfUrl: string | null = null
-            if (c.pdf_url) {
-                const signed = await getContractSignedUrl(c.pdf_url)
-                signedPdfUrl = signed.url
+            // Hent valideringer i bidder — én .in() med alle kontrakt-id'er giver
+            // en meget lang forespørgsels-URL når organisationen har hundredvis af
+            // kontrakter; hold den under proxy-grænserne.
+            const ids = data.map((c: any) => c.id)
+            const validationMap = new Map<string, any>()
+            for (let i = 0; i < ids.length; i += 200) {
+                const { data: chunk } = await supabase
+                    .from("contract_validations")
+                    .select("*")
+                    .in("contract_id", ids.slice(i, i + 200))
+                chunk?.forEach((v: any) => validationMap.set(v.contract_id, v))
             }
-            return {
+
+            // Signed URLs genereres KUN for den åbne kontrakt (se effekten nedenfor),
+            // ikke for hele listen — listen viser dem aldrig.
+            const mapped: ValidatingContract[] = data.map((c: any) => ({
                 ...c,
                 validation: validationMap.get(c.id) ?? null,
                 displayTitle: c.works?.title ?? c.working_title ?? c.employers?.name ?? "—",
                 displayEmployer: (c.works?.title || c.working_title) ? (c.employers?.name ?? null) : null,
                 displayMember: c.rettighedshavere?.full_name ?? "—",
-                signedPdfUrl,
-            }
-        }))
+                signedPdfUrl: null,
+            }))
 
-        setContracts(mapped)
-        setPageLoading(false)
+            setContracts(mapped)
+        } finally {
+            setPageLoading(false)
+        }
     }, [])
 
     useEffect(() => { loadContracts() }, [loadContracts])
+
+    // Signed URL for den åbne kontrakt — on-demand, så vi ikke laver hundredvis
+    // af storage-kald på sidens load.
+    useEffect(() => {
+        if (!reviewingId) return
+        const target = contracts.find(c => c.id === reviewingId)
+        if (!target || !target.pdf_url || target.signedPdfUrl) return
+        let cancelled = false
+        void getContractSignedUrl(target.pdf_url).then(signed => {
+            if (cancelled || !signed?.url) return
+            setContracts(prev => prev.map(c => c.id === reviewingId ? { ...c, signedPdfUrl: signed.url } : c))
+        })
+        return () => { cancelled = true }
+    }, [reviewingId, contracts])
 
     // Pre-fill form when opening a contract that has existing validation data
     useEffect(() => {
