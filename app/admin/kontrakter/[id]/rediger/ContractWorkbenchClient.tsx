@@ -171,10 +171,31 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   }));
   const [validationData, setValidationData] = useState<Record<string, unknown>>(contract.validation_data ?? {});
   const [variant, setVariant] = useState<ContractDocumentVariant>(data.documents.commented?.url ? "commented" : "original");
-  const [activeField, setActiveField] = useState<(ContractEvidenceActivation & { highlight: string }) | null>(null);
   const allowedInitialSection = SECTIONS.some(item => item.key === initialSection) && (initialSection !== "ownership" || data.canManageOwnership)
     ? initialSection!
     : "approve";
+  const initialActiveField = useMemo(() => {
+    if (allowedInitialSection === "ownership") {
+      const nameQuote = data.sources?.rightsHolderName || contract.rettighedshavere?.full_name || "";
+      const spatialEv = data.evidence?.rightsHolderName;
+      if (nameQuote || spatialEv) {
+        return {
+          fieldKey: "ownership",
+          label: "Navn aflæst fra kontrakten",
+          sourceKey: "rightsHolderName",
+          quote: nameQuote,
+          focusText: nameQuote,
+          page: spatialEv?.page ?? (data.sources?.rightsHolderName_page ? Number(data.sources.rightsHolderName_page) : 1),
+          bbox: spatialEv?.bbox ?? null,
+          coordinateSource: spatialEv?.coordinateSource ?? null,
+          confidence: spatialEv?.confidence ?? null,
+          highlight: nameQuote,
+        };
+      }
+    }
+    return null;
+  }, [allowedInitialSection, data.sources, data.evidence, contract.rettighedshavere]);
+  const [activeField, setActiveField] = useState<(ContractEvidenceActivation & { highlight: string }) | null>(initialActiveField);
   const [tab, setTab] = useState(allowedInitialSection);
   const [queueId, setQueueId] = useState(initialQueueId);
   const [queue, setQueue] = useState<AdminContractQueueContext | null>(null);
@@ -401,7 +422,8 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         : evidence.focusText?.trim() || evidence.quote
       : "";
     const next = { ...evidence, highlight };
-    if (!evidence.quote.trim()) {
+    const hasFocusOrCoordinate = Boolean(evidence.bbox || coordinateEvidence?.bbox || evidence.focusText?.trim());
+    if (!evidence.quote.trim() && !hasFocusOrCoordinate) {
       setActiveField(next);
       setPdfResetToken(current => current + 1);
       if (!splitLayout) {
@@ -683,6 +705,23 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     if (nextTab === tab) return;
     setVisitedTabs(current => new Set(current).add(nextTab));
     setTab(nextTab);
+    if (nextTab === "ownership") {
+      const nameQuote = data.sources?.rightsHolderName || contract.rettighedshavere?.full_name || "";
+      const spatialEv = data.evidence?.rightsHolderName;
+      if (nameQuote || spatialEv) {
+        setActive({
+          fieldKey: "ownership",
+          label: "Navn aflæst fra kontrakten",
+          sourceKey: "rightsHolderName",
+          quote: nameQuote,
+          focusText: nameQuote,
+          page: spatialEv?.page ?? (data.sources?.rightsHolderName_page ? Number(data.sources.rightsHolderName_page) : 1),
+          bbox: spatialEv?.bbox ?? null,
+          coordinateSource: spatialEv?.coordinateSource ?? null,
+          confidence: spatialEv?.confidence ?? null,
+        });
+      }
+    }
     const next = new URLSearchParams(window.location.search);
     next.set("section", nextTab);
     router.replace(`${window.location.pathname}?${next.toString()}`, { scroll: false });
@@ -904,7 +943,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
       style={splitLayout ? { gridTemplateColumns: `minmax(260px, ${splitPercent}fr) 8px minmax(420px, ${100 - splitPercent}fr)` } : undefined}
     >
       <section data-testid="contract-document-pane" className={`${splitLayout || mobilePane === "document" ? "block" : "hidden"} min-w-0 overflow-hidden border-r ${splitLayout ? "min-h-0" : "min-h-[70svh]"}`}>
-        {documentUrl ? documentIsPdf ? <PdfViewer url={documentUrl} activeHighlight={activeField?.highlight ?? null} pageNavigationHint={activeField?.highlight ?? activeField?.quote ?? undefined} activePage={contractEvidencePage(activeEvidence)} layout={documentLayout} activeClauseId={documentLayout ? activeEvidence?.clauseId ?? null : null} activeEvidence={activeEvidence} resetViewToken={pdfResetToken} /> : <ContractDocViewer url={documentUrl} filename={selectedDocument?.path} activeHighlight={activeField?.highlight ?? null} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen dokumentfil</div>}
+        {documentUrl ? documentIsPdf ? <PdfViewer key={`${contract.id}-${documentUrl}`} url={documentUrl} activeHighlight={activeField?.highlight ?? null} pageNavigationHint={activeField?.highlight ?? activeField?.quote ?? undefined} activePage={contractEvidencePage(activeEvidence)} layout={documentLayout} activeClauseId={documentLayout ? activeEvidence?.clauseId ?? null : null} activeEvidence={activeEvidence} resetViewToken={pdfResetToken} /> : <ContractDocViewer url={documentUrl} filename={selectedDocument?.path} activeHighlight={activeField?.highlight ?? null} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen dokumentfil</div>}
       </section>
 
       {splitLayout ? <div
@@ -1135,7 +1174,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         </DialogHeader>
         <div className="min-h-0 flex-1">
           {documentUrl ? documentIsPdf
-            ? <PdfViewer url={documentUrl} activeHighlight={activeField?.highlight || null} pageNavigationHint={activeField?.highlight || activeField?.quote || undefined} activePage={contractEvidencePage(activeEvidence)} layout={documentLayout} activeClauseId={documentLayout ? activeEvidence?.clauseId ?? null : null} activeEvidence={activeEvidence} resetViewToken={pdfResetToken} />
+            ? <PdfViewer key={`mobile-${contract.id}-${documentUrl}`} url={documentUrl} activeHighlight={activeField?.highlight || null} pageNavigationHint={activeField?.highlight || activeField?.quote || undefined} activePage={contractEvidencePage(activeEvidence)} layout={documentLayout} activeClauseId={documentLayout ? activeEvidence?.clauseId ?? null : null} activeEvidence={activeEvidence} resetViewToken={pdfResetToken} />
             : <ContractDocViewer url={documentUrl} filename={selectedDocument?.path} activeHighlight={activeField?.highlight || null} />
             : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen dokumentfil</div>}
         </div>
