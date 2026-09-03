@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Loader2, Search, UserRoundCheck } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CheckCircle2, Loader2, Plus, Search, UserRoundCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
+  createContractOwnerCandidate,
   fetchContractOwnerVerificationDetail,
   reviewContractOwnerVerification,
   searchEligibleContractOwners,
@@ -55,6 +56,8 @@ function InfoRow({ label, children, source, onSourceClick }: { label: string; ch
   </div>;
 }
 
+const ownerSearchCache = new Map<string, ContractOwnerSummary[]>();
+
 export function ContractOwnershipEditor({
   contractId,
   canManage,
@@ -70,13 +73,20 @@ export function ContractOwnershipEditor({
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<ContractOwnerSummary[]>([]);
   const [searching, setSearching] = useState(false);
-  const [selectedOwner, setSelectedOwner] = useState<ContractOwnerSummary | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [creatingOwner, setCreatingOwner] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function reload() {
     setLoading(true);
     const result = await fetchContractOwnerVerificationDetail(contractId);
     if (result.success) {
       setDetail(result.data);
+      const assigned = result.data.assignedRightsHolder;
+      if (!assigned) {
+        setShowSearch(true);
+      }
       const evidence = result.data.documentEvidence?.spatialEvidence;
       const quote = result.data.aiEvidence?.sourceQuote
         ?? result.data.aiEvidence?.extractedRightsHolderName
@@ -157,18 +167,58 @@ export function ContractOwnershipEditor({
     setSaving(false);
   }
 
-  async function search() {
-    if (query.trim().length < 2) return;
+  const searchWithQuery = async (searchQuery: string) => {
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 2) {
+      setCandidates([]);
+      return;
+    }
+    const cacheKey = trimmed.toLowerCase();
+    if (ownerSearchCache.has(cacheKey)) {
+      setCandidates(ownerSearchCache.get(cacheKey)!);
+      return;
+    }
     setSearching(true);
-    const result = await searchEligibleContractOwners(query);
-    if (result.success) setCandidates(result.candidates);
-    else toast.error(result.error);
+    const result = await searchEligibleContractOwners(trimmed);
+    if (result.success) {
+      ownerSearchCache.set(cacheKey, result.candidates);
+      setCandidates(result.candidates);
+    } else {
+      toast.error(result.error);
+    }
     setSearching(false);
-  }
+  };
+
+  const handleQueryChange = (value: string) => {
+    setQuery(value);
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      void searchWithQuery(value);
+    }, 150);
+  };
+
+  const handleCreateOwner = async (name: string) => {
+    setCreatingOwner(true);
+    try {
+      const res = await createContractOwnerCandidate(name);
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Rettighedshaver "${res.candidate.name}" er oprettet`);
+      ownerSearchCache.clear();
+      await applyOwner(res.candidate, inOwnershipQueue && hasNext);
+    } finally {
+      setCreatingOwner(false);
+    }
+  };
 
   useEffect(() => {
     if (!commandTrigger || !oneClickOwner || !canConfirm || saving) {
-      if (commandTrigger && !oneClickOwner) document.getElementById("ownership-search")?.focus();
+      if (commandTrigger && !oneClickOwner) {
+        setShowSearch(true);
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      }
       return;
     }
     void applyOwner(oneClickOwner, inOwnershipQueue && hasNext);
@@ -185,10 +235,105 @@ export function ContractOwnershipEditor({
       <div><h2 id="ownership-heading" className="font-semibold">Ejerskab</h2><p className="text-xs text-muted-foreground">Kontrollér navnet i kontrakten og godkend eller ret ejeren.</p></div>
       <Badge variant="outline">{contractOwnerStatusLabel(detail.verification.status)}</Badge>
     </div>
+
     <dl className="rounded border divide-y divide-border/40">
-      <InfoRow label="Registreret ejer" source={assignedOwner ? "member" : "unknown"}>
-        {assignedOwner?.name ?? "Mangler ejer"}
-      </InfoRow>
+      <div className="border-b border-border/40 px-2.5 py-2 hover:bg-muted/40 transition-colors last:border-b-0">
+        <div className="flex items-center justify-between gap-2">
+          <dt className="text-[11px] font-medium text-muted-foreground shrink-0">Registreret ejer</dt>
+          <div className="flex items-center gap-1.5 min-w-0">
+            {assignedOwner ? (
+              <span className="truncate text-xs font-semibold text-foreground">{assignedOwner.name}</span>
+            ) : (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-900 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-200"
+                onClick={() => {
+                  setShowSearch(true);
+                  setTimeout(() => searchInputRef.current?.focus(), 50);
+                }}
+              >
+                Mangler ejer
+              </button>
+            )}
+            <Button
+              type="button"
+              variant={showSearch ? "secondary" : "ghost"}
+              size="sm"
+              className="h-6 px-2 text-xs shrink-0"
+              onClick={() => {
+                const next = !showSearch;
+                setShowSearch(next);
+                if (next) setTimeout(() => searchInputRef.current?.focus(), 50);
+              }}
+            >
+              {showSearch ? "Luk søgning" : assignedOwner ? "Ret ejer" : "Søg/tilknyt"}
+            </Button>
+            <ContractSourceBadge source={assignedOwner ? "member" : "unknown"} />
+          </div>
+        </div>
+
+        {showSearch && (
+          <div className="mt-2.5 rounded-md border bg-background p-2.5 shadow-xs">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  ref={searchInputRef}
+                  value={query}
+                  onChange={e => handleQueryChange(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void searchWithQuery(query);
+                    }
+                  }}
+                  placeholder="Søg efter rettighedshaver..."
+                  className="h-8 pl-8 text-xs"
+                  autoFocus
+                />
+              </div>
+              {searching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            </div>
+
+            {candidates.length > 0 && (
+              <div className="mt-2 max-h-48 overflow-y-auto divide-y rounded border text-xs">
+                {candidates.map(candidate => (
+                  <div key={candidate.id} className="flex items-center justify-between gap-2 p-1.5 hover:bg-muted/50">
+                    <div className="min-w-0 flex-1 truncate">
+                      <span className="font-medium">{candidate.name}</span>
+                      {candidate.secondaryLabel && <span className="ml-1 text-[11px] text-muted-foreground">· {candidate.secondaryLabel}</span>}
+                    </div>
+                    <Button
+                      size="sm"
+                      className="h-6 px-2 text-[11px]"
+                      disabled={saving}
+                      onClick={() => void applyOwner(candidate, inOwnershipQueue && hasNext)}
+                    >
+                      Vælg{inOwnershipQueue && hasNext ? " og næste" : ""}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {query.trim().length >= 2 && !candidates.some(c => c.name.toLowerCase() === query.trim().toLowerCase()) && (
+              <div className="mt-2 border-t pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 w-full justify-start gap-1.5 text-xs font-normal"
+                  disabled={creatingOwner || saving}
+                  onClick={() => void handleCreateOwner(query.trim())}
+                >
+                  {creatingOwner ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                  <span>Opret &quot;{query.trim()}&quot; som ny rettighedshaver</span>
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </dl>
 
     <details className="mt-2 rounded border bg-muted/10">
@@ -206,14 +351,12 @@ export function ContractOwnershipEditor({
       </dl>
     </details>
 
-    <div className="mt-5 rounded-md border p-3">
-      <label htmlFor="ownership-search" className="text-sm font-medium">Søg efter korrekt ejer</label>
-      <div className="mt-2 flex gap-2"><Input id="ownership-search" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void search(); } }} placeholder="Søg navn…" /><Button variant="outline" disabled={searching || query.trim().length < 2} onClick={() => void search()}>{searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}Søg</Button></div>
-      {candidates.length ? <div className="mt-2 divide-y rounded-md border">{candidates.map(candidate => <div key={candidate.id} className="flex items-center justify-between gap-2 p-2"><button type="button" className="min-w-0 flex-1 truncate text-left text-sm" onClick={() => setSelectedOwner(candidate)}>{candidate.name}{candidate.secondaryLabel ? <span className="ml-1 text-xs text-muted-foreground">· {candidate.secondaryLabel}</span> : null}</button>{selectedOwner?.id === candidate.id ? <div className="flex gap-1"><Button size="sm" onClick={() => void applyOwner(candidate, inOwnershipQueue && hasNext)}>Vælg ejer{inOwnershipQueue && hasNext ? " og næste" : ""}</Button></div> : null}</div>)}</div> : null}
-    </div>
-
     <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t pt-3">
-      <Button variant="outline" onClick={() => document.getElementById("ownership-search")?.focus()}>Ret ejer</Button>
+      {!showSearch && (
+        <Button variant="outline" onClick={() => { setShowSearch(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}>
+          Ret ejer
+        </Button>
+      )}
       {canConfirm && oneClickOwner ? <Button disabled={saving} onClick={() => void applyOwner(oneClickOwner, inOwnershipQueue && hasNext)}>
         {inOwnershipQueue && hasNext ? <UserRoundCheck className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
         {inOwnershipQueue && hasNext ? "Godkend ejerskab og gå til næste" : "Godkend ejerskab"}

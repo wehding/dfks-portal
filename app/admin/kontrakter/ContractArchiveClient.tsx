@@ -24,7 +24,7 @@ import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ADMIN_CONTRACT_UPLOAD_ACCEPT } from "@/lib/contract-upload-format"
 import { CONTRACT_IMPORT_CONCURRENCY, validateContractImportFile } from "@/lib/contract-import"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
-import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame, SummaryCard, SummaryGrid } from "@/components/responsive-data-view"
+import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -362,33 +362,6 @@ function adminContractSummary(contract: ContractRow) {
     ].join("\n")
 }
 
-function YearCountCard({ contracts, availableYears, currentYear }: {
-    contracts: ContractRow[]
-    availableYears: number[]
-    currentYear: number
-}) {
-    const [selectedYear, setSelectedYear] = useState(currentYear)
-    const count = contracts.filter(c => {
-        const year = c.contract_date ? new Date(c.contract_date).getFullYear() : new Date(c.created_at).getFullYear()
-        return year === selectedYear
-    }).length
-    return (
-        <div className="min-w-0 rounded-lg border bg-card px-3 py-3 text-card-foreground sm:flex sm:min-w-52 sm:items-center sm:gap-3 sm:px-4 sm:py-2.5">
-            <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] font-medium leading-4 text-muted-foreground sm:text-sm">Kontrakter i</p>
-                <select
-                    value={selectedYear}
-                    onChange={e => setSelectedYear(Number(e.target.value))}
-                    className="rounded border bg-background px-1.5 py-0.5 text-[11px] font-medium text-foreground sm:text-sm focus:outline-none"
-                >
-                    {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
-                </select>
-            </div>
-            <p className="mt-1 text-xl font-bold tabular-nums text-foreground sm:ml-auto sm:mt-0">{count}</p>
-        </div>
-    )
-}
-
 function AdminKontrakterContent({
     view = "archive",
     initialResult,
@@ -417,7 +390,6 @@ function AdminKontrakterContent({
     const [pageSize, setPageSize] = useState(initialQuery?.pageSize ?? 20)
     const [currentPage, setCurrentPage] = useState(initialQuery?.page ?? 1)
     const [totalCount, setTotalCount] = useState(initialResult?.success ? initialResult.totalCount ?? 0 : 0)
-    const [serverStats, setServerStats] = useState(initialResult?.success ? initialResult.stats ?? { total: 0, validerede: 0, kladder: 0 } : { total: 0, validerede: 0, kladder: 0 })
     const [sortKey, setSortKey] = useState<SortKey>((initialQuery?.sortKey as SortKey) ?? "status")
     const [sortDir, setSortDir] = useState<SortDir>(initialQuery?.sortDir ?? "asc")
     const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -735,7 +707,6 @@ function AdminKontrakterContent({
             if (typeof contractsRes.totalAllCount === "number") {
                 summaryLoadedRef.current = true
             }
-            if (contractsRes.stats) setServerStats(contractsRes.stats)
 
             if (contractsRes.lookups) {
                 setEmployers(contractsRes.lookups.employers)
@@ -1680,46 +1651,12 @@ function AdminKontrakterContent({
 
     if (loading) return <TableSkeleton columns={7} rows={7} />
 
-    const currentYear = new Date().getFullYear()
-    const availableYears = Array.from(
-        new Set(contracts.map(c => c.contract_date ? new Date(c.contract_date).getFullYear() : new Date(c.created_at).getFullYear()))
-    ).sort((a, b) => b - a)
-    if (!availableYears.includes(currentYear)) availableYears.unshift(currentYear)
-
-    const stats = {
-        total: serverStats.total,
-        validerede: serverStats.validerede,
-        kladder: serverStats.kladder,
-    }
-
     return (
         <div className="space-y-6">
             {!loading && <ListReadinessMarker route="admin-contracts" stage="primary" />}
             {!loading && contracts.length > 0 && <ListReadinessMarker route="admin-contracts" stage="first-row" />}
             {!loading && <ListReadinessMarker route="admin-contracts" stage="secondary" />}
             {!loading && <ListReadinessMarker route="admin-contracts" stage="complete" />}
-            {view === "archive" && <SummaryGrid>
-                <SummaryCard
-                    label="Kontrakter i alt"
-                    value={stats.total}
-                    active={!search && filterStatus === "all" && filterType === "all" && !activeRh}
-                    onClick={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setCurrentPage(1) }}
-                />
-                <YearCountCard contracts={contracts} availableYears={availableYears} currentYear={currentYear} />
-                <SummaryCard
-                    label="Validerede"
-                    value={stats.validerede}
-                    active={!search && filterStatus === "valideret" && filterType === "all" && !activeRh}
-                    onClick={() => { setSearch(""); setFilterStatus("valideret"); setFilterType("all"); setActiveRh(null); setCurrentPage(1) }}
-                />
-                <SummaryCard
-                    label="Kladder"
-                    value={stats.kladder}
-                    active={!search && filterStatus === "kladde" && filterType === "all" && !activeRh}
-                    onClick={() => { setSearch(""); setFilterStatus("kladde"); setFilterType("all"); setActiveRh(null); setCurrentPage(1) }}
-                />
-            </SummaryGrid>}
-
             {view === "upload" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
                 <div>
                     <h2 className="font-semibold">Upload fra computer eller telefon</h2>
@@ -2803,7 +2740,7 @@ function AdminKontrakterPageInner({
                 ? "upload"
                 : "arkiv"
     const [activeTab, setActiveTab] = useState<ContractArchiveTab>(initialTab)
-    const [taskCounts, setTaskCounts] = useState({ validation: 0, ownership: 0, messages: 0 })
+    const [taskCounts, setTaskCounts] = useState({ validation: 0, ownership: 0, messages: 0, drafts: 0 })
     const [openingTask, setOpeningTask] = useState<"validation" | "ownership" | "messages" | null>(null)
     const tabRefs = useRef<Partial<Record<ContractArchiveTab, HTMLButtonElement | null>>>({})
     const visibleContractTabs: ContractArchiveTab[] = ["arkiv", "valideringskoe", "upload"]
@@ -2946,7 +2883,7 @@ function AdminKontrakterPageInner({
                     Kontraktupload
                 </button>
             </div>
-            {(taskCounts.validation > 0 || taskCounts.ownership > 0 || taskCounts.messages > 0) && (
+            {(taskCounts.validation > 0 || taskCounts.ownership > 0 || taskCounts.messages > 0 || taskCounts.drafts > 0) && (
                 <div className="overflow-x-auto" aria-label="Opgaver i kontraktarkivet">
                     <div className="flex min-w-max gap-2 pb-1">
                         {taskCounts.validation > 0 && (
@@ -2959,6 +2896,17 @@ function AdminKontrakterPageInner({
                             <Button type="button" variant="outline" className="shrink-0 gap-2 border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-100" onClick={() => void openTask("ownership")} disabled={openingTask !== null}>
                                 {openingTask === "ownership" ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
                                 Ejerskab skal afklares · {taskCounts.ownership}
+                            </Button>
+                        )}
+                        {taskCounts.drafts > 0 && (
+                            <Button type="button" variant="outline" className="shrink-0 gap-2 border-slate-300 bg-slate-50 text-slate-900 hover:bg-slate-100 dark:bg-slate-900/30 dark:text-slate-100" onClick={() => {
+                                const next = new URLSearchParams(searchParams.toString())
+                                next.set("tab", "arkiv")
+                                next.set("status", "kladde")
+                                router.replace(`/admin/kontrakter?${next.toString()}`, { scroll: false })
+                            }}>
+                                <FileText className="h-4 w-4" />
+                                Kladder · {taskCounts.drafts}
                             </Button>
                         )}
                         {taskCounts.messages > 0 && (
