@@ -13,6 +13,7 @@ import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import {
     resolveContractReviewProductionType,
+    removeInvalidDe4RoyaltyWarnings,
     royaltyRequirementForContract,
     type ContractReviewProductionType,
 } from "@/lib/contract-review-domain-rules"
@@ -968,6 +969,15 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             throw new Error("AI returnerede ugyldigt svar — prøv igen")
         }
     }
+
+    parsed.feedbackpunkter = removeInvalidDe4RoyaltyWarnings(
+        Array.isArray(parsed.feedbackpunkter) ? parsed.feedbackpunkter : [],
+        {
+            agreementCovered: erOverenskomstDaekket,
+            agreementName: klassifikation?.overenskomst_navn ?? null,
+            contractText,
+        },
+    )
 
     // ── Navnetjek mod DFKS-register ──────────────────────────
     const rightsHolderName: string | null =

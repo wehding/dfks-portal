@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   hasExplicitSeriesEpisodeScope,
+  removeInvalidDe4RoyaltyWarnings,
   resolveContractReviewProductionType,
   royaltyRequirementForContract,
 } from "../lib/contract-review-domain-rules";
@@ -72,6 +73,35 @@ test("spillefilmskontrollen bevares uden De4-fiktionsoverenskomsten", () => {
     agreementName: null,
     distributionChannels: ["streaming_svod"],
   }), /ROYALTY PÅKRÆVET/);
+});
+
+test("negative royaltypunkter fjernes deterministisk ved De4-reference", () => {
+  const points = [
+    { type: "advarsel", titel: "Royalty ikke nævnt", beskrivelse: "Mangler i kontrakten" },
+    { type: "positiv", titel: "Royalty dækket", beskrivelse: "Følger De4" },
+    { type: "advarsel", titel: "Andet punkt", beskrivelse: "Skal undersøges" },
+  ];
+  assert.deepEqual(removeInvalidDe4RoyaltyWarnings(points, {
+    agreementCovered: false,
+    agreementName: "de4-fiktion",
+  }), [points[1], points[2]]);
+});
+
+test("royaltyadvarsler bevares uden De4-reference", () => {
+  const points = [{ type: "advarsel", titel: "Royalty ikke nævnt", beskrivelse: "Mangler" }];
+  assert.deepEqual(removeInvalidDe4RoyaltyWarnings(points, {
+    agreementCovered: false,
+    agreementName: null,
+  }), points);
+});
+
+test("eksplicit De4-reference i kontraktteksten aktiverer efterfilteret", () => {
+  const points = [{ type: "kritisk", titel: "Manglende royalty", beskrivelse: "Ikke nævnt" }];
+  assert.deepEqual(removeInvalidDe4RoyaltyWarnings(points, {
+    agreementCovered: false,
+    agreementName: null,
+    contractText: "Kontrakten følger overenskomsten mellem Producentforeningen og De 4.",
+  }), []);
 });
 
 test("promoveringsret og TDM/AI er ikke hardcoded i analyseprompten", () => {
