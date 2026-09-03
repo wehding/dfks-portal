@@ -24,3 +24,7 @@ export function normalizeContractReviewAnalysisStatus(input: {
 export function isActiveContractReviewAnalysis(state: ContractReviewAnalysisState) {
   return state === "queued" || state === "processing" || state === "retrying";
 }
+
+export function canTriggerContractReviewAnalysis(state: ContractReviewAnalysisState) {
+  return state !== "processing";
+}

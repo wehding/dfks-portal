@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus } from "../lib/contract-review-job-status";
+import { canTriggerContractReviewAnalysis, isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus } from "../lib/contract-review-job-status";
 
 test("review-jobstatus skelner ko, behandling, retry, fejl og klar", () => {
   assert.equal(normalizeContractReviewAnalysisStatus({ aiStatus: "analyserer", intakeStatus: "queued", job: { status: "queued", attempts: 0, next_attempt_at: null, error_message: null } }), "queued");
@@ -16,4 +16,12 @@ test("kun aktive reviewtilstande polles", () => {
   assert.equal(isActiveContractReviewAnalysis("retrying"), true);
   assert.equal(isActiveContractReviewAnalysis("failed"), false);
   assert.equal(isActiveContractReviewAnalysis("ready"), false);
+});
+
+test("job i kø kan startes igen, mens aktiv behandling forbliver låst", () => {
+  assert.equal(canTriggerContractReviewAnalysis("queued"), true);
+  assert.equal(canTriggerContractReviewAnalysis("retrying"), true);
+  assert.equal(canTriggerContractReviewAnalysis("failed"), true);
+  assert.equal(canTriggerContractReviewAnalysis("ready"), true);
+  assert.equal(canTriggerContractReviewAnalysis("processing"), false);
 });
