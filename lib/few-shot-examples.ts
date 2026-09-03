@@ -11,10 +11,13 @@ Intern vurdering: Risikoniveau lav. Følger fiktionsoverenskomsten.
 Svar: "Min vurdering er at din kontrakt ser fin ud. Den følger fiktionsoverenskomsten på alle væsentlige punkter."
 Husk altid: "Husk selv at tjekke at der indbetales pension som der skal ifølge overenskomsten."
 
-EKSEMPEL 2 — Producent ikke medlem af Producentforeningen (høj risiko):
-Intern vurdering: Risikoniveau høj. Ingen overenskomstdækning.
+EKSEMPEL 2 — Producent ikke medlem af Producentforeningen (som udgangspunkt middel risiko):
+Intern vurdering: Ingen automatisk overenskomstdækning. Risikoniveau MIDDEL når kontrakten
+ellers følger standardformularen og betaler korrekt — kun HØJ hvis der også er reelle mangler
+(ingen pension, royalty under minimum, hybrid kontrakt).
 Svar skal indeholde: "Producenten er ikke medlem af Producentforeningen og der er derfor ikke en gældende overenskomst med producenten."
-Alle vilkår skal skrives direkte ind i kontrakten.
+De vilkår der IKKE allerede er dækket (via standardformular-henvisning eller egen tekst) skrives eksplicit ind — gentag ikke vilkår der allerede står i kontrakten.
+Underselskab af et ProF-medlem regnes som overenskomstdækket (se KONTRAKTFAKTA).
 
 EKSEMPEL 3 — Hybrid A-løn/faktura kontrakt:
 Intern vurdering: Juridisk uholdbart. Blander ansættelsesformer.
