@@ -88,8 +88,8 @@ test("gem og validering gemmer alle åbne editorfelter før kontraktstatus ændr
   assert.ok(flushPosition < workPosition);
   assert.ok(workPosition < updatePosition);
   assert.match(editor, /const success = await save\("valideret"/);
-  assert.match(editor, /Validér kontrakt <kbd/);
-  assert.match(editor, /Validér og næste <kbd/);
+  assert.match(editor, /Validér kontrakt<\/Button>/);
+  assert.match(editor, /Validér og næste <kbd/); // tastaturgenvej vises på "og næste"-varianten
 });
 
 test("kontraktarbejdsfladen har en tilgængelig og vedvarende breddejustering", () => {
@@ -103,8 +103,10 @@ test("kontraktarbejdsfladen har en tilgængelig og vedvarende breddejustering", 
 });
 
 test("godkendelsesfanen viser tydelige dokument- og underskriftsstatusser", () => {
-  assert.match(aiEditor, /Kontrakt ikke underskrevet/);
+  assert.match(aiEditor, /: "Ikke underskrevet"/); // tydelig underskriftsstatus-badge
   assert.match(editor, /Original konverteret PDF/);
   assert.match(editor, /CLAUSE_EVIDENCE_KEYS\.has\(evidence\.sourceKey\)/);
-  assert.match(editor, /fieldKey === "signatureStatus" && !evidence\.page/);
+  // underskrifts-evidens falder tilbage til sidste side når der ikke er en konkret side
+  assert.match(editor, /evidence\.fieldKey === "signatureStatus" \|\| evidence\.fieldKey === "signatureDate"/);
+  assert.match(editor, /evidence\.page \?\? documentLastPage/);
 });
