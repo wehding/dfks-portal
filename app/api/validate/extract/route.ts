@@ -1,4 +1,7 @@
 export const dynamic = "force-dynamic"
+// Et fuldt kontrakt-udtræk (klassificér → udtræk → efterbehandling via AI)
+// tager typisk 60–120 s. Uden dette dræber Vercel funktionen undervejs.
+export const maxDuration = 300
 /**
  * app/api/validate/extract/route.ts
  *
