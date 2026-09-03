@@ -15,7 +15,8 @@ jobs:
   application:
     name: TypeScript, tests og build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # App-, OCR- og audit-workerens samlede cold build kan overstige 20 minutter.
+    timeout-minutes: 30
     env:
       NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
