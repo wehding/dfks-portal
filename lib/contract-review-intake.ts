@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { getInternalWorkerSecret } from "@/lib/api-auth";
+import { isContractReviewWorkerResponse } from "@/lib/contract-review-worker-response";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export type ReviewIntakeInput = {
@@ -28,7 +29,7 @@ export async function triggerContractReviewWorker(origin: string) {
       method: "POST",
       headers: { Authorization: `Bearer ${secret}` },
     });
-    if (!response.ok) {
+    if (!await isContractReviewWorkerResponse(response)) {
       console.warn("[review-intake] Worker kunne ikke startes", response.status);
       return false;
     }
