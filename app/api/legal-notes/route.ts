@@ -52,7 +52,7 @@ export async function PATCH(req: NextRequest) {
     if (!existing || (existing.org_id === null ? auth.role !== "superadmin" : existing.org_id !== auth.orgId)) {
         return NextResponse.json({ error: "Noten blev ikke fundet" }, { status: 404 })
     }
-    const allowed = ["title", "body", "priority", "active", "gyldig_fra", "gyldig_til"]
+    const allowed = ["title", "body", "priority", "active", "gyldig_fra", "gyldig_til", "exclude_for_overenskomst"]
     const patch: Record<string, unknown> = {}
     for (const k of allowed) if (k in updates) patch[k] = updates[k]
     const { data, error } = await sb()
@@ -68,11 +68,17 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
     const auth = await requireStaffModuleApi("contract_reviews", "delete")
     if (!auth.ok) return auth.response
-    const { id } = await req.json()
+    const { id, confirmationTitle } = await req.json()
     if (typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: "id mangler" }, { status: 400 })
-    const { data: existing } = await sb().from("legal_notes").select("org_id").eq("id", id).maybeSingle()
+    if (typeof confirmationTitle !== "string" || !confirmationTitle.trim()) {
+        return NextResponse.json({ error: "Bekræft noteringens titel før sletning" }, { status: 400 })
+    }
+    const { data: existing } = await sb().from("legal_notes").select("org_id,title").eq("id", id).maybeSingle()
     if (!existing || (existing.org_id === null ? auth.role !== "superadmin" : existing.org_id !== auth.orgId)) {
         return NextResponse.json({ error: "Noten blev ikke fundet" }, { status: 404 })
+    }
+    if (existing.title !== confirmationTitle) {
+        return NextResponse.json({ error: "Noteringen er ændret. Genindlæs siden før du sletter." }, { status: 409 })
     }
     const { error } = await sb().from("legal_notes").delete().eq("id", id)
     if (error) return NextResponse.json({ error: "Den juridiske note kunne ikke slettes." }, { status: 500 })

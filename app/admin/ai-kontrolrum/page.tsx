@@ -15,13 +15,17 @@ import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog"
 import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
     Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@/components/ui/tabs"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import {
-    CheckCircle2, Pencil, Plus, X, Loader2, BookOpen,
+    CheckCircle2, Pencil, Plus, X, Loader2, BookOpen, Trash2,
     Brain, ListChecks, FlaskConical, AlertCircle, AlertTriangle,
     Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Wand2, RotateCcw,
     RefreshCw, ChevronRight, Copy, Check, Terminal,
@@ -51,6 +55,19 @@ type LegalNote = {
     gyldig_fra: string | null
     gyldig_til: string | null
     created_at: string
+}
+
+type LegalNoteResponse = Omit<LegalNote, "exclude_for_overenskomst"> & {
+    exclude_for_overenskomst?: boolean | string[]
+}
+
+function normalizeLegalNote(note: LegalNoteResponse): LegalNote {
+    return {
+        ...note,
+        exclude_for_overenskomst: Array.isArray(note.exclude_for_overenskomst)
+            ? note.exclude_for_overenskomst.includes("alle")
+            : note.exclude_for_overenskomst === true,
+    }
 }
 
 type LearnedPattern = {
@@ -295,6 +312,9 @@ function NoteringerTab() {
     const [notes, setNotes] = useState<LegalNote[]>([])
     const [loading, setLoading] = useState(true)
     const [editingId, setEditingId] = useState<string | null>(null)
+    const [editSnapshot, setEditSnapshot] = useState<LegalNote | null>(null)
+    const [noteToDelete, setNoteToDelete] = useState<LegalNote | null>(null)
+    const [deletingNote, setDeletingNote] = useState(false)
 
     // ── AI-editor state ───────────────────────────────────────
     const [fritekst, setFritekst] = useState("")
@@ -305,22 +325,42 @@ function NoteringerTab() {
 
     useEffect(() => {
         fetch("/api/legal-notes").then(r => r.json())
-            .then(data => { setNotes(data ?? []); setLoading(false) })
+            .then(data => {
+                setNotes(Array.isArray(data) ? data.map((note: LegalNoteResponse) => normalizeLegalNote(note)) : [])
+                setLoading(false)
+            })
             .catch(() => setLoading(false))
     }, [])
 
     const apiPatch = async (id: string, updates: Record<string, unknown>) => {
         const res = await fetch("/api/legal-notes", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...updates }) })
         if (!res.ok) throw new Error((await res.json()).error)
-        return res.json() as Promise<LegalNote>
+        return normalizeLegalNote(await res.json() as LegalNoteResponse)
     }
 
     const updateLocal = (id: string, patch: Partial<LegalNote>) =>
         setNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch } : n))
 
+    const beginEditing = (note: LegalNote) => {
+        if (editSnapshot) {
+            setNotes(prev => prev.map(n => n.id === editSnapshot.id ? editSnapshot : n))
+        }
+        setEditSnapshot({ ...note })
+        setEditingId(note.id)
+    }
+
+    const cancelEditing = () => {
+        if (editSnapshot) {
+            setNotes(prev => prev.map(n => n.id === editSnapshot.id ? editSnapshot : n))
+        }
+        setEditSnapshot(null)
+        setEditingId(null)
+        toast.info("Redigeringen blev fortrudt. Noteringen er ikke slettet.")
+    }
+
     const saveNote = async (note: LegalNote) => {
         try {
-            await apiPatch(note.id, {
+            const saved = await apiPatch(note.id, {
                 title: note.title,
                 body: note.body,
                 priority: note.priority,
@@ -328,6 +368,8 @@ function NoteringerTab() {
                 gyldig_til: note.gyldig_til,
                 exclude_for_overenskomst: note.exclude_for_overenskomst ? ["alle"] : [],
             })
+            setNotes(prev => prev.map(n => n.id === note.id ? saved : n))
+            setEditSnapshot(null)
             setEditingId(null)
             toast.success("Notering gemt")
         } catch (e: unknown) { toast.error(errorMessage(e)) }
@@ -337,20 +379,35 @@ function NoteringerTab() {
         try {
             const res = await fetch("/api/legal-notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "Ny notering", body: "", priority: "baggrund" }) })
             if (!res.ok) throw new Error((await res.json()).error)
-            const created: LegalNote = await res.json()
+            const created = normalizeLegalNote(await res.json() as LegalNoteResponse)
             setNotes(prev => [created, ...prev])
+            setEditSnapshot({ ...created })
             setEditingId(created.id)
         } catch (e: unknown) { toast.error(errorMessage(e)) }
     }
 
-    const deleteNote = async (id: string) => {
+    const deleteNote = async () => {
+        if (!noteToDelete || deletingNote) return
+        setDeletingNote(true)
         try {
-            const res = await fetch("/api/legal-notes", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })
+            const res = await fetch("/api/legal-notes", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: noteToDelete.id, confirmationTitle: noteToDelete.title }),
+            })
             if (!res.ok) throw new Error((await res.json()).error)
-            setNotes(prev => prev.filter(n => n.id !== id))
-            if (editingId === id) setEditingId(null)
+            setNotes(prev => prev.filter(n => n.id !== noteToDelete.id))
+            if (editingId === noteToDelete.id) {
+                setEditingId(null)
+                setEditSnapshot(null)
+            }
+            setNoteToDelete(null)
             toast.success("Notering slettet")
-        } catch (e: unknown) { toast.error(errorMessage(e)) }
+        } catch (e: unknown) {
+            toast.error(errorMessage(e))
+        } finally {
+            setDeletingNote(false)
+        }
     }
 
     // ── AI-generering ─────────────────────────────────────────
@@ -386,7 +443,7 @@ function NoteringerTab() {
                 .select()
                 .single()
             if (error) throw new Error(error.message)
-            setNotes(prev => [data as LegalNote, ...prev])
+            setNotes(prev => [normalizeLegalNote(data as LegalNoteResponse), ...prev])
             setGeneretNotering(null)
             setFritekst("")
             toast.success("Notering gemt")
@@ -542,7 +599,9 @@ function NoteringerTab() {
                                                 const idx = PRIORITY_ORDER.indexOf(note.priority as any)
                                                 const next = PRIORITY_ORDER[(idx + 1) % PRIORITY_ORDER.length]
                                                 updateLocal(note.id, { priority: next })
-                                                await apiPatch(note.id, { priority: next }).catch(e => toast.error(errorMessage(e)))
+                                                if (!isEditing) {
+                                                    await apiPatch(note.id, { priority: next }).catch(e => toast.error(errorMessage(e)))
+                                                }
                                             }}
                                             className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium cursor-pointer transition-opacity hover:opacity-80 ${pc.color}`}
                                         >
@@ -552,17 +611,29 @@ function NoteringerTab() {
                                         <span className="text-xs text-muted-foreground hidden sm:block">
                                             {new Date(note.created_at).toLocaleDateString("da-DK")}
                                         </span>
+                                        {isEditing ? (
+                                            <>
+                                                <Button variant="outline" size="sm" onClick={cancelEditing}>
+                                                    <X className="h-3.5 w-3.5" />Fortryd redigering
+                                                </Button>
+                                                <Button size="sm" onClick={() => saveNote(note)}>
+                                                    <CheckCircle2 className="h-3.5 w-3.5" />Gem ændringer
+                                                </Button>
+                                            </>
+                                        ) : (
+                                            <Button variant="ghost" size="icon" className="h-7 w-7" title="Rediger notering" onClick={() => beginEditing(note)}>
+                                                <Pencil className="h-3.5 w-3.5" />
+                                            </Button>
+                                        )}
                                         <Button
-                                            variant={isEditing ? "default" : "ghost"}
+                                            variant="ghost"
                                             size="icon"
-                                            className="h-7 w-7"
-                                            title={isEditing ? "Gem" : "Rediger"}
-                                            onClick={() => isEditing ? saveNote(note) : setEditingId(note.id)}
+                                            className="h-7 w-7 text-destructive hover:text-destructive"
+                                            title={`Slet notering: ${note.title}`}
+                                            aria-label={`Slet notering: ${note.title}`}
+                                            onClick={() => setNoteToDelete(note)}
                                         >
-                                            {isEditing ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
-                                        </Button>
-                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteNote(note.id)}>
-                                            <X className="h-3.5 w-3.5" />
+                                            <Trash2 className="h-3.5 w-3.5" />
                                         </Button>
                                     </div>
                                 </div>
@@ -589,9 +660,8 @@ function NoteringerTab() {
                                                 <input
                                                     type="checkbox"
                                                     checked={note.exclude_for_overenskomst ?? false}
-                                                    onChange={async e => {
+                                                    onChange={e => {
                                                         updateLocal(note.id, { exclude_for_overenskomst: e.target.checked })
-                                                        await apiPatch(note.id, { exclude_for_overenskomst: e.target.checked ? ["alle"] : [] }).catch(err => toast.error(err.message))
                                                     }}
                                                     className="h-3.5 w-3.5 rounded"
                                                 />
@@ -613,6 +683,27 @@ function NoteringerTab() {
                     </div>
                 )}
             </div>
+
+            <AlertDialog open={noteToDelete !== null} onOpenChange={open => { if (!open && !deletingNote) setNoteToDelete(null) }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Slet notering permanent?</AlertDialogTitle>
+                        <AlertDialogDescription className="space-y-2">
+                            <span className="block">Du er ved at slette noteringen <strong className="text-foreground">“{noteToDelete?.title}”</strong>.</span>
+                            <span className="block">Noteringen bruges som instruktion i kontraktanalyser. Sletningen kan ikke fortrydes i AI-kontrolrummet.</span>
+                            {noteToDelete?.id === editingId && (
+                                <span className="block font-medium text-destructive">Du redigerer denne notering lige nu. Brug “Fortryd redigering”, hvis du kun vil kassere dine ændringer.</span>
+                            )}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={deletingNote}>Behold notering</AlertDialogCancel>
+                        <AlertDialogAction disabled={deletingNote} onClick={event => { event.preventDefault(); void deleteNote() }}>
+                            {deletingNote ? "Sletter…" : "Slet notering permanent"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }
