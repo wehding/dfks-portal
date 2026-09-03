@@ -19,7 +19,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
 import { ValideringskøTab } from "@/components/admin/valideringskoe-tab"
-import { createAdminContractWorkQueue, fetchAdminContractTaskCounts } from "@/app/actions/admin-contract-work-queues"
+import { createAdminContractWorkQueue, fetchAdminContractTaskCounts, type AdminContractTaskCounts } from "@/app/actions/admin-contract-work-queues"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ADMIN_CONTRACT_UPLOAD_ACCEPT } from "@/lib/contract-upload-format"
 import { CONTRACT_IMPORT_CONCURRENCY, validateContractImportFile } from "@/lib/contract-import"
@@ -2728,7 +2728,7 @@ function AdminKontrakterPageInner({
     initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
     initialQuery?: AdminContractsPageParams
     canManageOwnership: boolean
-    initialTaskCounts?: { validation: number; ownership: number; messages: number; drafts: number }
+    initialTaskCounts?: AdminContractTaskCounts
 }) {
     const router = useRouter()
     const searchParams = useSearchParams()
@@ -2742,7 +2742,7 @@ function AdminKontrakterPageInner({
                 ? "upload"
                 : "arkiv"
     const [activeTab, setActiveTab] = useState<ContractArchiveTab>(initialTab)
-    const [taskCounts, setTaskCounts] = useState(initialTaskCounts ?? { validation: 0, ownership: 0, messages: 0, drafts: 0 })
+    const [taskCounts, setTaskCounts] = useState<AdminContractTaskCounts>(initialTaskCounts ?? { validation: null, ownership: null, messages: null })
     const [openingTask, setOpeningTask] = useState<"validation" | "ownership" | "messages" | null>(null)
     const tabRefs = useRef<Partial<Record<ContractArchiveTab, HTMLButtonElement | null>>>({})
     const visibleContractTabs: ContractArchiveTab[] = ["arkiv", "valideringskoe", "upload"]
@@ -2769,6 +2769,12 @@ function AdminKontrakterPageInner({
     }, [refreshTaskCounts])
 
     const openTask = async (kind: "validation" | "ownership" | "messages") => {
+        const count = taskCounts[kind]
+        if (count === null) {
+            toast.error("Opgavetallet kunne ikke hentes. Prøv igen.")
+            return
+        }
+        if (count === 0) return
         setOpeningTask(kind)
         try {
             const result = await createAdminContractWorkQueue({
@@ -2859,7 +2865,7 @@ function AdminKontrakterPageInner({
                     ].join(" ")}
                 >
                     Valideringskø
-                    {taskCounts.validation > 0 && (
+                    {taskCounts.validation !== null && taskCounts.validation > 0 && (
                         <span className="ml-2 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 px-2 py-0.5 text-xs font-semibold">
                             {taskCounts.validation}
                         </span>
@@ -2885,53 +2891,38 @@ function AdminKontrakterPageInner({
                     Kontraktupload
                 </button>
             </div>
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:flex lg:flex-wrap lg:gap-3" aria-label="Opgaver i kontraktarkivet">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2" aria-label="Opgaver i kontraktarkivet">
                 <Button
                     type="button"
                     variant="outline"
-                    className={`h-auto justify-start py-2.5 px-3.5 gap-2.5 text-xs font-semibold sm:text-sm ${taskCounts.validation > 0 ? "border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-100" : "text-muted-foreground"}`}
+                    className={`h-auto min-w-0 justify-start gap-2.5 whitespace-normal px-3.5 py-2.5 text-left text-xs font-semibold sm:text-sm ${taskCounts.validation !== null && taskCounts.validation > 0 ? "border-amber-300 bg-amber-50/80 text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-100" : "text-muted-foreground"}`}
                     onClick={() => void openTask("validation")}
-                    disabled={openingTask !== null}
+                    disabled={openingTask !== null || taskCounts.validation === 0}
+                    title={taskCounts.validation === null ? "Opgavetallet kunne ikke hentes" : undefined}
                 >
-                    {openingTask === "validation" ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <CheckCircle2 className={`h-4 w-4 shrink-0 ${taskCounts.validation > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />}
-                    <span>Afventer validering</span>
-                    <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${taskCounts.validation > 0 ? "bg-amber-200/80 dark:bg-amber-900/60 text-amber-900 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
-                        {taskCounts.validation}
+                    {openingTask === "validation" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <CheckCircle2 className={`h-4 w-4 shrink-0 ${taskCounts.validation !== null && taskCounts.validation > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />}
+                    <span className="min-w-0 flex-1 leading-tight">Afventer validering</span>
+                    <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${taskCounts.validation !== null && taskCounts.validation > 0 ? "bg-amber-200/80 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
+                        {taskCounts.validation ?? "–"}
                     </span>
                 </Button>
                 {canManageOwnership && (
                     <Button
                         type="button"
                         variant="outline"
-                        className={`h-auto justify-start py-2.5 px-3.5 gap-2.5 text-xs font-semibold sm:text-sm ${taskCounts.ownership > 0 ? "border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-100" : "text-muted-foreground"}`}
+                        className={`h-auto min-w-0 justify-start gap-2.5 whitespace-normal px-3.5 py-2.5 text-left text-xs font-semibold sm:text-sm ${taskCounts.ownership !== null && taskCounts.ownership > 0 ? "border-amber-300 bg-amber-50/80 text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-100" : "text-muted-foreground"}`}
                         onClick={() => void openTask("ownership")}
-                        disabled={openingTask !== null}
+                        disabled={openingTask !== null || taskCounts.ownership === 0}
+                        title={taskCounts.ownership === null ? "Opgavetallet kunne ikke hentes" : undefined}
                     >
-                        {openingTask === "ownership" ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <AlertTriangle className={`h-4 w-4 shrink-0 ${taskCounts.ownership > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />}
-                        <span>Ejerskab skal afklares</span>
-                        <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${taskCounts.ownership > 0 ? "bg-amber-200/80 dark:bg-amber-900/60 text-amber-900 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
-                            {taskCounts.ownership}
+                        {openingTask === "ownership" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <AlertTriangle className={`h-4 w-4 shrink-0 ${taskCounts.ownership !== null && taskCounts.ownership > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />}
+                        <span className="min-w-0 flex-1 leading-tight">Ejerskab skal afklares</span>
+                        <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${taskCounts.ownership !== null && taskCounts.ownership > 0 ? "bg-amber-200/80 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
+                            {taskCounts.ownership ?? "–"}
                         </span>
                     </Button>
                 )}
-                <Button
-                    type="button"
-                    variant="outline"
-                    className={`h-auto justify-start py-2.5 px-3.5 gap-2.5 text-xs font-semibold sm:text-sm ${taskCounts.drafts > 0 ? "border-slate-300 bg-slate-50 text-slate-900 hover:bg-slate-100 dark:bg-slate-900/30 dark:text-slate-100" : "text-muted-foreground"}`}
-                    onClick={() => {
-                        const next = new URLSearchParams(searchParams.toString())
-                        next.set("tab", "arkiv")
-                        next.set("status", "kladde")
-                        router.replace(`/admin/kontrakter?${next.toString()}`, { scroll: false })
-                    }}
-                >
-                    <FileText className={`h-4 w-4 shrink-0 ${taskCounts.drafts > 0 ? "text-slate-700 dark:text-slate-300" : "text-muted-foreground"}`} />
-                    <span>Kladder</span>
-                    <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${taskCounts.drafts > 0 ? "bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100" : "bg-muted text-muted-foreground"}`}>
-                        {taskCounts.drafts}
-                    </span>
-                </Button>
-                {taskCounts.messages > 0 && (
+                {taskCounts.messages !== null && taskCounts.messages > 0 && (
                     <Button
                         type="button"
                         variant="outline"
@@ -2947,6 +2938,14 @@ function AdminKontrakterPageInner({
                     </Button>
                 )}
             </div>
+            {(taskCounts.validation === null || (canManageOwnership && taskCounts.ownership === null)) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100" role="status">
+                    <span>Et eller flere opgavetal kunne ikke hentes.</span>
+                    <Button type="button" variant="outline" size="sm" className="h-7 bg-background" onClick={() => void refreshTaskCounts()}>
+                        Prøv igen
+                    </Button>
+                </div>
+            )}
             <div
                 id={activeTab === "arkiv"
                     ? "contract-archive-panel"
@@ -2980,7 +2979,7 @@ export default function ContractArchiveClient({
     initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
     initialQuery?: AdminContractsPageParams
     canManageOwnership: boolean
-    initialTaskCounts?: { validation: number; ownership: number; messages: number; drafts: number }
+    initialTaskCounts?: AdminContractTaskCounts
 }) {
     return <Suspense><AdminKontrakterPageInner initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} initialTaskCounts={initialTaskCounts} /></Suspense>
 }

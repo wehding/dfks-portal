@@ -31,6 +31,11 @@ test("arkivet viser opgaver og opretter navigation uden synlige køknapper", () 
   assert.doesNotMatch(archive, /Åbn aktuel liste som kø|Start valideringskø|Start ejerskabskø|Åbn valgte som kø/);
   assert.match(action, /kind === "messages"/);
   assert.match(migration, /'messages'/);
+  assert.doesNotMatch(archive, />Kladder</);
+  assert.match(archive, /grid-cols-1[\s\S]{0,80}sm:grid-cols-2/);
+  assert.match(action, /Promise\.allSettled/);
+  assert.match(action, /Valideringsafklaring/);
+  assert.match(editor, /queue\?\.kind === "validation"[\s\S]{0,180}Valideringsafklaring/);
 });
 
 test("editoren bevarer section og queueId og beskytter tastaturkontekst", () => {
@@ -51,4 +56,6 @@ test("kontraktarkivets søgning og valideringsfilter bruger det faktiske databas
   assert.doesNotMatch(filtering, /from\("employers"\)[^,\n]+?\.eq\("org_id"/);
   assert.doesNotMatch(filtering, /works\(id, type, is_season_group/);
   assert.doesNotMatch(filtering, /work\.is_season_group/);
+  assert.doesNotMatch(filtering, /candidate\.solo_confirmed/);
+  assert.doesNotMatch(filtering, /episode_numbers,\s*solo_confirmed/);
 });
