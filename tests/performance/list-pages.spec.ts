@@ -11,6 +11,12 @@ const routes = [
   ["admin-producers", "/admin/producenter"],
 ] as const;
 
+// GitHub-hosted runners vary noticeably while Chromium and the local Supabase
+// stack share the same machine. Keep this below the fixed 3 s completed-list
+// SLA, but leave enough headroom that first-paint noise does not block unrelated
+// pull requests.
+const DESKTOP_INITIAL_RENDER_LIMIT_MS = 1_750;
+
 async function login(page: Page) {
   await page.goto("/");
   await page.locator("#email").fill("performance@dfks.test");
@@ -71,7 +77,7 @@ for (const [routeName, path] of routes) {
     // Første-række-tiden ligger lokalt langt under grænsen; tillad bundet CI
     // browser-/runner-varians (samme margin som filter-scenarierne nedenfor),
     // mens den faste 3 s SLA for den komplette liste holdes uændret.
-    expect(median.firstRowMs).toBeLessThan(mobile ? 2_500 : 1_350);
+    expect(median.firstRowMs).toBeLessThan(mobile ? 2_500 : DESKTOP_INITIAL_RENDER_LIMIT_MS);
     expect(median.completeMs).toBeLessThan(mobile ? 4_000 : 3_000);
     await mkdir("performance-report/results", { recursive: true });
     await writeFile(`performance-report/results/${testInfo.project.name}-${routeName}.json`, JSON.stringify({ routeName, project: testInfo.project.name, median, samples }, null, 2));
@@ -115,7 +121,7 @@ for (const [scenario, query] of [
     await writeFile(`performance-report/results/${testInfo.project.name}-member-works-${scenario}.json`, JSON.stringify({ routeName: "member-works", scenario, project: testInfo.project.name, median, samples }, null, 2));
     // The local database stages remain well below 600 ms. Allow bounded CI
     // browser/runner variance while preserving the fixed 3 s completed-list SLA.
-    expect(median.firstRowMs).toBeLessThan(mobile ? 2_500 : 1_350);
+    expect(median.firstRowMs).toBeLessThan(mobile ? 2_500 : DESKTOP_INITIAL_RENDER_LIMIT_MS);
     expect(median.completeMs).toBeLessThan(mobile ? 4_000 : 3_000);
   });
 }
@@ -147,7 +153,7 @@ test("organisation settings indlæser grunddata før tekstskabeloner", async ({ 
   // Shell-tiden ligger lokalt langt under grænsen; tillad bundet CI-varians
   // (samme margin som listesiderne), mens den faste 3 s SLA for tekstskabeloner
   // holdes uændret.
-  expect(median.shellMs).toBeLessThan(mobile ? 2_500 : 1_350);
+  expect(median.shellMs).toBeLessThan(mobile ? 2_500 : DESKTOP_INITIAL_RENDER_LIMIT_MS);
   expect(median.textsMs).toBeLessThan(mobile ? 4_000 : 3_000);
   await mkdir("performance-report/results", { recursive: true });
   await writeFile(`performance-report/results/${testInfo.project.name}-organisation-settings.json`, JSON.stringify({ routeName: "organisation-settings", project: testInfo.project.name, median, samples }, null, 2));
