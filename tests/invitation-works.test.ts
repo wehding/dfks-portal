@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  formatInvitationWorkTitles,
   formatInvitationWorks,
   reconcileInvitationWorks,
   resolveExactInvitationPerson,
@@ -56,6 +57,18 @@ test("listen begrænses til ti titler og bruger neutral fallback", () => {
   }));
   assert.match(formatInvitationWorks(works), /2 øvrige titler/);
   assert.equal(formatInvitationWorks([]), "Vi kunne ikke hente en værksliste nu. Du kan gennemgå og tilføje dine værker i portalen.");
+});
+
+test("betainvitationens værkliste viser kun titler", () => {
+  const works = [{
+    id: "work-1", title: "Bullshit", year: 2024, sources: ["Portal" as const, "DFI" as const], verification: "external_candidate" as const,
+  }];
+  assert.equal(formatInvitationWorkTitles(works), "• Bullshit");
+  assert.doesNotMatch(formatInvitationWorkTitles(works), /2024|Portal|DFI|mulig kreditering/);
+
+  const route = readFileSync("app/api/admin/user/route.ts", "utf8");
+  assert.match(route, /isBetaPreview[\s\S]+formatInvitationWorkTitles\(workLookup\.works\)/);
+  assert.match(route, /isBetaInvitation[\s\S]+formatInvitationWorkTitles\(workLookup\.works\)/);
 });
 
 test("inviteruten bruger samme resolver til preview, standard og beta uden at lagre rådata", () => {

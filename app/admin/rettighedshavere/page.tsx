@@ -244,7 +244,7 @@ export default function RettighedshavereAdminPage() {
     const [memberSyncSummary, setMemberSyncSummary] = useState<{ updated: number; newCount: number; ambiguous: number; source: "org" | "env" | null } | null>(null)
     const [dfksMembers, setDfksMembers] = useState<DfksMemberOption[]>([])
     const [countsByRightsHolder, setCountsByRightsHolder] = useState<Record<string, RightsHolderCounts>>({})
-    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+    const [selectedHoldersById, setSelectedHoldersById] = useState<Map<string, AdminRightsHolderListItem>>(new Map())
     const [archivingSelected, setArchivingSelected] = useState(false)
     const [restoringSelected, setRestoringSelected] = useState(false)
     const [permanentDeleteOpen, setPermanentDeleteOpen] = useState(false)
@@ -618,10 +618,12 @@ export default function RettighedshavereAdminPage() {
             return result * direction
         })
     }, [rows, orgId, filter, search, countsByRightsHolder, sortKey, sortDirection, canSeeAllOrganisations])
-    const selectedMergeHolders = useMemo(
-        () => visible.filter(holder => selectedIds.has(holder.id)),
-        [visible, selectedIds],
-    )
+    const selectedHolders = useMemo(() => {
+        const currentRowsById = new Map(rows.map(holder => [holder.id, holder]))
+        return Array.from(selectedHoldersById.entries()).map(([id, snapshot]) => currentRowsById.get(id) ?? snapshot)
+    }, [rows, selectedHoldersById])
+    const selectedIds = useMemo(() => new Set(selectedHoldersById.keys()), [selectedHoldersById])
+    const selectedMergeHolders = selectedHolders
     const mergeHasConflictingUsers = selectedMergeHolders.length === 2
         && Boolean(selectedMergeHolders[0].user_id)
         && Boolean(selectedMergeHolders[1].user_id)
@@ -631,23 +633,29 @@ export default function RettighedshavereAdminPage() {
     const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
 
     function toggleSelected(id: string, checked: boolean) {
-        setSelectedIds(current => {
-            const next = new Set(current)
-            if (checked) next.add(id)
-            else next.delete(id)
+        setSelectedHoldersById(current => {
+            const next = new Map(current)
+            if (checked) {
+                const holder = rows.find(candidate => candidate.id === id)
+                if (holder) next.set(id, holder)
+            } else next.delete(id)
             return next
         })
     }
 
     function toggleAllVisible(checked: boolean) {
-        setSelectedIds(current => {
-            const next = new Set(current)
-            for (const id of visibleIds) {
-                if (checked) next.add(id)
-                else next.delete(id)
+        setSelectedHoldersById(current => {
+            const next = new Map(current)
+            for (const holder of visible) {
+                if (checked) next.set(holder.id, holder)
+                else next.delete(holder.id)
             }
             return next
         })
+    }
+
+    function clearSelected() {
+        setSelectedHoldersById(new Map())
     }
 
     // Send invitationsmail til én rettighedshaver. Returnerer true hvis mailen blev sendt.
@@ -707,7 +715,7 @@ export default function RettighedshavereAdminPage() {
     }
 
     function inviteTargetSummary() {
-        const selected = visible.filter(rh => selectedIds.has(rh.id))
+        const selected = selectedHolders
         const targets = selected.filter(rh => rh.email)
         const loginLinks = targets.filter(hasPortalAccess)
         const invitationTargets = targets.filter(rh => !hasPortalAccess(rh))
@@ -829,7 +837,7 @@ export default function RettighedshavereAdminPage() {
         } else {
             toast.warning(`${marked} markeret som betatestere · ${sent} mails sendt · ${marked - sent + failed} kræver opfølgning`)
         }
-        setSelectedIds(new Set())
+        clearSelected()
         await Promise.all([load(search.trim()), refreshBetaSummary()])
     }
 
@@ -862,7 +870,7 @@ export default function RettighedshavereAdminPage() {
         if (result.blocked.length > 0) {
             toast.warning(`${result.blocked.length} kunne ikke arkiveres: ${result.blocked.slice(0, 3).map(item => item.name).join(", ")}`)
         }
-        setSelectedIds(new Set())
+        clearSelected()
         await load(search.trim())
     }
 
@@ -876,7 +884,7 @@ export default function RettighedshavereAdminPage() {
             return
         }
         toast.success(`${result.restoredCount} rettighedshaver(e) gendannet`)
-        setSelectedIds(new Set())
+        clearSelected()
         await load(search.trim())
     }
 
@@ -895,7 +903,7 @@ export default function RettighedshavereAdminPage() {
         }
         setPermanentDeleteOpen(false)
         setDeleteConfirmation("")
-        setSelectedIds(new Set())
+        clearSelected()
         await load(search.trim())
     }
 
@@ -919,7 +927,7 @@ export default function RettighedshavereAdminPage() {
         toast.success("Rettighedshaverprofilerne er sammenlagt")
         setMergeOpen(false)
         setMergeConfirmation("")
-        setSelectedIds(new Set())
+        clearSelected()
         await load(search.trim())
     }
 
@@ -1185,7 +1193,7 @@ export default function RettighedshavereAdminPage() {
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
                     <div className="text-sm font-medium">{selectedIds.size} valgt</div>
                     <div className="flex flex-wrap gap-2">
-                        <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
+                        <Button size="sm" variant="outline" onClick={clearSelected}>Ryd valg</Button>
                         {canSeeAllOrganisations && selectedIds.size === 2 && (
                             <Button size="sm" variant="outline" onClick={openMergeSelected}>
                                 <GitMerge className="mr-1 h-4 w-4" />Sammenlæg dubletter
@@ -1195,7 +1203,7 @@ export default function RettighedshavereAdminPage() {
                             {bulkSendingInvitations ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Mail className="mr-1 h-4 w-4" />}
                             Send {selectedIds.size} {selectedIds.size === 1 ? "invitation" : "invitationer"}
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => void openBetaInvite(visible.filter(holder => selectedIds.has(holder.id)))} disabled={betaInviteSending || selectedIds.size > 50}>
+                        <Button size="sm" variant="outline" onClick={() => void openBetaInvite(selectedHolders)} disabled={betaInviteSending || selectedIds.size > 50}>
                             <FlaskConical className="mr-1 h-4 w-4" />Send {selectedIds.size} {selectedIds.size === 1 ? "betainvitation" : "betainvitationer"}
                         </Button>
                         {filter === "arkiverede" ? (
@@ -1961,13 +1969,11 @@ export default function RettighedshavereAdminPage() {
                                     </p>
                                 )}
                                 {betaInvitePreviewLoading ? (
-                                    <p className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter mulige krediteringer fra Portal, DFI og TMDb…</p>
+                                    <p className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter værktitler…</p>
                                 ) : betaInvitePreview ? (
                                     <>
                                         <p className="font-medium">{betaInvitePreview.subject}</p>
                                         <p className="max-h-36 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{betaInvitePreview.bodyText}</p>
-                                        <p className="text-xs">{betaInvitePreview.work_lookup?.counts.local ?? 0} lokale · {betaInvitePreview.work_lookup?.counts.external ?? 0} eksterne mulige krediteringer</p>
-                                        {betaInvitePreview.work_lookup?.warnings.map(warning => <p key={warning} className="text-xs text-amber-700 dark:text-amber-300">{warning}</p>)}
                                     </>
                                 ) : <p className="text-xs text-muted-foreground">Ingen forhåndsvisning tilgængelig.</p>}
                             </div>
@@ -2021,7 +2027,7 @@ export default function RettighedshavereAdminPage() {
                         </DialogDescription>
                     </DialogHeader>
                     <div className="max-h-40 overflow-y-auto rounded-md border px-3 py-2 text-sm">
-                        {visible.filter(rh => selectedIds.has(rh.id)).slice(0, 12).map(rh => (
+                        {selectedHolders.slice(0, 12).map(rh => (
                             <div key={rh.id}>{rh.full_name}</div>
                         ))}
                         {selectedIds.size > 12 && <div className="text-muted-foreground">…og {selectedIds.size - 12} flere</div>}
