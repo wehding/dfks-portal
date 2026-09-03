@@ -232,11 +232,17 @@ export function parseSeasonNumberFromTitle(title: string | null | undefined): nu
   if (!cleaned) return null;
 
   const token = String.raw`(\d{1,2}|[ivx]{1,5})`;
+  // Compact season suffixes are accepted only for short uppercase acronyms
+  // such as DNA2. Mixed-case film titles such as Apollo13 are not seasons.
+  const compact = cleaned.match(/^([A-ZÆØÅ]{2,6})(\d{1,2})$/);
+  if (compact) {
+    const compactSeason = Number(compact[2]);
+    return compactSeason >= 1 && compactSeason <= 30 ? compactSeason : null;
+  }
   const explicit = cleaned.match(new RegExp(String.raw`\b(?:sæson|season)\s*${token}\s*$`, "i"));
   const suffix = explicit
     ?? cleaned.match(new RegExp(String.raw`(?:\s|[-–—:/])${token}\s*$`, "i"))
-    ?? cleaned.match(new RegExp(String.raw`(?:\s|[-–—:/])${token}(?=\s*[-–—:/])`, "i"))
-    ?? cleaned.match(new RegExp(String.raw`[a-zæøå](${token})\s*$`, "i"));
+    ?? cleaned.match(new RegExp(String.raw`(?:\s|[-–—:/])${token}(?=\s*[-–—:/])`, "i"));
   if (!suffix) return null;
 
   const raw = suffix[1];

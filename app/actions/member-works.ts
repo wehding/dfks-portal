@@ -1632,23 +1632,28 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
   let localWorks: any[] = [];
   try {
-    let queryBuilder = db.from("works")
-      .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id");
-    if (searchBaseTitle) {
-      queryBuilder = queryBuilder.or(`title.ilike.%${q}%,title.ilike.%${searchBaseTitle}%`);
-    } else {
-      queryBuilder = queryBuilder.ilike("title", `%${q}%`);
-    }
-    let { data, error } = await queryBuilder.limit(15);
-    if (isMissingOptionalWorkColumn(error)) {
-      let retryBuilder = db.from("works")
-        .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, parent_work_id");
-      if (searchBaseTitle) {
-        retryBuilder = retryBuilder.or(`title.ilike.%${q}%,title.ilike.%${searchBaseTitle}%`);
-      } else {
-        retryBuilder = retryBuilder.ilike("title", `%${q}%`);
+    const fullSelect = "id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id";
+    const compatibilitySelect = "id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, parent_work_id";
+    const searchLocal = async (select: string) => {
+      const terms = searchBaseTitle ? [q, searchBaseTitle] : [q];
+      const responses = await Promise.all(terms.map(term => db.from("works")
+        .select(select)
+        .ilike("title", `%${term}%`)
+        .limit(15)));
+      const error = responses.find(response => response.error)?.error ?? null;
+      const merged = new Map<string, any>();
+      for (const response of responses) {
+        for (const work of response.data ?? []) {
+          const workRow = work as unknown as { id: string };
+          merged.set(String(workRow.id), work);
+        }
       }
-      const retry = await retryBuilder.limit(15);
+      return { data: [...merged.values()].slice(0, 15), error };
+    };
+
+    let { data, error } = await searchLocal(fullSelect);
+    if (isMissingOptionalWorkColumn(error)) {
+      const retry = await searchLocal(compatibilitySelect);
       data = (retry.data ?? []).map(work => ({ ...work, imdb_id: null, wikidata_id: null }));
       error = retry.error;
     }
