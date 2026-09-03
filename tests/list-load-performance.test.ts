@@ -34,6 +34,17 @@ test("Mine værker starter data på serveren og parallelt", async () => {
   assert.match(client, /refreshReviews = false/);
 });
 
+test("den samlede værksfinder interpolerer ikke fritekst i et PostgREST or-filter", async () => {
+  const action = await source("app/actions/member-works.ts");
+  const unifiedSearch = action.slice(
+    action.indexOf("export async function searchWorksUnified"),
+    action.indexOf("export async function searchRightsHoldersForMember"),
+  );
+  assert.match(unifiedSearch, /Promise\.all\(terms\.map/);
+  assert.match(unifiedSearch, /\.ilike\("title", `%\$\{term\}%`\)/);
+  assert.doesNotMatch(unifiedSearch, /\.or\(`[^`]*\$\{q\}/);
+});
+
 test("Mine kontrakter henter kontrakter og værkvalg i samme netværksrunde", async () => {
   const page = await source("app/portal/mine-kontrakter/page.tsx");
   assert.match(page, /\[pageResult, myWorksResult\]\s*=\s*await Promise\.all/);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readFile } from "node:fs/promises";
 import { formatUserActionDescription } from "../lib/admin-dashboard";
 import { resolvePostLoginDestination } from "../lib/auth/post-login";
 
@@ -77,6 +78,9 @@ test("beregner nøglesiders loadhastighed og opdaterer ved nye målinger", async
   assert(initial.some(p => p.key === "admin-works"));
   assert(initial.some(p => p.key === "member-contracts"));
   assert(initial.some(p => p.key === "member-works"));
+  assert(initial.every(p => p.sampleCount === 0));
+  assert(initial.every(p => p.averageMs === null && p.p90Ms === null));
+  assert(initial.every(p => p.status === "unavailable"));
 
   recordPageTiming("admin-contracts", 120);
   recordPageTiming("admin-contracts", 180);
@@ -87,4 +91,12 @@ test("beregner nøglesiders loadhastighed og opdaterer ved nye målinger", async
   assert.equal(contracts?.sampleCount, 2);
   assert.equal(contracts?.averageMs, 150);
   assert.equal(contracts?.status, "fast");
+});
+
+test("superadmin insights viser ikke konstrueret Vercel-telemetri som produktionsdata", async () => {
+  const source = await readFile(new URL("../lib/server/superadmin-overview.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /desktop:\s*74/);
+  assert.doesNotMatch(source, /value:\s*"1\.1s"/);
+  assert.match(source, /get_superadmin_insights_summary/);
+  assert.match(source, /systemHealth:\s*issues\.length === 0 \? "healthy" : "degraded"/);
 });
