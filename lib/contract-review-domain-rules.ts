@@ -37,7 +37,28 @@ export function resolveContractReviewProductionType(
     : "ukendt";
 }
 
-export function royaltyRequirementForProductionType(productionType: ContractReviewProductionType) {
+type RoyaltyRequirementInput = {
+  productionType: ContractReviewProductionType;
+  agreementCovered: boolean;
+  agreementName: string | null;
+  distributionChannels: string[];
+};
+
+export function royaltyRequirementForContract({
+  productionType,
+  agreementCovered,
+  agreementName,
+  distributionChannels,
+}: RoyaltyRequirementInput) {
+  const isDe4FictionAgreement = agreementCovered && (agreementName ?? "de4-fiktion") === "de4-fiktion";
+  const hasCinemaDistribution = distributionChannels.some(channel => channel.toLowerCase() === "biograf");
+
+  if (isDe4FictionAgreement) {
+    return hasCinemaDistribution
+      ? "⚠ ROYALTY PÅKRÆVET: Produktionen er omfattet af De4-fiktionsoverenskomsten og har biografdistribution. Tjek eksplicit om kontrakten nævner royalty. Hvis ikke — det SKAL kommenteres som et selvstændigt punkt."
+      : "";
+  }
+
   return productionType === "spillefilm"
     ? "⚠ ROYALTY PÅKRÆVET: Dette er en spillefilm. Tjek eksplicit om kontrakten nævner royalty. Hvis ikke — det SKAL kommenteres som et selvstændigt punkt."
     : "";

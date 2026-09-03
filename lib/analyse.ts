@@ -13,7 +13,7 @@ import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import {
     resolveContractReviewProductionType,
-    royaltyRequirementForProductionType,
+    royaltyRequirementForContract,
     type ContractReviewProductionType,
 } from "@/lib/contract-review-domain-rules"
 import { createAiUsageRun, finishAiUsageRun, type AiUsageContext } from "@/lib/ai-usage"
@@ -182,6 +182,7 @@ Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan
 function byggAbsolutteRegler(
     klassifikation: Klassifikation,
     satser: Array<{ beskrivelse: string; vaerdi: number | string; enhed: string }>,
+    distributionChannels: string[],
     overenskomst?: {
         /** Autoritativt svar fra DFKS-registeret/uploaden. Vinder over klassifikatorens gæt. */
         resolved: boolean | null
@@ -284,7 +285,12 @@ og Producenten."
 🚫 ABSOLUT FORBUD: Lav INGEN lønberegning ved hybrid kontrakt.`
             : "✓ A-LØNSKONTRAKT — Beregn korrekt: feriepenge og pension betales OVENI lønnen. Brug udelukkende satser fra AKTUELLE SATSER nedenfor."
 
-    const royaltyRegel = royaltyRequirementForProductionType(klassifikation.produktionstype)
+    const royaltyRegel = royaltyRequirementForContract({
+        productionType: klassifikation.produktionstype,
+        agreementCovered: erOverenskomst,
+        agreementName: klassifikation.overenskomst_navn,
+        distributionChannels,
+    })
 
     const overenskomstRegler = erOverenskomst
         ? (overenskomst?.parentMemberName
@@ -811,7 +817,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
     }
 
     if (klassifikation) {
-        activeSystemPrompt += byggAbsolutteRegler(klassifikation, dbSatser, {
+        activeSystemPrompt += byggAbsolutteRegler(klassifikation, dbSatser, distributionChannels, {
             resolved: overenskomstResolvedFlag,
             parentMemberName,
         }) + "\n\n"

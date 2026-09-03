@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   hasExplicitSeriesEpisodeScope,
   resolveContractReviewProductionType,
-  royaltyRequirementForProductionType,
+  royaltyRequirementForContract,
 } from "../lib/contract-review-domain-rules";
 
 const sommerdahlContract = `
@@ -29,7 +29,31 @@ test("en nummereret titel eller juridisk afsnitshenvisning bruges ikke som serie
   assert.equal(resolveContractReviewProductionType("spillefilm", "Fiktionsproduktion med titlen SOMMERDAHL 8"), "spillefilm");
 });
 
-test("royaltykravet gælder spillefilm, men ikke tv-serier", () => {
-  assert.match(royaltyRequirementForProductionType("spillefilm"), /ROYALTY PÅKRÆVET/);
-  assert.equal(royaltyRequirementForProductionType("tvserie"), "");
+test("De4-fiktionsoverenskomsten kræver royalty ved biografdistribution", () => {
+  assert.match(royaltyRequirementForContract({
+    productionType: "tvserie",
+    agreementCovered: true,
+    agreementName: "de4-fiktion",
+    distributionChannels: ["biograf", "streaming_svod"],
+  }), /ROYALTY PÅKRÆVET/);
+});
+
+test("De4-fiktionsoverenskomsten kræver ikke royalty ved tv eller streaming", () => {
+  for (const distributionChannels of [["tv_lineaer"], ["streaming_svod"], ["streaming_avod"], []]) {
+    assert.equal(royaltyRequirementForContract({
+      productionType: "spillefilm",
+      agreementCovered: true,
+      agreementName: "de4-fiktion",
+      distributionChannels,
+    }), "");
+  }
+});
+
+test("spillefilmskontrollen bevares uden De4-fiktionsoverenskomsten", () => {
+  assert.match(royaltyRequirementForContract({
+    productionType: "spillefilm",
+    agreementCovered: false,
+    agreementName: null,
+    distributionChannels: ["streaming_svod"],
+  }), /ROYALTY PÅKRÆVET/);
 });
