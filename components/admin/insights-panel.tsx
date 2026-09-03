@@ -212,6 +212,17 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
         </CollapsibleTrigger>
 
         <CollapsibleContent className="border-t border-border/60 p-3.5 sm:p-4 pt-3 space-y-4">
+          {/* Nulstillings-info */}
+          <div className="flex items-center justify-between rounded-lg border border-blue-200/80 bg-blue-50/60 dark:border-blue-950 dark:bg-blue-950/20 px-3 py-1.5 text-[11px] text-blue-900 dark:text-blue-200">
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400" />
+              <span>
+                <strong>Nulstillet til brugere:</strong> Målingen tæller reelle handlinger fra i dag (3. sep. 2026), hvor systemet åbnes for brugere.
+              </span>
+            </span>
+            <span className="text-[10px] text-muted-foreground hidden sm:inline">Ekskluderer historisk testdata</span>
+          </div>
+
           {/* Nøgletal (kompakt) */}
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
             <div className="rounded-lg border bg-muted/20 p-2.5">
@@ -227,12 +238,12 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
             <div className="rounded-lg border bg-muted/20 p-2.5">
               <p className="text-[10px] font-medium text-muted-foreground">Månedlige aktive (30d)</p>
               <p className="mt-0.5 text-xl font-bold tabular-nums text-foreground">{analytics.activeUsers30d}</p>
-              <p className="text-[10px] text-muted-foreground">Medlemmer + staff</p>
+              <p className="text-[10px] text-muted-foreground">Unikke brugere (faktisk)</p>
             </div>
             <div className="rounded-lg border bg-muted/20 p-2.5">
               <p className="text-[10px] font-medium text-muted-foreground">Handlinger (30d)</p>
               <p className="mt-0.5 text-xl font-bold tabular-nums text-foreground">{analytics.actionsLast30Days}</p>
-              <p className="text-[10px] text-muted-foreground">Audit & systemhændelser</p>
+              <p className="text-[10px] text-muted-foreground">Reelle brugerhandlinger</p>
             </div>
           </div>
 

@@ -22,6 +22,7 @@ export type SuperadminInsightsData = {
     totalMembers: number;
     totalAdmins: number;
     actionsLast30Days: number;
+    baselineDate: string;
     sessionBreakdown: {
       membersPct: number;
       adminsPct: number;
@@ -167,12 +168,18 @@ const ACTION_EXPLANATIONS: Record<string, { label: string; explanation: string }
   },
 };
 
-export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData> {
+// Nulstillingsdato: Data tælles fra dags dato (3. september 2026), hvor de første rigtige brugere lukkes ind
+export const LAUNCH_BASELINE_ISO = "2026-09-03T00:00:00.000Z";
+
+export async function fetchSuperadminInsights(customBaselineIso?: string): Promise<SuperadminInsightsData> {
   const db = createServiceClient();
   const now = Date.now();
-  const t24h = new Date(now - 24 * 60 * 60 * 1000).toISOString();
-  const t7d = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const t30d = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const baselineTime = new Date(customBaselineIso || LAUNCH_BASELINE_ISO).getTime();
+
+  // Tidsvinduer afskåret så der ikke tælles hændelser før lancering/nulstilling
+  const t24h = new Date(Math.max(now - 24 * 60 * 60 * 1000, baselineTime)).toISOString();
+  const t7d = new Date(Math.max(now - 7 * 24 * 60 * 60 * 1000, baselineTime)).toISOString();
+  const t30d = new Date(Math.max(now - 30 * 24 * 60 * 60 * 1000, baselineTime)).toISOString();
 
   const [
     events24hRes,
@@ -188,36 +195,41 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
   ] = await Promise.all([
     db.from("audit_events").select("actor_user_id").gte("occurred_at", t24h),
     db.from("audit_events").select("actor_user_id").gte("occurred_at", t7d),
-    db.from("audit_events").select("id,action,actor_role,source").gte("occurred_at", t30d).limit(3000),
+    db.from("audit_events").select("id,action,actor_role,actor_user_id,source").gte("occurred_at", t30d).limit(5000),
     db.from("rettighedshavere").select("id", { count: "exact", head: true }),
     db.from("user_org_roles").select("id", { count: "exact", head: true }).in("role", ["superadmin", "admin", "org-admin", "jurist"]),
     db.from("audit_events")
       .select("id,occurred_at,action,entity_type,entity_id,entity_label,actor_display_name,actor_email,actor_role,source,audit_event_organisations(org_id,org_name)")
+      .gte("occurred_at", t30d)
       .neq("actor_role", "member")
       .neq("source", "portal")
       .order("occurred_at", { ascending: false })
       .limit(60),
     db.from("audit_events")
       .select("id,occurred_at,action,entity_type,entity_id,entity_label,actor_display_name,actor_email,actor_role,source,audit_event_organisations(org_id,org_name)")
+      .gte("occurred_at", t30d)
       .or("source.eq.portal,actor_role.eq.member")
       .order("occurred_at", { ascending: false })
       .limit(60),
     db.from("organisations").select("id, name").order("name"),
     db.from("audit_events")
       .select("id,occurred_at,action,outcome,error_code,system_component,actor_display_name,entity_type,entity_label")
+      .gte("occurred_at", t30d)
       .or("outcome.eq.failed,action.eq.security_failure")
       .order("occurred_at", { ascending: false })
       .limit(30),
     db.from("contract_comments").select("id,contract_id,author_role,created_at").gte("created_at", t30d).limit(500),
   ]);
 
-  // Distinct active users
+  // Faktiske unikke brugere der har udført en hændelse
   const uniqueUsers24h = new Set((events24hRes.data ?? []).map(e => e.actor_user_id).filter(Boolean));
   const uniqueUsers7d = new Set((events7dRes.data ?? []).map(e => e.actor_user_id).filter(Boolean));
+  const uniqueUsers30d = new Set((events30dRes.data ?? []).map(e => e.actor_user_id).filter(Boolean));
+
   const totalMembers = membersCountRes.count ?? 0;
   const totalAdmins = adminsCountRes.count ?? 0;
 
-  // Events last 30d breakdown
+  // Hændelser opgjort fra baseline
   const events30d = events30dRes.data ?? [];
   let memberEventsCount = 0;
   let adminEventsCount = 0;
@@ -232,20 +244,20 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
     actionCounts[ev.action] = (actionCounts[ev.action] ?? 0) + 1;
   }
 
-  const totalEvents = events30d.length || 1;
-  const membersPct = Math.round((memberEventsCount / totalEvents) * 100);
-  const adminsPct = 100 - membersPct;
+  const totalEvents = events30d.length;
+  const membersPct = totalEvents > 0 ? Math.round((memberEventsCount / totalEvents) * 100) : 0;
+  const adminsPct = totalEvents > 0 ? 100 - membersPct : 0;
 
-  // Group into the 8 requested categories
-  const categoriesList: Array<{ key: string; actions: string[]; defaultFallbackCount: number }> = [
-    { key: "create", actions: ["create"], defaultFallbackCount: 18 },
-    { key: "download", actions: ["download", "export", "sar_export"], defaultFallbackCount: 9 },
-    { key: "read", actions: ["read", "search"], defaultFallbackCount: 24 },
-    { key: "retention", actions: ["retention"], defaultFallbackCount: 4 },
-    { key: "ai_analysis", actions: ["ai_analysis"], defaultFallbackCount: 14 },
-    { key: "link", actions: ["link", "update", "unlink"], defaultFallbackCount: 21 },
-    { key: "validate", actions: ["validate", "approve"], defaultFallbackCount: 12 },
-    { key: "complete_onboarding", actions: ["complete_onboarding", "require_onboarding"], defaultFallbackCount: 6 },
+  // Faktiske handlingskategorier (0 hvis ingen handlinger er sket)
+  const categoriesList: Array<{ key: string; actions: string[] }> = [
+    { key: "create", actions: ["create"] },
+    { key: "download", actions: ["download", "export", "sar_export"] },
+    { key: "read", actions: ["read", "search"] },
+    { key: "retention", actions: ["retention"] },
+    { key: "ai_analysis", actions: ["ai_analysis"] },
+    { key: "link", actions: ["link", "update", "unlink"] },
+    { key: "validate", actions: ["validate", "approve"] },
+    { key: "complete_onboarding", actions: ["complete_onboarding", "require_onboarding"] },
   ];
 
   const actionCategories: ActionCategoryDetail[] = categoriesList.map(cat => {
@@ -253,15 +265,12 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
     for (const a of cat.actions) {
       count += actionCounts[a] ?? 0;
     }
-    if (count === 0 && events30d.length === 0) {
-      count = cat.defaultFallbackCount;
-    }
     const meta = ACTION_EXPLANATIONS[cat.key] || { label: cat.key, explanation: "Systemhandling" };
     return {
       key: cat.key,
       label: meta.label,
       count,
-      pct: Math.max(1, Math.round((count / Math.max(totalEvents, 100)) * 100)),
+      pct: totalEvents > 0 ? Math.round((count / totalEvents) * 100) : 0,
       explanation: meta.explanation,
     };
   });
@@ -343,15 +352,16 @@ export async function fetchSuperadminInsights(): Promise<SuperadminInsightsData>
 
   return {
     analytics: {
-      activeUsers24h: Math.max(uniqueUsers24h.size, 1),
-      activeUsers7d: Math.max(uniqueUsers7d.size, uniqueUsers24h.size, 1),
-      activeUsers30d: Math.max(uniqueUsers7d.size, totalMembers + totalAdmins > 0 ? Math.min(totalMembers + totalAdmins, 42) : 1),
+      activeUsers24h: uniqueUsers24h.size,
+      activeUsers7d: uniqueUsers7d.size,
+      activeUsers30d: uniqueUsers30d.size,
       totalMembers,
       totalAdmins,
-      actionsLast30Days: events30d.length,
+      actionsLast30Days: totalEvents,
+      baselineDate: customBaselineIso || LAUNCH_BASELINE_ISO,
       sessionBreakdown: {
-        membersPct: membersPct || 70,
-        adminsPct: adminsPct || 30,
+        membersPct,
+        adminsPct,
         memberEvents: memberEventsCount,
         adminEvents: adminEventsCount,
       },
