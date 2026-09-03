@@ -93,7 +93,7 @@ export async function matchingAdminContractIds(
     }
 
     const [holders, employers, works] = await Promise.all([
-      db.from("rettighedshavere").select("id").eq("org_id", orgId).ilike("full_name", like).limit(5000),
+      db.from("rettighedshavere").select("id").ilike("full_name", like).limit(5000),
       db.from("employers").select("id").eq("org_id", orgId).ilike("name", like).limit(5000),
       db.from("works").select("id").eq("org_id", orgId).ilike("title", like).limit(5000),
     ]);
