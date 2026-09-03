@@ -1,12 +1,11 @@
 import "server-only";
-
-import { recordPageTiming } from "@/lib/list-load-timing-stats";
+import { recordPageTiming } from "./key-page-timing-stats";
 
 export {
   getKeyPageTimingStats,
   recordPageTiming,
   type KeyPageTiming,
-} from "@/lib/list-load-timing-stats";
+} from "./key-page-timing-stats";
 
 type TimingFields = Record<string, string | number | boolean | null>;
 

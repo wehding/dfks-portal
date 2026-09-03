@@ -36,7 +36,7 @@ export function getKeyPageTimingStats(): KeyPageTiming[] {
         statusLabel: avg < 400 ? "Hurtig" : avg <= 1000 ? "Acceptabel" : "Langsom",
       };
     }
-    const sum = samples.reduce((acc, value) => acc + value, 0);
+    const sum = samples.reduce((acc, v) => acc + v, 0);
     const avg = Math.round(sum / samples.length);
     const sorted = [...samples].sort((a, b) => a - b);
     const p90Index = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.9) - 1);
@@ -56,8 +56,8 @@ export function getKeyPageTimingStats(): KeyPageTiming[] {
 }
 
 export function recordPageTiming(label: string, durationMs: number) {
-  const samples = timingSamples.get(label) ?? [];
-  samples.push(durationMs);
-  if (samples.length > MAX_SAMPLES_PER_LABEL) samples.shift();
-  timingSamples.set(label, samples);
+  const list = timingSamples.get(label) ?? [];
+  list.push(durationMs);
+  if (list.length > MAX_SAMPLES_PER_LABEL) list.shift();
+  timingSamples.set(label, list);
 }

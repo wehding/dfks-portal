@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { createServiceClient } from "@/lib/supabase/service";
 import { calculateResponseTimeStats, formatUserActionDescription, type ResponseEvent } from "@/lib/admin-dashboard";
-import { getKeyPageTimingStats, type KeyPageTiming } from "@/lib/server/list-load-timing";
+import { getKeyPageTimingStats, type KeyPageTiming } from "@/lib/server/key-page-timing-stats";
 
 export type ActionCategoryDetail = {
   key: string;

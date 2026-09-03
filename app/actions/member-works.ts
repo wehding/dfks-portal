@@ -7,7 +7,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDBWithStatus, getTMDBWorkDetails, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { getDFIFilmDetails, normalizeDfiSeriesResults, searchDFIFilms } from "@/app/actions/dfi";
-import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
+import { cleanDfiTitle, extractBaseSeriesTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 import { buildCompleteEpisodeOptions, episodeOptionsFromLocalChildren, isSeriesType, mergeEpisodeOptionsByPriority, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
@@ -1623,21 +1623,32 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
   const q = query.trim();
   if (!q) return { success: true, results: [], externalLookup: { dfi: "success", tmdb: "success" } };
 
+  const { baseTitle, seasonNumber: baseSeason } = extractBaseSeriesTitle(q);
+  const searchBaseTitle = baseTitle && baseTitle.toLowerCase() !== q.toLowerCase() ? baseTitle : null;
+
   const db = createServiceClient();
   const user = await currentUser();
   await currentOrgId(db, user.id);
 
   let localWorks: any[] = [];
   try {
-    let { data, error } = await db.from("works")
-      .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id")
-      .ilike("title", `%${q}%`)
-      .limit(15);
+    let queryBuilder = db.from("works")
+      .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id");
+    if (searchBaseTitle) {
+      queryBuilder = queryBuilder.or(`title.ilike.%${q}%,title.ilike.%${searchBaseTitle}%`);
+    } else {
+      queryBuilder = queryBuilder.ilike("title", `%${q}%`);
+    }
+    let { data, error } = await queryBuilder.limit(15);
     if (isMissingOptionalWorkColumn(error)) {
-      const retry = await db.from("works")
-        .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, parent_work_id")
-        .ilike("title", `%${q}%`)
-        .limit(15);
+      let retryBuilder = db.from("works")
+        .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, parent_work_id");
+      if (searchBaseTitle) {
+        retryBuilder = retryBuilder.or(`title.ilike.%${q}%,title.ilike.%${searchBaseTitle}%`);
+      } else {
+        retryBuilder = retryBuilder.ilike("title", `%${q}%`);
+      }
+      const retry = await retryBuilder.limit(15);
       data = (retry.data ?? []).map(work => ({ ...work, imdb_id: null, wikidata_id: null }));
       error = retry.error;
     }
@@ -1695,7 +1706,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
   }
 
   const results: UnifiedSearchWorkResult[] = [];
-  const querySeasonHint = parseSeasonNumberFromTitle(q);
+  const querySeasonHint = baseSeason ?? parseSeasonNumberFromTitle(q);
 
   // 1. Add Local works (parents only, deduplicated)
   localWorks.forEach(w => {
@@ -1744,12 +1755,20 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
   // DFI's serie-normalisering, som ellers kan hente flere forældreværker.
   const [dfiLookup, tmdbLookup] = await Promise.all([
     runExternalLookup("dfi", async () => {
-      const response = await searchDFIFilms(q, { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS });
+      let response = await searchDFIFilms(q, { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS });
+      if ((!response.success || !response.results?.length) && searchBaseTitle) {
+        const fallback = await searchDFIFilms(searchBaseTitle, { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS });
+        if (fallback.success && fallback.results?.length) response = fallback;
+      }
       if (!response.success && response.error !== "Ingen film fundet.") throw new Error(response.error ?? "DFI-opslag fejlede");
       return normalizeDfiSeriesResults((response.success ? response.results ?? [] : []) as any[], { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS });
     }),
     runExternalLookup("tmdb", async () => {
-      const response = await searchTMDBWithStatus(q, { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS, retry: false });
+      let response = await searchTMDBWithStatus(q, { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS, retry: false });
+      if ((!response.success || !response.results?.length) && searchBaseTitle) {
+        const fallback = await searchTMDBWithStatus(searchBaseTitle, { timeoutMs: INTERACTIVE_EXTERNAL_LOOKUP_TIMEOUT_MS, retry: false });
+        if (fallback.success && fallback.results?.length) response = fallback;
+      }
       if (!response.success) throw new Error(response.error);
       return response.results;
     }),

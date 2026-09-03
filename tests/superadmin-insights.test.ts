@@ -70,7 +70,7 @@ test("sender almindelig admin til /admin efter login", async () => {
 });
 
 test("beregner nøglesiders loadhastighed og opdaterer ved nye målinger", async () => {
-  const { getKeyPageTimingStats, recordPageTiming } = await import("../lib/list-load-timing-stats");
+  const { getKeyPageTimingStats, recordPageTiming } = await import("../lib/server/key-page-timing-stats");
   const initial = getKeyPageTimingStats();
   assert.equal(initial.length, 4);
   assert(initial.some(p => p.key === "admin-contracts"));
