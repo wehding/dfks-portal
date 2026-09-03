@@ -91,13 +91,15 @@ export function ContractOwnershipEditor({
 
   const proposedOwner = detail?.proposedRightsHolder ?? null;
   const assignedOwner = detail?.assignedRightsHolder ?? null;
-  const oneClickOwner = proposedOwner;
+  // A historical assignment can await verification without a separate AI
+  // proposal. In that case staff confirms the already assigned owner.
+  const oneClickOwner = proposedOwner ?? assignedOwner;
   const confidence = detail?.documentEvidence?.spatialEvidence?.confidence
     ?? detail?.documentEvidence?.spatialAccuracy
     ?? null;
   const extractedName = detail?.aiEvidence?.extractedRightsHolderName ?? null;
   const sourceQuote = detail?.aiEvidence?.sourceQuote ?? null;
-  const canConfirm = Boolean(canManage && detail && proposedOwner && !["confirmed", "corrected", "not_applicable", "blocked"].includes(detail.verification.status));
+  const canConfirm = Boolean(canManage && detail && oneClickOwner && !["confirmed", "corrected", "not_applicable", "blocked"].includes(detail.verification.status));
 
   const sourceActivation = useMemo<ContractEvidenceActivation>(() => ({
     fieldKey: "ownership",

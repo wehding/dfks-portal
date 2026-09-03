@@ -44,6 +44,12 @@ test("editoren understøtter ét klik, næste og PDF-kilde", () => {
   assert.match(editor, /Ejerskab afklaring/);
 });
 
+test("en historisk registreret ejer kan godkendes uden et separat AI-forslag", () => {
+  assert.match(ownership, /const oneClickOwner = proposedOwner \?\? assignedOwner/);
+  assert.match(ownership, /canManage && detail && oneClickOwner/);
+  assert.doesNotMatch(ownership, /canManage && detail && proposedOwner &&/);
+});
+
 test("status og oprindelse har forståelige danske etiketter", () => {
   assert.equal(contractOwnerStatusLabel("correction_proposed"), "Rettelse foreslået");
   assert.equal(contractOwnerOriginLabel("historical_assignment"), "Tidligere registreret ejer");
