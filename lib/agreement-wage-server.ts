@@ -107,7 +107,7 @@ export async function getAgreementSatserForContext(
     getApprovedAgreementWageRules(agreementCode),
     db
       .from("agreement_pension_rules")
-      .select("employer_percent,employee_percent,basis,employment_form,agreements!inner(code)")
+      .select("employer_percent,employee_percent,basis,section_reference,employment_form,agreements!inner(code)")
       .in("status", ["approved", "archived"])
       .eq("agreements.code", agreementCode),
     db
@@ -121,15 +121,25 @@ export async function getAgreementSatserForContext(
 
   const satser = wageRulesToSatser(wageRules);
 
-  // Pensionssatser
+  // Pensionssatser — inkludér grundlag (basis) og paragrafhenvisning, så
+  // AI-prompten kan ræsonnere om hvad pensionen beregnes af (fx normalløn).
   const seen = new Set<string>();
   for (const row of pensionRows ?? []) {
     const key = `${row.employment_form}-${row.basis}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    satser.push({ beskrivelse: "pension", vaerdi: Number(row.employer_percent), enhed: "%" });
+    const ref = row.section_reference ? ` (${row.section_reference})` : "";
+    satser.push({
+      beskrivelse: `pension${ref} — grundlag: ${row.basis}`,
+      vaerdi: Number(row.employer_percent),
+      enhed: `% af ${row.basis}`,
+    });
     if (Number(row.employee_percent) > 0) {
-      satser.push({ beskrivelse: "pension (medarbejder)", vaerdi: Number(row.employee_percent), enhed: "%" });
+      satser.push({
+        beskrivelse: `pension (medarbejder)${ref} — grundlag: ${row.basis}`,
+        vaerdi: Number(row.employee_percent),
+        enhed: `% af ${row.basis}`,
+      });
     }
   }
 
