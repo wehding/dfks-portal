@@ -938,7 +938,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
           </Button>
           <Button size="sm" className={`h-7 shrink-0 gap-1.5 rounded-sm px-2 text-xs ${variant === "commented" ? "bg-background font-medium text-foreground shadow-xs" : ""}`} variant={variant === "commented" ? "secondary" : "ghost"} disabled={!data.documents.commented?.url} onClick={() => setVariant("commented")}>
             {variant === "commented" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
-            Kommenteret PDF
+            Konverteret PDF
           </Button>
         </div>
         {data.documents.original?.sourceUrl && <Button asChild size="icon" variant="outline" className="h-8 w-8 shrink-0" title="Download uændret original"><a href={data.documents.original.sourceUrl} download><Download className="h-3.5 w-3.5" /><span className="sr-only">Download uændret original</span></a></Button>}
@@ -1189,7 +1189,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
             </Button>
             <Button size="sm" className={`gap-1.5 ${variant === "commented" ? "bg-background font-medium text-foreground shadow-xs" : ""}`} variant={variant === "commented" ? "secondary" : "ghost"} disabled={!data.documents.commented?.url} onClick={() => setVariant("commented")}>
               {variant === "commented" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
-              Kommenteret PDF
+              Konverteret PDF
             </Button>
           </div>
         </DialogHeader>

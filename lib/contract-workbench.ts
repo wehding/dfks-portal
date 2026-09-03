@@ -125,7 +125,7 @@ export function contractDocumentPresentation(input: {
   const state = status === "ready" && !input.commentedPath
     ? { processingLabel: "Behandlet PDF mangler", processingTone: "danger" as const }
     : status === "ready"
-    ? { processingLabel: "Kommenteret PDF klar", processingTone: "success" as const }
+    ? { processingLabel: "Konverteret PDF klar", processingTone: "success" as const }
     : status === "not_required"
       ? { processingLabel: "Original PDF klar", processingTone: "success" as const }
       : status === "processing"

@@ -1995,7 +1995,7 @@ function AdminKontrakterContent({
                         {viewContract && <div className="flex flex-wrap items-center gap-2 pt-1">
                             <div className="flex rounded-md border p-0.5">
                                 <Button type="button" size="sm" variant={viewDocumentVariant === "original" ? "secondary" : "ghost"} onClick={() => void loadDocumentVariant(viewContract, "original")}>Original</Button>
-                                <Button type="button" size="sm" variant={viewDocumentVariant === "commented" ? "secondary" : "ghost"} disabled={!viewContract.processed_pdf_url} onClick={() => void loadDocumentVariant(viewContract, "commented")}>Kommenteret PDF</Button>
+                                <Button type="button" size="sm" variant={viewDocumentVariant === "commented" ? "secondary" : "ghost"} disabled={!viewContract.processed_pdf_url} onClick={() => void loadDocumentVariant(viewContract, "commented")}>Konverteret PDF</Button>
                             </div>
                             {viewContract.pdf_url && <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={async () => {
                                 const originalPath = viewContract.pdf_url
@@ -2231,7 +2231,7 @@ function AdminKontrakterContent({
                                         <Eye className="h-4 w-4" />Original
                                     </Button>
                                     <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void openContractVersion(version, "commented")} disabled={!version.processed_pdf_url}>
-                                        <FileText className="h-4 w-4" />Kommenteret PDF
+                                        <FileText className="h-4 w-4" />Konverteret PDF
                                     </Button>
                                 </div>
                             </div>
