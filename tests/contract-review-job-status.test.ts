@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { canTriggerContractReviewAnalysis, isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus } from "../lib/contract-review-job-status";
 
@@ -24,4 +25,11 @@ test("job i kø kan startes igen, mens aktiv behandling forbliver låst", () => 
   assert.equal(canTriggerContractReviewAnalysis("failed"), true);
   assert.equal(canTriggerContractReviewAnalysis("ready"), true);
   assert.equal(canTriggerContractReviewAnalysis("processing"), false);
+});
+
+test("review-intake begrænser både worker-kald og inline fallback", () => {
+  const source = readFileSync("lib/contract-review-intake.ts", "utf8");
+  assert.match(source, /signal: AbortSignal\.timeout\(5_000\)/);
+  assert.match(source, /processPendingContractReviewJobs\(1\)/);
+  assert.doesNotMatch(source, /processPendingContractReviewJobs\(3\)/);
 });

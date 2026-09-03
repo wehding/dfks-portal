@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   BrainCircuit,
   ChevronDown,
@@ -32,6 +33,7 @@ import type { SuperadminInsightsData } from "@/lib/server/superadmin-overview";
 import { Badge } from "@/components/ui/badge";
 import { formatResponseDuration } from "@/lib/admin-dashboard";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { recordSuperadminInsightsExport } from "@/app/actions/superadmin-insights";
 
 function formatRelativeTime(isoString: string): string {
   const diffMs = Date.now() - new Date(isoString).getTime();
@@ -62,6 +64,14 @@ function getCategoryIcon(key: string) {
 }
 
 export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
+  const router = useRouter();
+  const [isFiltering, startFiltering] = useTransition();
+  const baselineLabel = new Intl.DateTimeFormat("da-DK", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "Europe/Copenhagen",
+  }).format(new Date(data.analytics.baselineDate));
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
     if (typeof window === "undefined") return { analytics: true, speed: true, activity: true, errors: true };
     try {
@@ -74,7 +84,7 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
   });
 
   const [activityTab, setActivityTab] = useState<"admin" | "user">("admin");
-  const [selectedOrgId, setSelectedOrgId] = useState<string>("all");
+  const [selectedOrgId, setSelectedOrgId] = useState<string>(data.collection.selectedOrgId ?? "all");
   const [copiedReport, setCopiedReport] = useState(false);
   const [showReportPreview, setShowReportPreview] = useState(false);
 
@@ -90,18 +100,16 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
     });
   };
 
-  const { analytics, speedInsights, adminActivityLog, userActivityLog, organisations, systemErrors } = data;
+  const { analytics, speedInsights, adminActivityLog, userActivityLog, organisations, systemErrors, collection } = data;
+  const filteredAdminLogs = adminActivityLog;
+  const filteredUserLogs = userActivityLog;
 
-  // Filtrering på organisation i aktivitetsmonitoren
-  const filteredAdminLogs = useMemo(() => {
-    if (selectedOrgId === "all") return adminActivityLog;
-    return adminActivityLog.filter(item => item.orgId === selectedOrgId);
-  }, [adminActivityLog, selectedOrgId]);
-
-  const filteredUserLogs = useMemo(() => {
-    if (selectedOrgId === "all") return userActivityLog;
-    return userActivityLog.filter(item => item.orgId === selectedOrgId);
-  }, [userActivityLog, selectedOrgId]);
+  const applyOrganisationFilter = (orgId: string) => {
+    setSelectedOrgId(orgId);
+    startFiltering(() => {
+      router.replace(orgId === "all" ? "/admin/insights" : `/admin/insights?org=${encodeURIComponent(orgId)}`);
+    });
+  };
 
   // Generer tekst-/markdown-rapport over de seneste dages fejl
   const generateErrorReportText = () => {
@@ -109,7 +117,7 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
     const lines: string[] = [
       `# Fejl- og Hændelsesrapport – DFKS Portal`,
       `Genereret: ${timestamp}`,
-      `Overvåget miljø: Produktion / Staging`,
+      `Datakilde komplet: ${collection.complete ? "Ja" : "Nej"}`,
       ``,
       `## 1. Opsummering`,
       `- Registrerede fejl/sikkerhedshændelser (30d): ${systemErrors.length}`,
@@ -130,14 +138,15 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
         lines.push(`- Komponent: ${err.systemComponent || "Core System"}`);
         lines.push(`- Fejlkode: ${err.errorCode || "N/A"}`);
         lines.push(`- Udfald: ${err.outcome}`);
-        if (err.actorName) lines.push(`- Berørt bruger: ${err.actorName}`);
         lines.push(``);
       });
     }
 
     lines.push(`## 3. Nøglesider Indlæsningshastighed`);
     speedInsights.keyPages.forEach(p => {
-      lines.push(`- ${p.name} (${p.route}): Gns. ${p.averageMs} ms (P90: ${p.p90Ms} ms) – Status: ${p.statusLabel}`);
+      lines.push(p.sampleCount > 0 && p.averageMs != null && p.p90Ms != null
+        ? `- ${p.name} (${p.route}): Gns. ${p.averageMs} ms (P90: ${p.p90Ms} ms, ${p.sampleCount} proceslokale målinger) – Status: ${p.statusLabel}`
+        : `- ${p.name} (${p.route}): Ingen målinger tilgængelige`);
     });
 
     return lines.join("\n");
@@ -146,6 +155,10 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
   const handleCopyReport = async () => {
     const reportText = generateErrorReportText();
     try {
+      await recordSuperadminInsightsExport({
+        orgId: selectedOrgId === "all" ? null : selectedOrgId,
+        errorCount: systemErrors.length,
+      });
       await navigator.clipboard.writeText(reportText);
       setCopiedReport(true);
       setTimeout(() => setCopiedReport(false), 2500);
@@ -168,7 +181,7 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
               Insights & Systemovervågning
             </h1>
             <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
-              Kompakt realtidsoverblik over telemetri, sidehastigheder, tværgående admin- og brugeradfærd samt hændelser.
+              Driftsoversigt baseret på auditdata og tilgængelige målinger. Manglende telemetri markeres tydeligt.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -178,6 +191,12 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
           </div>
         </div>
       </div>
+
+      {!collection.complete && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          En eller flere datakilder kunne ikke læses. Oversigten er markeret som delvis og må ikke bruges som fuldstændigt revisionsbevis.
+        </div>
+      )}
 
       {/* Sektion 1: Vercel Analytics & Brugeraktivitet */}
       <Collapsible
@@ -192,16 +211,16 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
             </div>
             <div>
               <h2 className="text-sm font-semibold text-foreground">
-                Vercel Analytics & Handlingsfordeling
+                Auditbaseret aktivitet og handlingsfordeling
               </h2>
               <p className="text-[11px] text-muted-foreground">
-                Realtidsmåling af aktive brugere, enheder og specifikke handlingskategorier
+                Eksakte aggregater fra auditdatabasen for det valgte tidsrum og organisationsfilter
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 text-[10px] font-medium border-0">
-              Live aktivitet
+              {collection.complete ? "Data indlæst" : "Delvise data"}
             </Badge>
             <ChevronDown
               className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${
@@ -217,7 +236,7 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400" />
               <span>
-                <strong>Nulstillet til brugere:</strong> Målingen tæller reelle handlinger fra i dag (3. sep. 2026), hvor systemet åbnes for brugere.
+                <strong>Måleperiode:</strong> Målingen tæller reelle handlinger fra {baselineLabel}.
               </span>
             </span>
             <span className="text-[10px] text-muted-foreground hidden sm:inline">Ekskluderer historisk testdata</span>
@@ -282,24 +301,27 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
 
             {/* Enhedsfordeling */}
             <div className="rounded-lg border p-3 space-y-2">
-              <span className="text-xs font-semibold text-foreground">Enhedsfordeling (Vercel Telemetry)</span>
-              <div className="grid grid-cols-3 gap-2 text-center pt-0.5">
-                <div className="rounded border bg-muted/20 p-1.5">
-                  <Monitor className="h-3.5 w-3.5 mx-auto text-muted-foreground mb-0.5" />
-                  <p className="text-xs font-bold text-foreground">{analytics.deviceBreakdown.desktop}%</p>
-                  <p className="text-[9px] text-muted-foreground">Desktop</p>
+              <span className="text-xs font-semibold text-foreground">Enhedsfordeling</span>
+              {analytics.deviceBreakdown.desktop == null ? (
+                <p className="rounded border border-dashed bg-muted/10 p-3 text-[10px] text-muted-foreground">
+                  Ingen verificeret enhedstelemetri er tilsluttet endnu.
+                </p>
+              ) : (
+                <div className="grid grid-cols-3 gap-2 text-center pt-0.5">
+                  {[
+                    [Monitor, analytics.deviceBreakdown.desktop, "Desktop"],
+                    [Smartphone, analytics.deviceBreakdown.mobile, "Mobil"],
+                    [Tablet, analytics.deviceBreakdown.tablet, "Tablet"],
+                  ].map(([Icon, value, label]) => {
+                    const DeviceIcon = Icon as typeof Monitor;
+                    return <div key={String(label)} className="rounded border bg-muted/20 p-1.5">
+                      <DeviceIcon className="h-3.5 w-3.5 mx-auto text-muted-foreground mb-0.5" />
+                      <p className="text-xs font-bold text-foreground">{String(value)}%</p>
+                      <p className="text-[9px] text-muted-foreground">{String(label)}</p>
+                    </div>;
+                  })}
                 </div>
-                <div className="rounded border bg-muted/20 p-1.5">
-                  <Smartphone className="h-3.5 w-3.5 mx-auto text-muted-foreground mb-0.5" />
-                  <p className="text-xs font-bold text-foreground">{analytics.deviceBreakdown.mobile}%</p>
-                  <p className="text-[9px] text-muted-foreground">Mobil</p>
-                </div>
-                <div className="rounded border bg-muted/20 p-1.5">
-                  <Tablet className="h-3.5 w-3.5 mx-auto text-muted-foreground mb-0.5" />
-                  <p className="text-xs font-bold text-foreground">{analytics.deviceBreakdown.tablet}%</p>
-                  <p className="text-[9px] text-muted-foreground">Tablet</p>
-                </div>
-              </div>
+              )}
             </div>
           </div>
 
@@ -361,16 +383,16 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
             </div>
             <div>
               <h2 className="text-sm font-semibold text-foreground">
-                Vercel Speed Insights & Sidehastigheder
+                Sidehastigheder og svartider
               </h2>
               <p className="text-[11px] text-muted-foreground">
-                Core Web Vitals med forklaringstekster samt målte loadtider på centrale bruger- og adminsider
+                Tilgængelige procesmålinger; verificeret produktionstelemetri vises først, når den er tilsluttet
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 text-[10px] font-medium border-0">
-              Optimeret score
+              {speedInsights.keyPages.some(page => page.sampleCount > 0) ? "Lokale målinger" : "Afventer telemetri"}
             </Badge>
             <ChevronDown
               className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${
@@ -384,8 +406,8 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
           {/* Core Web Vitals med forklaringer */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs font-semibold text-foreground">
-              <span>Core Web Vitals (Brugernes faktiske oplevelse)</span>
-              <span className="text-[10px] text-muted-foreground font-normal">Realtidstelemetri</span>
+              <span>Core Web Vitals</span>
+              <span className="text-[10px] text-muted-foreground font-normal">Verificeret datakilde ikke tilsluttet</span>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               {Object.entries(speedInsights.webVitals).map(([key, item]) => (
@@ -393,10 +415,10 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
                   <div>
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-bold uppercase tracking-wider text-foreground">{key}</span>
-                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                      <span className={`h-2 w-2 rounded-full ${item.value == null ? "bg-slate-300" : "bg-emerald-500"}`} />
                     </div>
-                    <p className="mt-1 text-lg font-bold tabular-nums text-foreground">{item.value}</p>
-                    <p className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400">Mål {item.target}</p>
+                    <p className="mt-1 text-lg font-bold tabular-nums text-foreground">{item.value ?? "—"}</p>
+                    <p className="text-[9px] font-medium text-muted-foreground">{item.value == null ? "Ingen måling" : `Mål ${item.target}`}</p>
                   </div>
                   <p className="mt-1.5 pt-1.5 border-t border-border/40 text-[10px] text-muted-foreground leading-snug">
                     {item.explanation}
@@ -431,7 +453,9 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
                           ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
                           : page.status === "moderate"
                           ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
-                          : "bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300"
+                          : page.status === "slow"
+                          ? "bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300"
+                          : "bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-300"
                       }`}
                     >
                       {page.statusLabel}
@@ -439,10 +463,12 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
                   </div>
                   <div className="flex items-baseline justify-between">
                     <div>
-                      <span className="text-lg font-bold tabular-nums text-foreground">{page.averageMs}</span>
-                      <span className="text-[10px] text-muted-foreground ml-1">ms gns.</span>
+                      <span className="text-lg font-bold tabular-nums text-foreground">{page.averageMs ?? "—"}</span>
+                      {page.averageMs != null && <span className="text-[10px] text-muted-foreground ml-1">ms gns.</span>}
                     </div>
-                    <span className="text-[10px] text-muted-foreground tabular-nums">P90: {page.p90Ms} ms</span>
+                    <span className="text-[10px] text-muted-foreground tabular-nums">
+                      {page.p90Ms == null ? "0 målinger" : `P90: ${page.p90Ms} ms · n=${page.sampleCount}`}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10px]">
                     <span className="text-muted-foreground font-mono text-[9px] truncate max-w-[130px]" title={page.route}>
@@ -548,7 +574,8 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
               <select
                 id="org-filter"
                 value={selectedOrgId}
-                onChange={e => setSelectedOrgId(e.target.value)}
+                onChange={e => applyOrganisationFilter(e.target.value)}
+                disabled={isFiltering}
                 className="h-7 text-xs rounded-md border bg-background px-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <option value="all">Alle organisationer</option>
@@ -728,7 +755,9 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
               <CheckCircle2 className="h-6 w-6 text-emerald-500 mb-1" />
               <p className="text-xs font-semibold text-foreground">Ingen registrerede systemfejl</p>
               <p className="text-[10px] text-muted-foreground mt-0.5">
-                Alle handlinger og transaktioner er gennemført fejlfrit i den overvågede periode.
+                {collection.complete
+                  ? "Der er ikke registreret fejl i den indlæste periode. Det er ikke en garanti for fejlfri drift."
+                  : "Fejllisten er ufuldstændig, fordi en datakilde ikke kunne læses."}
               </p>
             </div>
           ) : (
@@ -745,7 +774,6 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
                     <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                       <span>Komponent: {item.systemComponent || "Core"}</span>
                       {item.errorCode && <span>• Kode: {item.errorCode}</span>}
-                      {item.actorName && <span>• Bruger: {item.actorName}</span>}
                     </div>
                   </div>
                   <span className="text-[10px] text-muted-foreground shrink-0">

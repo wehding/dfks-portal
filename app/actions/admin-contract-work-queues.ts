@@ -21,6 +21,12 @@ import { isUuid } from "@/lib/uuid";
 
 const MAX_QUEUE_ITEMS = 5000;
 const MAX_SELECTED_ITEMS = 1000;
+
+export type AdminContractTaskCounts = {
+  validation: number | null;
+  ownership: number | null;
+  messages: number | null;
+};
 const VALID_STATUSES = new Set([
   "all", "kladde", "valideret", "arkiveret", "beskeder", "missingWork",
   "validationPending", "validationRecommended", "documentProcessing", "documentReady",
@@ -84,7 +90,7 @@ function normalizeFilters(input: AdminContractFilterParams | undefined): AdminCo
 }
 
 function queueLabel(kind: CreateAdminContractQueueInput["kind"], count: number) {
-  if (kind === "validation") return `Afventer validering · ${count}`;
+  if (kind === "validation") return `Valideringsafklaring · ${count}`;
   if (kind === "ownership") return `Ejerskab skal afklares · ${count}`;
   if (kind === "messages") return `Ulæste beskeder · ${count}`;
   if (kind === "selected") return `Valgte kontrakter · ${count}`;
@@ -203,24 +209,31 @@ export async function fetchAdminContractTaskCounts() {
   const caller = await requireQueueCaller(false);
   if (!caller) return { success: false as const, error: "Ikke autoriseret" };
   const db = createServiceClient();
-  try {
-    const [validationRaw, messagesRaw, ownership, draftsResult] = await Promise.all([
-      matchingAdminContractIds(db, caller.orgId, { status: "validationPending" }),
-      matchingAdminContractIds(db, caller.orgId, { status: "beskeder" }),
-      caller.canManageOwnership ? ownershipTaskIds(db, caller.orgId) : Promise.resolve(new Set<string>()),
-      db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", caller.orgId).is("superseded_by_contract_id", null).eq("status", "kladde"),
-    ]);
-    const [validation, messages] = await Promise.all([
-      existingScopedContractIds(db, caller.orgId, validationRaw),
-      existingScopedContractIds(db, caller.orgId, messagesRaw),
-    ]);
-    return {
-      success: true as const,
-      counts: { validation: validation.size, ownership: ownership.size, messages: messages.size, drafts: draftsResult.count ?? 0 },
-    };
-  } catch (error) {
-    return { success: false as const, error: error instanceof Error ? error.message : "Opgaverne kunne ikke hentes" };
-  }
+  const countFiltered = async (status: "validationPending" | "beskeder") => {
+    const raw = await matchingAdminContractIds(db, caller.orgId, { status });
+    return (await existingScopedContractIds(db, caller.orgId, raw)).size;
+  };
+  const results = await Promise.allSettled([
+    countFiltered("validationPending"),
+    caller.canManageOwnership ? ownershipTaskIds(db, caller.orgId).then(ids => ids.size) : Promise.resolve(0),
+    countFiltered("beskeder"),
+  ]);
+  (["validation", "ownership", "messages"] as const).forEach((task, index) => {
+    if (results[index]?.status === "rejected") {
+      console.error("[admin-contract-tasks] count unavailable", { task });
+    }
+  });
+  const countAt = (index: number) => results[index]?.status === "fulfilled"
+    ? results[index].value
+    : null;
+  return {
+    success: true as const,
+    counts: {
+      validation: countAt(0),
+      ownership: countAt(1),
+      messages: countAt(2),
+    } satisfies AdminContractTaskCounts,
+  };
 }
 
 async function deleteQueue(db: ReturnType<typeof createServiceClient>, queueId: string) {

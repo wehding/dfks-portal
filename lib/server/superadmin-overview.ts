@@ -5,6 +5,7 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { createServiceClient } from "@/lib/supabase/service";
 import { calculateResponseTimeStats, formatUserActionDescription, type ResponseEvent } from "@/lib/admin-dashboard";
 import { getKeyPageTimingStats, type KeyPageTiming } from "@/lib/server/key-page-timing-stats";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export type ActionCategoryDetail = {
   key: string;
@@ -31,23 +32,30 @@ export type SuperadminInsightsData = {
     };
     actionCategories: ActionCategoryDetail[];
     deviceBreakdown: {
-      desktop: number;
-      mobile: number;
-      tablet: number;
+      desktop: number | null;
+      mobile: number | null;
+      tablet: number | null;
     };
   };
   speedInsights: {
     medianResponseTimeMs: number | null;
     p90ResponseTimeMs: number | null;
     webVitals: {
-      lcp: { value: string; score: "good" | "needs-improvement" | "poor"; target: string; explanation: string };
-      inp: { value: string; score: "good" | "needs-improvement" | "poor"; target: string; explanation: string };
-      cls: { value: string; score: "good" | "needs-improvement" | "poor"; target: string; explanation: string };
-      fcp: { value: string; score: "good" | "needs-improvement" | "poor"; target: string; explanation: string };
-      ttfb: { value: string; score: "good" | "needs-improvement" | "poor"; target: string; explanation: string };
+      lcp: { value: string | null; score: "good" | "needs-improvement" | "poor" | "unavailable"; target: string; explanation: string };
+      inp: { value: string | null; score: "good" | "needs-improvement" | "poor" | "unavailable"; target: string; explanation: string };
+      cls: { value: string | null; score: "good" | "needs-improvement" | "poor" | "unavailable"; target: string; explanation: string };
+      fcp: { value: string | null; score: "good" | "needs-improvement" | "poor" | "unavailable"; target: string; explanation: string };
+      ttfb: { value: string | null; score: "good" | "needs-improvement" | "poor" | "unavailable"; target: string; explanation: string };
     };
     keyPages: KeyPageTiming[];
     systemHealth: "healthy" | "degraded";
+    sourceLabel: string;
+  };
+  collection: {
+    collectedAt: string;
+    complete: boolean;
+    issues: string[];
+    selectedOrgId: string | null;
   };
   adminActivityLog: Array<{
     id: string;
@@ -171,80 +179,114 @@ const ACTION_EXPLANATIONS: Record<string, { label: string; explanation: string }
 // Nulstillingsdato: Data tælles fra dags dato (3. september 2026), hvor de første rigtige brugere lukkes ind
 export const LAUNCH_BASELINE_ISO = "2026-09-03T00:00:00.000Z";
 
-export async function fetchSuperadminInsights(customBaselineIso?: string): Promise<SuperadminInsightsData> {
+function resolveBaselineIso(customBaselineIso?: string): string {
+  const candidate = customBaselineIso || process.env.SUPERADMIN_INSIGHTS_BASELINE_ISO || LAUNCH_BASELINE_ISO;
+  return Number.isNaN(new Date(candidate).getTime()) ? LAUNCH_BASELINE_ISO : candidate;
+}
+
+export async function fetchSuperadminInsights(input: {
+  caller: { userId: string; orgId: string; role: string };
+  customBaselineIso?: string;
+  orgId?: string | null;
+}): Promise<SuperadminInsightsData> {
   const db = createServiceClient();
   const now = Date.now();
-  const baselineTime = new Date(customBaselineIso || LAUNCH_BASELINE_ISO).getTime();
+  const baselineIso = resolveBaselineIso(input.customBaselineIso);
+  const baselineTime = new Date(baselineIso).getTime();
+  const selectedOrgId = input.orgId || null;
 
   // Tidsvinduer afskåret så der ikke tælles hændelser før lancering/nulstilling
   const t24h = new Date(Math.max(now - 24 * 60 * 60 * 1000, baselineTime)).toISOString();
   const t7d = new Date(Math.max(now - 7 * 24 * 60 * 60 * 1000, baselineTime)).toISOString();
   const t30d = new Date(Math.max(now - 30 * 24 * 60 * 60 * 1000, baselineTime)).toISOString();
 
+  const activitySelect = selectedOrgId
+    ? "id,occurred_at,action,entity_type,entity_id,entity_label,actor_display_name,actor_email,actor_role,source,audit_event_organisations!inner(org_id,org_name),audit_event_subjects(target_member_uuid)"
+    : "id,occurred_at,action,entity_type,entity_id,entity_label,actor_display_name,actor_email,actor_role,source,audit_event_organisations(org_id,org_name),audit_event_subjects(target_member_uuid)";
+  let adminLogsQuery = db.from("audit_events")
+    .select(activitySelect)
+    .gte("occurred_at", t30d)
+    .neq("actor_role", "member")
+    .neq("source", "portal")
+    .order("occurred_at", { ascending: false })
+    .limit(60);
+  let userLogsQuery = db.from("audit_events")
+    .select(activitySelect)
+    .gte("occurred_at", t30d)
+    .or("source.eq.portal,actor_role.eq.member")
+    .order("occurred_at", { ascending: false })
+    .limit(60);
+  const errorSelect = selectedOrgId
+    ? "id,occurred_at,action,outcome,error_code,system_component,actor_display_name,entity_type,entity_label,audit_event_organisations!inner(org_id)"
+    : "id,occurred_at,action,outcome,error_code,system_component,actor_display_name,entity_type,entity_label";
+  let errorLogsQuery = db.from("audit_events")
+    .select(errorSelect)
+    .gte("occurred_at", t30d)
+    .or("outcome.eq.failed,action.eq.security_failure")
+    .order("occurred_at", { ascending: false })
+    .limit(30);
+  let commentsQuery = db.from("contract_comments")
+    .select("id,contract_id,author_role,created_at,org_id")
+    .gte("created_at", t30d)
+    .limit(500);
+  if (selectedOrgId) {
+    adminLogsQuery = adminLogsQuery.eq("audit_event_organisations.org_id", selectedOrgId);
+    userLogsQuery = userLogsQuery.eq("audit_event_organisations.org_id", selectedOrgId);
+    errorLogsQuery = errorLogsQuery.eq("audit_event_organisations.org_id", selectedOrgId);
+    commentsQuery = commentsQuery.eq("org_id", selectedOrgId);
+  }
+
   const [
-    events24hRes,
-    events7dRes,
-    events30dRes,
-    membersCountRes,
-    adminsCountRes,
+    summaryRes,
     adminLogsRes,
     userLogsRes,
     organisationsRes,
     errorLogsRes,
     commentsRes,
   ] = await Promise.all([
-    db.from("audit_events").select("actor_user_id").gte("occurred_at", t24h),
-    db.from("audit_events").select("actor_user_id").gte("occurred_at", t7d),
-    db.from("audit_events").select("id,action,actor_role,actor_user_id,source").gte("occurred_at", t30d).limit(5000),
-    db.from("rettighedshavere").select("id", { count: "exact", head: true }),
-    db.from("user_org_roles").select("id", { count: "exact", head: true }).in("role", ["superadmin", "admin", "org-admin", "jurist"]),
-    db.from("audit_events")
-      .select("id,occurred_at,action,entity_type,entity_id,entity_label,actor_display_name,actor_email,actor_role,source,audit_event_organisations(org_id,org_name)")
-      .gte("occurred_at", t30d)
-      .neq("actor_role", "member")
-      .neq("source", "portal")
-      .order("occurred_at", { ascending: false })
-      .limit(60),
-    db.from("audit_events")
-      .select("id,occurred_at,action,entity_type,entity_id,entity_label,actor_display_name,actor_email,actor_role,source,audit_event_organisations(org_id,org_name)")
-      .gte("occurred_at", t30d)
-      .or("source.eq.portal,actor_role.eq.member")
-      .order("occurred_at", { ascending: false })
-      .limit(60),
+    db.rpc("get_superadmin_insights_summary", {
+      p_actor_user_id: input.caller.userId,
+      p_from_24h: t24h,
+      p_from_7d: t7d,
+      p_from_30d: t30d,
+      p_org_id: selectedOrgId,
+    }),
+    adminLogsQuery,
+    userLogsQuery,
     db.from("organisations").select("id, name").order("name"),
-    db.from("audit_events")
-      .select("id,occurred_at,action,outcome,error_code,system_component,actor_display_name,entity_type,entity_label")
-      .gte("occurred_at", t30d)
-      .or("outcome.eq.failed,action.eq.security_failure")
-      .order("occurred_at", { ascending: false })
-      .limit(30),
-    db.from("contract_comments").select("id,contract_id,author_role,created_at").gte("created_at", t30d).limit(500),
+    errorLogsQuery,
+    commentsQuery,
   ]);
 
-  // Faktiske unikke brugere der har udført en hændelse
-  const uniqueUsers24h = new Set((events24hRes.data ?? []).map(e => e.actor_user_id).filter(Boolean));
-  const uniqueUsers7d = new Set((events7dRes.data ?? []).map(e => e.actor_user_id).filter(Boolean));
-  const uniqueUsers30d = new Set((events30dRes.data ?? []).map(e => e.actor_user_id).filter(Boolean));
+  const queryResults = [summaryRes, adminLogsRes, userLogsRes, organisationsRes, errorLogsRes, commentsRes];
+  const issues = queryResults
+    .map(result => result.error?.message)
+    .filter((message): message is string => Boolean(message));
 
-  const totalMembers = membersCountRes.count ?? 0;
-  const totalAdmins = adminsCountRes.count ?? 0;
-
-  // Hændelser opgjort fra baseline
-  const events30d = events30dRes.data ?? [];
-  let memberEventsCount = 0;
-  let adminEventsCount = 0;
-  const actionCounts: Record<string, number> = {};
-
-  for (const ev of events30d) {
-    if (ev.actor_role === "member" || ev.source === "portal") {
-      memberEventsCount++;
-    } else {
-      adminEventsCount++;
-    }
-    actionCounts[ev.action] = (actionCounts[ev.action] ?? 0) + 1;
+  if (summaryRes.error || !summaryRes.data) {
+    throw new Error("Systemindsigt kunne ikke beregnes sikkert.");
   }
 
-  const totalEvents = events30d.length;
+  type SummaryRow = {
+    activeUsers24h: number;
+    activeUsers7d: number;
+    activeUsers30d: number;
+    totalMembers: number;
+    totalAdmins: number;
+    actionsLast30Days: number;
+    memberEvents: number;
+    adminEvents: number;
+    actionCounts: Record<string, number>;
+  };
+  const summary = summaryRes.data as unknown as SummaryRow;
+  const totalMembers = Number(summary.totalMembers ?? 0);
+  const totalAdmins = Number(summary.totalAdmins ?? 0);
+
+  // Hændelser opgjort fra baseline
+  const memberEventsCount = Number(summary.memberEvents ?? 0);
+  const adminEventsCount = Number(summary.adminEvents ?? 0);
+  const actionCounts = summary.actionCounts ?? {};
+  const totalEvents = Number(summary.actionsLast30Days ?? 0);
   const membersPct = totalEvents > 0 ? Math.round((memberEventsCount / totalEvents) * 100) : 0;
   const adminsPct = totalEvents > 0 ? 100 - membersPct : 0;
 
@@ -297,6 +339,7 @@ export async function fetchSuperadminInsights(customBaselineIso?: string): Promi
     actor_role: string | null;
     source: string;
     audit_event_organisations?: Array<{ org_id: string; org_name: string | null }>;
+    audit_event_subjects?: Array<{ target_member_uuid: string }>;
   };
 
   const adminActivityLog = ((adminLogsRes.data ?? []) as unknown as RawAuditLogRow[]).map(row => {
@@ -339,26 +382,64 @@ export async function fetchSuperadminInsights(customBaselineIso?: string): Promi
   }));
 
   // System errors mapping
-  const systemErrors = (errorLogsRes.data ?? []).map(row => ({
+  type RawErrorLogRow = {
+    id: string;
+    occurred_at: string;
+    action: string;
+    outcome: string | null;
+    error_code: string | null;
+    system_component: string | null;
+    actor_display_name: string | null;
+    entity_type: string | null;
+  };
+  const systemErrors = ((errorLogsRes.data ?? []) as unknown as RawErrorLogRow[]).map(row => ({
     id: row.id,
     occurredAt: row.occurred_at,
     action: row.action,
-    outcome: row.outcome,
+    outcome: row.outcome || "failed",
     errorCode: row.error_code,
     systemComponent: row.system_component,
     actorName: row.actor_display_name,
     description: `Fejl i ${row.system_component || row.entity_type || "systemet"}: ${row.error_code || "Uventet fejl"}`,
   }));
 
+  const displayedSubjects = [...new Set(
+    [...((adminLogsRes.data ?? []) as unknown as RawAuditLogRow[]), ...((userLogsRes.data ?? []) as unknown as RawAuditLogRow[])]
+      .flatMap(row => row.audit_event_subjects ?? [])
+      .map(subject => subject.target_member_uuid)
+      .filter(Boolean),
+  )];
+  await recordSensitiveFlow({
+    actor: {
+      userId: input.caller.userId,
+      orgId: input.caller.orgId,
+      role: input.caller.role,
+      source: "admin",
+    },
+    action: "read",
+    component: "admin.superadmin.insights",
+    entityType: "audit_insights",
+    targetMemberUuids: displayedSubjects,
+    orgIds: selectedOrgId ? [selectedOrgId] : [],
+    purposeCode: "security_and_operations_monitoring",
+    legalBasis: "GDPR Art. 6(1)(f), Art. 9(2)(d)",
+    dataCategories: ["audit_data", "usage_data", "union_membership_data"],
+    counts: {
+      displayedAdminEvents: adminActivityLog.length,
+      displayedMemberEvents: userActivityLog.length,
+      filteredByOrganisation: Boolean(selectedOrgId),
+    },
+  });
+
   return {
     analytics: {
-      activeUsers24h: uniqueUsers24h.size,
-      activeUsers7d: uniqueUsers7d.size,
-      activeUsers30d: uniqueUsers30d.size,
+      activeUsers24h: Number(summary.activeUsers24h ?? 0),
+      activeUsers7d: Number(summary.activeUsers7d ?? 0),
+      activeUsers30d: Number(summary.activeUsers30d ?? 0),
       totalMembers,
       totalAdmins,
       actionsLast30Days: totalEvents,
-      baselineDate: customBaselineIso || LAUNCH_BASELINE_ISO,
+      baselineDate: baselineIso,
       sessionBreakdown: {
         membersPct,
         adminsPct,
@@ -367,23 +448,30 @@ export async function fetchSuperadminInsights(customBaselineIso?: string): Promi
       },
       actionCategories,
       deviceBreakdown: {
-        desktop: 74,
-        mobile: 21,
-        tablet: 5,
+        desktop: null,
+        mobile: null,
+        tablet: null,
       },
     },
     speedInsights: {
       medianResponseTimeMs: speedStats.medianMs,
       p90ResponseTimeMs: speedStats.p90Ms,
       webVitals: {
-        lcp: { value: "1.1s", score: "good", target: "< 2.5s", explanation: "Indlæsningstid for sidens største element (f.eks. tabel/PDF)" },
-        inp: { value: "34ms", score: "good", target: "< 200ms", explanation: "Brugerens oplevede klik- og tastaturforsinkelse" },
-        cls: { value: "0.01", score: "good", target: "< 0.1", explanation: "Visuel layout-stabilitet under side-rendering" },
-        fcp: { value: "0.6s", score: "good", target: "< 1.8s", explanation: "Tidspunkt hvor det første indhold vises på skærmen" },
-        ttfb: { value: "115ms", score: "good", target: "< 800ms", explanation: "Serverens svartid fra forespørgsel til første datapakke" },
+        lcp: { value: null, score: "unavailable", target: "< 2.5s", explanation: "Indlæsningstid for sidens største element (f.eks. tabel/PDF)" },
+        inp: { value: null, score: "unavailable", target: "< 200ms", explanation: "Brugerens oplevede klik- og tastaturforsinkelse" },
+        cls: { value: null, score: "unavailable", target: "< 0.1", explanation: "Visuel layout-stabilitet under side-rendering" },
+        fcp: { value: null, score: "unavailable", target: "< 1.8s", explanation: "Tidspunkt hvor det første indhold vises på skærmen" },
+        ttfb: { value: null, score: "unavailable", target: "< 800ms", explanation: "Serverens svartid fra forespørgsel til første datapakke" },
       },
       keyPages,
-      systemHealth: "healthy",
+      systemHealth: issues.length === 0 ? "healthy" : "degraded",
+      sourceLabel: "Auditdatabase og proceslokale servermålinger",
+    },
+    collection: {
+      collectedAt: new Date(now).toISOString(),
+      complete: issues.length === 0,
+      issues: issues.map(() => "En datakilde kunne ikke læses"),
+      selectedOrgId,
     },
     adminActivityLog,
     userActivityLog,

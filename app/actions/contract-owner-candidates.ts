@@ -2,7 +2,6 @@
 
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
-import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 import { createServiceClient } from "@/lib/supabase/service";
 import type { ContractOwnerSummary } from "@/lib/contract-owner-verification-types";
 
@@ -31,38 +30,29 @@ export async function createContractOwnerCandidate(name: string) {
   if (trimmed.length < 2) return { success: false as const, error: "Navnet skal være mindst 2 tegn", code: "invalid_input" as const };
 
   const db = createServiceClient();
-  const { data: rh, error: createError } = await db
-    .from("rettighedshavere")
-    .insert({ full_name: trimmed })
-    .select("id, full_name")
-    .single();
+  const { data, error: createError } = await db.rpc("create_contract_owner_candidate", {
+    p_org_id: caller.orgId,
+    p_actor_user_id: caller.userId,
+    p_actor_role: caller.role,
+    p_full_name: trimmed,
+  });
 
-  if (createError || !rh) {
-    return { success: false as const, error: createError?.message ?? "Kunne ikke oprette rettighedshaver" };
+  const result = data as { id?: string; fullName?: string; created?: boolean } | null;
+  if (createError || !result?.id || !result.fullName) {
+    const duplicate = createError?.code === "23505";
+    return {
+      success: false as const,
+      error: duplicate
+        ? "Der findes allerede en rettighedshaver med dette navn. Vælg personen i søgeresultatet."
+        : "Kunne ikke oprette rettighedshaveren. Prøv igen.",
+      code: duplicate ? "duplicate" as const : "create_failed" as const,
+    };
   }
 
-  await db.from("org_affiliations").insert({
-    org_id: caller.orgId,
-    rights_holder_id: rh.id,
-    is_member: false,
-  });
-
-  await recordSensitiveFlow({
-    actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },
-    action: "create",
-    component: "admin.contract_ownership.create_owner_candidate",
-    entityType: "rettighedshavere",
-    targetMemberUuids: [rh.id],
-    orgIds: [caller.orgId],
-    purposeCode: "contract_owner_verification",
-    legalBasis: "GDPR Art. 6(1)(b)/(f)",
-    dataCategories: ["identity_data"],
-  });
-
   const candidate: ContractOwnerSummary = {
-    id: rh.id,
-    name: rh.full_name,
-    secondaryLabel: "Nyoprettet rettighedshaver",
+    id: result.id,
+    name: result.fullName,
+    secondaryLabel: result.created ? "Nyoprettet rettighedshaver" : "Eksisterende rettighedshaver",
   };
   return { success: true as const, candidate };
 }
