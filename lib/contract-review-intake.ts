@@ -39,6 +39,26 @@ export async function triggerContractReviewWorker(origin: string) {
   }
 }
 
+/**
+ * Starter analysejob-workeren — og kører køen inline som fallback hvis workeren
+ * ikke kunne startes (typisk fordi CONTRACT_REVIEW_JOB_SECRET ikke er sat, eller
+ * det interne fetch-kald ikke kan nå deployment'et). Uden dette hænger et
+ * netop indsat/genkøet job til den daglige cron.
+ *
+ * Kald altid via `after(...)` fra route-handleren, og sæt `maxDuration` højt nok
+ * til at et enkelt AI-kald kan nå at køre færdigt.
+ */
+export async function ensureContractReviewWorkerRuns(origin: string) {
+  const started = await triggerContractReviewWorker(origin);
+  if (started) return;
+  try {
+    const { processPendingContractReviewJobs } = await import("@/lib/server/contract-review-job-processor");
+    await processPendingContractReviewJobs(3);
+  } catch (error) {
+    console.warn("[review-intake] Inline jobkørsel fejlede", error instanceof Error ? error.message : "ukendt fejl");
+  }
+}
+
 export async function createContractReviewIntake(input: ReviewIntakeInput) {
   const db = createServiceClient();
   const fileHash = createHash("sha256").update(input.fileBuffer).digest("hex");

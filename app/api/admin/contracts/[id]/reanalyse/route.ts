@@ -1,10 +1,13 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { requireStaffModuleApi } from "@/lib/api-auth";
 import { assertContractReviewInOrg } from "@/lib/authz";
-import { triggerContractReviewWorker } from "@/lib/contract-review-intake";
+import { ensureContractReviewWorkerRuns } from "@/lib/contract-review-intake";
 import { createServiceClient } from "@/lib/supabase/service";
 import { auditRequestContext } from "@/lib/audit-access-server";
 import { recordAuditEvent } from "@/lib/audit-log-server";
+
+// Fallback-jobkørslen kan indeholde et fuldt AI-kald når workeren ikke kan startes.
+export const maxDuration = 300;
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx"];
@@ -111,7 +114,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
   }
 
-  after(triggerContractReviewWorker(request.nextUrl.origin));
+  after(ensureContractReviewWorkerRuns(request.nextUrl.origin));
   await recordAuditEvent({
     context: auditRequestContext(request, { userId: auth.userId, orgId: auth.orgId, role: auth.role }, "admin", "admin.contract-reviews.reanalyse"),
     action: "ai_analysis",

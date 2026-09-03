@@ -2,10 +2,12 @@ import { after, NextRequest, NextResponse } from "next/server";
 import { verifyPubSubPushToken } from "@/lib/gmail-contract-client";
 import { parsePubSubNotificationBody } from "@/lib/gmail-contract-import-core";
 import { getSafeGmailContractImportError, syncGmailContractMailbox } from "@/lib/gmail-contract-import";
-import { triggerContractReviewWorker } from "@/lib/contract-review-intake";
+import { ensureContractReviewWorkerRuns } from "@/lib/contract-review-intake";
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 export const dynamic = "force-dynamic";
+// Fallback-jobkørslen kan indeholde et fuldt AI-kald når workeren ikke kan startes.
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,9 +17,10 @@ export async function POST(req: NextRequest) {
     after(async () => {
       try {
         await syncGmailContractMailbox(notification.historyId);
-        // Start altid workeren. Det reparerer ogsa tidligere modne jobs, hvis
-        // Gmail-synkroniseringen ikke fandt en ny mail denne gang.
-        await triggerContractReviewWorker(origin);
+        // Start altid workeren (kør inline hvis den ikke kan trigges). Det
+        // reparerer ogsa tidligere modne jobs, hvis Gmail-synkroniseringen
+        // ikke fandt en ny mail denne gang.
+        await ensureContractReviewWorkerRuns(origin);
       } catch (error) {
         console.error("[gmail-contract-import] Synkronisering fejlede", getSafeGmailContractImportError(error));
       }
