@@ -647,23 +647,6 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         logWarn("analyse", "Sats-hentning fejlede", { error: errorMessage(e) })
     }
 
-    // ── Hent altid-noteringer ─────────────────────────────────
-    let altidNoteringer: Array<{ title: string; body: string }> = []
-    try {
-        const admin = createAdminClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!
-        )
-        const { data: noter } = await admin
-            .from("legal_notes")
-            .select("title, body")
-            .eq("priority", "altid")
-            .eq("active", true)
-        altidNoteringer = noter ?? []
-    } catch (e) {
-        logWarn("analyse", "Altid-noteringer hentning fejlede", { error: errorMessage(e) })
-    }
-
     // ── Hent godkendte eksempler ──────────────────────────────
     let godkendteEksempler: Array<{
         kontrakttype: string
@@ -714,6 +697,48 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
     const effectiveOverenskomstStatus = parentMemberName
         ? `Ja — underselskab af ${parentMemberName} (ProF-medlem)`
         : overenskomstStatus
+
+    // Autoritativ overenskomst-afgørelse — samme præcedens som byggAbsolutteRegler():
+    // moderselskabs-binding → DFKS-flag fra uploaden → klassifikatorens gæt.
+    const overenskomstResolvedFlag: boolean | null =
+        producerOverenskomst === "true" ? true :
+        producerOverenskomst === "false" ? false :
+        null
+    const erOverenskomstDaekket: boolean = parentMemberName != null
+        ? true
+        : (overenskomstResolvedFlag ?? klassifikation?.er_overenskomst === true)
+
+    // ── Fravalg ved overenskomst-kontrakter ───────────────────
+    // En notering markeret "Fravalgt ved overenskomst-kontrakter" i AI-
+    // kontrolrummet skal ikke injiceres når kontrakten er en A-lønskontrakt
+    // hvor overenskomsten reelt er bindende (ProF-bundet producent eller
+    // underselskab heraf). Der gælder overenskomstens egne vilkår, og DFKS-
+    // indsatser rettet mod leverandør-/ikke-overenskomstkontrakter må ikke
+    // flyde ind over det område. Bemærk: at kontrakten blot HENVISER til en
+    // overenskomst er ikke nok — er producenten ikke bundet, skal indsatserne
+    // netop gælde.
+    const erAloenUnderOverenskomst =
+        klassifikation?.kontrakttype === "a-loen" && erOverenskomstDaekket
+
+    const noteringGaelder = (n: { exclude_for_overenskomst?: string[] | null }) =>
+        !erAloenUnderOverenskomst || !(n.exclude_for_overenskomst?.length)
+
+    // ── Hent altid-noteringer ─────────────────────────────────
+    let altidNoteringer: Array<{ title: string; body: string }> = []
+    try {
+        const admin = createAdminClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!
+        )
+        const { data: noter } = await admin
+            .from("legal_notes")
+            .select("title, body, exclude_for_overenskomst")
+            .eq("priority", "altid")
+            .eq("active", true)
+        altidNoteringer = (noter ?? []).filter(noteringGaelder)
+    } catch (e) {
+        logWarn("analyse", "Altid-noteringer hentning fejlede", { error: errorMessage(e) })
+    }
 
     const contextBlock = (contractType || productionType || producerName) ? `
 KONTRAKTTYPE: ${contractType ?? "ukendt"}
@@ -768,12 +793,8 @@ anbefalinger og juridiske referencer — leveres på engelsk.
     }
 
     if (klassifikation) {
-        const overenskomstResolved: boolean | null =
-            producerOverenskomst === "true" ? true :
-            producerOverenskomst === "false" ? false :
-            null
         activeSystemPrompt += byggAbsolutteRegler(klassifikation, dbSatser, {
-            resolved: overenskomstResolved,
+            resolved: overenskomstResolvedFlag,
             parentMemberName,
         }) + "\n\n"
     } else if (dbSatser.length > 0) {
@@ -861,12 +882,13 @@ anbefalinger og juridiske referencer — leveres på engelsk.
                     "──────────────────────────────────────────────────────────────────────\n" +
                     kontekst.mønstre.map(r => `${r.titel}:\n${r.regel}`).join("\n\n")
             }
-            if (kontekst.baggrund.length > 0) {
+            const baggrund = kontekst.baggrund.filter(noteringGaelder)
+            if (baggrund.length > 0) {
                 activeSystemPrompt +=
                     "\n\n──────────────────────────────────────────────────────────────────────\n" +
                     "DFKS BAGGRUNDSVIDEN:\n" +
                     "──────────────────────────────────────────────────────────────────────\n" +
-                    kontekst.baggrund.map(n => `${n.title}: ${n.body}`).join("\n\n")
+                    baggrund.map(n => `${n.title}: ${n.body}`).join("\n\n")
             }
         } catch (ragErr) {
             logWarn("analyse", "Kontekst-hentning fejlede, fortsætter uden", { error: errorMessage(ragErr) })
