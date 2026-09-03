@@ -303,7 +303,7 @@ export async function ensureOnboardingEpisodes(params: {
   return episodeRows ?? [];
 }
 
-type DfiRequestOptions = { timeoutMs?: number };
+export type DfiRequestOptions = { timeoutMs?: number };
 
 async function fetchDFI(endpoint: string, options: DfiRequestOptions = {}) {
   const username = process.env.DFI_API_USERNAME;
@@ -379,7 +379,8 @@ export async function downloadDfiPosterDataUrl(metadata: unknown) {
 export async function searchDFIPerson(
   firstName?: string,
   lastName?: string,
-  fullName?: string
+  fullName?: string,
+  options: DfiRequestOptions = {}
 ) {
   let query = "";
   if (fullName?.trim()) {
@@ -399,7 +400,7 @@ export async function searchDFIPerson(
     return { success: false, error: "Angiv fornavn og efternavn eller fuldt navn." };
   }
 
-  const result = await fetchDFI(`/v1/person${query}`);
+  const result = await fetchDFI(`/v1/person${query}`, options);
   if (!result.success || !result.data) {
     return { success: false, error: result.error || "Ingen data fra DFI." };
   }
@@ -407,8 +408,8 @@ export async function searchDFIPerson(
   return { success: true, results: result.data.PersonList || [] };
 }
 
-export async function getDFIPersonCredits(personId: number) {
-  const result = await fetchDFI(`/v1/person/${personId}`);
+export async function getDFIPersonCredits(personId: number, options: DfiRequestOptions = {}) {
+  const result = await fetchDFI(`/v1/person/${personId}`, options);
   if (!result.success || !result.data) {
     return { success: false, error: result.error || "Kunne ikke hente person-detaljer." };
   }

@@ -35,7 +35,7 @@ export type TMDBSeasonEpisode = {
 };
 
 const TMDB_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
-type TmdbRequestOptions = { timeoutMs?: number; retry?: boolean };
+export type TmdbRequestOptions = { timeoutMs?: number; retry?: boolean };
 
 async function tmdbFetch(endpointPath: string, options: TmdbRequestOptions = {}) {
   const apiKey = process.env.TMDB_API_KEY;
@@ -99,11 +99,11 @@ function yearFromTmdbItem(item: TMDBSearchItem) {
   return Number.isFinite(year) ? year : 0;
 }
 
-export async function searchTMDBPerson(name: string) {
+export async function searchTMDBPerson(name: string, options: TmdbRequestOptions = {}) {
   try {
     // Ingen language-param: personnavne er sproguafhængige, og API-fejl må aldrig
     // forveksles med "ingen resultater" — derfor eksplicit res.ok-tjek.
-    const res = await tmdbFetch(`/search/person?query=${encodeURIComponent(name)}`);
+    const res = await tmdbFetch(`/search/person?query=${encodeURIComponent(name)}`, options);
     if (!res.ok) throw new Error(`TMDB person search status ${res.status}`);
     const data = await res.json();
     return { success: true, results: data.results || [] };
@@ -113,9 +113,9 @@ export async function searchTMDBPerson(name: string) {
   }
 }
 
-export async function getTMDBPersonCombinedCredits(personId: number) {
+export async function getTMDBPersonCombinedCredits(personId: number, options: TmdbRequestOptions = {}) {
   try {
-    const res = await tmdbFetch(`/person/${personId}/combined_credits?language=da-DK`);
+    const res = await tmdbFetch(`/person/${personId}/combined_credits?language=da-DK`, options);
     if (!res.ok) throw new Error(`TMDB combined credits status ${res.status}`);
     const data = await res.json();
     return { success: true, crew: data.crew || [], cast: data.cast || [] };
