@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { createContractReviewIntake, triggerContractReviewWorker } from "@/lib/contract-review-intake";
+import { createContractReviewIntake, ensureContractReviewWorkerRuns } from "@/lib/contract-review-intake";
 import { resolveOrgId } from "@/lib/org";
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
+
+// Fallback-jobkørslen kan indeholde et fuldt AI-kald når workeren ikke kan startes.
+export const maxDuration = 300;
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const ALLOWED = [".pdf", ".doc", ".docx"];
@@ -53,7 +56,7 @@ export async function POST(request: NextRequest) {
     // Portal- og Gmail-intake behandles altid af den samme ko. Det sikrer ens
     // retry, modelvalg, maskering og forbrugsregistrering. Kaldet foretages ogsa
     // ved en dublet, sa et eksisterende modent job kan blive genoptaget.
-    after(triggerContractReviewWorker(request.nextUrl.origin));
+    after(ensureContractReviewWorkerRuns(request.nextUrl.origin));
     return NextResponse.json({ success: true, review_id: intake.reviewId, duplicate: intake.duplicate });
   } catch (error) {
     console.error("[review-intake] Portalindsendelse fejlede", error instanceof Error ? error.message : "Ukendt fejl");
