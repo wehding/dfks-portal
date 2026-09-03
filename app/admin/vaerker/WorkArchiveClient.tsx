@@ -71,6 +71,7 @@ import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import { normalizeCompanyName, type ExternalProductionCompany, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
 import { WorkShareReconciliationTab } from "@/components/admin/work-share-reconciliation-tab";
 import { LegacyWorkDeclarationStatus } from "@/components/admin/legacy-work-declaration-status";
+import { resolveWorkArchiveDocumentationState } from "@/lib/work-documentation";
 import { countAdminShareTasks, type fetchAdminShareQueue } from "@/app/actions/work-share-cases";
 import { normalizeWorkEditorRole, resolveWorkEditorRelation } from "@/lib/work-editor-roles";
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker";
@@ -228,7 +229,99 @@ type WorkRow = {
   overview_unread_count?: number;
   overview_contract_count?: number;
   overview_assigned_user_count?: number;
+  has_declaration?: boolean;
 };
+
+function renderMissingContractOrDeclaration({
+  isMissing,
+  isPre2016,
+  hasDeclaration,
+  contractCount,
+  onOpenContract,
+  onOpenDeclaration,
+  compact = false,
+}: {
+  isMissing: boolean;
+  isPre2016: boolean;
+  hasDeclaration: boolean;
+  contractCount: number;
+  onOpenContract: () => void;
+  onOpenDeclaration: () => void;
+  compact?: boolean;
+}) {
+  const state = resolveWorkArchiveDocumentationState({
+    contractCount,
+    isMissing,
+    year: isPre2016 ? 2015 : 2016,
+    hasDeclaration,
+  });
+
+  if (state.kind === "contracts") {
+    if (compact) {
+      return (
+        <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-foreground">
+          {state.label}
+        </span>
+      );
+    }
+    return `Kontrakter: ${state.contractCount}`;
+  }
+
+  if (state.kind === "declared") {
+    if (compact) {
+      return (
+        <span className="rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+          {state.label}
+        </span>
+      );
+    }
+    return <span className="font-medium text-emerald-700">{state.label}</span>;
+  }
+
+  if (state.kind === "missing_declaration") {
+    if (compact) {
+      return (
+        <button
+          type="button"
+          className="rounded bg-amber-50 px-1 py-0.5 text-[10px] font-medium text-amber-700 hover:underline dark:bg-amber-950/40 dark:text-amber-300"
+          onClick={onOpenDeclaration}
+        >
+          {state.label}
+        </button>
+      );
+    }
+    return (
+      <button
+        type="button"
+        className="font-medium text-amber-700 underline underline-offset-2"
+        onClick={onOpenDeclaration}
+      >
+        {state.label}
+      </button>
+    );
+  }
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        className="rounded bg-amber-50 px-1 py-0.5 text-[10px] font-medium text-amber-700 hover:underline dark:bg-amber-950/40 dark:text-amber-300"
+        onClick={onOpenContract}
+      >
+        {state.label}
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="font-medium text-amber-700 underline underline-offset-2"
+      onClick={onOpenContract}
+    >
+      {state.label}
+    </button>
+  );
+}
 
 type WorkForm = {
   title: string;
@@ -2310,6 +2403,9 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
           const isSelected = workSelectionIds.length > 0 && workSelectionIds.every(id => selectedIds.includes(id));
           const contractCount = isSeason ? work.overview_contract_count ?? 0 : work.contracts?.length ?? 0;
           const isMissingContract = isSeason ? contractCount < (work.episode_count ?? 0) : contractCount === 0;
+          const effectiveYear = work.production_year ?? work.year;
+          const isPre2016 = typeof effectiveYear === "number" && effectiveYear < 2016;
+          const hasDeclaration = Boolean(work.has_declaration);
           return (
             <div key={work.id} className="space-y-2">
             <MobileDataCard className={pendingCount ? "border-amber-200 bg-amber-50/35" : undefined}>
@@ -2356,9 +2452,15 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
               <div className="mt-3 text-xs text-muted-foreground">
                 {isSeason ? `${work.episode_count ?? 0} afsnit · Afsnit med kontrakt: ${contractCount}` : `DFI: ${work.dfi_id ?? "-"} · TMDB: ${work.tmdb_id ?? "-"}`}
                 <div className="mt-1">
-                  {isMissingContract ? (
-                    <button type="button" className="font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractUploadForWork(work)}>Mangler kontrakt</button>
-                  ) : `Kontrakter: ${contractCount}`}
+                  {renderMissingContractOrDeclaration({
+                    isMissing: isMissingContract,
+                    isPre2016,
+                    hasDeclaration,
+                    contractCount,
+                    onOpenContract: () => openContractUploadForWork(work),
+                    onOpenDeclaration: () => isSeason ? openAdminSeasonEdit(work) : openEdit(work),
+                    compact: false,
+                  })}
                 </div>
                 {coEditors.length > 0 && <div className="mt-1 line-clamp-2">Klippere: {coEditors.join(", ")}</div>}
               </div>
@@ -2374,6 +2476,10 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                 )}
                 {episodes.map(episode => {
                   const names = (episode.work_assignments ?? []).map(a => `${a.rettighedshavere?.full_name ?? "Ukendt"} (${adminEditorLabel(a.role)})`);
+                  const epContracts = episode.contracts?.length ?? 0;
+                  const epYear = episode.production_year ?? episode.year ?? effectiveYear;
+                  const epIsPre2016 = typeof epYear === "number" && epYear < 2016;
+                  const epHasDecl = Boolean(episode.has_declaration || hasDeclaration);
                   return (
                     <div key={episode.id} className="rounded-lg border bg-background p-3 hover:bg-muted/50">
                       <button type="button" onClick={() => openEdit(episode)} className="block w-full text-left">
@@ -2383,9 +2489,17 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">{names.length ? names.join(", ") : "Ingen tilknyttede brugere"}</p>
                       </button>
-                      {(episode.contracts?.length ?? 0) === 0 ? (
-                        <button type="button" className="mt-1 text-xs font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractUploadForWork(episode)}>Mangler kontrakt</button>
-                      ) : <p className="mt-1 text-xs text-muted-foreground">Kontrakter: {episode.contracts?.length ?? 0}</p>}
+                      <div className="mt-1">
+                        {renderMissingContractOrDeclaration({
+                          isMissing: epContracts === 0,
+                          isPre2016: epIsPre2016,
+                          hasDeclaration: epHasDecl,
+                          contractCount: epContracts,
+                          onOpenContract: () => openContractUploadForWork(episode),
+                          onOpenDeclaration: () => openEdit(episode),
+                          compact: false,
+                        })}
+                      </div>
                     </div>
                   );
                 })}
@@ -2429,6 +2543,9 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
               const isSelected = workSelectionIds.length > 0 && workSelectionIds.every(id => selectedIds.includes(id));
               const contractCount = isSeason ? work.overview_contract_count ?? 0 : work.contracts?.length ?? 0;
               const isMissingContract = isSeason ? contractCount < (work.episode_count ?? 0) : contractCount === 0;
+              const effectiveYear = work.production_year ?? work.year;
+              const isPre2016 = typeof effectiveYear === "number" && effectiveYear < 2016;
+              const hasDeclaration = Boolean(work.has_declaration);
               return (
                 <Fragment key={work.id}>
                 <TableRow className={pendingCount ? "bg-amber-50/45" : undefined}>
@@ -2477,15 +2594,15 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                       {work.duration_minutes && <span>· {work.duration_minutes} min</span>}
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                      {isMissingContract ? (
-                        <button type="button" className="rounded bg-amber-50 px-1 py-0.5 text-[10px] font-medium text-amber-700 hover:underline dark:bg-amber-950/40 dark:text-amber-300" onClick={() => openContractUploadForWork(work)}>
-                          Mangler kontrakt
-                        </button>
-                      ) : (
-                        <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-foreground">
-                          {contractCount} {contractCount === 1 ? "kontrakt" : "kontrakter"}
-                        </span>
-                      )}
+                      {renderMissingContractOrDeclaration({
+                        isMissing: isMissingContract,
+                        isPre2016,
+                        hasDeclaration,
+                        contractCount,
+                        onOpenContract: () => openContractUploadForWork(work),
+                        onOpenDeclaration: () => isSeason ? openAdminSeasonEdit(work) : openEdit(work),
+                        compact: true,
+                      })}
                       {(() => {
                         const coEditors = [...new Set((work.work_assignments ?? [])
                           .map(a => a.rettighedshavere?.full_name)
@@ -2526,6 +2643,10 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                 {isSeason && isExpanded && episodes.map(episode => {
                   const episodeStatus = displayStatus(episode);
                   const episodeNames = (episode.work_assignments ?? []).map(a => `${a.rettighedshavere?.full_name ?? "Ukendt"} (${adminEditorLabel(a.role)})`);
+                  const epContracts = episode.contracts?.length ?? 0;
+                  const epYear = episode.production_year ?? episode.year ?? effectiveYear;
+                  const epIsPre2016 = typeof epYear === "number" && epYear < 2016;
+                  const epHasDecl = Boolean(episode.has_declaration || hasDeclaration);
                   return (
                     <TableRow key={episode.id} className="bg-muted/20">
                       <TableCell className="pl-8"><input type="checkbox" checked={selectedIds.includes(episode.id)} onChange={() => toggleSelected(episode.id)} className="h-4 w-4" aria-label={`Vælg ${episode.title}`} /></TableCell>
@@ -2535,9 +2656,15 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                       <TableCell className="text-xs text-muted-foreground">
                         {episodeNames.length ? episodeNames.join(", ") : "Ingen tilknyttede brugere"}
                         <div>
-                          {(episode.contracts?.length ?? 0) === 0 ? (
-                            <button type="button" className="font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractUploadForWork(episode)}>Mangler kontrakt</button>
-                          ) : `Kontrakter: ${episode.contracts?.length ?? 0}`}
+                          {renderMissingContractOrDeclaration({
+                            isMissing: epContracts === 0,
+                            isPre2016: epIsPre2016,
+                            hasDeclaration: epHasDecl,
+                            contractCount: epContracts,
+                            onOpenContract: () => openContractUploadForWork(episode),
+                            onOpenDeclaration: () => openEdit(episode),
+                            compact: false,
+                          })}
                         </div>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{getWorkBroadcaster(episode) ?? "-"}</TableCell>

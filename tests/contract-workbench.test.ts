@@ -13,7 +13,7 @@ test("kontraktarbejdsfladen accepterer kun retur-URL'er i kontraktadministration
   assert.equal(safeContractReturnTo("//example.com/admin/kontrakter"), "/admin/kontrakter?tab=arkiv");
 });
 
-test("dokumentversioner skelner mellem juridisk original, Word-visning og kommenteret PDF", () => {
+test("dokumentversioner skelner mellem juridisk original, Word-visning og konverteret PDF", () => {
   assert.deepEqual(contractDocumentPresentation({
     originalPath: "org/contract.docx",
     originalViewPath: "org/processed/original-view.pdf",
@@ -24,12 +24,12 @@ test("dokumentversioner skelner mellem juridisk original, Word-visning og kommen
     hasOriginal: true,
     hasOriginalView: true,
     hasCommentedPdf: true,
-    processingLabel: "Kommenteret PDF klar",
+    processingLabel: "Konverteret PDF klar",
     processingTone: "success",
   });
 });
 
-test("dokumentstatus lover ikke en kommenteret PDF for en ubehandlet original", () => {
+test("dokumentstatus lover ikke en konverteret PDF for en ubehandlet original", () => {
   const state = contractDocumentPresentation({
     originalPath: "org/contract.pdf",
     processingStatus: "processing",

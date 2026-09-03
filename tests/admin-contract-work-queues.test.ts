@@ -48,6 +48,7 @@ test("kontraktarkivets søgning og valideringsfilter bruger det faktiske databas
   assert.match(filtering, /org_affiliations!inner\(org_id\)/);
   assert.match(filtering, /eq\("org_affiliations\.org_id", orgId\)/);
   assert.doesNotMatch(filtering, /from\("rettighedshavere"\)[\s\S]{0,120}\.eq\("org_id", orgId\)/);
+  assert.doesNotMatch(filtering, /from\("employers"\)[^,\n]+?\.eq\("org_id"/);
   assert.doesNotMatch(filtering, /works\(id, type, is_season_group/);
   assert.doesNotMatch(filtering, /work\.is_season_group/);
 });
