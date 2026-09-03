@@ -53,3 +53,16 @@ test("betainvitationens audit-event skelner mellem status og maillevering", () =
   assert.match(sql, /p_error_code => case when p_enabled and not p_email_delivered then 'email_delivery_failed'/);
   assert.doesNotMatch(sql, /email_address|invite_url|private_key|provider_error/i);
 });
+
+test("masseinvitation viser én eksempelmail og sender til alle valgte i begrænsede batches", () => {
+  const page = readFileSync("app/admin/rettighedshavere/page.tsx", "utf8");
+  assert.match(page, /betaInviteTargets\.length === 0/);
+  assert.match(page, /rhId: betaInviteTargets\[0\]\.id/);
+  assert.match(page, /Kun én eksempelmail vises/);
+  assert.match(page, /alle \{betaInviteTargets\.length\} valgte deres egen mail/);
+  assert.match(page, /const batchSize = 3/);
+  assert.match(page, /betaInviteTargets\.slice\(index, index \+ batchSize\)/);
+  assert.match(page, /Send \$\{betaInviteTargets\.length\}/);
+  assert.match(page, /Send \{selectedIds\.size\} \{selectedIds\.size === 1 \? "betainvitation" : "betainvitationer"\}/);
+  assert.match(page, /springes over, fordi de mangler email/);
+});
