@@ -40,7 +40,7 @@ export default async function AdminKontrakterPage({ searchParams }: { searchPara
   ]);
   const initialTaskCounts = taskCountsResult.success
     ? taskCountsResult.counts
-    : { validation: null, ownership: null, messages: null };
+    : { validation: null, ownership: null, missingOwner: null, messages: null };
   return <ContractArchiveClient
     initialResult={initialResult}
     initialQuery={initialQuery}
