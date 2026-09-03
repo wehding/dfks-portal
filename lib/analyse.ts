@@ -723,7 +723,8 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
     const noteringGaelder = (n: { exclude_for_overenskomst?: string[] | null }) =>
         !erAloenUnderOverenskomst || !(n.exclude_for_overenskomst?.length)
 
-    // ── Hent altid-noteringer ─────────────────────────────────
+    // ── Hent aktiv-indsats- og altid-noteringer ───────────────
+    let aktivIndsatsNoteringer: Array<{ title: string; body: string }> = []
     let altidNoteringer: Array<{ title: string; body: string }> = []
     try {
         const admin = createAdminClient(
@@ -732,12 +733,14 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         )
         const { data: noter } = await admin
             .from("legal_notes")
-            .select("title, body, exclude_for_overenskomst")
-            .eq("priority", "altid")
+            .select("title, body, priority, exclude_for_overenskomst")
+            .in("priority", ["aktiv-indsats", "altid"])
             .eq("active", true)
-        altidNoteringer = (noter ?? []).filter(noteringGaelder)
+        const gaeldende = (noter ?? []).filter(noteringGaelder)
+        aktivIndsatsNoteringer = gaeldende.filter(n => n.priority === "aktiv-indsats")
+        altidNoteringer = gaeldende.filter(n => n.priority === "altid")
     } catch (e) {
-        logWarn("analyse", "Altid-noteringer hentning fejlede", { error: errorMessage(e) })
+        logWarn("analyse", "Notering-hentning fejlede", { error: errorMessage(e) })
     }
 
     const contextBlock = (contractType || productionType || producerName) ? `
@@ -763,6 +766,19 @@ anbefalinger og juridiske referencer — leveres på engelsk.
 
     // ── Byg system prompt ─────────────────────────────────────
     let activeSystemPrompt = ""
+
+    if (aktivIndsatsNoteringer.length > 0) {
+        activeSystemPrompt +=
+            "──────────────────────────────────────────────────────────────────────\n" +
+            "⚑ AKTIVE DFKS-INDSATSER — HØJESTE PRIORITET:\n" +
+            "──────────────────────────────────────────────────────────────────────\n" +
+            "Disse punkter er genstand for en aktiv DFKS-indsats lige nu. Du SKAL:\n" +
+            "1. Altid tjekke kontrakten for disse forhold — uanset om kontrakten er tavs eller eksplicit.\n" +
+            "2. Altid kommentere på dem i feedbackmailen — positivt hvis kontrakten håndterer det korrekt, negativt hvis den er tavs eller afviger.\n" +
+            "3. Nævne eksplicit i mailen at DFKS p.t. kører en målrettet indsats på netop dette punkt, fx: \"Vi har i øjeblikket særligt fokus på ...\". Forklar kort hvorfor.\n\n" +
+            aktivIndsatsNoteringer.map(n => `AKTIV INDSATS: ${n.title} — ${n.body}`).join("\n\n") +
+            "\n\n"
+    }
 
     if (altidNoteringer.length > 0) {
         activeSystemPrompt +=
