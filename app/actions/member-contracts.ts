@@ -2343,7 +2343,7 @@ export async function fetchAdminContractEditorData(contractId: string) {
       .select("id,title,year,type,dfi_id,tmdb_id,imdb_id")
       .eq("org_id", orgId)
       .order("title")
-      .limit(1000),
+      .limit(100),
     db.from("contract_employers")
       .select("employer_id,legal_entity_id,sort_order,employers(name),employer_legal_entities(legal_name,registration_number)")
       .eq("contract_id", contractId)

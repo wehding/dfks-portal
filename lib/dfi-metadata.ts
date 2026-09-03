@@ -235,12 +235,33 @@ export function parseSeasonNumberFromTitle(title: string | null | undefined): nu
   const explicit = cleaned.match(new RegExp(String.raw`\b(?:sæson|season)\s*${token}\s*$`, "i"));
   const suffix = explicit
     ?? cleaned.match(new RegExp(String.raw`(?:\s|[-–—:/])${token}\s*$`, "i"))
-    ?? cleaned.match(new RegExp(String.raw`(?:\s|[-–—:/])${token}(?=\s*[-–—:/])`, "i"));
+    ?? cleaned.match(new RegExp(String.raw`(?:\s|[-–—:/])${token}(?=\s*[-–—:/])`, "i"))
+    ?? cleaned.match(new RegExp(String.raw`[a-zæøå](${token})\s*$`, "i"));
   if (!suffix) return null;
 
   const raw = suffix[1];
   const parsed = /^\d+$/.test(raw) ? Number.parseInt(raw, 10) : romanToNumber(raw);
   return parsed != null && parsed >= 1 && parsed <= 30 ? parsed : null;
+}
+
+export function extractBaseSeriesTitle(title: string | null | undefined): { baseTitle: string; seasonNumber: number | null } {
+  const cleaned = cleanDfiTitle(title)
+    .replace(/\([^)]*\)\s*$/g, "")
+    .replace(/\[[^\]]*\]\s*$/g, "")
+    .trim();
+  if (!cleaned) return { baseTitle: "", seasonNumber: null };
+
+  const season = parseSeasonNumberFromTitle(cleaned);
+  if (!season) return { baseTitle: cleaned, seasonNumber: null };
+
+  const base = cleaned
+    .replace(new RegExp(String.raw`\s*[-–—:/]?\s*(?:sæson|season)\s*(\d{1,2}|[ivx]{1,5})\s*$`, "i"), "")
+    .replace(new RegExp(String.raw`\s*[-–—:/]\s*(\d{1,2}|[ivx]{1,5})\s*$`, "i"), "")
+    .replace(new RegExp(String.raw`\s+(\d{1,2}|[ivx]{1,5})\s*$`, "i"), "")
+    .replace(new RegExp(String.raw`([a-zæøå]+)(\d{1,2})\s*$`, "i"), "$1")
+    .trim();
+
+  return { baseTitle: base || cleaned, seasonNumber: season };
 }
 
 
