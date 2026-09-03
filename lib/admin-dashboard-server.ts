@@ -2,7 +2,7 @@ import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import type { AdminDashboardMetrics, ResponseEvent, UserActivityItem } from "@/lib/admin-dashboard";
-import { calculateResponseTimeStats } from "@/lib/admin-dashboard";
+import { calculateResponseTimeStats, formatUserActionDescription } from "@/lib/admin-dashboard";
 import { isActionableAdminWorkShareCase } from "@/lib/work-share-admin";
 
 const RESPONSE_TIME_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -105,25 +105,7 @@ export async function loadAdminDashboardMetrics(orgId: string, userId: string): 
   };
 }
 
-export function formatUserActionDescription(action: string, entityType: string, entityLabel: string | null): string {
-  if (action === "complete_onboarding") return "Gennemførte onboarding i portalen";
-  if (action === "create" && (entityType === "contracts" || entityType.startsWith("contract"))) {
-    return entityLabel ? `Uploadede kontrakt: ${entityLabel}` : "Uploadede en ny kontrakt";
-  }
-  if (action === "link" && (entityType === "works" || entityType === "contracts" || entityType === "work_identity")) {
-    return entityLabel ? `Forbandt værk til kontrakt: ${entityLabel}` : "Forbandt et værk til en kontrakt";
-  }
-  if (action === "update" && (entityType === "contracts" || entityType.startsWith("contract"))) {
-    return entityLabel ? `Erklærede / opdaterede kontrakt: ${entityLabel}` : "Erklærede / opdaterede kontrakt";
-  }
-  if (action === "update" && (entityType === "rettighedshavere" || entityType === "member_profile")) {
-    return "Opdaterede sin medlemsprofil";
-  }
-  if (action === "create" && entityType === "works") {
-    return entityLabel ? `Oprettede værk: ${entityLabel}` : "Oprettede et nyt værk";
-  }
-  return `${action} på ${entityLabel || entityType}`;
-}
+export { formatUserActionDescription, type UserActivityItem };
 
 export async function loadRecentUserActivity(orgId: string, limit = 10): Promise<UserActivityItem[]> {
   const db = createServiceClient();
