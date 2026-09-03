@@ -4,11 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Loader2, Plus, Search, UserRoundCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
-  createContractOwnerCandidate,
   fetchContractOwnerVerificationDetail,
   reviewContractOwnerVerification,
   searchEligibleContractOwners,
 } from "@/app/actions/contract-owner-verifications";
+import { createContractOwnerCandidate } from "@/app/actions/contract-owner-candidates";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -309,7 +309,7 @@ export function ContractOwnershipEditor({
                       disabled={saving}
                       onClick={() => void applyOwner(candidate, inOwnershipQueue && hasNext)}
                     >
-                      Vælg{inOwnershipQueue && hasNext ? " og næste" : ""}
+                      Vælg ejer{inOwnershipQueue && hasNext ? " og næste" : ""}
                     </Button>
                   </div>
                 ))}
