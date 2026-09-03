@@ -496,7 +496,11 @@ export default function RettighedshavereAdminPage() {
 
     useEffect(() => {
         let cancelled = false
-        if (!betaInviteOpen || betaInviteTargets.length !== 1 || !betaInviteEndDate) return
+        setBetaInvitePreview(null)
+        if (!betaInviteOpen || betaInviteTargets.length === 0 || !betaInviteEndDate) {
+            setBetaInvitePreviewLoading(false)
+            return
+        }
         setBetaInvitePreviewLoading(true)
         void fetch("/api/admin/user", {
             method: "POST",
@@ -757,6 +761,7 @@ export default function RettighedshavereAdminPage() {
         const eligible = targets.filter(holder => holder.email).slice(0, 50)
         if (!eligible.length) { toast.info("Ingen af de valgte har en emailadresse."); return }
         if (targets.length > 50) { toast.error("Der kan højst sendes 50 betainvitationer ad gangen."); return }
+        if (eligible.length < targets.length) toast.warning(`${targets.length - eligible.length} valgt(e) springes over, fordi de mangler email.`)
         try {
             const summary = await getBetaTestAdminSummary()
             setBetaInviteTargets(eligible)
@@ -778,11 +783,26 @@ export default function RettighedshavereAdminPage() {
         const emailErrors: string[] = []
         const manualLinks: string[] = []
         let workLookupIssues = 0
-        for (const holder of betaInviteTargets) {
-            try {
-                const response = await fetch("/api/admin/user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "beta_invite", rhId: holder.id, betaEndDate: betaInviteEndDate }) })
-                const result = await response.json() as AdminUserResponse
-                if (!response.ok) throw new Error(result.error)
+        const batchSize = 3
+        for (let index = 0; index < betaInviteTargets.length; index += batchSize) {
+            const batch = betaInviteTargets.slice(index, index + batchSize)
+            const results = await Promise.all(batch.map(async holder => {
+                try {
+                    const response = await fetch("/api/admin/user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "beta_invite", rhId: holder.id, betaEndDate: betaInviteEndDate }) })
+                    const result = await response.json() as AdminUserResponse
+                    if (!response.ok) throw new Error(result.error)
+                    return { ok: true as const, result }
+                } catch (error) {
+                    return { ok: false as const, error }
+                }
+            }))
+            for (const delivery of results) {
+                if (!delivery.ok) {
+                    failed += 1
+                    emailErrors.push(errorMessage(delivery.error))
+                    continue
+                }
+                const result = delivery.result
                 if ((result.work_lookup?.warnings.length ?? 0) > 0) workLookupIssues += 1
                 marked += 1
                 if (result.email_sent) sent += 1
@@ -790,9 +810,6 @@ export default function RettighedshavereAdminPage() {
                     if (result.email_error) emailErrors.push(result.email_error)
                     if (result.invite_url) manualLinks.push(result.invite_url)
                 }
-            } catch (error) {
-                failed += 1
-                toast.error(errorMessage(error))
             }
         }
         setBetaInviteSending(false)
@@ -1176,10 +1193,10 @@ export default function RettighedshavereAdminPage() {
                         )}
                         <Button size="sm" variant="outline" onClick={handleBulkSendInvitation} disabled={bulkSendingInvitations}>
                             {bulkSendingInvitations ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Mail className="mr-1 h-4 w-4" />}
-                            Send invitation
+                            Send {selectedIds.size} {selectedIds.size === 1 ? "invitation" : "invitationer"}
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => void openBetaInvite(visible.filter(holder => selectedIds.has(holder.id)))} disabled={betaInviteSending || selectedIds.size > 50}>
-                            <FlaskConical className="mr-1 h-4 w-4" />Send betainvitation
+                            <FlaskConical className="mr-1 h-4 w-4" />Send {selectedIds.size} {selectedIds.size === 1 ? "betainvitation" : "betainvitationer"}
                         </Button>
                         {filter === "arkiverede" ? (
                             <Button size="sm" variant="outline" onClick={handleRestoreSelected} disabled={restoringSelected}>
@@ -1919,15 +1936,30 @@ export default function RettighedshavereAdminPage() {
                 <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>Send betatest-invitation</DialogTitle>
-                        <DialogDescription>{betaInviteTargets.length} rettighedshaver(e) markeres som betatestere og får almindelig portaladgang.</DialogDescription>
+                        <DialogDescription>
+                            Du sender individuelle betatest-invitationer til {betaInviteTargets.length} {betaInviteTargets.length === 1 ? "rettighedshaver" : "rettighedshavere"}.
+                        </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
+                        <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                            <span>Valgte modtagere</span>
+                            <Badge variant="secondary">{betaInviteTargets.length}</Badge>
+                        </div>
                         <div className="space-y-1"><Label>Startdato</Label><Input type="date" value={betaInviteStartDate} disabled /></div>
                         <div className="space-y-1"><Label htmlFor="beta-end-date">Slutdato i invitationsteksten</Label><Input id="beta-end-date" type="date" min={betaInviteStartDate ? addCalendarDays(betaInviteStartDate, 1) : undefined} value={betaInviteEndDate} onChange={event => setBetaInviteEndDate(event.target.value)} /></div>
                         <p className="text-xs text-muted-foreground">Slutdatoen er kun information. Betatesterstatus og adgang fortsætter, indtil en administrator ændrer dem.</p>
-                        {betaInviteTargets.length === 1 && (
+                        {betaInviteTargets.length > 0 && (
                             <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-sm">
-                                <p className="font-medium">Forhåndsvisning og værksopslag</p>
+                                <p className="font-medium">
+                                    {betaInviteTargets.length === 1
+                                        ? "Forhåndsvisning og værksopslag"
+                                        : `Eksempelmail til ${betaInviteTargets[0].full_name}`}
+                                </p>
+                                {betaInviteTargets.length > 1 && (
+                                    <p className="text-xs text-muted-foreground">
+                                        Kun én eksempelmail vises. Når du sender, får alle {betaInviteTargets.length} valgte deres egen mail med eget navn, invitationslink og værker.
+                                    </p>
+                                )}
                                 {betaInvitePreviewLoading ? (
                                     <p className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter mulige krediteringer fra Portal, DFI og TMDb…</p>
                                 ) : betaInvitePreview ? (
@@ -1940,7 +1972,7 @@ export default function RettighedshavereAdminPage() {
                                 ) : <p className="text-xs text-muted-foreground">Ingen forhåndsvisning tilgængelig.</p>}
                             </div>
                         )}
-                        {betaInviteTargets.length > 1 && <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">Værker hentes sikkert for hver modtager ved udsendelsen. Resultatet opsummeres bagefter.</p>}
+                        {betaInviteTargets.length > 1 && <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">Værker hentes sikkert for hver modtager ved udsendelsen. Mails sendes enkeltvis, så modtagerne aldrig kan se hinandens oplysninger. Resultatet opsummeres bagefter.</p>}
                         {betaInviteResult && betaInviteResult.sent < betaInviteTargets.length && (
                             <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100" role="alert">
                                 <p className="font-medium">Betatesterstatus er gemt, men ikke alle mails blev sendt.</p>
@@ -1962,7 +1994,7 @@ export default function RettighedshavereAdminPage() {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setBetaInviteOpen(false)} disabled={betaInviteSending}>{betaInviteResult ? "Luk" : "Annuller"}</Button>
-                        <Button onClick={confirmBetaInvite} disabled={betaInviteSending || !betaInviteEndDate}>{betaInviteSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{betaInviteResult ? "Prøv at sende igen" : "Send invitation"}</Button>
+                        <Button onClick={confirmBetaInvite} disabled={betaInviteSending || !betaInviteEndDate}>{betaInviteSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{betaInviteResult ? "Prøv at sende igen" : `Send ${betaInviteTargets.length} ${betaInviteTargets.length === 1 ? "invitation" : "invitationer"}`}</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
