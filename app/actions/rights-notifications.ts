@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { revalidatePath } from "next/cache"
+import { firstRelated } from "@/lib/supabase/relations"
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
@@ -79,7 +80,7 @@ export async function getRightsNotifications(opts?: {
 
         let q = db
             .from("rights_notifications")
-            .select(`*, rettighedshavere ( full_name, member_number )`)
+            .select(`*, rettighedshavere ( full_name, org_affiliations ( member_no ) )`)
             .eq("org_id", caller.orgId)
             .order("scheduled_at", { ascending: false })
             .limit(opts?.limit ?? 200)
@@ -91,11 +92,15 @@ export async function getRightsNotifications(opts?: {
         const { data, error } = await q
         if (error) throw error
 
-        const notifications: RightsNotification[] = (data ?? []).map((r) => ({
-            ...r,
-            rights_holder_name: r.rettighedshavere?.full_name,
-            member_number: r.rettighedshavere?.member_number,
-        }))
+        const notifications: RightsNotification[] = (data ?? []).map((r) => {
+            const rh = firstRelated(r.rettighedshavere)
+            const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
+            return {
+                ...r,
+                rights_holder_name: rh?.full_name,
+                member_number: aff?.member_no ?? null,
+            }
+        })
 
         await recordSensitiveFlow({
             actor: { userId: caller.userId, orgId: caller.orgId, role: caller.role, source: "admin" },

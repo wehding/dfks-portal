@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Ugyldige parametre" }, { status: 400 });
     }
 
-    const res = await fetch(buildUrl(endpoint), { headers });
+    const res = await fetch(buildUrl(endpoint), { headers, signal: AbortSignal.timeout(8000) });
     if (!res.ok) {
       console.error("[tmdb] provider failed", res.status);
       return NextResponse.json({ error: "TMDB-opslaget fejlede" }, { status: 502 });

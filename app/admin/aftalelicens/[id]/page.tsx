@@ -300,12 +300,33 @@ const FILTER_RULE_TYPE_LABELS: Record<FilterRule["type"], string> = {
     channel: "Kanalnavn",
 }
 
+const MAX_REGEX_PATTERN_LENGTH = 100
+const regexCache = new Map<string, RegExp | null>()
+
+function getSafeRegex(pattern: string): RegExp | null {
+    if (!pattern || pattern.length > MAX_REGEX_PATTERN_LENGTH) return null
+    if (/([+*?]|\{\d+,?\d*\})\s*([+*?]|\{\d+,?\d*\})/.test(pattern)) return null
+    if (regexCache.has(pattern)) return regexCache.get(pattern) ?? null
+    try {
+        const re = new RegExp(pattern, "i")
+        if (regexCache.size > 200) regexCache.clear()
+        regexCache.set(pattern, re)
+        return re
+    } catch {
+        regexCache.set(pattern, null)
+        return null
+    }
+}
+
 function matchesAnyRule(title: string, channel: string | undefined, rules: FilterRule[]): boolean {
     const t = title.toLowerCase()
     const ch = (channel ?? "").toLowerCase()
     return rules.filter(r => r.active).some(r => {
         if (r.type === "title_keyword") return t.includes(r.value.toLowerCase())
-        if (r.type === "title_regex") { try { return new RegExp(r.value, "i").test(title) } catch { return false } }
+        if (r.type === "title_regex") {
+            const re = getSafeRegex(r.value)
+            return re ? re.test(title) : false
+        }
         if (r.type === "channel") return ch === r.value.toLowerCase()
         return false
     })

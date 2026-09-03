@@ -52,6 +52,14 @@ type AdminUserResponse = {
     email_sent?: boolean
     email_error?: string
     link_type?: "invite" | "recovery"
+    subject?: string
+    bodyText?: string
+    works?: Array<{ id: string; title: string; year: number | null; sources: string[]; verification: "linked" | "external_candidate" }>
+    work_lookup?: {
+        counts: { local: number; external: number; total: number }
+        sourceStatus: { local: "ok" | "none"; dfi: "ok" | "none" | "ambiguous" | "unavailable"; tmdb: "ok" | "none" | "ambiguous" | "unavailable" }
+        warnings: string[]
+    }
 }
 type BetaInviteResult = {
     marked: number
@@ -59,6 +67,7 @@ type BetaInviteResult = {
     failed: number
     emailError?: string
     manualLink?: string
+    workLookupIssues: number
 }
 type DfksMemberOption = {
     display_id: string | null
@@ -201,6 +210,8 @@ export default function RettighedshavereAdminPage() {
     const [betaInviteEndDate, setBetaInviteEndDate] = useState("")
     const [betaInviteSending, setBetaInviteSending] = useState(false)
     const [betaInviteResult, setBetaInviteResult] = useState<BetaInviteResult | null>(null)
+    const [betaInvitePreview, setBetaInvitePreview] = useState<AdminUserResponse | null>(null)
+    const [betaInvitePreviewLoading, setBetaInvitePreviewLoading] = useState(false)
     const [betaTesterCount, setBetaTesterCount] = useState(0)
     const [betaMessageOpen, setBetaMessageOpen] = useState(false)
     const [betaMessageSending, setBetaMessageSending] = useState(false)
@@ -224,6 +235,8 @@ export default function RettighedshavereAdminPage() {
     const [portalLoading, setPortalLoading] = useState(false)
     const [portalLink, setPortalLink] = useState<string | null>(null)
     const [portalEmailStatus, setPortalEmailStatus] = useState<{ sent: boolean; error?: string } | null>(null)
+    const [portalInvitePreview, setPortalInvitePreview] = useState<AdminUserResponse | null>(null)
+    const [portalInvitePreviewLoading, setPortalInvitePreviewLoading] = useState(false)
 
     const [syncingMembers, setSyncingMembers] = useState(false)
     const [memberSyncStatus, setMemberSyncStatus] = useState<{ count: number; syncedAt: string | null } | null>(null)
@@ -456,6 +469,50 @@ export default function RettighedshavereAdminPage() {
         if (!editTarget || editMemberNoTouched || editForm.member_no.trim() || !editMatchedMemberNo) return
         setEditForm(form => ({ ...form, member_no: editMatchedMemberNo, is_member: true }))
     }, [editMatchedMemberNo, editForm.member_no, editMemberNoTouched, editTarget])
+
+    useEffect(() => {
+        let cancelled = false
+        setPortalInvitePreview(null)
+        if (portalAction?.type !== "invite") {
+            setPortalInvitePreviewLoading(false)
+            return
+        }
+        setPortalInvitePreviewLoading(true)
+        void fetch("/api/admin/user", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "preview_invite", rhId: portalAction.rh.id }),
+        }).then(async response => {
+            const result = await response.json() as AdminUserResponse
+            if (!response.ok) throw new Error(result.error)
+            if (!cancelled) setPortalInvitePreview(result)
+        }).catch(error => {
+            if (!cancelled) toast.error(`Invitationen kunne ikke forhåndsvises: ${errorMessage(error)}`)
+        }).finally(() => {
+            if (!cancelled) setPortalInvitePreviewLoading(false)
+        })
+        return () => { cancelled = true }
+    }, [portalAction])
+
+    useEffect(() => {
+        let cancelled = false
+        if (!betaInviteOpen || betaInviteTargets.length !== 1 || !betaInviteEndDate) return
+        setBetaInvitePreviewLoading(true)
+        void fetch("/api/admin/user", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "preview_invite", invitationType: "beta", rhId: betaInviteTargets[0].id, betaEndDate: betaInviteEndDate }),
+        }).then(async response => {
+            const result = await response.json() as AdminUserResponse
+            if (!response.ok) throw new Error(result.error)
+            if (!cancelled) setBetaInvitePreview(result)
+        }).catch(error => {
+            if (!cancelled) toast.error(`Betainvitationen kunne ikke forhåndsvises: ${errorMessage(error)}`)
+        }).finally(() => {
+            if (!cancelled) setBetaInvitePreviewLoading(false)
+        })
+        return () => { cancelled = true }
+    }, [betaInviteEndDate, betaInviteOpen, betaInviteTargets])
 
     const visibleImportCandidates = useMemo(() => {
         const query = normalizeName(importSearch)
@@ -706,6 +763,7 @@ export default function RettighedshavereAdminPage() {
             setBetaInviteStartDate(summary.startDate)
             setBetaInviteEndDate(summary.suggestedEndDate)
             setBetaInviteResult(null)
+            setBetaInvitePreview(null)
             setBetaInviteOpen(true)
         } catch (error) {
             toast.error(errorMessage(error))
@@ -719,11 +777,13 @@ export default function RettighedshavereAdminPage() {
         let failed = 0
         const emailErrors: string[] = []
         const manualLinks: string[] = []
+        let workLookupIssues = 0
         for (const holder of betaInviteTargets) {
             try {
                 const response = await fetch("/api/admin/user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "beta_invite", rhId: holder.id, betaEndDate: betaInviteEndDate }) })
                 const result = await response.json() as AdminUserResponse
                 if (!response.ok) throw new Error(result.error)
+                if ((result.work_lookup?.warnings.length ?? 0) > 0) workLookupIssues += 1
                 marked += 1
                 if (result.email_sent) sent += 1
                 else {
@@ -742,11 +802,13 @@ export default function RettighedshavereAdminPage() {
             failed,
             emailError: emailErrors[0],
             manualLink: betaInviteTargets.length === 1 ? manualLinks[0] : undefined,
+            workLookupIssues,
         }
         setBetaInviteResult(result)
         if (sent === betaInviteTargets.length) {
             setBetaInviteOpen(false)
             toast.success(`${sent} betatest-invitation${sent === 1 ? "" : "er"} sendt`)
+            if (workLookupIssues > 0) toast.warning(`${workLookupIssues} værksopslag havde tvetydige matches eller en utilgængelig kilde.`)
         } else {
             toast.warning(`${marked} markeret som betatestere · ${sent} mails sendt · ${marked - sent + failed} kræver opfølgning`)
         }
@@ -1856,11 +1918,28 @@ export default function RettighedshavereAdminPage() {
                         <div className="space-y-1"><Label>Startdato</Label><Input type="date" value={betaInviteStartDate} disabled /></div>
                         <div className="space-y-1"><Label htmlFor="beta-end-date">Slutdato i invitationsteksten</Label><Input id="beta-end-date" type="date" min={betaInviteStartDate ? addCalendarDays(betaInviteStartDate, 1) : undefined} value={betaInviteEndDate} onChange={event => setBetaInviteEndDate(event.target.value)} /></div>
                         <p className="text-xs text-muted-foreground">Slutdatoen er kun information. Betatesterstatus og adgang fortsætter, indtil en administrator ændrer dem.</p>
+                        {betaInviteTargets.length === 1 && (
+                            <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-sm">
+                                <p className="font-medium">Forhåndsvisning og værksopslag</p>
+                                {betaInvitePreviewLoading ? (
+                                    <p className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter mulige krediteringer fra Portal, DFI og TMDb…</p>
+                                ) : betaInvitePreview ? (
+                                    <>
+                                        <p className="font-medium">{betaInvitePreview.subject}</p>
+                                        <p className="max-h-36 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{betaInvitePreview.bodyText}</p>
+                                        <p className="text-xs">{betaInvitePreview.work_lookup?.counts.local ?? 0} lokale · {betaInvitePreview.work_lookup?.counts.external ?? 0} eksterne mulige krediteringer</p>
+                                        {betaInvitePreview.work_lookup?.warnings.map(warning => <p key={warning} className="text-xs text-amber-700 dark:text-amber-300">{warning}</p>)}
+                                    </>
+                                ) : <p className="text-xs text-muted-foreground">Ingen forhåndsvisning tilgængelig.</p>}
+                            </div>
+                        )}
+                        {betaInviteTargets.length > 1 && <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">Værker hentes sikkert for hver modtager ved udsendelsen. Resultatet opsummeres bagefter.</p>}
                         {betaInviteResult && betaInviteResult.sent < betaInviteTargets.length && (
                             <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100" role="alert">
                                 <p className="font-medium">Betatesterstatus er gemt, men ikke alle mails blev sendt.</p>
                                 <p>{betaInviteResult.sent} sendt · {betaInviteResult.marked - betaInviteResult.sent} mailfejl · {betaInviteResult.failed} øvrige fejl.</p>
                                 {betaInviteResult.emailError && <p>{betaInviteResult.emailError}</p>}
+                                {betaInviteResult.workLookupIssues > 0 && <p>{betaInviteResult.workLookupIssues} værksopslag havde tvetydige matches eller en utilgængelig kilde.</p>}
                                 {betaInviteResult.manualLink && (
                                     <div className="space-y-2">
                                         <Label htmlFor="beta-manual-link">Manuelt invitationslink</Label>
@@ -2070,12 +2149,27 @@ export default function RettighedshavereAdminPage() {
                             </p>
                         </div>
                     ) : (
-                        <div className="py-2">
+                        <div className="space-y-3 py-2">
                             <p className="text-sm text-muted-foreground">
                                 {portalAction?.rh.email
                                     ? `Email: ${portalAction.rh.email}`
                                     : <span className="text-destructive">Ingen email registreret — tilføj email først</span>}
                             </p>
+                            {portalAction?.type === "invite" && (
+                                <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-sm">
+                                    <p className="font-medium">Forhåndsvisning og værksopslag</p>
+                                    {portalInvitePreviewLoading ? (
+                                        <p className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter mulige krediteringer…</p>
+                                    ) : portalInvitePreview ? (
+                                        <>
+                                            <p className="font-medium">{portalInvitePreview.subject}</p>
+                                            <p className="max-h-36 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{portalInvitePreview.bodyText}</p>
+                                            <p className="text-xs">{portalInvitePreview.work_lookup?.counts.local ?? 0} lokale · {portalInvitePreview.work_lookup?.counts.external ?? 0} eksterne mulige krediteringer</p>
+                                            {portalInvitePreview.work_lookup?.warnings.map(warning => <p key={warning} className="text-xs text-amber-700 dark:text-amber-300">{warning}</p>)}
+                                        </>
+                                    ) : <p className="text-xs text-muted-foreground">Ingen forhåndsvisning tilgængelig.</p>}
+                                </div>
+                            )}
                         </div>
                     )}
 

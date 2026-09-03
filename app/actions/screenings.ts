@@ -39,12 +39,16 @@ async function currentUser() {
   return user;
 }
 
-async function isUserAdmin(userId: string) {
+async function isUserAdmin(userId: string, orgId?: string | null) {
   const db = createServiceClient();
-  const { data } = await db
+  let query = db
     .from("user_org_roles")
     .select("role")
     .eq("user_id", userId);
+  if (orgId) {
+    query = query.eq("org_id", orgId);
+  }
+  const { data } = await query;
   return (data ?? []).some(row => ADMIN_ROLES.includes(row.role));
 }
 
@@ -205,10 +209,10 @@ export async function importScreeningSourceRows(params: {
   }>;
 }) {
   const user = await currentUser();
-  if (!user || !(await isUserAdmin(user.id))) return { success: false, error: "Ikke autoriseret" };
-  const db = createServiceClient();
+  if (!user) return { success: false, error: "Ikke autoriseret" };
   const orgId = await userOrgId(user.id);
-  if (!orgId) return { success: false, error: "Ingen organisation" };
+  if (!orgId || !(await isUserAdmin(user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+  const db = createServiceClient();
   const rows = params.rows.filter(row => row.title.trim()).map(row => ({
     org_id: orgId,
     source: params.source,
@@ -266,7 +270,7 @@ export async function addScreeningClaimComment(params: {
   const { data: claim } = await db.from("screening_claims").select("profile_id,org_id").eq("id", params.claimId).single();
   if (!claim) return { success: false, error: "Indberetningen findes ikke" };
   const adminOrgId = params.authorRole === "admin" ? await userOrgId(user.id) : null;
-  const admin = params.authorRole === "admin" && await isUserAdmin(user.id) && adminOrgId === claim.org_id;
+  const admin = params.authorRole === "admin" && await isUserAdmin(user.id, claim.org_id) && adminOrgId === claim.org_id;
   const member = params.authorRole === "member" && claim.profile_id === user.id;
   if (!admin && !member) return { success: false, error: "Ikke autoriseret til dette krav" };
   if (!params.message.trim()) return { success: false, error: "Skriv en besked" };
@@ -315,7 +319,7 @@ export async function markScreeningClaimCommentsRead(claimId: string, role: "mem
   if (role === "member" && claim.profile_id !== user.id) return { success: false, error: "Ikke autoriseret" };
   if (role === "admin") {
     const orgId = await userOrgId(user.id);
-    if (!(await isUserAdmin(user.id)) || orgId !== claim.org_id) return { success: false, error: "Ikke autoriseret" };
+    if (!(await isUserAdmin(user.id, claim.org_id)) || orgId !== claim.org_id) return { success: false, error: "Ikke autoriseret" };
   }
   const now = new Date().toISOString();
 
@@ -341,12 +345,12 @@ export async function fetchAdminScreeningClaims() {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke autoriseret" };
 
-  const isAdmin = await isUserAdmin(user.id);
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation" };
+  const isAdmin = await isUserAdmin(user.id, orgId);
   if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin" };
 
   const db = createServiceClient();
-  const orgId = await userOrgId(user.id);
-  if (!orgId) return { success: false, error: "Ingen organisation" };
   
   // Hent alle krav og koble med profil og kommentarer
   const { data: claims, error } = await db
@@ -379,12 +383,12 @@ export async function updateScreeningClaimStatus(claimId: string, status: "appro
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke autoriseret" };
 
-  const isAdmin = await isUserAdmin(user.id);
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation" };
+  const isAdmin = await isUserAdmin(user.id, orgId);
   if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin" };
 
   const db = createServiceClient();
-  const orgId = await userOrgId(user.id);
-  if (!orgId) return { success: false, error: "Ingen organisation" };
   const { error } = await db
     .from("screening_claims")
     .update({ status, reviewed_by: user.id, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -411,10 +415,10 @@ export async function createAftalelicensBatch(batch: {
 }) {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
-  const isAdmin = await isUserAdmin(user.id);
-  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin" };
   const orgId = await userOrgId(user.id);
   if (!orgId) return { success: false, error: "Ingen organisation" };
+  const isAdmin = await isUserAdmin(user.id, orgId);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin" };
 
   const db = createServiceClient();
   const { error } = await db.from("aftalelicens_batches").insert({
@@ -441,10 +445,10 @@ export async function createAftalelicensBatch(batch: {
 export async function fetchAftalelicensBatches() {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind", batches: [] as const };
-  const isAdmin = await isUserAdmin(user.id);
-  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", batches: [] as const };
   const orgId = await userOrgId(user.id);
   if (!orgId) return { success: false, error: "Ingen organisation", batches: [] as const };
+  const isAdmin = await isUserAdmin(user.id, orgId);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", batches: [] as const };
 
   const db = createServiceClient();
   const { data, error } = await db
@@ -464,10 +468,10 @@ export async function fetchAftalelicensBatches() {
 export async function fetchAftalelicensBatch(id: string) {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind", batch: null };
-  const isAdmin = await isUserAdmin(user.id);
-  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", batch: null };
   const orgId = await userOrgId(user.id);
   if (!orgId) return { success: false, error: "Ingen organisation", batch: null };
+  const isAdmin = await isUserAdmin(user.id, orgId);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", batch: null };
 
   const db = createServiceClient();
   const { data, error } = await db
@@ -537,9 +541,9 @@ function normalizeBatchFilterConfig(value: unknown): BatchFilterConfig {
 
 export async function getAftalelicensBatchFilterConfig(batchKey: string) {
   const user = await currentUser();
-  if (!user || !(await isUserAdmin(user.id))) return { success: false, error: "Ikke autoriseret", config: normalizeBatchFilterConfig(null) };
+  if (!user) return { success: false, error: "Ikke autoriseret", config: normalizeBatchFilterConfig(null) };
   const orgId = await userOrgId(user.id);
-  if (!orgId) return { success: false, error: "Ingen organisation", config: normalizeBatchFilterConfig(null) };
+  if (!orgId || !(await isUserAdmin(user.id, orgId))) return { success: false, error: "Ikke autoriseret", config: normalizeBatchFilterConfig(null) };
   const db = createServiceClient();
   const { data, error } = await db.from("aftalelicens_batches").select("filter_config").eq("id", batchKey).eq("org_id", orgId).maybeSingle();
   if (error || !data) return { success: false, error: error?.message ?? "Datasættet blev ikke fundet", config: normalizeBatchFilterConfig(null) };
@@ -548,9 +552,9 @@ export async function getAftalelicensBatchFilterConfig(batchKey: string) {
 
 export async function updateAftalelicensBatchFilterConfig(batchKey: string, config: BatchFilterConfig) {
   const user = await currentUser();
-  if (!user || !(await isUserAdmin(user.id))) return { success: false, error: "Ikke autoriseret" };
+  if (!user) return { success: false, error: "Ikke autoriseret" };
   const orgId = await userOrgId(user.id);
-  if (!orgId) return { success: false, error: "Ingen organisation" };
+  if (!orgId || !(await isUserAdmin(user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
   const normalized = normalizeBatchFilterConfig(config);
   const db = createServiceClient();
   const { data, error } = await db.from("aftalelicens_batches")
@@ -574,10 +578,10 @@ export type ScreeningSourceRowSortUpdate = {
 export async function updateScreeningSourceRowSortStates(updates: ScreeningSourceRowSortUpdate[]) {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind", failedIds: updates.map(update => update.id) };
-  const isAdmin = await isUserAdmin(user.id);
-  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", failedIds: updates.map(update => update.id) };
   const orgId = await userOrgId(user.id);
   if (!orgId) return { success: false, error: "Ingen organisation", failedIds: updates.map(update => update.id) };
+  const isAdmin = await isUserAdmin(user.id, orgId);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", failedIds: updates.map(update => update.id) };
 
   const uniqueUpdates = Array.from(new Map(updates.map(update => [update.id, update])).values());
   if (uniqueUpdates.length === 0) return { success: true, failedIds: [] as string[] };
@@ -636,10 +640,10 @@ export async function fetchWorksAndContractsForMatching() {
   const user = await currentUser();
   const empty = { works: [] as MatchingWorkRow[], contracts: [] as MatchingContractRow[] };
   if (!user) return { success: false, error: "Ikke logget ind", ...empty };
-  const isAdmin = await isUserAdmin(user.id);
-  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", ...empty };
   const orgId = await userOrgId(user.id);
   if (!orgId) return { success: false, error: "Ingen organisation", ...empty };
+  const isAdmin = await isUserAdmin(user.id, orgId);
+  if (!isAdmin) return { success: false, error: "Ikke autoriseret som admin", ...empty };
 
   const db = createServiceClient();
 

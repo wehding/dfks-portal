@@ -163,11 +163,32 @@ function detectColumns(headers: string[]): ColMap {
 
 // ── Filter helper ─────────────────────────────────────────────
 
+const MAX_REGEX_PATTERN_LENGTH = 100
+const regexCache = new Map<string, RegExp | null>()
+
+function getSafeRegex(pattern: string): RegExp | null {
+    if (!pattern || pattern.length > MAX_REGEX_PATTERN_LENGTH) return null
+    if (/([+*?]|\{\d+,?\d*\})\s*([+*?]|\{\d+,?\d*\})/.test(pattern)) return null
+    if (regexCache.has(pattern)) return regexCache.get(pattern) ?? null
+    try {
+        const re = new RegExp(pattern, "i")
+        if (regexCache.size > 200) regexCache.clear()
+        regexCache.set(pattern, re)
+        return re
+    } catch {
+        regexCache.set(pattern, null)
+        return null
+    }
+}
+
 function matchesRule(title: string, channel: string | undefined, rule: FilterRule): boolean {
     const t = title.toLowerCase()
     const ch = (channel ?? "").toLowerCase()
     if (rule.type === "title_keyword") return t.includes(rule.value.toLowerCase())
-    if (rule.type === "title_regex") { try { return new RegExp(rule.value, "i").test(title) } catch { return false } }
+    if (rule.type === "title_regex") {
+        const re = getSafeRegex(rule.value)
+        return re ? re.test(title) : false
+    }
     if (rule.type === "channel") return ch === rule.value.toLowerCase()
     return false
 }
