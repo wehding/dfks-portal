@@ -103,7 +103,7 @@ async function fetchExportRows(
             payable_amount,
             currency,
             below_threshold,
-            rettighedshavere ( full_name, member_number ),
+            rettighedshavere ( full_name, org_affiliations ( member_no ) ),
             settlements ( label, rights_funds ( name ) )
         `)
         .eq("settlement_id", settlement_id)
@@ -134,6 +134,7 @@ async function fetchExportRows(
         const settlement = Array.isArray(item.settlements) ? item.settlements[0] : item.settlements
         const fund = Array.isArray(settlement?.rights_funds) ? settlement.rights_funds[0] : settlement?.rights_funds
         const rh = Array.isArray(item.rettighedshavere) ? item.rettighedshavere[0] : item.rettighedshavere
+        const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
 
         if (existing) {
             existing.payable_amount_minor += amount
@@ -141,7 +142,7 @@ async function fetchExportRows(
             byHolder.set(item.rights_holder_id, {
                 rights_holder_id: item.rights_holder_id,
                 rights_holder_name: rh?.full_name ?? "Ukendt",
-                member_number: rh?.member_number ?? null,
+                member_number: aff?.member_no ?? null,
                 payroll_recipient_id: refMap.get(item.rights_holder_id) ?? null,
                 payable_amount_minor: amount,
                 currency: item.currency ?? "DKK",

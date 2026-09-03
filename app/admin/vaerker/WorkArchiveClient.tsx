@@ -3538,6 +3538,32 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                 </SelectContent>
               </Select>
             </Field>
+            {masterId && (
+              <div className="rounded-md border p-3 bg-muted/20 space-y-2 text-xs">
+                <div className="font-medium text-sm text-foreground">Sammenligning før fletning:</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="border rounded p-2 bg-background space-y-1">
+                    <span className="font-semibold text-primary block">Hovedværk (bevares):</span>
+                    <div><strong>Titel:</strong> {selectedWorks.find(w => w.id === masterId)?.title}</div>
+                    <div><strong>Type:</strong> {workTypeLabel(selectedWorks.find(w => w.id === masterId)?.type)}</div>
+                    <div><strong>År:</strong> {selectedWorks.find(w => w.id === masterId)?.year ?? "—"}</div>
+                    {selectedWorks.find(w => w.id === masterId)?.director && (
+                      <div><strong>Instruktør:</strong> {selectedWorks.find(w => w.id === masterId)?.director}</div>
+                    )}
+                  </div>
+                  <div className="border rounded p-2 bg-background space-y-1">
+                    <span className="font-semibold text-muted-foreground block">Dublet(ter) (arkiveres):</span>
+                    {selectedWorks.filter(w => w.id !== masterId).map(dup => (
+                      <div key={dup.id} className="pb-1 border-b last:border-0 last:pb-0">
+                        <div><strong>Titel:</strong> {dup.title}</div>
+                        <div><strong>Type:</strong> {workTypeLabel(dup.type)} · <strong>År:</strong> {dup.year ?? "—"}</div>
+                        {dup.director && <div><strong>Instruktør:</strong> {dup.director}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
             <p className="text-sm text-muted-foreground">
               Alle kontrakter og relationer fra de øvrige valgte værker flyttes til hovedværket. Dubletterne arkiveres bagefter.
             </p>

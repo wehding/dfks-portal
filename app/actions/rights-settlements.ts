@@ -148,6 +148,9 @@ export async function setOrgPayoutThreshold(threshold_minor: number): Promise<{
     success: boolean; error?: string
 }> {
     try {
+        if (typeof threshold_minor !== "number" || !Number.isFinite(threshold_minor) || threshold_minor < 0 || threshold_minor > 100_000_000) {
+            return { success: false, error: "Ugyldigt tærskelbeløb (skal være et positivt beløb i øre)" }
+        }
         const supabase = await createClient()
         const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES)
         if (!caller) throw new Error("Ingen adgang")
@@ -235,8 +238,11 @@ export async function createSettlement(payload: {
         const { data: allocs, error: allocErr } = await db
             .from("rights_allocations")
             .select(`
-                id, rights_holder_id, individual_net,
-                works ( title ), episodes ( title ),
+                id, rights_holder_id, individual_amount, net_amount,
+                rights_work_allocations (
+                    work_id, episode_id,
+                    works ( title ), episodes ( title )
+                ),
                 rights_calculation_runs ( period_label )
             `)
             .eq("org_id", caller.orgId)
@@ -263,9 +269,11 @@ export async function createSettlement(payload: {
                 byHolder.set(id, { allocIds: [], total: 0, work_title: null, run_label: null })
             }
             const entry = byHolder.get(id)!
+            const wa = firstRelated(a.rights_work_allocations)
+            const allocAmt = Math.round(Number(a.individual_amount ?? a.net_amount ?? 0))
             entry.allocIds.push(a.id)
-            entry.total += Number(a.individual_net)
-            entry.work_title = firstRelated(a.episodes)?.title ?? firstRelated(a.works)?.title ?? null
+            entry.total += allocAmt
+            entry.work_title = firstRelated(wa?.episodes)?.title ?? firstRelated(wa?.works)?.title ?? null
             entry.run_label = firstRelated(a.rights_calculation_runs)?.period_label ?? null
         }
 
@@ -294,12 +302,14 @@ export async function createSettlement(payload: {
             }
             // En post pr. allokering
             for (const allocId of entry.allocIds) {
+                const aObj = allocs.find(a => a.id === allocId)
+                const itemAmount = Math.round(Number(aObj?.individual_amount ?? aObj?.net_amount ?? 0))
                 items.push({
                     rights_holder_id: rhId,
                     allocation_id: allocId,
-                    individual_net: Number(allocs.find(a => a.id === allocId)?.individual_net ?? 0),
+                    individual_net: itemAmount,
                     adjustment_total: 0,
-                    payable_amount: belowThreshold ? 0 : Number(allocs.find(a => a.id === allocId)?.individual_net ?? 0),
+                    payable_amount: belowThreshold ? 0 : itemAmount,
                     below_threshold: belowThreshold,
                     currency,
                 })
@@ -334,7 +344,14 @@ export async function createSettlement(payload: {
             .insert(items.map(item => ({
                 org_id: caller.orgId,
                 settlement_id: settlement.id,
-                ...item,
+                allocation_id: item.allocation_id,
+                rights_holder_id: item.rights_holder_id,
+                fund_id: payload.fund_id,
+                net_amount: item.individual_net,
+                payable_amount: item.payable_amount,
+                below_threshold: item.below_threshold,
+                currency: item.currency,
+                adjustment_total: item.adjustment_total,
             })))
 
         if (itemErr) throw itemErr
@@ -411,10 +428,12 @@ export async function getSettlementItems(settlement_id: string): Promise<{
             .from("settlement_items")
             .select(`
                 *,
-                rettighedshavere ( full_name, member_number ),
+                rettighedshavere ( full_name, org_affiliations ( member_no ) ),
                 rights_allocations (
-                    works ( title ),
-                    episodes ( title ),
+                    rights_work_allocations (
+                        works ( title ),
+                        episodes ( title )
+                    ),
                     rights_calculation_runs ( period_label )
                 )
             `)
@@ -424,16 +443,25 @@ export async function getSettlementItems(settlement_id: string): Promise<{
 
         if (error) throw error
 
-        const items: SettlementItem[] = (data ?? []).map((r) => ({
-            ...r,
-            individual_net: Number(r.individual_net),
-            adjustment_total: Number(r.adjustment_total),
-            payable_amount: Number(r.payable_amount),
-            rights_holder_name: r.rettighedshavere?.full_name,
-            member_number: r.rettighedshavere?.member_number,
-            work_title: r.rights_allocations?.episodes?.title ?? r.rights_allocations?.works?.title,
-            run_label: r.rights_allocations?.rights_calculation_runs?.period_label,
-        }))
+        const items: SettlementItem[] = (data ?? []).map((r) => {
+            const rh = firstRelated(r.rettighedshavere)
+            const aff = Array.isArray(rh?.org_affiliations) ? rh.org_affiliations[0] : rh?.org_affiliations
+            const alloc = firstRelated(r.rights_allocations)
+            const wa = firstRelated(alloc?.rights_work_allocations)
+            const work = firstRelated(wa?.works)
+            const episode = firstRelated(wa?.episodes)
+            const run = firstRelated(alloc?.rights_calculation_runs)
+            return {
+                ...r,
+                individual_net: Number(r.net_amount ?? r.individual_net ?? 0),
+                adjustment_total: Number(r.adjustment_total ?? 0),
+                payable_amount: Number(r.payable_amount ?? 0),
+                rights_holder_name: rh?.full_name,
+                member_number: aff?.member_no ?? null,
+                work_title: episode?.title ?? work?.title ?? null,
+                run_label: run?.period_label ?? null,
+            }
+        })
 
         return { success: true, items }
     } catch (err) {

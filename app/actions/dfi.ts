@@ -22,6 +22,7 @@ import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 
 // DFI org_id bruges ved import — DFKS default
 import { requireMemberContext } from "@/lib/org";
+import { isAllowedPortraitSource } from "@/lib/person-portrait";
 const MAX_DFI_POSTER_BYTES = 2 * 1024 * 1024;
 
 type DfiCredit = {
@@ -345,8 +346,12 @@ async function fetchDFI(endpoint: string, options: DfiRequestOptions = {}) {
 }
 
 export async function downloadDfiPosterDataUrl(metadata: unknown) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
   const posterUrl = extractDfiPosterUrl(metadata);
-  if (!posterUrl) return null;
+  if (!posterUrl || !isAllowedPortraitSource(posterUrl)) return null;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);

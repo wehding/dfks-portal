@@ -23,6 +23,7 @@ import { identityLevel } from "@/lib/work-identity";
 import { assertRightsHolderInOrg } from "@/lib/authz";
 import { canLinkContractWork } from "@/lib/contract-link-access";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
+import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 import type { DbWork } from "@/lib/db/types";
 import { normalizeWorkEditorRole } from "@/lib/work-editor-roles";
 import { createListLoadTimer } from "@/lib/server/list-load-timing";
@@ -301,7 +302,7 @@ async function matchingAdminWorkIds(
 
     const [{ data: distributions, error: distributionError }, { data: productionNumbers, error: productionNumberError }] = await Promise.all([
       db.from("work_distributions").select("work_id").eq("org_id", orgId).or(`broadcaster_name.ilike.${like},distribution_type.ilike.${like}`).limit(5000),
-      db.from("work_production_numbers").select("work_id").or(`tv_station.ilike.${like},number.ilike.${like}`).limit(5000),
+      db.from("work_production_numbers").select("work_id, works!inner(org_id)").eq("works.org_id", orgId).or(`tv_station.ilike.${like},number.ilike.${like}`).limit(5000),
     ]);
     if (distributionError) throw new Error(distributionError.message);
     if (productionNumberError) throw new Error(productionNumberError.message);
@@ -2027,25 +2028,144 @@ export async function mergeAdminWorks(params: {
   const orgId = await currentOrgId(db, user.id);
   const { data: master, error: masterError } = await db
     .from("works")
-    .select("id, org_id")
+    .select("id, org_id, title")
     .eq("id", params.masterWorkId)
     .eq("org_id", orgId)
     .single();
   if (masterError || !master) throw new Error("Hovedværket findes ikke.");
 
-  const tableUpdates = [
-    db.from("contracts").update({ work_id: params.masterWorkId }).in("work_id", duplicateIds),
-    db.from("work_assignments").update({ work_id: params.masterWorkId }).in("work_id", duplicateIds),
-    db.from("episodes").update({ work_id: params.masterWorkId }).in("work_id", duplicateIds),
-    db.from("work_production_numbers").update({ work_id: params.masterWorkId }).in("work_id", duplicateIds),
-    db.from("work_change_requests").update({ work_id: params.masterWorkId }).in("work_id", duplicateIds),
-  ];
+  // 1. Håndter work_assignments deduplikering
+  // Unique constraint: (work_id, rights_holder_id, role)
+  const [{ data: masterAssignments }, { data: dupAssignments }] = await Promise.all([
+    db.from("work_assignments").select("id, rights_holder_id, role").eq("work_id", params.masterWorkId),
+    db.from("work_assignments").select("id, rights_holder_id, role").in("work_id", duplicateIds),
+  ]);
 
-  for (const update of tableUpdates) {
-    const { error } = await update;
-    if (error) throw new Error(error.message);
+  const masterAssignmentKeys = new Set(
+    (masterAssignments ?? []).map(a => `${a.rights_holder_id}::${a.role}`)
+  );
+  const redundantAssignmentIds: string[] = [];
+  const uniqueAssignmentIds: string[] = [];
+
+  for (const a of dupAssignments ?? []) {
+    const key = `${a.rights_holder_id}::${a.role}`;
+    if (masterAssignmentKeys.has(key)) {
+      redundantAssignmentIds.push(a.id);
+    } else {
+      masterAssignmentKeys.add(key);
+      uniqueAssignmentIds.push(a.id);
+    }
   }
 
+  if (redundantAssignmentIds.length > 0) {
+    const { error } = await db.from("work_assignments").delete().in("id", redundantAssignmentIds);
+    if (error) throw new Error(`Kunne ikke fjerne overlappende arbejdsandele: ${error.message}`);
+  }
+  if (uniqueAssignmentIds.length > 0) {
+    const { error } = await db.from("work_assignments").update({ work_id: params.masterWorkId }).in("id", uniqueAssignmentIds);
+    if (error) throw new Error(`Kunne ikke overføre arbejdsandele: ${error.message}`);
+  }
+
+  // 2. Håndter episodes deduplikering
+  // Unique constraint: (work_id, episode_number)
+  const [{ data: masterEpisodes }, { data: dupEpisodes }] = await Promise.all([
+    db.from("episodes").select("id, episode_number").eq("work_id", params.masterWorkId),
+    db.from("episodes").select("id, episode_number").in("work_id", duplicateIds),
+  ]);
+
+  const masterEpByNumber = new Map<number, string>(
+    (masterEpisodes ?? []).filter(e => e.episode_number !== null).map(e => [e.episode_number, e.id])
+  );
+  const redundantEpisodeIds: string[] = [];
+  const uniqueEpisodeIds: string[] = [];
+
+  for (const ep of dupEpisodes ?? []) {
+    if (ep.episode_number !== null && masterEpByNumber.has(ep.episode_number)) {
+      redundantEpisodeIds.push(ep.id);
+    } else {
+      if (ep.episode_number !== null) masterEpByNumber.set(ep.episode_number, ep.id);
+      uniqueEpisodeIds.push(ep.id);
+    }
+  }
+
+  if (redundantEpisodeIds.length > 0) {
+    const { error } = await db.from("episodes").delete().in("id", redundantEpisodeIds);
+    if (error) throw new Error(`Kunne ikke fjerne dublerede afsnit: ${error.message}`);
+  }
+  if (uniqueEpisodeIds.length > 0) {
+    const { error } = await db.from("episodes").update({ work_id: params.masterWorkId }).in("id", uniqueEpisodeIds);
+    if (error) throw new Error(`Kunne ikke overføre afsnit: ${error.message}`);
+  }
+
+  // 3. Håndter work_production_numbers deduplikering
+  // Unique constraint: (work_id, tv_station)
+  const [{ data: masterProdNums }, { data: dupProdNums }] = await Promise.all([
+    db.from("work_production_numbers").select("id, tv_station").eq("work_id", params.masterWorkId),
+    db.from("work_production_numbers").select("id, tv_station").in("work_id", duplicateIds),
+  ]);
+
+  const masterStations = new Set(
+    (masterProdNums ?? []).filter(p => p.tv_station).map(p => p.tv_station.toLowerCase())
+  );
+  const redundantProdNumIds: string[] = [];
+  const uniqueProdNumIds: string[] = [];
+
+  for (const p of dupProdNums ?? []) {
+    const station = p.tv_station?.toLowerCase();
+    if (station && masterStations.has(station)) {
+      redundantProdNumIds.push(p.id);
+    } else {
+      if (station) masterStations.add(station);
+      uniqueProdNumIds.push(p.id);
+    }
+  }
+
+  if (redundantProdNumIds.length > 0) {
+    const { error } = await db.from("work_production_numbers").delete().in("id", redundantProdNumIds);
+    if (error) throw new Error(`Kunne ikke fjerne overlappende produktionsnumre: ${error.message}`);
+  }
+  if (uniqueProdNumIds.length > 0) {
+    const { error } = await db.from("work_production_numbers").update({ work_id: params.masterWorkId }).in("id", uniqueProdNumIds);
+    if (error) throw new Error(`Kunne ikke overføre produktionsnumre: ${error.message}`);
+  }
+
+  // 4. Håndter work_share_cases
+  // Unique index: (org_id, work_id, coalesce(season_number, -1), coalesce(episode_number, -1))
+  const [{ data: masterCases }, { data: dupCases }] = await Promise.all([
+    db.from("work_share_cases").select("id, season_number, episode_number").eq("work_id", params.masterWorkId),
+    db.from("work_share_cases").select("id, season_number, episode_number").in("work_id", duplicateIds),
+  ]);
+  const masterCaseKeys = new Set(
+    (masterCases ?? []).map(c => `${c.season_number ?? -1}::${c.episode_number ?? -1}`)
+  );
+  const redundantCaseIds: string[] = [];
+  const uniqueCaseIds: string[] = [];
+
+  for (const c of dupCases ?? []) {
+    const key = `${c.season_number ?? -1}::${c.episode_number ?? -1}`;
+    if (masterCaseKeys.has(key)) {
+      redundantCaseIds.push(c.id);
+    } else {
+      masterCaseKeys.add(key);
+      uniqueCaseIds.push(c.id);
+    }
+  }
+
+  if (redundantCaseIds.length > 0) {
+    await db.from("work_share_cases").delete().in("id", redundantCaseIds);
+  }
+  if (uniqueCaseIds.length > 0) {
+    await db.from("work_share_cases").update({ work_id: params.masterWorkId }).in("id", uniqueCaseIds);
+  }
+
+  // 5. Opdater resterende relationer
+  const { error: contractError } = await db.from("contracts").update({ work_id: params.masterWorkId }).in("work_id", duplicateIds);
+  if (contractError) throw new Error(`Kunne ikke overføre kontrakter: ${contractError.message}`);
+
+  const { error: changeReqError } = await db.from("work_change_requests").update({ work_id: params.masterWorkId }).in("work_id", duplicateIds);
+  if (changeReqError) throw new Error(`Kunne ikke overføre ændringsønsker: ${changeReqError.message}`);
+
+  // 6. Arkivér dubletterne
   const { error: archiveError } = await db
     .from("works")
     .update({ status: "arkiveret" })
@@ -2053,6 +2173,20 @@ export async function mergeAdminWorks(params: {
     .in("id", duplicateIds);
 
   if (archiveError) throw new Error(archiveError.message);
+
+  await recordSensitiveFlow({
+    actor: { userId: user.id, orgId, role: admin.role, source: "admin" },
+    action: "update",
+    component: "admin.works.merge",
+    entityType: "works",
+    entityId: params.masterWorkId,
+    orgIds: [orgId],
+    purposeCode: "work_deduplication",
+    legalBasis: "GDPR Art. 6(1)(f)",
+    dataCategories: ["work_data"],
+    counts: { duplicatesMerged: duplicateIds.length },
+  });
+
   revalidatePath("/admin/vaerker");
   revalidatePath("/portal/mine-vaerker");
   return { success: true };

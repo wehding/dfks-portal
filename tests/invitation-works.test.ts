@@ -68,7 +68,7 @@ test("inviteruten bruger samme resolver til preview, standard og beta uden at la
 });
 
 test("beta-audit tillader kun tællinger og kilde-status", () => {
-  const migration = readFileSync("supabase/migrations/20260903113100_beta_invite_work_lookup_audit.sql", "utf8");
+  const migration = readFileSync("supabase/migrations/20260903005609_beta_invite_work_lookup_audit.sql", "utf8");
   assert.match(migration, /p_work_lookup jsonb default/);
   assert.match(migration, /safe_work_lookup := jsonb_build_object/);
   assert.match(migration, /revoke all on function public\.set_beta_tester_status[\s\S]+public, anon, authenticated/);
