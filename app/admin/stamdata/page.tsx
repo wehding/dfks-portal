@@ -317,6 +317,27 @@ const RULE_TYPE_LABELS: Record<FilterRule["type"], string> = {
     channel: "Kanalnavn",
 }
 
+function readLegacyFilterRules(): FilterRule[] | null {
+    try {
+        const stored = localStorage.getItem("dfks_filter_rules")
+        if (!stored) return null
+        const parsed: unknown = JSON.parse(stored)
+        if (!Array.isArray(parsed)) return null
+        return parsed.filter((rule): rule is FilterRule => {
+            if (!rule || typeof rule !== "object") return false
+            const candidate = rule as Partial<FilterRule>
+            return typeof candidate.id === "string"
+                && typeof candidate.name === "string"
+                && typeof candidate.value === "string"
+                && typeof candidate.active === "boolean"
+                && typeof candidate.createdAt === "string"
+                && ["title_keyword", "title_regex", "channel"].includes(candidate.type ?? "")
+        })
+    } catch {
+        return null
+    }
+}
+
 function FilterRulesTab() {
     const [rules, setRules] = useState<FilterRule[]>([])
     const [loading, setLoading] = useState(true)
@@ -329,7 +350,18 @@ function FilterRulesTab() {
 
     useEffect(() => {
         getAftalelicensFilterRules()
-            .then(result => setRules(result.rules))
+            .then(async result => {
+                const legacyRules = readLegacyFilterRules()
+                if (!legacyRules) {
+                    setRules(result.rules)
+                    return
+                }
+
+                const migrated = await updateAftalelicensFilterRules(legacyRules)
+                setRules(migrated.rules)
+                localStorage.removeItem("dfks_filter_rules")
+                toast.success("Dine tidligere aftalelicensfiltre er overført til organisationens stamdata")
+            })
             .catch(error => toast.error(error instanceof Error ? error.message : "Kunne ikke hente filtreringsregler"))
             .finally(() => setLoading(false))
     }, [])

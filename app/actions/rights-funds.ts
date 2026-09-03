@@ -5,10 +5,54 @@ import { createServiceClient } from "@/lib/supabase/service"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import type { PolicyComponent } from "@/lib/rights-policy-preview"
 import { revalidatePath } from "next/cache"
+import { z } from "zod"
 
 export type { PolicyComponent } from "@/lib/rights-policy-preview"
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const
+const uuidSchema = z.string().uuid()
+const policyVersionSchema = z.object({
+    policy_id: uuidSchema,
+    admin_rate_bps: z.number().int().min(0).max(10_000),
+    notes: z.string().max(10_000).nullable().optional(),
+    components: z.array(z.object({
+        component_type: z.enum(["CLAIM_RESERVE", "SKU_DIRECT", "SKU_FROM_RESERVE", "STATUTORY_COLLECTIVE_SHARE"]),
+        sort_order: z.number().int().min(0).max(1_000),
+        rate_bps: z.number().int().min(0).max(10_000),
+        calculation_basis: z.enum(["GROSS", "AFTER_ADMIN", "ORIGINAL_CLAIM_RESERVE", "REMAINING_INDIVIDUAL"]),
+        is_statutory_collective: z.boolean(),
+        label: z.string().max(500).nullable(),
+        description: z.string().max(5_000).nullable(),
+        active: z.boolean(),
+    }).strict()).max(100),
+}).strict()
+
+class RightsFundUserError extends Error {}
+
+type DatabaseError = {
+    code?: unknown
+    message?: unknown
+    details?: unknown
+    hint?: unknown
+    constraint?: unknown
+}
+
+function rightsFundErrorMessage(error: unknown): string {
+    if (error instanceof RightsFundUserError) return error.message
+    if (error instanceof z.ZodError) return "De indsendte oplysninger er ugyldige."
+    if (!error || typeof error !== "object") return "Handlingen kunne ikke gennemføres."
+
+    const databaseError = error as DatabaseError
+    const code = typeof databaseError.code === "string" ? databaseError.code : ""
+    const constraint = typeof databaseError.constraint === "string" ? databaseError.constraint : ""
+    const message = typeof databaseError.message === "string" ? databaseError.message : ""
+    const details = typeof databaseError.details === "string" ? databaseError.details : ""
+    if (code === "23505" && (constraint === "rights_funds_org_id_code_key" || /rights_funds_org_id_code_key/i.test(message + details))) {
+        return "Der findes allerede en rettighedskasse med denne kode i organisationen."
+    }
+
+    return "Handlingen kunne ikke gennemføres. Prøv igen eller kontakt en administrator."
+}
 
 // ── Typer ────────────────────────────────────────────────────────────────────
 
@@ -88,7 +132,7 @@ export async function getRightsFunds(): Promise<{ success: boolean; funds: Right
         return { success: true, funds: (data ?? []) as RightsFund[] }
     } catch (err) {
         console.error("[rights-funds] getRightsFunds fejlede:", err)
-        return { success: false, funds: [], error: String(err) }
+        return { success: false, funds: [], error: rightsFundErrorMessage(err) }
     }
 }
 
@@ -116,12 +160,20 @@ export async function createRightsFund(payload: {
             .select()
             .single()
 
-        if (error) throw error
+        if (error) {
+            console.error("[rights-funds] createRightsFund databasefejl:", {
+                code: error.code,
+                message: error.message,
+                details: error.details,
+                hint: error.hint,
+            })
+            return { success: false, error: rightsFundErrorMessage(error) }
+        }
         revalidatePath("/admin/stamdata")
         return { success: true, fund: data as RightsFund }
     } catch (err) {
         console.error("[rights-funds] createRightsFund fejlede:", err)
-        return { success: false, error: String(err) }
+        return { success: false, error: rightsFundErrorMessage(err) }
     }
 }
 
@@ -147,7 +199,7 @@ export async function updateRightsFund(
         return { success: true }
     } catch (err) {
         console.error("[rights-funds] updateRightsFund fejlede:", err)
-        return { success: false, error: String(err) }
+        return { success: false, error: rightsFundErrorMessage(err) }
     }
 }
 
@@ -155,6 +207,7 @@ export async function updateRightsFund(
 
 export async function getDistributionPolicies(fund_id: string): Promise<{ success: boolean; policies: DistributionPolicy[]; error?: string }> {
     try {
+        const fundId = uuidSchema.parse(fund_id)
         const supabase = await createClient()
         const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES)
         const db = createServiceClient()
@@ -165,14 +218,14 @@ export async function getDistributionPolicies(fund_id: string): Promise<{ succes
             .from("distribution_policies")
             .select("*")
             .eq("org_id", orgId)
-            .eq("fund_id", fund_id)
+            .eq("fund_id", fundId)
             .order("valid_from", { ascending: false })
 
         if (error) throw error
         return { success: true, policies: (data ?? []) as DistributionPolicy[] }
     } catch (err) {
         console.error("[rights-funds] getDistributionPolicies fejlede:", err)
-        return { success: false, policies: [], error: String(err) }
+        return { success: false, policies: [], error: rightsFundErrorMessage(err) }
     }
 }
 
@@ -190,6 +243,7 @@ export async function createDistributionPolicy(payload: {
     notes?: string | null
 }): Promise<{ success: boolean; policy?: DistributionPolicy; error?: string }> {
     try {
+        const fundId = uuidSchema.parse(payload.fund_id)
         const supabase = await createClient()
         const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES)
         const db = createServiceClient()
@@ -198,7 +252,7 @@ export async function createDistributionPolicy(payload: {
 
         const { data, error } = await db
             .from("distribution_policies")
-            .insert({ ...payload, org_id: orgId })
+            .insert({ ...payload, fund_id: fundId, org_id: orgId })
             .select()
             .single()
 
@@ -207,7 +261,7 @@ export async function createDistributionPolicy(payload: {
         return { success: true, policy: data as DistributionPolicy }
     } catch (err) {
         console.error("[rights-funds] createDistributionPolicy fejlede:", err)
-        return { success: false, error: String(err) }
+        return { success: false, error: rightsFundErrorMessage(err) }
     }
 }
 
@@ -215,6 +269,7 @@ export async function createDistributionPolicy(payload: {
 
 export async function getPolicyVersions(policy_id: string): Promise<{ success: boolean; versions: PolicyVersionWithComponents[]; error?: string }> {
     try {
+        const policyId = uuidSchema.parse(policy_id)
         const supabase = await createClient()
         const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES)
         const db = createServiceClient()
@@ -225,7 +280,7 @@ export async function getPolicyVersions(policy_id: string): Promise<{ success: b
             .from("distribution_policy_versions")
             .select("*")
             .eq("org_id", orgId)
-            .eq("policy_id", policy_id)
+            .eq("policy_id", policyId)
             .order("version_number", { ascending: false })
 
         if (vErr) throw vErr
@@ -247,7 +302,7 @@ export async function getPolicyVersions(policy_id: string): Promise<{ success: b
         return { success: true, versions: result }
     } catch (err) {
         console.error("[rights-funds] getPolicyVersions fejlede:", err)
-        return { success: false, versions: [], error: String(err) }
+        return { success: false, versions: [], error: rightsFundErrorMessage(err) }
     }
 }
 
@@ -258,17 +313,30 @@ export async function createPolicyVersion(payload: {
     components: Omit<PolicyComponent, "id" | "org_id" | "policy_version_id">[]
 }): Promise<{ success: boolean; version?: PolicyVersionWithComponents; error?: string }> {
     try {
+        const validatedPayload = policyVersionSchema.parse(payload)
         const supabase = await createClient()
         const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES)
         const db = createServiceClient()
         if (!caller) throw new Error("Ingen adgang")
         const orgId = caller.orgId
+        const policyId = validatedPayload.policy_id
+
+        const { data: policy, error: policyError } = await db
+            .from("distribution_policies")
+            .select("id")
+            .eq("id", policyId)
+            .eq("org_id", orgId)
+            .maybeSingle()
+
+        if (policyError) throw policyError
+        if (!policy) throw new RightsFundUserError("Fordelingspolitikken blev ikke fundet i organisationen.")
 
         // Find næste versionsnummer
         const { data: existing } = await db
             .from("distribution_policy_versions")
             .select("version_number")
-            .eq("policy_id", payload.policy_id)
+            .eq("policy_id", policyId)
+            .eq("org_id", orgId)
             .order("version_number", { ascending: false })
             .limit(1)
             .maybeSingle()
@@ -279,19 +347,19 @@ export async function createPolicyVersion(payload: {
             .from("distribution_policy_versions")
             .insert({
                 org_id: orgId,
-                policy_id: payload.policy_id,
+                policy_id: policyId,
                 version_number,
-                admin_rate_bps: payload.admin_rate_bps,
-                notes: payload.notes ?? null,
+                admin_rate_bps: validatedPayload.admin_rate_bps,
+                notes: validatedPayload.notes ?? null,
                 prepared_by: caller.userId,
-                snapshot_components: payload.components,
+                snapshot_components: validatedPayload.components,
             })
             .select()
             .single()
 
         if (vErr) throw vErr
 
-        const componentRows = payload.components.map(c => ({
+        const componentRows = validatedPayload.components.map(c => ({
             ...c,
             org_id: orgId,
             policy_version_id: version.id,
@@ -314,7 +382,7 @@ export async function createPolicyVersion(payload: {
         }
     } catch (err) {
         console.error("[rights-funds] createPolicyVersion fejlede:", err)
-        return { success: false, error: String(err) }
+        return { success: false, error: rightsFundErrorMessage(err) }
     }
 }
 
@@ -323,6 +391,8 @@ export async function activatePolicyVersion(
     policy_id: string
 ): Promise<{ success: boolean; error?: string }> {
     try {
+        const versionId = uuidSchema.parse(version_id)
+        const policyId = uuidSchema.parse(policy_id)
         const supabase = await createClient()
         const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES)
         const db = createServiceClient()
@@ -332,26 +402,31 @@ export async function activatePolicyVersion(
         // Hent versionen og verificer fire-øjne
         const { data: version, error: fetchErr } = await db
             .from("distribution_policy_versions")
-            .select("prepared_by, status, used_in_calculation")
-            .eq("id", version_id)
+            .select("prepared_by, policy_id, status, used_in_calculation")
+            .eq("id", versionId)
             .eq("org_id", orgId)
             .single()
 
         if (fetchErr) throw fetchErr
+        if (version.policy_id !== policyId) {
+            throw new RightsFundUserError("Politikversionen tilhører ikke den valgte fordelingspolitik.")
+        }
         if (version.status !== "draft" && version.status !== "preview") {
-            throw new Error("Kun draft- og preview-versioner kan aktiveres.")
+            throw new RightsFundUserError("Kun kladde- og preview-versioner kan aktiveres.")
         }
         if (version.prepared_by === caller.userId) {
-            throw new Error("Fire-øjne-krav: godkender og udarbejder skal være forskellige personer.")
+            throw new RightsFundUserError("Fire-øjne-krav: godkender og udarbejder skal være forskellige personer.")
         }
 
         // Sæt tidligere aktive versioner til superseded
-        await db
+        const { error: supersedeErr } = await db
             .from("distribution_policy_versions")
             .update({ status: "superseded" })
-            .eq("policy_id", policy_id)
+            .eq("policy_id", policyId)
             .eq("org_id", orgId)
             .eq("status", "active")
+
+        if (supersedeErr) throw supersedeErr
 
         // Aktiver denne version
         const { error: activateErr } = await db
@@ -361,7 +436,8 @@ export async function activatePolicyVersion(
                 approved_by: caller.userId,
                 activated_at: new Date().toISOString(),
             })
-            .eq("id", version_id)
+            .eq("id", versionId)
+            .eq("policy_id", policyId)
             .eq("org_id", orgId)
 
         if (activateErr) throw activateErr
@@ -370,6 +446,6 @@ export async function activatePolicyVersion(
         return { success: true }
     } catch (err) {
         console.error("[rights-funds] activatePolicyVersion fejlede:", err)
-        return { success: false, error: String(err) }
+        return { success: false, error: rightsFundErrorMessage(err) }
     }
 }

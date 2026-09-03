@@ -6,6 +6,8 @@ Denne manual forklarer det planlagte system i et sprog, der kan bruges til præs
 
 Manualen beskriver det aftalte design. Funktionerne er endnu ikke nødvendigvis implementeret.
 
+Det praktiske, isolerede testforløb findes i [Testguide: Rettighedsmidler uden efterladte testdata](./rettighedsmidler-testforloeb.md).
+
 ## Den korte forklaring
 
 DFKS Portal skal kunne modtage et grundlag for rettighedsbetaling, beregne hvad hvert værk har ret til, fordele beløbet mellem værkets rettighedshavere og følge beløbet frem til en dokumenteret udbetaling.

@@ -113,7 +113,10 @@ export function RightsFundsTab() {
                     rights_category: form.rights_category,
                     notes: form.notes || null,
                 })
-                if (!res.success) throw new Error(res.error)
+                if (!res.success) {
+                    toast.error(`Kunne ikke gemme: ${res.error ?? "Ukendt fejl"}`)
+                    return
+                }
                 toast.success("Rettighedskasse opdateret")
             } else {
                 const res = await createRightsFund({
@@ -127,13 +130,16 @@ export function RightsFundsTab() {
                     allowed_groups: [],
                     notes: form.notes || undefined,
                 })
-                if (!res.success) throw new Error(res.error)
+                if (!res.success) {
+                    toast.error(`Kunne ikke gemme: ${res.error ?? "Ukendt fejl"}`)
+                    return
+                }
                 toast.success("Rettighedskasse oprettet")
             }
             setDialogOpen(false)
             load()
         } catch (err) {
-            toast.error("Kunne ikke gemme: " + String(err))
+            toast.error(`Kunne ikke gemme: ${err instanceof Error ? err.message : "Ukendt fejl"}`)
         } finally {
             setSaving(false)
         }
