@@ -11,6 +11,12 @@ import { extractPdfText } from "@/lib/pdf-parse"
 import { extractWordText } from "@/lib/word-text"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
+import {
+    resolveContractReviewProductionType,
+    removeInvalidDe4RoyaltyWarnings,
+    royaltyRequirementForContract,
+    type ContractReviewProductionType,
+} from "@/lib/contract-review-domain-rules"
 import { createAiUsageRun, finishAiUsageRun, type AiUsageContext } from "@/lib/ai-usage"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { getSupabaseServiceKey } from "@/lib/env"
@@ -68,7 +74,7 @@ export type Klassifikation = {
     kontraktsprog: "da" | "en" | "other"
     loen_type: "ugeloeen" | "dagsloen" | "fast_total" | "ukendt"
     loen_valuta: "DKK" | "USD" | "EUR" | "GBP" | "other"
-    produktionstype: "spillefilm" | "tvserie" | "dokumentar" | "kortfilm" | "ukendt" | "udvikling_dokumentar" | "udvikling_fiktion" | "udvikling_underholdning"
+    produktionstype: ContractReviewProductionType
 }
 
 // ── Trin 1: Klassificér kontrakten ────────────────────────────
@@ -117,6 +123,7 @@ Brug "udvikling_dokumentar", "udvikling_fiktion" eller "udvikling_underholdning"
 - Titlen er beskrevet som "arbejdstitel" uden fastlagt produktionsformat
 
 Domænereglen: dokumentar → "udvikling_dokumentar", fiktion/drama → "udvikling_fiktion", underholdning/reality → "udvikling_underholdning".
+Serieformat: Et konkret produktionsomfang med nummererede episoder eller arbejde "på afsnit 1 og 4" betyder, at produktionstypen skal være "tvserie". Formuleringer som "klipper af 2 episoder (5+6)" og "Klipper på afsnit 1 og 4" er sikre seriesignaler. En nummereret titel eller en juridisk henvisning som "se afsnit 4" er ikke et seriesignal.
 Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan bestemmes.`
 
     const defaultKlassifikation: Klassifikation = {
@@ -163,9 +170,7 @@ Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan
             kontraktsprog: p.kontraktsprog ?? "da",
             loen_type: p.loen_type ?? "ukendt",
             loen_valuta: p.loen_valuta ?? "DKK",
-            produktionstype: ["spillefilm","tvserie","dokumentar","kortfilm","udvikling_dokumentar","udvikling_fiktion","udvikling_underholdning"].includes(p.produktionstype)
-                ? p.produktionstype
-                : "ukendt",
+            produktionstype: resolveContractReviewProductionType(p.produktionstype, kontraktTekst),
         }
     } catch {
         logWarn("analyse", "Klassifikation JSON parse fejl")
@@ -178,6 +183,7 @@ Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan
 function byggAbsolutteRegler(
     klassifikation: Klassifikation,
     satser: Array<{ beskrivelse: string; vaerdi: number | string; enhed: string }>,
+    distributionChannels: string[],
     overenskomst?: {
         /** Autoritativt svar fra DFKS-registeret/uploaden. Vinder over klassifikatorens gæt. */
         resolved: boolean | null
@@ -280,9 +286,12 @@ og Producenten."
 🚫 ABSOLUT FORBUD: Lav INGEN lønberegning ved hybrid kontrakt.`
             : "✓ A-LØNSKONTRAKT — Beregn korrekt: feriepenge og pension betales OVENI lønnen. Brug udelukkende satser fra AKTUELLE SATSER nedenfor."
 
-    const royaltyRegel = ["spillefilm", "tvserie"].includes(klassifikation.produktionstype)
-        ? "⚠ ROYALTY PÅKRÆVET: Dette er en fiktionsproduktion. Tjek eksplicit om kontrakten nævner royalty. Hvis ikke — det SKAL kommenteres som et selvstændigt punkt."
-        : ""
+    const royaltyRegel = royaltyRequirementForContract({
+        productionType: klassifikation.produktionstype,
+        agreementCovered: erOverenskomst,
+        agreementName: klassifikation.overenskomst_navn,
+        distributionChannels,
+    })
 
     const overenskomstRegler = erOverenskomst
         ? (overenskomst?.parentMemberName
@@ -293,7 +302,7 @@ og Producenten."
     const overenskomstNavn = klassifikation.overenskomst_navn ?? ""
     const overenskomstFormularRegel =
         overenskomstNavn === "de4-fiktion"
-            ? "✓ DE4-FIKTION: De4-standardformularen dækker allerede eksplicit Copydan-forbehold og SVOD/streaming-aftale. Henviser kontrakten til De4-overenskomsten eller standardformularen, ER disse dækket — nævn dem som POSITIVE, ALDRIG som 'manglende Copydan' / 'manglende SVOD'. Royalty står IKKE i De4-standardformularen — vurder royalty separat."
+            ? "✓ DE4-FIKTION: De4-standardformularen dækker allerede Copydan-forbehold, SVOD/streaming-aftale og royalty for de produktioner, royaltybestemmelsen omfatter. Henviser kontrakten til De4-overenskomsten eller standardformularen, ER disse dækket — nævn relevante rettigheder som POSITIVE, og flag dem ALDRIG som manglende, blot fordi der ikke står en særskilt klausul i kontrakten."
         : ["faf", "faf-dokumentar"].includes(overenskomstNavn)
             ? "⚠ FAF: FAF-standardformularen mangler eksplicit Copydan, SVOD og royalty. Mangler kontrakten dem, skal alle tre skrives ind (eksplicit hvis producenten ikke er ProF-bundet; ellers med overenskomsten som hjemmel)."
         : ""
@@ -413,8 +422,9 @@ KRITISK FORSKEL — FAF (2025-2027) vs. De4 (2022) for fiktion:
 - De4-standardkontrakten INDEHOLDER allerede eksplicit Copydan-forbehold og SVOD/streaming-aftale.
   Henviser kontrakten til De4-overenskomsten eller bruger De4-standardformularen, ER Copydan og
   SVOD dækket — anerkend dem som POSITIVE, flag dem ALDRIG som "manglende".
+- En henvisning til De4-overenskomsten dækker også royalty for de produktioner, royaltybestemmelsen
+  omfatter. Nævn relevant royaltydækning som POSITIV, og kræv ALDRIG en særskilt royaltyklausul.
 - FAF-standardkontrakten mangler eksplicit Copydan, SVOD og royalty — disse skal tilføjes separat.
-- Royalty står IKKE som fast tekst i De4-standardformularen — vurder royalty separat uanset formular.
 
 PRODUCENTFORENINGENS MEDLEMSSKAB — HVAD DET AFGØR:
 Overenskomstens vilkår gælder AUTOMATISK kun for ProF-medlemmer (se KONTRAKTFAKTA øverst).
@@ -428,19 +438,9 @@ Kendte store selskaber (SF Film, Nordisk Film, DR, TV 2, Zentropa) behøver norm
 
 A-LØN vs. LEVERANDØRKONTRAKT — se KONTRAKTFAKTA øverst for denne kontrakts type.
 
-AI-klausul og TDM:
-- Eksplicit TDM-forbehold til ophavsmanden: POSITIVT (ophavsretslovens § 11b)
-- TDM-ret til producenten uden aftale: KRITISK
-- Ingen TDM-nævnelse: advarsel
-
 Royalty:
-- 1,5% af nettoindtægter er STANDARD for FAF dokumentar — flagger ALDRIG som lavt
 - Anbefal ALDRIG højere sats — det er branchepolitisk følsomt
 - Anbefal ALDRIG fjernelse af royalty-klausul
-
-Tavshedspligt og selvpromovering:
-- Acceptabel hvis kontrakten andetsteds giver ret til egenpromotion
-- Flagger kun som problematisk hvis der INGEN promoveringsundtagelse er
 
 Kontraktlæsning generelt:
 - Læs altid kontrakten som helhed — klausuler vurderes i sammenhæng
@@ -467,9 +467,7 @@ RETTIGHEDSKLAUSULER:
 5. Manglende streaming-/SVOD-forbehold (type: kritisk)
    — samme forbehold: dækket ved De4-standardformular / De4-henvisning → POSITIVT punkt.
      Udløs primært ved FAF-standardformular eller kontrakt uden standardformular.
-6. Manglende promoveringsret (type: advarsel)
-7. Manglende TDM/AI-klausul (type: advarsel)
-8. Overenskomstinkorporering i leverandørkontrakt (type: advarsel)
+6. Overenskomstinkorporering i leverandørkontrakt (type: advarsel)
 
 SKADESLØSHOLDELSE:
 9. Skadesløsholdelse ved skattemæssig omklassificering (type: advarsel)
@@ -809,7 +807,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
     }
 
     if (klassifikation) {
-        activeSystemPrompt += byggAbsolutteRegler(klassifikation, dbSatser, {
+        activeSystemPrompt += byggAbsolutteRegler(klassifikation, dbSatser, distributionChannels, {
             resolved: overenskomstResolvedFlag,
             parentMemberName,
         }) + "\n\n"
@@ -971,6 +969,15 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             throw new Error("AI returnerede ugyldigt svar — prøv igen")
         }
     }
+
+    parsed.feedbackpunkter = removeInvalidDe4RoyaltyWarnings(
+        Array.isArray(parsed.feedbackpunkter) ? parsed.feedbackpunkter : [],
+        {
+            agreementCovered: erOverenskomstDaekket,
+            agreementName: klassifikation?.overenskomst_navn ?? null,
+            contractText,
+        },
+    )
 
     // ── Navnetjek mod DFKS-register ──────────────────────────
     const rightsHolderName: string | null =
