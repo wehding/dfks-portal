@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { formatUserActionDescription } from "../lib/admin-dashboard-server";
+import { formatUserActionDescription } from "../lib/admin-dashboard";
 import { resolvePostLoginDestination } from "../lib/auth/post-login";
 
 test("formaterer brugerhandlinger korrekt til aktivitetsfeed", () => {

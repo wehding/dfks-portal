@@ -56,3 +56,6 @@ supabase/.temp/
 *.tfstate
 *.tfstate.*
 *.tfplan
+
+# claude code worktrees and local settings
+.claude/
