@@ -5,6 +5,7 @@ import test from "node:test";
 const action = readFileSync("app/actions/admin-contract-work-queues.ts", "utf8");
 const archive = readFileSync("app/admin/kontrakter/ContractArchiveClient.tsx", "utf8");
 const editor = readFileSync("app/admin/kontrakter/[id]/rediger/ContractWorkbenchClient.tsx", "utf8");
+const filtering = readFileSync("lib/server/admin-contract-filtering.ts", "utf8");
 const migration = readFileSync("supabase/migrations/20260902201509_admin_contract_work_queues.sql", "utf8");
 
 test("arbejdskøer er organisations- og brugerafgrænsede", () => {
@@ -41,4 +42,13 @@ test("editoren bevarer section og queueId og beskytter tastaturkontekst", () => 
   assert.match(editor, /value="messages"/);
   assert.match(editor, /markContractCommentsRead\(contract\.id, "admin"\)/);
   assert.doesNotMatch(editor, /Start valideringskø|Start ejerskabskø|Vis kontraktkø/);
+});
+
+test("kontraktarkivets søgning og valideringsfilter bruger det faktiske databaseskema", () => {
+  assert.match(filtering, /org_affiliations!inner\(org_id\)/);
+  assert.match(filtering, /eq\("org_affiliations\.org_id", orgId\)/);
+  assert.doesNotMatch(filtering, /from\("rettighedshavere"\)[\s\S]{0,120}\.eq\("org_id", orgId\)/);
+  assert.doesNotMatch(filtering, /from\("employers"\)[^,\n]+?\.eq\("org_id"/);
+  assert.doesNotMatch(filtering, /works\(id, type, is_season_group/);
+  assert.doesNotMatch(filtering, /work\.is_season_group/);
 });

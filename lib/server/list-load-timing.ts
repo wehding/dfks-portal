@@ -1,4 +1,11 @@
 import "server-only";
+import { recordPageTiming } from "./key-page-timing-stats";
+
+export {
+  getKeyPageTimingStats,
+  recordPageTiming,
+  type KeyPageTiming,
+} from "./key-page-timing-stats";
 
 type TimingFields = Record<string, string | number | boolean | null>;
 
@@ -19,8 +26,10 @@ export function createListLoadTimer(label: string, clock: () => number = () => p
   }
 
   function finish(fields: TimingFields = {}): ListLoadTiming {
+    const totalMs = Math.round((clock() - startedAt) * 10) / 10;
+    recordPageTiming(label, totalMs);
     const timing = {
-      totalMs: Math.round((clock() - startedAt) * 10) / 10,
+      totalMs,
       stages,
     };
     console.info("[list-performance]", JSON.stringify({ label, ...timing, ...fields }));

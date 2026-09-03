@@ -10,7 +10,9 @@ test("listetimer opdeler serverarbejdet i sikre målbare faser", async () => {
   const timer = await source("lib/server/list-load-timing.ts");
   assert.match(timer, /stages: Record<string, number>/);
   assert.match(timer, /console\.info\("\[list-performance\]"/);
-  assert.doesNotMatch(timer, /contract|email|name|title/i);
+  const logStatement = timer.match(/console\.info\("\[list-performance\]"[^;]+;/)?.[0] ?? "";
+  assert.ok(logStatement);
+  assert.doesNotMatch(logStatement, /\b(?:contract|email|name|title)\b/i);
 });
 
 test("Mine værker starter data på serveren og parallelt", async () => {

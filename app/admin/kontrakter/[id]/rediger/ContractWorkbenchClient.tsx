@@ -938,7 +938,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
           </Button>
           <Button size="sm" className={`h-7 shrink-0 gap-1.5 rounded-sm px-2 text-xs ${variant === "commented" ? "bg-background font-medium text-foreground shadow-xs" : ""}`} variant={variant === "commented" ? "secondary" : "ghost"} disabled={!data.documents.commented?.url} onClick={() => setVariant("commented")}>
             {variant === "commented" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
-            Kommenteret PDF
+            Konverteret PDF
           </Button>
         </div>
         {data.documents.original?.sourceUrl && <Button asChild size="icon" variant="outline" className="h-8 w-8 shrink-0" title="Download uændret original"><a href={data.documents.original.sourceUrl} download><Download className="h-3.5 w-3.5" /><span className="sr-only">Download uændret original</span></a></Button>}
@@ -954,8 +954,11 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
       className={`grid min-h-0 flex-1 ${resizingSplit ? "select-none" : ""}`}
       style={splitLayout ? { gridTemplateColumns: `minmax(260px, ${splitPercent}fr) 8px minmax(420px, ${100 - splitPercent}fr)` } : undefined}
     >
-      <section data-testid="contract-document-pane" className={`${splitLayout || mobilePane === "document" ? "block" : "hidden"} min-w-0 overflow-hidden border-r ${splitLayout ? "min-h-0" : "min-h-[70svh]"}`}>
-        {documentUrl ? documentIsPdf ? <PdfViewer key={`${contract.id}-${documentUrl}`} url={documentUrl} activeHighlight={activeField?.highlight ?? null} pageNavigationHint={activeField?.highlight ?? activeField?.quote ?? undefined} activePage={contractEvidencePage(activeEvidence)} layout={documentLayout} activeClauseId={documentLayout ? activeEvidence?.clauseId ?? null : null} activeEvidence={activeEvidence} resetViewToken={pdfResetToken} /> : <ContractDocViewer url={documentUrl} filename={selectedDocument?.path} activeHighlight={activeField?.highlight ?? null} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen dokumentfil</div>}
+      <section data-testid="contract-document-pane" className={`${splitLayout || mobilePane === "document" ? "flex flex-col" : "hidden"} min-w-0 overflow-y-auto border-r ${splitLayout ? "min-h-0" : "min-h-[70svh]"}`}>
+        <DocumentProcessingReviewCard review={documentReview} loading={documentReviewLoading} activeAction={documentReviewAction} statusMessage={documentReviewStatus} onAction={action => void handleDocumentReviewAction(action)} />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {documentUrl ? documentIsPdf ? <PdfViewer key={`${contract.id}-${documentUrl}`} url={documentUrl} activeHighlight={activeField?.highlight ?? null} pageNavigationHint={activeField?.highlight ?? activeField?.quote ?? undefined} activePage={contractEvidencePage(activeEvidence)} layout={documentLayout} activeClauseId={documentLayout ? activeEvidence?.clauseId ?? null : null} activeEvidence={activeEvidence} resetViewToken={pdfResetToken} /> : <ContractDocViewer url={documentUrl} filename={selectedDocument?.path} activeHighlight={activeField?.highlight ?? null} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen dokumentfil</div>}
+        </div>
       </section>
 
       {splitLayout ? <div
@@ -993,7 +996,6 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
       ><GripVertical className="h-5 w-5 text-muted-foreground group-hover:text-foreground" /></div> : null}
 
       <section data-testid="contract-data-pane" className={`${splitLayout || mobilePane === "data" ? "block" : "hidden"} relative z-10 min-h-0 min-w-0 bg-background ${splitLayout ? "overflow-y-auto" : ""}`}>
-        <DocumentProcessingReviewCard review={documentReview} loading={documentReviewLoading} activeAction={documentReviewAction} statusMessage={documentReviewStatus} onAction={action => void handleDocumentReviewAction(action)} />
         <div className="hidden flex-wrap items-center gap-1 border-b bg-muted/20 px-3 py-1 min-[1440px]:flex"><span className="mr-1 text-[10px] font-medium">Datakilde:</span>{(["contract", "agreement", "member", "work_archive", "dfi", "tmdb", "wikidata", "manual", "stored"] as ContractFieldSource[]).map(source => <ContractSourceBadge key={source} source={source} />)}</div>
         <Tabs value={tab} onValueChange={changeTab} className="min-h-0 gap-0">
           <TabsList variant="line" className="sticky top-0 z-20 h-8 w-full justify-start overflow-x-auto rounded-none border-b bg-background px-2 py-0.5">
@@ -1187,7 +1189,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
             </Button>
             <Button size="sm" className={`gap-1.5 ${variant === "commented" ? "bg-background font-medium text-foreground shadow-xs" : ""}`} variant={variant === "commented" ? "secondary" : "ghost"} disabled={!data.documents.commented?.url} onClick={() => setVariant("commented")}>
               {variant === "commented" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
-              Kommenteret PDF
+              Konverteret PDF
             </Button>
           </div>
         </DialogHeader>

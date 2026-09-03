@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { contractDocumentPresentation, contractEpisodeNumbersFromLayout, contractEvidencePage, contractSeriesBaseTitle, fieldEvidence, findContractTypeEvidence, findCopydanEvidence, findSvodEvidence, findSignatureEvidence, findProducerEvidence, pdfBboxToViewportRect, safeContractReturnTo, suggestLocalContractWork } from "../lib/contract-workbench";
 import { calculatePdfEvidenceScale, calculatePdfFitWidthScale, CONTRACT_WORKBENCH_SPLIT_MIN_WIDTH, usesContractWorkbenchSplitLayout } from "../lib/contract-workbench-responsive";
+import { extractBaseSeriesTitle, parseSeasonNumberFromTitle } from "../lib/dfi-metadata";
 
 test("kontraktarbejdsfladen accepterer kun retur-URL'er i kontraktadministrationen", () => {
   assert.equal(
@@ -12,7 +13,7 @@ test("kontraktarbejdsfladen accepterer kun retur-URL'er i kontraktadministration
   assert.equal(safeContractReturnTo("//example.com/admin/kontrakter"), "/admin/kontrakter?tab=arkiv");
 });
 
-test("dokumentversioner skelner mellem juridisk original, Word-visning og kommenteret PDF", () => {
+test("dokumentversioner skelner mellem juridisk original, Word-visning og konverteret PDF", () => {
   assert.deepEqual(contractDocumentPresentation({
     originalPath: "org/contract.docx",
     originalViewPath: "org/processed/original-view.pdf",
@@ -23,12 +24,12 @@ test("dokumentversioner skelner mellem juridisk original, Word-visning og kommen
     hasOriginal: true,
     hasOriginalView: true,
     hasCommentedPdf: true,
-    processingLabel: "Kommenteret PDF klar",
+    processingLabel: "Konverteret PDF klar",
     processingTone: "success",
   });
 });
 
-test("dokumentstatus lover ikke en kommenteret PDF for en ubehandlet original", () => {
+test("dokumentstatus lover ikke en konverteret PDF for en ubehandlet original", () => {
   const state = contractDocumentPresentation({
     originalPath: "org/contract.pdf",
     processingStatus: "processing",
@@ -275,4 +276,33 @@ test("Producent identificeres automatisk på side 1 ud fra layout og kontraktens
   assert.equal(evidence?.clauseId, "s1_c2");
   assert.equal(evidence?.page, 1);
   assert.equal(evidence?.producerName, "Apple Tree Productions");
+});
+
+test("Leverandøraftale identificerer Underleverandøren som kildebevis (Ternet Ninja 3)", () => {
+  const evidence = findContractTypeEvidence("leverandør", {
+    type: "pdf",
+    pageCount: 6,
+    fragmentCount: 4,
+    clauses: [
+      { id: "c1", page: 1, text: "Aftale om klippearbejde", bold: true, numbered: false },
+      { id: "c2", page: 1, text: "Underleverandøren skal udføre Opgaven fra den 4. september 2023 til og med den 29. februar 2024", bold: false, numbered: false },
+      { id: "c3", page: 2, text: "betaler A.Film et buy-out honorar til Underleverandøren på 3.673,50 kr. ekskl. moms pr. arbejdsdag.", bold: false, numbered: false },
+    ],
+  });
+
+  assert.ok(evidence);
+  assert.equal(evidence?.clauseId, "c3");
+  assert.equal(evidence?.page, 2);
+  assert.equal(evidence?.focusText, "Underleverandøren");
+  assert.match(evidence?.quote ?? "", /Underleverandøren/);
+});
+
+test("Serie- og sæsongenkendelse udtrækker basistitel og sæson for DNA 2 og DNA2", () => {
+  assert.equal(parseSeasonNumberFromTitle("DNA 2"), 2);
+  assert.equal(parseSeasonNumberFromTitle("DNA2"), 2);
+  assert.equal(parseSeasonNumberFromTitle("DNA sæson 2"), 2);
+
+  assert.deepEqual(extractBaseSeriesTitle("DNA 2"), { baseTitle: "DNA", seasonNumber: 2 });
+  assert.deepEqual(extractBaseSeriesTitle("DNA2"), { baseTitle: "DNA", seasonNumber: 2 });
+  assert.deepEqual(extractBaseSeriesTitle("DNA"), { baseTitle: "DNA", seasonNumber: null });
 });

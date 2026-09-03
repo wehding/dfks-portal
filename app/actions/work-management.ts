@@ -865,7 +865,7 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
     return { success: true, works: [], totalCount: 0, totalAllCount: includeSummary ? allTotal : undefined, stats: includeSummary ? { total: Number(stats?.total ?? allTotal), withContract: Number(stats?.with_contract ?? 0), missingContract: Number(stats?.missing_contract ?? allTotal) } : undefined, lookups, context: { orgId, role: admin.role }, timing };
   }
 
-  const workListFields = "id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, alternative_titles, production_companies, status, dfi_id, tmdb_id, imdb_id, description, poster_url, created_at";
+  const workListFields = "id, org_id, title, type, year, production_year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, alternative_titles, production_companies, status, dfi_id, tmdb_id, imdb_id, description, poster_url, created_at";
   let countQuery = db.from("works").select("id", { count: "exact", head: true }).eq("org_id", orgId);
   let workListQuery = db
     .from("works")
@@ -917,7 +917,7 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
 
   const workIds = rows.map(work => work.id);
   const parentIds = uniqueIds(rows.map(work => (work as { parent_work_id?: string | null }).parent_work_id));
-  const [requestsResult, contractsResult, assignmentsResult, productionNumbersResult, distributionsResult, parentsResult] = await Promise.all([
+  const [requestsResult, contractsResult, assignmentsResult, productionNumbersResult, distributionsResult, parentsResult, declarationsResult] = await Promise.all([
     workIds.length
       ? db.from("work_change_requests").select("id, work_id, status").eq("org_id", orgId).in("work_id", workIds)
       : Promise.resolve({ data: [], error: null }),
@@ -936,8 +936,15 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
     parentIds.length
       ? db.from("works").select(workListFields).eq("org_id", orgId).in("id", parentIds)
       : Promise.resolve({ data: [], error: null }),
+    workIds.length
+      ? db.from("legacy_work_declarations")
+          .select("id, root_work_id, qualifying_scope_ids_snapshot, rights_holder_id, accepted_at")
+          .eq("org_id", orgId)
+          .is("invalidated_at", null)
+          .in("root_work_id", [...new Set([...workIds, ...parentIds])])
+      : Promise.resolve({ data: [], error: null }),
   ]);
-  for (const result of [requestsResult, contractsResult, assignmentsResult, productionNumbersResult, distributionsResult, parentsResult]) {
+  for (const result of [requestsResult, contractsResult, assignmentsResult, productionNumbersResult, distributionsResult, parentsResult, declarationsResult]) {
     if (result.error) throw new Error(result.error.message);
   }
 
@@ -971,8 +978,16 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
     list.push(distribution);
     distributionsByWork.set(distribution.work_id, list);
   }
+  const declaredWorkIds = new Set<string>();
+  for (const decl of declarationsResult.data ?? []) {
+    if (decl.root_work_id) declaredWorkIds.add(decl.root_work_id);
+    for (const scopeId of (decl.qualifying_scope_ids_snapshot ?? []) as string[]) {
+      if (scopeId) declaredWorkIds.add(scopeId);
+    }
+  }
   const hydratedRows = rows.map(work => ({
     ...work,
+    has_declaration: declaredWorkIds.has(work.id) || Boolean(work.parent_work_id && declaredWorkIds.has(work.parent_work_id)),
     work_change_requests: requestsByWork.get(work.id) ?? [],
     contracts: contractsByWork.get(work.id) ?? [],
     work_assignments: assignmentsByWork.get(work.id) ?? [],
@@ -1034,6 +1049,7 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
     if (group.kind === "work") {
       return {
         ...group.work,
+        has_declaration: Boolean((group.work as any).has_declaration),
         is_season_group: false,
         group_key: group.key,
         child_work_ids: group.workIds,
@@ -1062,6 +1078,8 @@ export async function fetchAdminWorksPage(params: AdminWorksPageParams = {}) {
       title: group.title,
       type: group.type,
       year: group.year,
+      production_year: group.episodes.find(episode => (episode as any).production_year != null)?.production_year ?? (parent as any)?.production_year ?? null,
+      has_declaration: group.workIds.some(id => declaredWorkIds.has(id)) || declaredWorkIds.has(group.parentWorkId),
       duration_minutes: null,
       season_count: null,
       episode_count: group.episodeCount,
@@ -1156,8 +1174,22 @@ export async function fetchAdminSeasonEpisodes(params: { parentWorkId: string; s
     .eq("work_id", params.parentWorkId)
     .eq("season_number", params.seasonNumber);
   if (seasonContractError) return { success: false, error: seasonContractError.message, works: [] };
+  const episodeIds = (data ?? []).map(work => work.id);
+  const { data: seasonDeclarations } = await db.from("legacy_work_declarations")
+    .select("id, root_work_id, qualifying_scope_ids_snapshot")
+    .eq("org_id", orgId)
+    .is("invalidated_at", null)
+    .in("root_work_id", [params.parentWorkId, ...episodeIds]);
+  const declaredEpisodeIds = new Set<string>();
+  for (const decl of seasonDeclarations ?? []) {
+    if (decl.root_work_id) declaredEpisodeIds.add(decl.root_work_id);
+    for (const scopeId of (decl.qualifying_scope_ids_snapshot ?? []) as string[]) {
+      if (scopeId) declaredEpisodeIds.add(scopeId);
+    }
+  }
   const works = (data ?? []).map(work => ({
     ...work,
+    has_declaration: declaredEpisodeIds.has(work.id) || declaredEpisodeIds.has(params.parentWorkId),
     contracts: [
       ...(work.contracts ?? []),
       ...(seasonContracts ?? []).filter(contract => contractCoversEpisode(

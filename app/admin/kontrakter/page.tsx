@@ -1,4 +1,5 @@
 import { fetchAdminContractsPage } from "@/app/actions/member-contracts";
+import { fetchAdminContractTaskCounts } from "@/app/actions/admin-contract-work-queues";
 import ContractArchiveClient from "./ContractArchiveClient";
 import type { AdminContractsPageParams } from "@/app/actions/member-contracts";
 import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
@@ -31,12 +32,19 @@ export default async function AdminKontrakterPage({ searchParams }: { searchPara
   const requestedTab = value(query.tab, "arkiv");
   const supportedNonArchiveTab = requestedTab === "valideringskoe"
     || requestedTab === "upload";
-  const initialResult = supportedNonArchiveTab
-    ? undefined
-    : await fetchAdminContractsPage(initialQuery);
+  const [initialResult, taskCountsResult] = await Promise.all([
+    supportedNonArchiveTab
+      ? Promise.resolve(undefined)
+      : fetchAdminContractsPage(initialQuery),
+    fetchAdminContractTaskCounts(),
+  ]);
+  const initialTaskCounts = taskCountsResult.success
+    ? taskCountsResult.counts
+    : { validation: 0, ownership: 0, messages: 0, drafts: 0 };
   return <ContractArchiveClient
     initialResult={initialResult}
     initialQuery={initialQuery}
     canManageOwnership={canManageOwnership}
+    initialTaskCounts={initialTaskCounts}
   />;
 }

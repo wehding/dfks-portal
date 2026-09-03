@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import Link from "next/link";
 import {
   BrainCircuit,
   ChevronDown,
@@ -15,6 +16,17 @@ import {
   Monitor,
   Tablet,
   Shield,
+  Copy,
+  Check,
+  FileDown,
+  Search,
+  Trash2,
+  Sparkles,
+  Link2,
+  CheckCheck,
+  UserCheck,
+  User,
+  ArrowRight,
 } from "lucide-react";
 import type { SuperadminInsightsData } from "@/lib/server/superadmin-overview";
 import { Badge } from "@/components/ui/badge";
@@ -35,17 +47,36 @@ function formatRelativeTime(isoString: string): string {
   return new Date(isoString).toLocaleDateString("da-DK", { day: "numeric", month: "short" });
 }
 
+function getCategoryIcon(key: string) {
+  switch (key) {
+    case "create": return Sparkles;
+    case "download": return FileDown;
+    case "read": return Search;
+    case "retention": return Trash2;
+    case "ai_analysis": return BrainCircuit;
+    case "link": return Link2;
+    case "validate": return CheckCheck;
+    case "complete_onboarding": return UserCheck;
+    default: return BarChart3;
+  }
+}
+
 export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
-    if (typeof window === "undefined") return { analytics: true, speed: true, adminLog: true, errors: true };
+    if (typeof window === "undefined") return { analytics: true, speed: true, activity: true, errors: true };
     try {
       const saved = localStorage.getItem("dfks_insights_sections");
       if (saved) return JSON.parse(saved);
     } catch {
       // ignore
     }
-    return { analytics: true, speed: true, adminLog: true, errors: true };
+    return { analytics: true, speed: true, activity: true, errors: true };
   });
+
+  const [activityTab, setActivityTab] = useState<"admin" | "user">("admin");
+  const [selectedOrgId, setSelectedOrgId] = useState<string>("all");
+  const [copiedReport, setCopiedReport] = useState(false);
+  const [showReportPreview, setShowReportPreview] = useState(false);
 
   const toggleSection = (key: string) => {
     setOpenSections(prev => {
@@ -59,28 +90,89 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
     });
   };
 
-  const { analytics, speedInsights, adminActivityLog, systemErrors } = data;
+  const { analytics, speedInsights, adminActivityLog, userActivityLog, organisations, systemErrors } = data;
+
+  // Filtrering på organisation i aktivitetsmonitoren
+  const filteredAdminLogs = useMemo(() => {
+    if (selectedOrgId === "all") return adminActivityLog;
+    return adminActivityLog.filter(item => item.orgId === selectedOrgId);
+  }, [adminActivityLog, selectedOrgId]);
+
+  const filteredUserLogs = useMemo(() => {
+    if (selectedOrgId === "all") return userActivityLog;
+    return userActivityLog.filter(item => item.orgId === selectedOrgId);
+  }, [userActivityLog, selectedOrgId]);
+
+  // Generer tekst-/markdown-rapport over de seneste dages fejl
+  const generateErrorReportText = () => {
+    const timestamp = new Date().toLocaleString("da-DK", { dateStyle: "long", timeStyle: "short" });
+    const lines: string[] = [
+      `# Fejl- og Hændelsesrapport – DFKS Portal`,
+      `Genereret: ${timestamp}`,
+      `Overvåget miljø: Produktion / Staging`,
+      ``,
+      `## 1. Opsummering`,
+      `- Registrerede fejl/sikkerhedshændelser (30d): ${systemErrors.length}`,
+      `- Aktive organisationer overvåget: ${organisations.length}`,
+      `- Systemstatus: ${speedInsights.systemHealth === "healthy" ? "Normal drift" : "Advarsel"}`,
+      `- Median responstid: ${formatResponseDuration(speedInsights.medianResponseTimeMs)}`,
+      ``,
+      `## 2. Registrerede Fejllogs`,
+    ];
+
+    if (systemErrors.length === 0) {
+      lines.push(`Ingen registrerede fejl i perioden.`);
+    } else {
+      systemErrors.forEach((err, idx) => {
+        const timeStr = new Date(err.occurredAt).toLocaleString("da-DK");
+        lines.push(`### Fejl #${idx + 1}: ${err.description}`);
+        lines.push(`- Tidspunkt: ${timeStr} (${formatRelativeTime(err.occurredAt)})`);
+        lines.push(`- Komponent: ${err.systemComponent || "Core System"}`);
+        lines.push(`- Fejlkode: ${err.errorCode || "N/A"}`);
+        lines.push(`- Udfald: ${err.outcome}`);
+        if (err.actorName) lines.push(`- Berørt bruger: ${err.actorName}`);
+        lines.push(``);
+      });
+    }
+
+    lines.push(`## 3. Nøglesider Indlæsningshastighed`);
+    speedInsights.keyPages.forEach(p => {
+      lines.push(`- ${p.name} (${p.route}): Gns. ${p.averageMs} ms (P90: ${p.p90Ms} ms) – Status: ${p.statusLabel}`);
+    });
+
+    return lines.join("\n");
+  };
+
+  const handleCopyReport = async () => {
+    const reportText = generateErrorReportText();
+    try {
+      await navigator.clipboard.writeText(reportText);
+      setCopiedReport(true);
+      setTimeout(() => setCopiedReport(false), 2500);
+    } catch {
+      // fallback
+    }
+  };
 
   return (
-    <div className="space-y-6 max-w-6xl pb-10">
+    <div className="space-y-4 max-w-6xl pb-10">
       {/* Top Banner / Badge */}
-      <div className="rounded-xl border border-indigo-200/80 bg-gradient-to-r from-indigo-50/70 via-purple-50/50 to-blue-50/70 p-5 shadow-sm dark:border-indigo-900/50 dark:from-indigo-950/20 dark:via-purple-950/20 dark:to-blue-950/20">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-2 rounded-full border border-indigo-300/80 bg-indigo-100/70 px-3 py-1 text-xs font-semibold text-indigo-800 shadow-sm dark:border-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-200">
+      <div className="rounded-xl border border-indigo-200/80 bg-gradient-to-r from-indigo-50/70 via-purple-50/50 to-blue-50/70 p-4 shadow-sm dark:border-indigo-900/50 dark:from-indigo-950/20 dark:via-purple-950/20 dark:to-blue-950/20">
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-indigo-300/80 bg-indigo-100/70 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-800 shadow-sm dark:border-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-200">
               <BrainCircuit className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
               <span>Super Admin Aktivitetsinfo</span>
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
+            <h1 className="text-lg font-bold tracking-tight text-foreground sm:text-xl">
               Insights & Systemovervågning
             </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground max-w-3xl leading-relaxed">
-              Tvær-organisatorisk overblik over brugeradfærd, administratorhandlinger på tværs af organisationer,
-              Vercel Speed Insights og systemperformance.
+            <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
+              Kompakt realtidsoverblik over telemetri, sidehastigheder, tværgående admin- og brugeradfærd samt hændelser.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="bg-background/80 text-xs px-2.5 py-1">
+            <Badge variant="outline" className="bg-background/80 text-[11px] px-2.5 py-1">
               <Shield className="mr-1 h-3.5 w-3.5 text-indigo-500" /> Kun synlig for Superadmin
             </Badge>
           </div>
@@ -93,22 +185,22 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
         onOpenChange={() => toggleSection("analytics")}
         className="rounded-xl border bg-card shadow-sm transition-all overflow-hidden"
       >
-        <CollapsibleTrigger className="flex w-full items-center justify-between p-4 sm:p-5 text-left hover:bg-muted/30 transition-colors">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
-              <BarChart3 className="h-5 w-5" />
+        <CollapsibleTrigger className="flex w-full items-center justify-between p-3.5 sm:p-4 text-left hover:bg-muted/30 transition-colors">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
+              <BarChart3 className="h-4 w-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-foreground sm:text-base">
-                Vercel Analytics & Brugeraktivitet
+              <h2 className="text-sm font-semibold text-foreground">
+                Vercel Analytics & Handlingsfordeling
               </h2>
-              <p className="text-xs text-muted-foreground">
-                Realtidsmåling af aktive brugere, sessioner og adfærd i portalen
+              <p className="text-[11px] text-muted-foreground">
+                Realtidsmåling af aktive brugere, enheder og specifikke handlingskategorier
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 text-[11px] font-medium border-0">
+            <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 text-[10px] font-medium border-0">
               Live aktivitet
             </Badge>
             <ChevronDown
@@ -119,54 +211,67 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
           </div>
         </CollapsibleTrigger>
 
-        <CollapsibleContent className="border-t border-border/60 p-4 sm:p-5 pt-4 space-y-5">
-          {/* Nøgletal */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="rounded-lg border bg-muted/20 p-3.5">
-              <p className="text-[11px] font-medium text-muted-foreground">Aktive i dag (24t)</p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{analytics.activeUsers24h}</p>
-              <p className="mt-0.5 text-[10px] text-emerald-600 font-medium">Brugere med aktivitet</p>
+        <CollapsibleContent className="border-t border-border/60 p-3.5 sm:p-4 pt-3 space-y-4">
+          {/* Nulstillings-info */}
+          <div className="flex items-center justify-between rounded-lg border border-blue-200/80 bg-blue-50/60 dark:border-blue-950 dark:bg-blue-950/20 px-3 py-1.5 text-[11px] text-blue-900 dark:text-blue-200">
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400" />
+              <span>
+                <strong>Nulstillet til brugere:</strong> Målingen tæller reelle handlinger fra i dag (3. sep. 2026), hvor systemet åbnes for brugere.
+              </span>
+            </span>
+            <span className="text-[10px] text-muted-foreground hidden sm:inline">Ekskluderer historisk testdata</span>
+          </div>
+
+          {/* Nøgletal (kompakt) */}
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            <div className="rounded-lg border bg-muted/20 p-2.5">
+              <p className="text-[10px] font-medium text-muted-foreground">Aktive i dag (24t)</p>
+              <p className="mt-0.5 text-xl font-bold tabular-nums text-foreground">{analytics.activeUsers24h}</p>
+              <p className="text-[10px] text-emerald-600 font-medium">Brugere med aktivitet</p>
             </div>
-            <div className="rounded-lg border bg-muted/20 p-3.5">
-              <p className="text-[11px] font-medium text-muted-foreground">Aktive (7 dage)</p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{analytics.activeUsers7d}</p>
-              <p className="mt-0.5 text-[10px] text-muted-foreground">Unikke brugere</p>
+            <div className="rounded-lg border bg-muted/20 p-2.5">
+              <p className="text-[10px] font-medium text-muted-foreground">Aktive (7 dage)</p>
+              <p className="mt-0.5 text-xl font-bold tabular-nums text-foreground">{analytics.activeUsers7d}</p>
+              <p className="text-[10px] text-muted-foreground">Unikke brugere</p>
             </div>
-            <div className="rounded-lg border bg-muted/20 p-3.5">
-              <p className="text-[11px] font-medium text-muted-foreground">Månedlige aktive (30d)</p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{analytics.activeUsers30d}</p>
-              <p className="mt-0.5 text-[10px] text-muted-foreground">Medlemmer + staff</p>
+            <div className="rounded-lg border bg-muted/20 p-2.5">
+              <p className="text-[10px] font-medium text-muted-foreground">Månedlige aktive (30d)</p>
+              <p className="mt-0.5 text-xl font-bold tabular-nums text-foreground">{analytics.activeUsers30d}</p>
+              <p className="text-[10px] text-muted-foreground">Unikke brugere (faktisk)</p>
             </div>
-            <div className="rounded-lg border bg-muted/20 p-3.5">
-              <p className="text-[11px] font-medium text-muted-foreground">Handlinger (30d)</p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{analytics.actionsLast30Days}</p>
-              <p className="mt-0.5 text-[10px] text-muted-foreground">Audit & systemhændelser</p>
+            <div className="rounded-lg border bg-muted/20 p-2.5">
+              <p className="text-[10px] font-medium text-muted-foreground">Handlinger (30d)</p>
+              <p className="mt-0.5 text-xl font-bold tabular-nums text-foreground">{analytics.actionsLast30Days}</p>
+              <p className="text-[10px] text-muted-foreground">Reelle brugerhandlinger</p>
             </div>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-3 md:grid-cols-2">
             {/* Sessioner & roller */}
-            <div className="rounded-lg border p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-foreground">Aktivitetsfordeling</span>
-                <span className="text-[11px] text-muted-foreground">{analytics.sessionBreakdown.memberEvents + analytics.sessionBreakdown.adminEvents} hændelser</span>
+            <div className="rounded-lg border p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs font-semibold text-foreground">
+                <span>Aktivitetsfordeling</span>
+                <span className="text-[10px] font-normal text-muted-foreground">
+                  {analytics.sessionBreakdown.memberEvents + analytics.sessionBreakdown.adminEvents} hændelser
+                </span>
               </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs">
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-[11px]">
                   <span className="text-muted-foreground">Medlemmer (Portal)</span>
                   <span className="font-semibold">{analytics.sessionBreakdown.membersPct}%</span>
                 </div>
-                <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
                   <div
                     className="h-full bg-blue-500 rounded-full"
                     style={{ width: `${analytics.sessionBreakdown.membersPct}%` }}
                   />
                 </div>
-                <div className="flex justify-between text-xs pt-1">
+                <div className="flex justify-between text-[11px] pt-0.5">
                   <span className="text-muted-foreground">Administratorer & Staff</span>
                   <span className="font-semibold">{analytics.sessionBreakdown.adminsPct}%</span>
                 </div>
-                <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
                   <div
                     className="h-full bg-indigo-600 rounded-full"
                     style={{ width: `${analytics.sessionBreakdown.adminsPct}%` }}
@@ -176,67 +281,95 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
             </div>
 
             {/* Enhedsfordeling */}
-            <div className="rounded-lg border p-4 space-y-3">
-              <span className="text-xs font-semibold text-foreground">Enhedsfordeling (Vercel Client Telemetry)</span>
-              <div className="grid grid-cols-3 gap-2 pt-1 text-center">
-                <div className="rounded border bg-muted/20 p-2">
-                  <Monitor className="h-4 w-4 mx-auto text-muted-foreground mb-1" />
-                  <p className="text-sm font-bold text-foreground">{analytics.deviceBreakdown.desktop}%</p>
-                  <p className="text-[10px] text-muted-foreground">Desktop</p>
+            <div className="rounded-lg border p-3 space-y-2">
+              <span className="text-xs font-semibold text-foreground">Enhedsfordeling (Vercel Telemetry)</span>
+              <div className="grid grid-cols-3 gap-2 text-center pt-0.5">
+                <div className="rounded border bg-muted/20 p-1.5">
+                  <Monitor className="h-3.5 w-3.5 mx-auto text-muted-foreground mb-0.5" />
+                  <p className="text-xs font-bold text-foreground">{analytics.deviceBreakdown.desktop}%</p>
+                  <p className="text-[9px] text-muted-foreground">Desktop</p>
                 </div>
-                <div className="rounded border bg-muted/20 p-2">
-                  <Smartphone className="h-4 w-4 mx-auto text-muted-foreground mb-1" />
-                  <p className="text-sm font-bold text-foreground">{analytics.deviceBreakdown.mobile}%</p>
-                  <p className="text-[10px] text-muted-foreground">Mobil</p>
+                <div className="rounded border bg-muted/20 p-1.5">
+                  <Smartphone className="h-3.5 w-3.5 mx-auto text-muted-foreground mb-0.5" />
+                  <p className="text-xs font-bold text-foreground">{analytics.deviceBreakdown.mobile}%</p>
+                  <p className="text-[9px] text-muted-foreground">Mobil</p>
                 </div>
-                <div className="rounded border bg-muted/20 p-2">
-                  <Tablet className="h-4 w-4 mx-auto text-muted-foreground mb-1" />
-                  <p className="text-sm font-bold text-foreground">{analytics.deviceBreakdown.tablet}%</p>
-                  <p className="text-[10px] text-muted-foreground">Tablet</p>
+                <div className="rounded border bg-muted/20 p-1.5">
+                  <Tablet className="h-3.5 w-3.5 mx-auto text-muted-foreground mb-0.5" />
+                  <p className="text-xs font-bold text-foreground">{analytics.deviceBreakdown.tablet}%</p>
+                  <p className="text-[9px] text-muted-foreground">Tablet</p>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Top handlinger */}
-          <div className="rounded-lg border p-4 space-y-3">
-            <span className="text-xs font-semibold text-foreground">Mest benyttede funktioner (seneste 30 dage)</span>
+          {/* 8 Kompakte Handlingsbokse med forklaringer */}
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-foreground">
+                Uddybende handlingsstatistik (seneste 30 dage)
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                Hver boks beskriver funktionens formål i systemet
+              </span>
+            </div>
+
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              {analytics.topActions.map(action => (
-                <div key={action.action} className="flex items-center justify-between rounded border bg-muted/15 px-3 py-2 text-xs">
-                  <span className="font-medium text-foreground truncate">{action.label}</span>
-                  <Badge variant="secondary" className="ml-2 tabular-nums text-[10px]">
-                    {action.count} ({action.pct}%)
-                  </Badge>
-                </div>
-              ))}
+              {analytics.actionCategories.map(item => {
+                const Icon = getCategoryIcon(item.key);
+                return (
+                  <div
+                    key={item.key}
+                    className="flex flex-col justify-between rounded-lg border bg-muted/15 p-2.5 transition-colors hover:bg-muted/30"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Icon className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                          <span className="font-semibold text-xs text-foreground truncate">{item.label}</span>
+                        </div>
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 tabular-nums shrink-0">
+                          {item.count}
+                        </Badge>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground leading-snug mt-1.5">
+                        {item.explanation}
+                      </p>
+                    </div>
+                    <div className="mt-2 pt-1.5 border-t border-border/50 flex items-center justify-between text-[10px] text-muted-foreground">
+                      <span>Andel af hændelser:</span>
+                      <span className="font-medium text-foreground">{item.pct}%</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Sektion 2: Speed Insights & Web Vitals */}
+      {/* Sektion 2: Speed Insights & Nøglesiders Loadtider */}
       <Collapsible
         open={openSections.speed}
         onOpenChange={() => toggleSection("speed")}
         className="rounded-xl border bg-card shadow-sm transition-all overflow-hidden"
       >
-        <CollapsibleTrigger className="flex w-full items-center justify-between p-4 sm:p-5 text-left hover:bg-muted/30 transition-colors">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
-              <Zap className="h-5 w-5" />
+        <CollapsibleTrigger className="flex w-full items-center justify-between p-3.5 sm:p-4 text-left hover:bg-muted/30 transition-colors">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+              <Zap className="h-4 w-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-foreground sm:text-base">
-                Vercel Speed Insights & Performance
+              <h2 className="text-sm font-semibold text-foreground">
+                Vercel Speed Insights & Sidehastigheder
               </h2>
-              <p className="text-xs text-muted-foreground">
-                Core Web Vitals, API-latens og system svartider
+              <p className="text-[11px] text-muted-foreground">
+                Core Web Vitals med forklaringstekster samt målte loadtider på centrale bruger- og adminsider
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 text-[11px] font-medium border-0">
+            <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 text-[10px] font-medium border-0">
               Optimeret score
             </Badge>
             <ChevronDown
@@ -247,164 +380,291 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
           </div>
         </CollapsibleTrigger>
 
-        <CollapsibleContent className="border-t border-border/60 p-4 sm:p-5 pt-4 space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <div className="rounded-lg border bg-muted/20 p-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-muted-foreground">LCP</span>
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              </div>
-              <p className="mt-1 text-xl font-bold tabular-nums text-foreground">{speedInsights.webVitals.lcp.value}</p>
-              <p className="text-[10px] text-muted-foreground">Mål {speedInsights.webVitals.lcp.target}</p>
+        <CollapsibleContent className="border-t border-border/60 p-3.5 sm:p-4 pt-3 space-y-4">
+          {/* Core Web Vitals med forklaringer */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs font-semibold text-foreground">
+              <span>Core Web Vitals (Brugernes faktiske oplevelse)</span>
+              <span className="text-[10px] text-muted-foreground font-normal">Realtidstelemetri</span>
             </div>
-            <div className="rounded-lg border bg-muted/20 p-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-muted-foreground">INP</span>
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              </div>
-              <p className="mt-1 text-xl font-bold tabular-nums text-foreground">{speedInsights.webVitals.inp.value}</p>
-              <p className="text-[10px] text-muted-foreground">Mål {speedInsights.webVitals.inp.target}</p>
-            </div>
-            <div className="rounded-lg border bg-muted/20 p-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-muted-foreground">CLS</span>
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              </div>
-              <p className="mt-1 text-xl font-bold tabular-nums text-foreground">{speedInsights.webVitals.cls.value}</p>
-              <p className="text-[10px] text-muted-foreground">Mål {speedInsights.webVitals.cls.target}</p>
-            </div>
-            <div className="rounded-lg border bg-muted/20 p-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-muted-foreground">FCP</span>
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              </div>
-              <p className="mt-1 text-xl font-bold tabular-nums text-foreground">{speedInsights.webVitals.fcp.value}</p>
-              <p className="text-[10px] text-muted-foreground">Mål {speedInsights.webVitals.fcp.target}</p>
-            </div>
-            <div className="rounded-lg border bg-muted/20 p-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-muted-foreground">TTFB</span>
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              </div>
-              <p className="mt-1 text-xl font-bold tabular-nums text-foreground">{speedInsights.webVitals.ttfb.value}</p>
-              <p className="text-[10px] text-muted-foreground">Mål {speedInsights.webVitals.ttfb.target}</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {Object.entries(speedInsights.webVitals).map(([key, item]) => (
+                <div key={key} className="flex flex-col justify-between rounded-lg border bg-muted/20 p-2.5">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-foreground">{key}</span>
+                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    </div>
+                    <p className="mt-1 text-lg font-bold tabular-nums text-foreground">{item.value}</p>
+                    <p className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400">Mål {item.target}</p>
+                  </div>
+                  <p className="mt-1.5 pt-1.5 border-t border-border/40 text-[10px] text-muted-foreground leading-snug">
+                    {item.explanation}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
 
-          <div className="flex items-center justify-between rounded-lg border bg-emerald-50/60 dark:bg-emerald-950/20 px-4 py-2.5 text-xs text-emerald-900 dark:text-emerald-200">
+          {/* Nøglesiders loadtider */}
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-foreground">
+                Loadhastighed på nøglesider (Arkiver & Mine Sider)
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                Gennemsnitlig server- og dataindlæsningstid (letvægts-måling)
+              </span>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {speedInsights.keyPages.map(page => (
+                <div
+                  key={page.key}
+                  className="rounded-lg border bg-muted/15 p-2.5 space-y-2 transition-colors hover:bg-muted/30"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-foreground truncate">{page.name}</span>
+                    <Badge
+                      className={`text-[9px] px-1.5 py-0 border-0 ${
+                        page.status === "fast"
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
+                          : page.status === "moderate"
+                          ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
+                          : "bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300"
+                      }`}
+                    >
+                      {page.statusLabel}
+                    </Badge>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <div>
+                      <span className="text-lg font-bold tabular-nums text-foreground">{page.averageMs}</span>
+                      <span className="text-[10px] text-muted-foreground ml-1">ms gns.</span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground tabular-nums">P90: {page.p90Ms} ms</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10px]">
+                    <span className="text-muted-foreground font-mono text-[9px] truncate max-w-[130px]" title={page.route}>
+                      {page.route}
+                    </span>
+                    <Link href={page.route} className="text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-0.5">
+                      <span>Test</span>
+                      <ArrowRight className="h-2.5 w-2.5" />
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border bg-emerald-50/60 dark:bg-emerald-950/20 px-3.5 py-2 text-xs text-emerald-900 dark:text-emerald-200">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
               <span>
-                Median svartid for sagsbehandling:{" "}
+                Median sagsbehandlings-svartid:{" "}
                 <strong className="font-semibold">
                   {formatResponseDuration(speedInsights.medianResponseTimeMs)}
                 </strong>{" "}
                 (P90: {formatResponseDuration(speedInsights.p90ResponseTimeMs)})
               </span>
             </div>
-            <span className="text-[11px] text-muted-foreground hidden sm:inline">Edge routing & global cache aktiv</span>
+            <span className="text-[10px] text-muted-foreground hidden sm:inline">Edge-routing og global responsivitet</span>
           </div>
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Sektion 3: Tværgående Administrator-log */}
+      {/* Sektion 3: Aktivitetsmonitor ("Kig over skulderen") */}
       <Collapsible
-        open={openSections.adminLog}
-        onOpenChange={() => toggleSection("adminLog")}
+        open={openSections.activity}
+        onOpenChange={() => toggleSection("activity")}
         className="rounded-xl border bg-card shadow-sm transition-all overflow-hidden"
       >
-        <CollapsibleTrigger className="flex w-full items-center justify-between p-4 sm:p-5 text-left hover:bg-muted/30 transition-colors">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
-              <Users2 className="h-5 w-5" />
+        <CollapsibleTrigger className="flex w-full items-center justify-between p-3.5 sm:p-4 text-left hover:bg-muted/30 transition-colors">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
+              <Users2 className="h-4 w-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-foreground sm:text-base">
-                Administratoraktivitet på tværs af organisationer
+              <h2 className="text-sm font-semibold text-foreground">
+                Aktivitetsmonitor: Administratorer & Medlemmer
               </h2>
-              <p className="text-xs text-muted-foreground">
-                Løbende log over hvad administratorer i alle organisationer foretager sig
+              <p className="text-[11px] text-muted-foreground">
+                Følg præcis hvad administratorer og brugere foretager sig med organisationsfiltrering
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="text-xs font-normal">
-              {adminActivityLog.length} seneste handlinger
+            <Badge variant="outline" className="text-[10px] font-normal">
+              {activityTab === "admin" ? filteredAdminLogs.length : filteredUserLogs.length} handlinger
             </Badge>
             <ChevronDown
               className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${
-                openSections.adminLog ? "rotate-180" : ""
+                openSections.activity ? "rotate-180" : ""
               }`}
             />
           </div>
         </CollapsibleTrigger>
 
         <CollapsibleContent className="border-t border-border/60 p-0">
-          {adminActivityLog.length === 0 ? (
-            <div className="p-8 text-center text-xs text-muted-foreground">
-              Ingen registrerede administratorhandlinger i loggen endnu.
+          {/* Værktøjslinje: Tabs + Organisationsfilter */}
+          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 px-4 bg-muted/20 border-b border-border/60">
+            {/* Faneblade */}
+            <div className="inline-flex rounded-lg bg-muted p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setActivityTab("admin")}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  activityTab === "admin"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Shield className="h-3 w-3" />
+                <span>Administratorer</span>
+                <span className="ml-1 text-[10px] opacity-75">({filteredAdminLogs.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivityTab("user")}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  activityTab === "user"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <User className="h-3 w-3" />
+                <span>Brugere & Medlemmer</span>
+                <span className="ml-1 text-[10px] opacity-75">({filteredUserLogs.length})</span>
+              </button>
             </div>
-          ) : (
-            <div className="max-h-96 overflow-y-auto divide-y divide-border/60">
-              {adminActivityLog.map(item => (
-                <div
-                  key={item.id}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3.5 px-5 hover:bg-muted/30 text-xs transition-colors"
-                >
-                  <div className="space-y-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-foreground">{item.actorName}</span>
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                        {item.actorRole}
-                      </Badge>
-                      <span className="text-muted-foreground">•</span>
-                      <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                        <Building2 className="h-3 w-3" />
-                        {item.orgName}
-                      </span>
+
+            {/* Organisationsvælger */}
+            <div className="flex items-center gap-1.5">
+              <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+              <label htmlFor="org-filter" className="text-[11px] text-muted-foreground font-medium">
+                Organisation:
+              </label>
+              <select
+                id="org-filter"
+                value={selectedOrgId}
+                onChange={e => setSelectedOrgId(e.target.value)}
+                className="h-7 text-xs rounded-md border bg-background px-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <option value="all">Alle organisationer</option>
+                {organisations.map(org => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Aktivitetsliste */}
+          {activityTab === "admin" ? (
+            filteredAdminLogs.length === 0 ? (
+              <div className="p-8 text-center text-xs text-muted-foreground">
+                Ingen administratorhandlinger fundet for det valgte filter.
+              </div>
+            ) : (
+              <div className="max-h-96 overflow-y-auto divide-y divide-border/60">
+                {filteredAdminLogs.map(item => (
+                  <div
+                    key={item.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 px-4 hover:bg-muted/30 text-xs transition-colors"
+                  >
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-foreground">{item.actorName}</span>
+                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
+                          {item.actorRole}
+                        </Badge>
+                        <span className="text-muted-foreground">•</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <Building2 className="h-2.5 w-2.5" />
+                          {item.orgName}
+                        </span>
+                      </div>
+                      <p className="text-muted-foreground font-medium truncate text-[11px]">
+                        {item.description}
+                      </p>
                     </div>
-                    <p className="text-muted-foreground font-medium truncate">
-                      {item.description}
-                    </p>
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground shrink-0 sm:self-center">
+                      <Clock className="h-2.5 w-2.5" />
+                      <span>{formatRelativeTime(item.occurredAt)}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground shrink-0 sm:self-center">
-                    <Clock className="h-3 w-3" />
-                    <span>{formatRelativeTime(item.occurredAt)}</span>
+                ))}
+              </div>
+            )
+          ) : (
+            filteredUserLogs.length === 0 ? (
+              <div className="p-8 text-center text-xs text-muted-foreground">
+                Ingen brugerhandlinger fundet for det valgte filter.
+              </div>
+            ) : (
+              <div className="max-h-96 overflow-y-auto divide-y divide-border/60">
+                {filteredUserLogs.map(item => (
+                  <div
+                    key={item.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 px-4 hover:bg-muted/30 text-xs transition-colors"
+                  >
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-foreground">{item.actorName}</span>
+                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 text-muted-foreground">
+                          Medlem
+                        </Badge>
+                        <span className="text-muted-foreground">•</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <Building2 className="h-2.5 w-2.5" />
+                          {item.orgName}
+                        </span>
+                      </div>
+                      <p className="text-muted-foreground font-medium truncate text-[11px]">
+                        {item.description}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground shrink-0 sm:self-center">
+                      <Clock className="h-2.5 w-2.5" />
+                      <span>{formatRelativeTime(item.occurredAt)}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )
           )}
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Sektion 4: Fejllog & Sikkerhedshændelser */}
+      {/* Sektion 4: Fejllog, Sikkerhedshændelser & Rapport-generator */}
       <Collapsible
         open={openSections.errors}
         onOpenChange={() => toggleSection("errors")}
         className="rounded-xl border bg-card shadow-sm transition-all overflow-hidden"
       >
-        <CollapsibleTrigger className="flex w-full items-center justify-between p-4 sm:p-5 text-left hover:bg-muted/30 transition-colors">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
-              <AlertTriangle className="h-5 w-5" />
+        <CollapsibleTrigger className="flex w-full items-center justify-between p-3.5 sm:p-4 text-left hover:bg-muted/30 transition-colors">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+              <AlertTriangle className="h-4 w-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-foreground sm:text-base">
-                Fejllog & Sikkerhedshændelser
+              <h2 className="text-sm font-semibold text-foreground">
+                Fejllog & Hændelsesrapport
               </h2>
-              <p className="text-xs text-muted-foreground">
-                Fejlede transaktioner, adgangsafvisninger og uregelmæssigheder
+              <p className="text-[11px] text-muted-foreground">
+                Fejlede transaktioner, adgangsafvisninger samt hurtig generering af fejlrapport
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {systemErrors.length === 0 ? (
-              <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 text-[11px] font-medium border-0">
+              <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 text-[10px] font-medium border-0">
                 0 fejl
               </Badge>
             ) : (
-              <Badge variant="destructive" className="text-[11px]">
+              <Badge variant="destructive" className="text-[10px]">
                 {systemErrors.length} hændelser
               </Badge>
             )}
@@ -417,11 +677,57 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
         </CollapsibleTrigger>
 
         <CollapsibleContent className="border-t border-border/60 p-0">
+          {/* Rapport-handlingsbar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 px-4 bg-muted/20 border-b border-border/60">
+            <span className="text-xs font-semibold text-foreground">
+              Seneste systemhændelser ({systemErrors.length})
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowReportPreview(p => !p)}
+                className="text-[11px] font-medium text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted transition-colors"
+              >
+                {showReportPreview ? "Skjul forhåndsvisning" : "Forhåndsvis rapport"}
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyReport}
+                className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 transition-colors"
+              >
+                {copiedReport ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 text-white" />
+                    <span>Kopieret til udklipsholder!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5" />
+                    <span>Kopier fejlrapport</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Rapport preview boks */}
+          {showReportPreview && (
+            <div className="p-3 bg-muted/30 border-b border-border/60">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[11px] font-semibold text-foreground">Rapporttekst (Markdown / Text):</span>
+                <span className="text-[10px] text-muted-foreground">Klar til indsættelse i sager eller e-mails</span>
+              </div>
+              <pre className="p-2.5 rounded border bg-background text-[10px] font-mono text-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">
+                {generateErrorReportText()}
+              </pre>
+            </div>
+          )}
+
           {systemErrors.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
-              <CheckCircle2 className="h-7 w-7 text-emerald-500 mb-1.5" />
+            <div className="flex flex-col items-center justify-center p-6 text-center text-muted-foreground">
+              <CheckCircle2 className="h-6 w-6 text-emerald-500 mb-1" />
               <p className="text-xs font-semibold text-foreground">Ingen registrerede systemfejl</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
+              <p className="text-[10px] text-muted-foreground mt-0.5">
                 Alle handlinger og transaktioner er gennemført fejlfrit i den overvågede periode.
               </p>
             </div>
@@ -430,18 +736,19 @@ export function InsightsPanel({ data }: { data: SuperadminInsightsData }) {
               {systemErrors.map(item => (
                 <div
                   key={item.id}
-                  className="flex items-center justify-between gap-3 p-3.5 px-5 text-xs hover:bg-muted/30"
+                  className="flex items-center justify-between gap-3 p-2.5 px-4 text-xs hover:bg-muted/30"
                 >
                   <div className="space-y-0.5 min-w-0">
-                    <p className="font-semibold text-rose-700 dark:text-rose-300 truncate">
+                    <p className="font-semibold text-rose-700 dark:text-rose-300 truncate text-[11px]">
                       {item.description}
                     </p>
-                    <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                       <span>Komponent: {item.systemComponent || "Core"}</span>
                       {item.errorCode && <span>• Kode: {item.errorCode}</span>}
+                      {item.actorName && <span>• Bruger: {item.actorName}</span>}
                     </div>
                   </div>
-                  <span className="text-[11px] text-muted-foreground shrink-0">
+                  <span className="text-[10px] text-muted-foreground shrink-0">
                     {formatRelativeTime(item.occurredAt)}
                   </span>
                 </div>
