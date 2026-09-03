@@ -327,7 +327,7 @@ export async function fetchAdminContractsPage(params: AdminContractsPageParams =
   const includeSummary = params.includeSummary !== false;
   const lookupsPromise = includeLookups
     ? Promise.all([
-        db.from("employers").select("id,name,parent_id,dfi_company_id").eq("org_id", orgId).order("name"),
+        db.from("employers").select("id,name,parent_id,dfi_company_id").order("name"),
         canReadRightsHolderLookups
           ? db.from("org_affiliations").select("rettighedshavere(id,full_name)").eq("org_id", orgId)
           : Promise.resolve({ data: [], error: null }),

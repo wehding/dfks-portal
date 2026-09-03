@@ -99,7 +99,7 @@ export async function matchingAdminContractIds(
         .eq("org_affiliations.org_id", orgId)
         .ilike("full_name", like)
         .limit(5000),
-      db.from("employers").select("id").eq("org_id", orgId).ilike("name", like).limit(5000),
+      db.from("employers").select("id").ilike("name", like).limit(5000),
       db.from("works").select("id").eq("org_id", orgId).ilike("title", like).limit(5000),
     ]);
     const lookupError = holders.error ?? employers.error ?? works.error;
