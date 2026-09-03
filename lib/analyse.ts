@@ -11,6 +11,11 @@ import { extractPdfText } from "@/lib/pdf-parse"
 import { extractWordText } from "@/lib/word-text"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
+import {
+    resolveContractReviewProductionType,
+    royaltyRequirementForProductionType,
+    type ContractReviewProductionType,
+} from "@/lib/contract-review-domain-rules"
 import { createAiUsageRun, finishAiUsageRun, type AiUsageContext } from "@/lib/ai-usage"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { getSupabaseServiceKey } from "@/lib/env"
@@ -68,7 +73,7 @@ export type Klassifikation = {
     kontraktsprog: "da" | "en" | "other"
     loen_type: "ugeloeen" | "dagsloen" | "fast_total" | "ukendt"
     loen_valuta: "DKK" | "USD" | "EUR" | "GBP" | "other"
-    produktionstype: "spillefilm" | "tvserie" | "dokumentar" | "kortfilm" | "ukendt" | "udvikling_dokumentar" | "udvikling_fiktion" | "udvikling_underholdning"
+    produktionstype: ContractReviewProductionType
 }
 
 // ── Trin 1: Klassificér kontrakten ────────────────────────────
@@ -117,6 +122,7 @@ Brug "udvikling_dokumentar", "udvikling_fiktion" eller "udvikling_underholdning"
 - Titlen er beskrevet som "arbejdstitel" uden fastlagt produktionsformat
 
 Domænereglen: dokumentar → "udvikling_dokumentar", fiktion/drama → "udvikling_fiktion", underholdning/reality → "udvikling_underholdning".
+Serieformat: Hvis kontrakten både angiver konkrete episoder/afsnit og kalder produktionen fiktion, drama eller tv-serie, skal produktionstypen være "tvserie". Formuleringer som "klipper af 2 episoder (5+6)" er et sikkert seriesignal, når kontrakten samtidig siger fiktionsproduktion. En nummereret titel alene er ikke et sikkert signal.
 Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan bestemmes.`
 
     const defaultKlassifikation: Klassifikation = {
@@ -163,9 +169,7 @@ Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan
             kontraktsprog: p.kontraktsprog ?? "da",
             loen_type: p.loen_type ?? "ukendt",
             loen_valuta: p.loen_valuta ?? "DKK",
-            produktionstype: ["spillefilm","tvserie","dokumentar","kortfilm","udvikling_dokumentar","udvikling_fiktion","udvikling_underholdning"].includes(p.produktionstype)
-                ? p.produktionstype
-                : "ukendt",
+            produktionstype: resolveContractReviewProductionType(p.produktionstype, kontraktTekst),
         }
     } catch {
         logWarn("analyse", "Klassifikation JSON parse fejl")
@@ -280,9 +284,7 @@ og Producenten."
 🚫 ABSOLUT FORBUD: Lav INGEN lønberegning ved hybrid kontrakt.`
             : "✓ A-LØNSKONTRAKT — Beregn korrekt: feriepenge og pension betales OVENI lønnen. Brug udelukkende satser fra AKTUELLE SATSER nedenfor."
 
-    const royaltyRegel = ["spillefilm", "tvserie"].includes(klassifikation.produktionstype)
-        ? "⚠ ROYALTY PÅKRÆVET: Dette er en fiktionsproduktion. Tjek eksplicit om kontrakten nævner royalty. Hvis ikke — det SKAL kommenteres som et selvstændigt punkt."
-        : ""
+    const royaltyRegel = royaltyRequirementForProductionType(klassifikation.produktionstype)
 
     const overenskomstRegler = erOverenskomst
         ? (overenskomst?.parentMemberName
