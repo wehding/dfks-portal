@@ -179,6 +179,8 @@ export async function resolveInvitationWorks(input: {
   const warnings = [
     ...(dfi.status === "ambiguous" ? ["DFI fandt flere personer med samme navn. DFI-værker er derfor ikke medtaget."] : []),
     ...(tmdb.status === "ambiguous" ? ["TMDb fandt flere personer med samme navn. TMDb-værker er derfor ikke medtaget."] : []),
+    ...(dfi.status === "none" ? ["DFI fandt ikke et sikkert, entydigt personmatch. DFI-værker er derfor ikke medtaget."] : []),
+    ...(tmdb.status === "none" ? ["TMDb fandt ikke et sikkert, entydigt personmatch. TMDb-værker er derfor ikke medtaget."] : []),
     ...(dfi.status === "unavailable" ? ["DFI kunne ikke kontaktes. Invitationen kan stadig sendes med øvrige værker."] : []),
     ...(tmdb.status === "unavailable" ? ["TMDb kunne ikke kontaktes. Invitationen kan stadig sendes med øvrige værker."] : []),
   ];
