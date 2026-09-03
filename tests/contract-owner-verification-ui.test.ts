@@ -9,6 +9,7 @@ import {
 
 const archive = readFileSync("app/admin/kontrakter/ContractArchiveClient.tsx", "utf8");
 const editor = readFileSync("app/admin/kontrakter/[id]/rediger/ContractWorkbenchClient.tsx", "utf8");
+const aiEditor = readFileSync("app/admin/kontrakter/ContractAiDataEditor.tsx", "utf8");
 const ownership = readFileSync("components/admin/contract-ownership-editor.tsx", "utf8");
 
 test("ejerskab er integreret i arkiv og editor og ikke et separat panel", () => {
@@ -68,4 +69,36 @@ test("producentforslag og manuel værksoprettelse genbruger de aflæste kontrakt
   assert.match(editor, /extractedProductionCompanyNames\(validationData\)/);
   assert.match(editor, /suggestedNames=\{extractedProducerNames\}/);
   assert.match(editor, /contractDataToManualWorkSeed/);
+  assert.match(editor, /production_companies: data\.producerSelections/);
+  assert.match(editor, /void searchWorks\(query\)/);
+  assert.match(editor, /contractWorkTypeFilter/);
+});
+
+test("gem og validering gemmer alle åbne editorfelter før kontraktstatus ændres", () => {
+  const flushPosition = editor.indexOf("for (const flush of flushHandlersRef.current.values())");
+  const workPosition = editor.indexOf("const workId = await resolveWorkBeforeSave()");
+  const updatePosition = editor.indexOf("const result = await updateAdminContract");
+  assert.ok(flushPosition >= 0);
+  assert.ok(flushPosition < workPosition);
+  assert.ok(workPosition < updatePosition);
+  assert.match(editor, /const success = await save\("valideret"/);
+  assert.match(editor, /Validér kontrakt <kbd/);
+  assert.match(editor, /Validér og næste <kbd/);
+});
+
+test("kontraktarbejdsfladen har en tilgængelig og vedvarende breddejustering", () => {
+  assert.match(editor, /role="separator"/);
+  assert.match(editor, /aria-orientation="vertical"/);
+  assert.match(editor, /cursor-col-resize/);
+  assert.match(editor, /setPointerCapture/);
+  assert.match(editor, /SPLIT_STORAGE_KEY/);
+  assert.match(editor, /event\.key === "ArrowLeft"/);
+  assert.match(editor, /event\.key === "ArrowRight"/);
+});
+
+test("godkendelsesfanen viser tydelige dokument- og underskriftsstatusser", () => {
+  assert.match(aiEditor, /Kontrakt ikke underskrevet/);
+  assert.match(editor, /Original konverteret PDF/);
+  assert.match(editor, /CLAUSE_EVIDENCE_KEYS\.has\(evidence\.sourceKey\)/);
+  assert.match(editor, /fieldKey === "signatureStatus" && !evidence\.page/);
 });
