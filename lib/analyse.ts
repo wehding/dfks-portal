@@ -288,7 +288,15 @@ og Producenten."
         ? (overenskomst?.parentMemberName
             ? `✓ OVERENSKOMSTDÆKKET VIA MODERSELSKAB — producenten er underselskab af ${overenskomst.parentMemberName} (ProF-medlem). Behandl producenten som fuldt overenskomstdækket: overenskomst-referencer er tilladt som bindende hjemmel i snippets til producenten, og du må IKKE skrive at producenten ikke er medlem / at overenskomsten ikke gælder.`
             : "✓ OVERENSKOMSTDÆKKET — overenskomst-referencer er tilladt i snippets til producenten.")
-        : "🚫 IKKE OVERENSKOMSTDÆKKET — ABSOLUT FORBUD: Citer ALDRIG De4/FAF som bindende hjemmel i snippets til producenten. Brug 'branchepraksis' og 'standard i branchen' i stedet."
+        : "🚫 IKKE OVERENSKOMSTDÆKKET — Citer ALDRIG De4/FAF som bindende hjemmel for PRODUCENTENS forpligtelser i snippets til producenten; brug 'branchepraksis' i stedet. MEN: klausuler kontrakten selv har skrevet ind — ordret eller ved at henvise til/bygge på De4- eller FAF-standardformularen — er bindende. Anerkend dem som dækkede; flag dem ikke som manglende."
+
+    const overenskomstNavn = klassifikation.overenskomst_navn ?? ""
+    const overenskomstFormularRegel =
+        overenskomstNavn === "de4-fiktion"
+            ? "✓ DE4-FIKTION: De4-standardformularen dækker allerede eksplicit Copydan-forbehold og SVOD/streaming-aftale. Henviser kontrakten til De4-overenskomsten eller standardformularen, ER disse dækket — nævn dem som POSITIVE, ALDRIG som 'manglende Copydan' / 'manglende SVOD'. Royalty står IKKE i De4-standardformularen — vurder royalty separat."
+        : ["faf", "faf-dokumentar"].includes(overenskomstNavn)
+            ? "⚠ FAF: FAF-standardformularen mangler eksplicit Copydan, SVOD og royalty. Mangler kontrakten dem, skal alle tre skrives ind (eksplicit hvis producenten ikke er ProF-bundet; ellers med overenskomsten som hjemmel)."
+        : ""
 
     return `
 KONTRAKTFAKTA — VERIFICERET I TRIN 1. TILSIDESÆT IKKE DISSE:
@@ -314,6 +322,7 @@ ${sprogRegel}
 ${loenTypeRegel}
 ${kontrakttypeRegler}
 ${overenskomstRegler}
+${overenskomstFormularRegel}
 ${royaltyRegel}
 ${loenGrundlagRegel}
 BEDRE END OVERENSKOMSTEN = POSITIVT: Er et vilkår bedre for medlemmet end overenskomstens minimum (løn over normalløn, pension af et højere grundlag, længere prolongationsvarsel, royalty over standard, tillæg over minimum), så fremstil det som POSITIVT (type "positiv"/"info", ✓) — aldrig som "advarsel"/"kritisk", et "OBS" eller et "kontrollér at ...". Kontrol-opfordringer kun ved en konkret uregelmæssighed, ikke rutinemæssigt.
@@ -363,7 +372,7 @@ Returner KUN gyldig JSON uden markdown-backticks:
       "beskrivelse": "string (præcis juridisk forklaring, max 200 tegn)",
       "anbefaling": "string (konkret handlingsforslag, max 200 tegn)",
       "citat": "string (EKSAKT tekststreng fra kontrakten, max 200 tegn)",
-      "paragraf": "string (paragraf/afsnit reference hvis mulig)"
+      "paragraf": "string — peg på den klausul der FAKTISK regulerer forholdet, eller 'ikke reguleret i kontrakten' når punktet handler om en mangel. Hæng ALDRIG flere urelaterede punkter på den samme overenskomst-henvisningsklausul."
     }
   ],
   "feedbackmail": {
@@ -378,9 +387,11 @@ Returner KUN gyldig JSON uden markdown-backticks:
 }
 
 risk_level-logik:
-- LAV: ingen kritiske punkter, ingen alvorlige overenskomstbrud
-- MELLEM: et eller flere advarsels-punkter, men intet kritisk
-- HØJ: mindst ét kritisk punkt ELLER royalty under minimumsats ELLER manglende pension/feriepenge
+- LAV: ingen kritiske punkter, ingen alvorlige overenskomstbrud. Følger standardformularen og betaler korrekt.
+- MELLEM: et eller flere advarsels-punkter, men intet kritisk. En producent der IKKE er ProF-bundet hører som udgangspunkt HER — ikke i HØJ — når kontrakten ellers følger standard og betaler korrekt; det udløser kun anbefalinger om at skrive udækkede vilkår eksplicit ind.
+- HØJ: mindst ét reelt kritisk punkt: hybrid kontrakt, INGEN pension nævnt, royalty under minimumsats, feriepenge ikke sikret, eller en klausul der reelt fratager medlemmet rettigheder.
+
+Manglende ProF-medlemskab er IKKE i sig selv HØJ risiko.
 
 should_escalate: sæt til true hvis risk_level er HØJ og sagen bør behandles af senior-jurist.
 
@@ -399,12 +410,20 @@ DE4-OVERENSKOMSTEN ER ALTID INTERN MÅLESTOK:
 Selv hvis en kontrakt reguleres af en anden overenskomst, vurdér om De4's vilkår er bedre.
 
 KRITISK FORSKEL — FAF (2025-2027) vs. De4 (2022) for fiktion:
-De4-standardkontrakten: inkluderer eksplicit Copydan-forbehold og SVOD-aftale.
-FAF-standardkontrakten: mangler eksplicit Copydan, SVOD og royalties — disse skal tilføjes separat.
+- De4-standardkontrakten INDEHOLDER allerede eksplicit Copydan-forbehold og SVOD/streaming-aftale.
+  Henviser kontrakten til De4-overenskomsten eller bruger De4-standardformularen, ER Copydan og
+  SVOD dækket — anerkend dem som POSITIVE, flag dem ALDRIG som "manglende".
+- FAF-standardkontrakten mangler eksplicit Copydan, SVOD og royalty — disse skal tilføjes separat.
+- Royalty står IKKE som fast tekst i De4-standardformularen — vurder royalty separat uanset formular.
 
-PRODUCENTFORENINGENS MEDLEMSSKAB — KRITISK JURIDISK FORUDSÆTNING:
-Overenskomsterne er KUN bindende for ProF-medlemmer.
-Tjek altid om producenten er overenskomstdækket — se KONTRAKTFAKTA øverst.
+PRODUCENTFORENINGENS MEDLEMSSKAB — HVAD DET AFGØR:
+Overenskomstens vilkår gælder AUTOMATISK kun for ProF-medlemmer (se KONTRAKTFAKTA øverst).
+MEN: en klausul som kontrakten selv skriver ind — ordret ELLER ved at henvise til / bygge på
+De4- eller FAF-standardformularen — er kontraktuelt bindende uanset ProF-medlemskab.
+Kontrollér derfor ALTID om klausulen FAKTISK står i kontrakten (direkte eller via
+standardformular-henvisning) FØR du kalder den "manglende". Er producenten ikke ProF-bundet,
+handler rådgivningen om at få de vilkår der IKKE allerede er dækket, skrevet eksplicit ind —
+ikke om at gentage vilkår der allerede er der.
 Kendte store selskaber (SF Film, Nordisk Film, DR, TV 2, Zentropa) behøver normalt ikke nævnes.
 
 A-LØN vs. LEVERANDØRKONTRAKT — se KONTRAKTFAKTA øverst for denne kontrakts type.
@@ -443,7 +462,11 @@ OPSIGELSESKLAUSULER:
 
 RETTIGHEDSKLAUSULER:
 4. Manglende Copydan-forbehold (type: kritisk)
+   — udløs KUN hvis forbeholdet reelt ikke står nogen steder. Ved De4-standardformular / henvisning
+     til De4-overenskomsten ER det dækket → i stedet et POSITIVT punkt, ikke en mangel.
 5. Manglende streaming-/SVOD-forbehold (type: kritisk)
+   — samme forbehold: dækket ved De4-standardformular / De4-henvisning → POSITIVT punkt.
+     Udløs primært ved FAF-standardformular eller kontrakt uden standardformular.
 6. Manglende promoveringsret (type: advarsel)
 7. Manglende TDM/AI-klausul (type: advarsel)
 8. Overenskomstinkorporering i leverandørkontrakt (type: advarsel)

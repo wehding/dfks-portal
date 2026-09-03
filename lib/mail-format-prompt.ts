@@ -331,6 +331,14 @@ KORREKT:
 Copydan-retten er IKKE automatisk beskyttet. Hvis forbeholdet ikke
 står eksplicit i kontrakten, kan retten mistes.
 
+FØRST: STÅR FORBEHOLDET DER ALLEREDE?
+Copydan-forbehold og SVOD/streaming-aftale er en fast del af De4-standardformularen.
+Henviser kontrakten til De4-overenskomsten eller bygger på De4-standardformularen,
+ER forbeholdet dækket — så er det et POSITIVT punkt ("Copydan- og SVOD-forbeholdet
+er på plads via henvisningen til De4"), IKKE en mangel og IKKE en gul blok.
+Rejs kun et mangel-punkt hvis forbeholdet reelt ikke står nogen steder — typisk ved
+FAF-standardformular eller en kontrakt uden standardformular.
+
 KONTEKST TIL FORKLARING FOR MEDLEMMET:
 Producenten modtager selv Copydan-vederlag og har en egeninteresse
 i at klausulen er med. Det gør Copydan til et af de lettere punkter
@@ -685,9 +693,16 @@ OVERENSKOMST-REFERENCER — HVORNÅR OG HVORDAN
 ═══════════════════════════════════════════════
 
 Når KONTRAKTFAKTA viser Overenskomstdækket: NEJ —
-citer ALDRIG De4/FAF som bindende hjemmel i snippets til producenten.
+citer ALDRIG De4/FAF som bindende hjemmel for producentens forpligtelser i snippets til producenten.
 
-I STEDET — brug konkrete begrundelser uden overenskomstkrav:
+MEN FØRST — HVAD ER ALLEREDE DÆKKET:
+Manglende ProF-medlemskab betyder KUN at overenskomstens vilkår ikke gælder automatisk.
+Klausuler kontrakten selv skriver ind — ordret eller ved at henvise til / bygge på
+De4- eller FAF-standardformularen — er bindende uanset medlemskab. Læs kontrakten og
+afgør hvad der FAKTISK står, før du foreslår at tilføje noget. Foreslå kun tilføjelser
+for vilkår der IKKE allerede er dækket. Gentag ikke et vilkår der står i kontrakten.
+
+I STEDET — brug konkrete begrundelser uden overenskomstkrav (kun for de udækkede vilkår):
 - Pension: "Det er normal branchepraksis på fiktionsproduktioner at
   producenten indbetaler [pensionsprocent] i pension oveni lønnen."
 - Opsigelse: "Det er normal branchepraksis at opsigelse kan ske med
@@ -731,10 +746,15 @@ FERIELOVEN:
 RISIKONIVEAUER
 ═══════════════════════════════════════════════
 
-Lav:    Følger overenskomsten — kun mindre forbedringer anbefales
-Middel: Vigtige mangler men kan rettes — anbefal ikke at underskrive endnu
-Høj:    Alvorlige problemer (hybrid kontrakt, ikke-overenskomstdækket,
-        manglende pension) — anbefal IKKE at underskrive i nuværende form
+Lav:    Følger standardformularen og betaler korrekt — kun mindre forbedringer anbefales
+Middel: Vigtige mangler men kan rettes — anbefal ikke at underskrive endnu.
+        En producent der IKKE er ProF-bundet hører som udgangspunkt HER, ikke i Høj,
+        når kontrakten ellers følger standard og betaler korrekt — så handler det om
+        at få de udækkede vilkår skrevet eksplicit ind.
+Høj:    Alvorlige problemer: hybrid kontrakt, INGEN pension nævnt, royalty under
+        minimumsats, feriepenge ikke sikret, eller en klausul der reelt fratager
+        medlemmet rettigheder — anbefal IKKE at underskrive i nuværende form.
+        Manglende ProF-medlemskab er IKKE i sig selv Høj.
 
 LEVERANDØRKONTRAKT — REEL LØN-BEREGNING I TIL DIG-SEKTIONEN:
 Hvis kontrakten er leverandørkontrakt og løn fremgår, inkludér:
