@@ -93,7 +93,12 @@ export async function matchingAdminContractIds(
     }
 
     const [holders, employers, works] = await Promise.all([
-      db.from("rettighedshavere").select("id").ilike("full_name", like).limit(5000),
+      db
+        .from("rettighedshavere")
+        .select("id,org_affiliations!inner(org_id)")
+        .eq("org_affiliations.org_id", orgId)
+        .ilike("full_name", like)
+        .limit(5000),
       db.from("employers").select("id").eq("org_id", orgId).ilike("name", like).limit(5000),
       db.from("works").select("id").eq("org_id", orgId).ilike("title", like).limit(5000),
     ]);
@@ -148,7 +153,7 @@ export async function matchingAdminContractIds(
         rights_holder_id,
         episode_numbers,
         solo_confirmed,
-        works(id, type, is_season_group, parent_work_id),
+        works(id, type, parent_work_id),
         contract_validations(extracted_data)
       `)
       .eq("org_id", orgId)
@@ -164,7 +169,7 @@ export async function matchingAdminContractIds(
       rights_holder_id: string;
       episode_numbers: number[] | null;
       solo_confirmed: boolean | null;
-      works: { id: string; type: string | null; is_season_group: boolean | null; parent_work_id: string | null } | Array<{ id: string; type: string | null; is_season_group: boolean | null; parent_work_id: string | null }> | null;
+      works: { id: string; type: string | null; parent_work_id: string | null } | Array<{ id: string; type: string | null; parent_work_id: string | null }> | null;
       contract_validations: { extracted_data: Record<string, unknown> | null } | Array<{ extracted_data: Record<string, unknown> | null }> | null;
     };
 
@@ -176,7 +181,6 @@ export async function matchingAdminContractIds(
       const isSeries = Boolean(
         work && (
           isSeriesType(work.type) ||
-          work.is_season_group ||
           work.parent_work_id
         )
       );

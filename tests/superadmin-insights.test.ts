@@ -88,4 +88,3 @@ test("beregner nøglesiders loadhastighed og opdaterer ved nye målinger", async
   assert.equal(contracts?.averageMs, 150);
   assert.equal(contracts?.status, "fast");
 });
-

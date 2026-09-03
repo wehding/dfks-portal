@@ -1,6 +1,12 @@
 import "server-only";
 import { recordPageTiming } from "./key-page-timing-stats";
 
+export {
+  getKeyPageTimingStats,
+  recordPageTiming,
+  type KeyPageTiming,
+} from "./key-page-timing-stats";
+
 type TimingFields = Record<string, string | number | boolean | null>;
 
 export type ListLoadTiming = {
@@ -32,4 +38,3 @@ export function createListLoadTimer(label: string, clock: () => number = () => p
 
   return { mark, finish };
 }
-
