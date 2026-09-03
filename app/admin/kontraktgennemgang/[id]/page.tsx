@@ -259,6 +259,16 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     }, [review])
     const isAnalysing = analysisStatus != null && isActiveContractReviewAnalysis(analysisStatus)
 
+    // Soft-timeout: hvis analysen har kørt usædvanligt længe (fx et hængende
+    // job der først samles op af den daglige cron), vis en forklarende note
+    // frem for bare at snurre i det uendelige.
+    const [analysisSlow, setAnalysisSlow] = useState(false)
+    useEffect(() => {
+        if (!isAnalysing) { setAnalysisSlow(false); return }
+        const timer = window.setTimeout(() => setAnalysisSlow(true), 4 * 60_000)
+        return () => window.clearTimeout(timer)
+    }, [isAnalysing])
+
     useEffect(() => {
         getMyOrgRole().then(r => setOrgId(r?.org_id ?? null))
     }, [])
@@ -660,9 +670,12 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                     </div>
                     {/* "AI tænker"-stribe — synlig så længe et analysejob er i kø / under behandling */}
                     {isAnalysing && (
-                        <div className="flex items-center gap-2 border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground shrink-0">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-                            <span>{t("admin.reviewDetail.analysisRunning")}</span>
+                        <div className="flex items-start gap-2 border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground shrink-0">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0 mt-0.5" />
+                            <span>
+                                {t("admin.reviewDetail.analysisRunning")}
+                                {analysisSlow && ` ${t("admin.reviewDetail.analysisSlow")}`}
+                            </span>
                         </div>
                     )}
                     {/* Risikovurderingsbanner — vises kun når risk_level er sat */}
