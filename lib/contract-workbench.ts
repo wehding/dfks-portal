@@ -332,7 +332,7 @@ export function findContractTypeEvidence(contractType: string | null | undefined
         { pattern: /\bpensionsbidrag\b/iu, score: 3 },
       ]
     : [
-        { pattern: /\bleverandør(?:en)?\b/iu, score: 8 },
+        { pattern: /\b(?:under)?leverandør[a-zæøå]*\b/iu, score: 8 },
         { pattern: /\bfaktura(?:beløb|ering)?\b/iu, score: 6 },
         { pattern: /\bhonorar\b/iu, score: 5 },
         { pattern: /\bmoms\b/iu, score: 3 },
