@@ -9,12 +9,12 @@ import { errorMessage } from "@/lib/error-message";
  * Kontekstkort øverst med status og tildeling.
  */
 
-import { useState, useRef, useEffect, use } from "react"
+import { useState, useRef, useEffect, useMemo, use } from "react"
 import { useRouter } from "next/navigation"
 import {
     ArrowLeft, Sparkles, Mail, Copy, CheckCircle2, AlertTriangle, Info,
     ChevronRight, Pencil, Eye, ThumbsUp,
-    ThumbsDown, FileText, RotateCcw, RefreshCw, ExternalLink,
+    ThumbsDown, FileText, RotateCcw, RefreshCw, ExternalLink, Loader2,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
@@ -242,6 +242,33 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     const [pdfObjectUrl, setPdfObjectUrl] = useState<string | null>(null)
     const docRef = useRef<HTMLDivElement>(null)
 
+    // Afledt analysestatus — driver "AI tænker"-feedback i UI'et så længe et
+    // job er i kø / under behandling (ikke kun mens POST-kaldet kører).
+    const analysisStatus = useMemo(() => {
+        if (!review) return null
+        return review.analysis_status ?? normalizeContractReviewAnalysisStatus({
+            aiStatus: review.ai_status,
+            intakeStatus: review.intake_status,
+            job: review.analysis_job ? {
+                status: review.analysis_job.status,
+                attempts: review.analysis_job.attempts,
+                next_attempt_at: review.analysis_job.next_attempt_at,
+                error_message: review.analysis_job.error,
+            } : null,
+        })
+    }, [review])
+    const isAnalysing = analysisStatus != null && isActiveContractReviewAnalysis(analysisStatus)
+
+    // Soft-timeout: hvis analysen har kørt usædvanligt længe (fx et hængende
+    // job der først samles op af den daglige cron), vis en forklarende note
+    // frem for bare at snurre i det uendelige.
+    const [analysisSlow, setAnalysisSlow] = useState(false)
+    useEffect(() => {
+        if (!isAnalysing) { setAnalysisSlow(false); return }
+        const timer = window.setTimeout(() => setAnalysisSlow(true), 4 * 60_000)
+        return () => window.clearTimeout(timer)
+    }, [isAnalysing])
+
     useEffect(() => {
         getMyOrgRole().then(r => setOrgId(r?.org_id ?? null))
     }, [])
@@ -278,18 +305,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     }, [id])
 
     useEffect(() => {
-        if (!review) return
-        const analysisStatus = review.analysis_status ?? normalizeContractReviewAnalysisStatus({
-            aiStatus: review.ai_status,
-            intakeStatus: review.intake_status,
-            job: review.analysis_job ? {
-                status: review.analysis_job.status,
-                attempts: review.analysis_job.attempts,
-                next_attempt_at: review.analysis_job.next_attempt_at,
-                error_message: review.analysis_job.error,
-            } : null,
-        })
-        if (!isActiveContractReviewAnalysis(analysisStatus)) return
+        if (!isAnalysing) return
         const interval = window.setInterval(async () => {
             const response = await fetch(`/api/admin/contracts/${id}`).catch(() => null)
             if (!response?.ok) return
@@ -306,7 +322,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             }
         }, 5_000)
         return () => window.clearInterval(interval)
-    }, [id, review])
+    }, [id, isAnalysing])
 
     // Hent PDF-URL via server-side route (omgår storage RLS)
     useEffect(() => {
@@ -583,12 +599,12 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             size="sm"
                             variant="outline"
                             className="gap-1.5 text-xs h-7"
-                            disabled={reanalysing}
+                            disabled={reanalysing || isAnalysing}
                             title="Kør ny AI-analyse"
                             onClick={() => handleReanalyse()}
                         >
-                            <RotateCcw className={`h-3.5 w-3.5 ${reanalysing ? "animate-spin" : ""}`} />
-                            {reanalysing ? t("admin.reviewDetail.analysing") : t("admin.reviewDetail.reanalyse")}
+                            <RotateCcw className={`h-3.5 w-3.5 ${reanalysing || isAnalysing ? "animate-spin" : ""}`} />
+                            {reanalysing || isAnalysing ? t("admin.reviewDetail.analysing") : t("admin.reviewDetail.reanalyse")}
                         </Button>
                         {/* Skjult fil-input — trigges automatisk hvis storage_path mangler */}
                         <input
@@ -641,12 +657,27 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                     <div className="flex items-center gap-2 border-b px-4 py-2.5 shrink-0">
                         <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="text-xs font-medium">AI-analyse</span>
-                        {result && (
+                        {isAnalysing ? (
+                            <span className="ml-auto flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                {analysisStatus === "retrying" ? "Prøver igen…" : t("admin.reviewDetail.analysing")}
+                            </span>
+                        ) : result && (
                             <Badge variant="secondary" className="ml-auto text-[10px]">
                                 {result.feedbackpunkter.length} punkter
                             </Badge>
                         )}
                     </div>
+                    {/* "AI tænker"-stribe — synlig så længe et analysejob er i kø / under behandling */}
+                    {isAnalysing && (
+                        <div className="flex items-start gap-2 border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground shrink-0">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0 mt-0.5" />
+                            <span>
+                                {t("admin.reviewDetail.analysisRunning")}
+                                {analysisSlow && ` ${t("admin.reviewDetail.analysisSlow")}`}
+                            </span>
+                        </div>
+                    )}
                     {/* Risikovurderingsbanner — vises kun når risk_level er sat */}
                     {riskLevel && (
                         <div className={`flex items-center gap-2 px-4 py-2.5 text-xs font-medium border-b shrink-0 ${
@@ -664,7 +695,19 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                         </div>
                     )}
                     <div className="flex-1 overflow-y-auto divide-y">
-                        {!result ? (
+                        {!result && isAnalysing ? (
+                            <div className="px-4 py-8 text-center text-xs text-muted-foreground">
+                                <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin opacity-40" />
+                                <p>{t("admin.reviewDetail.analysisRunning")}</p>
+                                <p className="mt-1">Resultatet vises automatisk her, når analysen er færdig.</p>
+                            </div>
+                        ) : !result && analysisStatus === "failed" ? (
+                            <div className="px-4 py-8 text-center text-xs text-muted-foreground">
+                                <AlertTriangle className="h-8 w-8 mx-auto mb-3 text-amber-500 opacity-70" />
+                                <p>Analysen kunne ikke gennemføres.</p>
+                                <p className="mt-1">Klik &quot;Kør ny analyse&quot; for at prøve igen.</p>
+                            </div>
+                        ) : !result ? (
                             <div className="px-4 py-8 text-center text-xs text-muted-foreground">
                                 <Sparkles className="h-8 w-8 mx-auto mb-3 opacity-20" />
                                 <p>Ingen analyse endnu.</p>
