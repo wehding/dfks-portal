@@ -16,12 +16,24 @@ export function calculatePdfEvidenceScale(input: {
   containerHeight: number;
   boxWidth: number;
   boxHeight: number;
+  pdfWidth?: number;
 }) {
-  const { containerWidth, containerHeight, boxWidth, boxHeight } = input;
+  const { containerWidth, containerHeight, boxWidth, boxHeight, pdfWidth } = input;
   if (![containerWidth, containerHeight, boxWidth, boxHeight].every(Number.isFinite) || containerWidth <= 0 || containerHeight <= 0 || boxWidth <= 0 || boxHeight <= 0) return 1;
-  const availableWidth = Math.max(200, containerWidth * 0.72);
-  const availableHeight = Math.max(160, containerHeight * 0.48);
-  const paddedWidth = Math.max(1, boxWidth * 1.5);
-  const paddedHeight = Math.max(1, boxHeight * 2.2);
-  return Math.max(0.4, Math.min(1.35, availableWidth / paddedWidth, availableHeight / paddedHeight));
+
+  // Navnet/tekstboksen skal fylde ca. 2/3 af skærmområdets bredde
+  const targetWidth = containerWidth * (2 / 3);
+  const targetHeight = containerHeight * 0.45;
+  const widthScale = targetWidth / Math.max(1, boxWidth);
+  const heightScale = targetHeight / Math.max(1, boxHeight);
+
+  // Vælg skala så boksen fylder 2/3 af bredden, men begrænset hvis højden er for stor
+  const idealScale = Math.min(widthScale, heightScale);
+
+  // Basisskala for at tilpasse til bredden
+  const fitWidth = pdfWidth && pdfWidth > 0 ? calculatePdfFitWidthScale(containerWidth, pdfWidth, 16) : 0.6;
+
+  // Skalaen må aldrig blive mindre end fitWidth, og maks 2.4
+  return Math.max(fitWidth, Math.min(2.4, idealScale));
 }
+

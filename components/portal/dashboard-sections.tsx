@@ -64,7 +64,7 @@ export async function DashboardTasksSection({ orgId, rightsHolderId, userId }: {
   const waitingCount = Number(overview.pending_work_request_count ?? 0) + Number(overview.pending_screening_count ?? 0);
   timer.finish({ actionCount, waitingCount });
   return <>
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid gap-4 lg:grid-cols-2">
       <DashboardCard title="Kræver handling" count={actionCount} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
       <DashboardCard title="Afventer DFKS" count={waitingCount} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />
     </div>
@@ -158,15 +158,44 @@ export async function DashboardSalarySection({ orgId, rightsHolderId, optedOut }
 }
 
 export async function DashboardInboxSection() {
-  return <section className="space-y-3">
-    <h2 className="flex items-center gap-2 text-lg font-semibold"><MessageSquare className="h-5 w-5 text-amber-500" />Beskeder fra DFKS</h2>
+  return <section className="space-y-2.5">
+    <h2 className="flex items-center gap-2 text-base font-semibold"><MessageSquare className="h-4 w-4 text-amber-500" />Beskeder fra DFKS</h2>
     <MemberInboxPanel />
     <ListReadinessMarker route="member-dashboard" stage="complete" />
   </section>;
 }
 
 function DashboardCard({ title, count, icon: Icon, items, empty }: { title: string; count: number; icon: typeof AlertCircle; items: Array<{ key: string; href: string; icon: typeof AlertCircle; title: string; text: string }>; empty: string }) {
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><Icon className="h-5 w-5 text-amber-500" />{title}<span className="ml-auto text-sm text-muted-foreground">{count}</span></CardTitle></CardHeader><CardContent className="space-y-2">{items.length ? items.map(item => <Link key={item.key} href={item.href} className="flex gap-3 rounded-md border p-3 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><item.icon className="mt-0.5 h-4 w-4" /><span><span className="block font-medium">{item.title}</span><span className="text-sm text-muted-foreground">{item.text}</span></span></Link>) : <p className="text-sm text-muted-foreground">{empty}</p>}</CardContent></Card>;
+  return (
+    <Card className="flex flex-col">
+      <CardHeader className="px-4 py-3 border-b">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <Icon className="h-4 w-4 text-amber-500" />
+          {title}
+          <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-foreground">{count}</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex-1 p-3 space-y-1.5">
+        {items.length ? (
+          items.map(item => (
+            <Link
+              key={item.key}
+              href={item.href}
+              className="flex items-center gap-3 rounded-md border bg-card px-3 py-2 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <item.icon className="h-4 w-4 shrink-0 text-amber-600" />
+              <div className="min-w-0 flex-1">
+                <span className="block text-xs font-semibold leading-tight text-foreground truncate">{item.title}</span>
+                <span className="block text-[11px] leading-snug text-muted-foreground truncate">{item.text}</span>
+              </div>
+            </Link>
+          ))
+        ) : (
+          <p className="py-6 text-center text-xs text-muted-foreground">{empty}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function DashboardSectionError({ title, stage }: { title: string; stage: "first-row" | "secondary" | "complete" }) {

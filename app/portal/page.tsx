@@ -34,7 +34,7 @@ export default async function PortalDashboardPage({ searchParams }: { searchPara
   const noticeValue = (await searchParams)?.notice;
   const notice = Array.isArray(noticeValue) ? noticeValue[0] : noticeValue;
 
-  return <div className="space-y-6">
+  return <div className="space-y-4">
     <PortalPageHeader title="Overblik" subtitle={`Velkommen, ${(holder.full_name ?? "").trim().split(/\s+/)[0] || holder.full_name}. Her er det, der kræver din opmærksomhed.`} />
     <OrgContextNotice notice={notice} />
     <ListReadinessMarker route="member-dashboard" stage="access" />

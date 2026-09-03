@@ -1376,9 +1376,13 @@ export default function MineVaerkerClient({
       <PortalPageHeader
         title={t("works.title")}
         subtitle={t("works.registeredSubtitle")}
-        actions={<Button onClick={() => setIsAdding(true)} className="w-full gap-2 sm:w-auto">
-            <Plus className="h-4 w-4" /> {t("works.addWork")}
-          </Button>}
+        actions={<div className="flex flex-wrap items-center gap-2">
+            <Button asChild type="button" size="sm" variant="outline"><a href="/api/portal/filmography/export?format=pdf"><Download className="h-4 w-4" />PDF</a></Button>
+            <Button asChild type="button" size="sm" variant="outline"><a href="/api/portal/filmography/export?format=csv"><Download className="h-4 w-4" />CSV</a></Button>
+            <Button onClick={() => setIsAdding(true)} className="w-full gap-2 sm:w-auto">
+              <Plus className="h-4 w-4" /> {t("works.addWork")}
+            </Button>
+          </div>}
       />
 
       {reviewWorkCount > 0 && (
@@ -1434,13 +1438,6 @@ export default function MineVaerkerClient({
         />
       </SummaryGrid>
 
-      <section aria-label={t("works.filmographyExport")} className="flex justify-end gap-2">
-        <div className="flex shrink-0 gap-2">
-          <Button asChild type="button" size="sm" variant="outline"><a href="/api/portal/filmography/export?format=pdf"><Download className="h-4 w-4" />PDF</a></Button>
-          <Button asChild type="button" size="sm" variant="outline"><a href="/api/portal/filmography/export?format=csv"><Download className="h-4 w-4" />CSV</a></Button>
-        </div>
-      </section>
-
       {/* Toast */}
       {msg && (
         <div className={`flex items-center justify-between rounded-lg px-4 py-3 text-sm ${
@@ -1463,18 +1460,18 @@ export default function MineVaerkerClient({
       <div className="rounded-lg border bg-card text-card-foreground overflow-hidden">
 
         {/* Toolbar */}
-        <div className="flex flex-col px-4 py-3.5 border-b gap-3 sm:px-5 md:flex-row md:items-center md:justify-between">
-          <div className="flex w-full flex-col gap-2.5 sm:flex-row sm:flex-wrap md:w-auto md:items-center">
+        <div className="flex flex-col px-4 py-3 border-b gap-3 sm:px-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             {selected.length > 0 ? (
               <>
                 <span className="text-sm font-semibold text-red-700">{selected.length} {t("works.selected")}</span>
-                <Button size="sm" variant="destructive" onClick={handleDeleteSelected} className="h-8 w-full gap-1.5 text-xs sm:w-auto">
+                <Button size="sm" variant="destructive" onClick={handleDeleteSelected} className="h-8 gap-1.5 text-xs sm:w-auto">
                   <Trash2 className="h-3.5 w-3.5" /> {t("works.removeSelected")}
                 </Button>
-                <Button size="sm" variant="outline" onClick={beginSelectedSoloReview} className="h-8 w-full text-xs sm:w-auto">
+                <Button size="sm" variant="outline" onClick={beginSelectedSoloReview} className="h-8 text-xs sm:w-auto">
                   {t("works.review.soloAction")}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => setSelected([])} className="h-8 w-full text-xs sm:w-auto">{t("common.cancel")}</Button>
+                <Button size="sm" variant="outline" onClick={() => setSelected([])} className="h-8 text-xs sm:w-auto">{t("common.cancel")}</Button>
               </>
             ) : (
               <>
@@ -1484,7 +1481,7 @@ export default function MineVaerkerClient({
                   placeholder={t("works.searchPlaceholder")}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="h-9 w-full pl-8 pr-8 text-sm"
+                  className="h-8 w-full pl-8 pr-8 text-sm"
                 />
                 {search && (
                   <button
@@ -1498,14 +1495,14 @@ export default function MineVaerkerClient({
                 )}
               </div>
               <Select value={catFilter} onValueChange={setCatFilter}>
-                <SelectTrigger className="h-9 w-full text-sm sm:w-[160px]"><SelectValue placeholder="Type" /></SelectTrigger>
+                <SelectTrigger className="h-8 w-full text-xs sm:w-[150px]"><SelectValue placeholder="Type" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Type</SelectItem>
                   {WORK_TYPES.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
                 </SelectContent>
               </Select>
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="h-9 w-full text-sm sm:w-[210px]"><SelectValue placeholder="Status" /></SelectTrigger>
+                <SelectTrigger className="h-8 w-full text-xs sm:w-[190px]"><SelectValue placeholder="Status" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Alle statusser</SelectItem>
                   <SelectItem value="messages">Nye beskeder fra DFKS</SelectItem>
@@ -1518,53 +1515,54 @@ export default function MineVaerkerClient({
                   <SelectItem value="unresolvedShares">{t("works.unresolvedShareStatus")}</SelectItem>
                 </SelectContent>
               </Select>
+              <ResetFiltersButton
+                active={Boolean(search || catFilter !== "all" || statusFilter !== "all")}
+                onReset={() => { setSearch(""); setCatFilter("all"); setStatusFilter("all"); setSelected([]); setPageSize(20); }}
+              />
               </>
             )}
           </div>
-          <ResetFiltersButton
-            active={Boolean(search || catFilter !== "all" || statusFilter !== "all")}
-            onReset={() => { setSearch(""); setCatFilter("all"); setStatusFilter("all"); setSelected([]); setPageSize(20); }}
-          />
-	          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-	            Vis
-	            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground">
-		              {[20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
-	            </select>
-	          </label>
-	          {filtered.length > 0 && (
-	            <Button
-	              type="button"
-	              variant="outline"
-	              className="w-full sm:w-auto lg:hidden"
-	              onClick={() => setSelected(allFilteredSelected ? [] : filteredSelectionIds)}
-	            >
-	              {allFilteredSelected ? "Fravælg alle" : "Vælg alle"}
-	              {selected.length > 0 ? ` (${selected.length})` : ""}
-	            </Button>
-	          )}
-	          <div className="grid grid-cols-[1fr_auto] gap-2 lg:hidden">
-            <Select value={sortKey} onValueChange={value => setSortKey(value as SortKey)}>
-              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="date">Tilføjet dato</SelectItem>
-                <SelectItem value="title">Værktitel</SelectItem>
-                <SelectItem value="year">Premiereår</SelectItem>
-                <SelectItem value="type">Type</SelectItem>
-                <SelectItem value="contract">Kontraktstatus</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-9 px-3">
-              {sortKey === "date" ? (sortDir === "asc" ? "Ældst" : "Nyest") : sortKey === "contract" ? (sortDir === "asc" ? "Mangler" : "OK") : sortDir === "asc" ? "A-Z" : "Z-A"}
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground md:justify-end">
+            <ListResultSummary filteredCount={pageResult.filteredCount} totalCount={pageResult.totalCount} selectedCount={selected.length} className="text-xs" />
+            <label className="flex items-center gap-1.5 text-xs">
+              Vis
+              <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
+                {[20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+            {filtered.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto lg:hidden text-xs h-8"
+                onClick={() => setSelected(allFilteredSelected ? [] : filteredSelectionIds)}
+              >
+                {allFilteredSelected ? "Fravælg alle" : "Vælg alle"}
+                {selected.length > 0 ? ` (${selected.length})` : ""}
+              </Button>
+            )}
+            <div className="grid grid-cols-[1fr_auto] gap-2 lg:hidden w-full sm:w-auto">
+              <Select value={sortKey} onValueChange={value => setSortKey(value as SortKey)}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="date">Tilføjet dato</SelectItem>
+                  <SelectItem value="title">Værktitel</SelectItem>
+                  <SelectItem value="year">Premiereår</SelectItem>
+                  <SelectItem value="type">Type</SelectItem>
+                  <SelectItem value="contract">Kontraktstatus</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-8 px-3 text-xs">
+                {sortKey === "date" ? (sortDir === "asc" ? "Ældst" : "Nyest") : sortKey === "contract" ? (sortDir === "asc" ? "Mangler" : "OK") : sortDir === "asc" ? "A-Z" : "Z-A"}
+              </Button>
+            </div>
           </div>
-
-          <ListResultSummary filteredCount={pageResult.filteredCount} totalCount={pageResult.totalCount} selectedCount={selected.length} className="lg:col-span-full" />
         </div>
 
-		        {/* Kolonnehoveder */}
+	        {/* Kolonnehoveder */}
 	        <div
           className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground select-none lg:grid"
-          style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
+          style={{ gridTemplateColumns: "36px 2.6fr 0.6fr 1fr 0.8fr 0.8fr 1.4fr 0.6fr" }}
         >
           <input
             type="checkbox"
@@ -1623,8 +1621,8 @@ export default function MineVaerkerClient({
           return (
             <React.Fragment key={a.id}>
             <div
-              className="hidden items-center px-5 py-3 border-b hover:bg-muted/50 transition-colors lg:grid"
-              style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
+              className="hidden items-center px-5 py-2.5 border-b hover:bg-muted/50 transition-colors lg:grid"
+              style={{ gridTemplateColumns: "36px 2.6fr 0.6fr 1fr 0.8fr 0.8fr 1.4fr 0.6fr" }}
             >
               <input
                 type="checkbox"

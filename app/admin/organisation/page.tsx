@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
-import { AlertCircle, Building2, CheckCircle2, ChevronDown, Copy, ImageIcon, Loader2, Plus, Save, Trash2, Upload, Wifi } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, Copy, ImageIcon, Loader2, Plus, Save, Trash2, Upload, Wifi } from "lucide-react";
 import { getOrganisationSettings, removeOrganisationLogo, testOrganisationForeningLetConnection, updateOrganisationSettings, uploadOrganisationLogo } from "@/app/actions/organisation-settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImportConnectionsSettings } from "@/components/admin/import-connections-settings";
+import { PageHeader } from "@/components/page-header";
 
 const OrganisationTextEditor = dynamic(() => import("@/components/admin/organisation-text-editor"), {
   loading: () => <section className="rounded-lg border bg-card p-5 text-sm text-muted-foreground shadow-sm"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Indlæser teksteditor...</section>,
@@ -90,12 +91,12 @@ const emptyForm: FormState = {
 function SettingsSection({ title, description, children }: { title: string; description: string; children: ReactNode }) {
   return (
     <details open className="group rounded-lg border bg-card shadow-sm">
-      <summary className="flex cursor-pointer list-none items-start justify-between gap-4 p-4 marker:hidden sm:p-5 [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-4 px-4 py-3 marker:hidden sm:px-5 sm:py-3.5 [&::-webkit-details-marker]:hidden">
         <div>
-          <h2 className="text-base font-semibold">{title}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
         </div>
-        <ChevronDown className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true" />
+        <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true" />
       </summary>
       <div className="border-t p-4 sm:p-5">{children}</div>
     </details>
@@ -334,28 +335,17 @@ export default function OrganisationSettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6" data-performance-route="organisation-settings" data-performance-ready="shell">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Building2 className="h-4 w-4" />
-            Opsætning
-          </div>
-          <h1 className="text-2xl font-semibold">Opsætning</h1>
-          <p className="mt-1 text-base font-medium text-foreground">
-            {form.long_name || form.short_name || "Organisation"}
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Tilpas navn, logo, afsender-mail og de fagord organisationens brugere ser i portalen.
-          </p>
-        </div>
-        {activeTab === "organisation" && (
+    <div className="mx-auto max-w-4xl space-y-4" data-performance-route="organisation-settings" data-performance-ready="shell">
+      <PageHeader
+        title={`Opsætning · ${form.long_name || form.short_name || "Organisation"}`}
+        subtitle="Tilpas navn, logo, afsender-mail og de fagord organisationens brugere ser i portalen."
+        actions={activeTab === "organisation" && (
           <Button className="w-full sm:w-auto" onClick={handleSave} disabled={isPending || !canSave}>
             {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Gem ændringer
           </Button>
         )}
-      </div>
+      />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
         <TabsList className="flex h-auto w-full flex-wrap justify-start">

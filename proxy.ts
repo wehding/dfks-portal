@@ -12,17 +12,30 @@ export async function proxy(req: NextRequest) {
     // godkendes fortsat af deres egne secrets/signaturer i de enkelte ruter.
     if (pathname.startsWith("/api/") && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
         const fetchSite = req.headers.get("sec-fetch-site")
-        if (fetchSite && !["same-origin", "same-site"].includes(fetchSite)) {
+        const isDev = process.env.NODE_ENV !== "production"
+        if (fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite) && !isDev) {
             return NextResponse.json({ error: "Ugyldig forespørgselskilde" }, { status: 403 })
         }
         const origin = req.headers.get("origin")
         if (origin) {
             let allowed = false
             try {
-                const reqOrigin = new URL(origin).origin
+                const reqOriginUrl = new URL(origin)
+                const reqOrigin = reqOriginUrl.origin
                 const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim()
                 const expectedOrigin = configured ? new URL(configured).origin : req.nextUrl.origin
-                allowed = reqOrigin === expectedOrigin || reqOrigin === req.nextUrl.origin
+                const hostHeader = req.headers.get("x-forwarded-host") ?? req.headers.get("host")
+                const isLocalHost = reqOriginUrl.hostname === "localhost"
+                    || reqOriginUrl.hostname === "127.0.0.1"
+                    || reqOriginUrl.hostname.startsWith("100.") // Tailscale
+                    || reqOriginUrl.hostname.startsWith("192.168.")
+                    || reqOriginUrl.hostname.startsWith("10.")
+                    || reqOriginUrl.hostname.endsWith(".local")
+
+                allowed = reqOrigin === expectedOrigin
+                    || reqOrigin === req.nextUrl.origin
+                    || (hostHeader ? reqOriginUrl.host === hostHeader : false)
+                    || (isDev && isLocalHost)
             } catch {
                 allowed = false
             }

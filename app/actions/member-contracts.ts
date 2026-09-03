@@ -27,7 +27,7 @@ import { extractPdfTextWithLayout } from "@/lib/pdf-parse";
 import { buildPdfLayout } from "@/lib/contract-layout";
 import type { ContractLayout } from "@/lib/contract-layout";
 import { matchCitationToClause } from "@/lib/contract-layout-store";
-import { findContractTypeEvidence, type StoredContractFieldEvidence } from "@/lib/contract-workbench";
+import { findContractTypeEvidence, findCopydanEvidence, findSvodEvidence, findSignatureEvidence, findProducerEvidence, type StoredContractFieldEvidence } from "@/lib/contract-workbench";
 import { mergeContractEvidence, resolveNativeLayoutEvidence, resolveSpatialV3Evidence, sanitizeStoredContractEvidence } from "@/lib/contract-field-evidence";
 import { parseVerifiedSpatialV3Artifact } from "@/lib/server/contract-spatial-artifact";
 import { hasActiveMemberContractOwnership, type MemberOrgAffiliation } from "@/lib/member-contract-access";
@@ -2107,14 +2107,20 @@ export async function deleteAdminContractsPermanently(contractIds: string[]) {
   }
 
   // Admin skal have rettigheder i hver org kontrakterne tilhører
+  // Kun admin og superadmin kan slette kontrakter permanent
   const orgIds = [...new Set(found.map(row => row.org_id))];
   for (const orgId of orgIds) {
-    if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+    const role = await staffRoleForOrg(db, user.id, orgId);
+    if (!role || (role !== "admin" && role !== "superadmin")) {
+      return { success: false, error: "Kun admin og superadmin kan slette kontrakter permanent." };
+    }
   }
 
   const actorOrgId = await requireOrgId(db, user.id);
   const actorRole = await staffRoleForOrg(db, user.id, actorOrgId);
-  if (!actorRole) return { success: false, error: "Ikke autoriseret" };
+  if (!actorRole || (actorRole !== "admin" && actorRole !== "superadmin")) {
+    return { success: false, error: "Kun admin og superadmin kan slette kontrakter permanent." };
+  }
   const writeDb = createServiceClient({ audit: {
     actorUserId: user.id,
     actorOrgId,
@@ -2426,6 +2432,43 @@ export async function fetchAdminContractEditorData(contractId: string) {
       sources.contractType_focus = evidence.focusText;
       sources.contractType_clause_id = evidence.clauseId;
       sources.contractType_page = String(evidence.page);
+    }
+  }
+  if (!sources.copydan || extractedData.copydan === false || extractedData.copydan === "unknown") {
+    const copydanEv = findCopydanEvidence(layout);
+    if (copydanEv) {
+      sources.copydan = copydanEv.quote;
+      sources.copydan_clause_id = copydanEv.clauseId;
+      sources.copydan_page = String(copydanEv.page);
+      extractedData.copydan = true;
+    }
+  }
+  if (!sources.svod || extractedData.svod === false || extractedData.svod === "unknown") {
+    const svodEv = findSvodEvidence(layout);
+    if (svodEv) {
+      sources.svod = svodEv.quote;
+      sources.svod_clause_id = svodEv.clauseId;
+      sources.svod_page = String(svodEv.page);
+      extractedData.svod = true;
+    }
+  }
+  if (!sources.signatureEvidence) {
+    const sigEv = findSignatureEvidence(layout);
+    if (sigEv) {
+      sources.signatureEvidence = sigEv.quote;
+      sources.signatureEvidence_clause_id = sigEv.clauseId;
+      sources.signatureEvidence_page = String(sigEv.page);
+    }
+  }
+  if (!sources.employerName || !extractedData.employerName) {
+    const prodEv = findProducerEvidence(layout, contract.working_title);
+    if (prodEv) {
+      sources.employerName = prodEv.quote;
+      sources.employerName_clause_id = prodEv.clauseId;
+      sources.employerName_page = String(prodEv.page);
+      extractedData.employerName = prodEv.producerName;
+      extractedData.producerName = prodEv.producerName;
+      extractedData.productionCompanies = [prodEv.producerName];
     }
   }
   // Normalisér navigationen for alle kilder ét sted. Ældre AI-resultater har

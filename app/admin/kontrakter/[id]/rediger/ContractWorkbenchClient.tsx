@@ -4,9 +4,9 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, BriefcaseBusiness, Building2, CheckCircle2, ChevronLeft, ChevronRight, Download, GripVertical, Loader2, Save, Scale, Sparkles, X, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BriefcaseBusiness, Building2, CheckCircle2, ChevronLeft, ChevronRight, Download, GripVertical, Loader2, Save, Scale, Scissors, Sparkles, Trash2, Tv, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { addAdminContractComment, getAdminContractSeriesEpisodeOptions, markContractCommentsRead, queueAdminContractAiExtraction, updateAdminContract } from "@/app/actions/member-contracts";
+import { addAdminContractComment, deleteAdminContractsPermanently, getAdminContractSeriesEpisodeOptions, markContractCommentsRead, queueAdminContractAiExtraction, updateAdminContract } from "@/app/actions/member-contracts";
 import { createAdminContractWorkQueue, fetchAdminContractWorkQueue, markAdminContractQueueItem } from "@/app/actions/admin-contract-work-queues";
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management";
 import { resolveUnifiedSearchResultDetails, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
@@ -26,7 +26,7 @@ import { contractDataToManualWorkSeed, contractWorkTypeFilter, emptyManualWorkFo
 import { extractedProductionCompanyNames, type ProductionCompanySelection } from "@/lib/production-companies";
 import { buildCompleteEpisodeOptions, mergeEpisodeOptionsByPriority, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
-import { contractEpisodeNumbersFromLayout, contractEvidencePage, fieldEvidence, safeContractReturnTo, suggestLocalContractWork, type ContractDocumentVariant, type ContractFieldEvidence, type ContractFieldSource, type ContractValidationMissingField, type ContractWorkbenchData } from "@/lib/contract-workbench";
+import { contractEpisodeNumbersFromLayout, contractEvidencePage, fieldEvidence, safeContractReturnTo, suggestLocalContractWork, type ContractDocumentVariant, type ContractEvidenceBbox, type ContractFieldEvidence, type ContractFieldSource, type ContractValidationMissingField, type ContractWorkbenchData } from "@/lib/contract-workbench";
 import { CONTRACT_WORKBENCH_SPLIT_QUERY } from "@/lib/contract-workbench-responsive";
 import type { ContractValidationSectionKey } from "@/app/actions/member-contracts";
 import type { ContractEvidenceActivation } from "../../ContractAiDataEditor";
@@ -56,7 +56,7 @@ const SECTIONS: Array<{ key: string; label: string; section?: ContractValidation
   { key: "rights", label: "Rettigheder", section: "rights" },
   { key: "dates", label: "Dato", section: "dates" },
   { key: "salary", label: "Løn og periode", section: "salary" },
-  { key: "series", label: "Seriedata", section: "series" },
+  { key: "series", label: "Afsnit og medklippere", section: "series" },
   { key: "signature", label: "Underskrift", section: "signature" },
   { key: "ids", label: "ID", section: "ids" },
   { key: "work", label: "Værksdata", section: "work" },
@@ -190,6 +190,15 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   const [validateOpen, setValidateOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectMessage, setRejectMessage] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [soloConfirmed, setSoloConfirmed] = useState<boolean>(() => {
+    return Boolean(
+      (validationData as any).soloConfirmed ??
+      (validationData as any).isSoloClipped ??
+      (contract as any).solo_confirmed
+    );
+  });
   const [validatedOpen, setValidatedOpen] = useState(false);
   const flushHandlersRef = useRef(new Map<string, () => Promise<boolean>>());
   const [visitedTabs, setVisitedTabs] = useState<Set<string>>(new Set([allowedInitialSection]));
@@ -358,16 +367,30 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     if (triState(validationData.svod) === "unknown") add("approve", "svod", "Streaming-forbehold");
     if (!form.contractDate) add("approve", "contractDate", "Kontraktdato");
     if (validationData.salary == null) add("salary", "salary", "Ugeløn");
-    if (isSeries && form.episodeNumbers.length === 0) add("series", "episodeNumbers", "Valgte afsnit");
+    if (isSeries && form.episodeNumbers.length === 0) {
+      add("approve", "episodeNumbers", "Valgte serieafsnit");
+      add("series", "episodeNumbers", "Valgte afsnit");
+    }
+    if (isSeries && !soloConfirmed) {
+      add("approve", "collaboration", "Solo- eller medklipper-valg");
+    }
     if (triState(validationData.signatureStatus) === "unknown") add("approve", "signatureStatus", "Underskrevet");
-    if (!validationData.signatureDate) add("approve", "signatureDate", "Underskriftsdato");
+    if (triState(validationData.signatureStatus) === "yes" && !validationData.signatureDate) {
+      add("approve", "signatureDate", "Underskriftsdato");
+    }
     if (activeWork && !activeWork.dfi_id && !activeWork.tmdb_id && !activeWork.imdb_id) add("ids", "externalIds", "Eksternt værk-ID");
     if (!validationData.productionType && !validationData.director) add("work", "workDetails", "Produktionstype eller instruktør");
     return result;
-  }, [activeWork, contract.rights_holder_id, form, isSeries, manualWorkMode, producerSelections.length, selectedWorkResult, validationData]);
+  }, [activeWork, contract.rights_holder_id, form, isSeries, manualWorkMode, producerSelections.length, selectedWorkResult, soloConfirmed, validationData]);
   const missing = missingByTab.approve;
   const allMissing = useMemo(() => Object.values(missingByTab).flat(), [missingByTab]);
   const tabCounts = useMemo(() => Object.fromEntries(Object.entries(missingByTab).map(([key, items]) => [key, items.length])), [missingByTab]);
+  const isValidationRecommended = useMemo(() => {
+    const nonSignatureMissing = missing.filter(
+      item => item.key !== "signatureStatus" && item.key !== "signatureDate"
+    );
+    return nonSignatureMissing.length === 0;
+  }, [missing]);
 
   const setActive = (evidence: ContractEvidenceActivation) => {
     const coordinateEvidence = data.evidence?.[evidence.sourceKey] ?? data.evidence?.[evidence.fieldKey];
@@ -395,11 +418,27 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     setActiveField(next);
   };
   const documentLastPage = useMemo(() => Math.max(1, ...(data.layout?.clauses ?? []).map(clause => Number(clause.page) || 1)), [data.layout]);
-  const activateEvidence = (evidence: ContractEvidenceActivation) => setActive(
-    evidence.fieldKey === "signatureStatus" && !evidence.page
-      ? { ...evidence, page: documentLastPage }
-      : evidence,
-  );
+  const activateEvidence = (evidence: ContractEvidenceActivation) => {
+    if (evidence.fieldKey === "signatureStatus" || evidence.fieldKey === "signatureDate") {
+      const targetPage = evidence.page ?? documentLastPage;
+      const signatureClause = data.layout?.clauses?.find(c =>
+        (c.page ?? 1) >= Math.max(1, documentLastPage - 1) &&
+        /(for\s+producenten|for\s+(?:lønmodtageren|medarbejderen|klipperen)|penneo|docusign|adobe\s*sign|digitalt\s+signeret|dato\s*[,:]\s*sted|sted\s*[,:]\s*dato|dato\s+og\s+underskrift|_{3,})/i.test(c.text)
+      );
+      const clauseBbox: ContractEvidenceBbox | null = signatureClause?.pdfBbox?.x != null && signatureClause.pdfBbox.y != null && signatureClause.pdfBbox.width != null && signatureClause.pdfBbox.height != null
+        ? { x: signatureClause.pdfBbox.x, y: signatureClause.pdfBbox.y, width: signatureClause.pdfBbox.width, height: signatureClause.pdfBbox.height, space: "pdf_bottom_left" }
+        : null;
+      return setActive({
+        ...evidence,
+        page: targetPage,
+        clauseId: evidence.clauseId ?? signatureClause?.id ?? null,
+        bbox: evidence.bbox ?? clauseBbox,
+        focusText: null, // Undgå tekstsøgning på det isolerede ord "underskrift"
+        quote: signatureClause?.text ?? "",
+      });
+    }
+    return setActive(evidence);
+  };
   const activeEvidenceBase = activeField ? fieldEvidence(activeField.fieldKey, activeField.sourceKey, {
     ...data.sources,
     [activeField.sourceKey]: activeField.quote,
@@ -412,25 +451,41 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
 
   const baseRow = (args: { key: string; label: string; sourceKey: string; source: ContractFieldSource; focusText?: string | null; missing?: boolean; children: React.ReactNode }) => {
     const evidence = fieldEvidence(args.key, args.sourceKey, data.sources, data.layout, data.evidence);
-    const activation: ContractEvidenceActivation = { fieldKey: args.key, label: args.label, sourceKey: args.sourceKey, quote: evidence.quote ?? "", focusText: args.focusText, clauseId: evidence.clauseId, page: evidence.clause?.page ?? evidence.page };
+    const activation: ContractEvidenceActivation = {
+      fieldKey: args.key,
+      label: args.label,
+      sourceKey: args.sourceKey,
+      quote: evidence.quote ?? "",
+      focusText: args.focusText,
+      clauseId: evidence.clauseId,
+      page: evidence.clause?.page ?? evidence.page,
+      bbox: evidence.bbox,
+      coordinateSource: evidence.coordinateSource,
+      confidence: evidence.confidence,
+    };
     const activateFromRow = (event: MouseEvent) => {
       if ((event.target as Element).closest("button,input,select,textarea,a,[role='combobox']")) return;
-      setActive(activation);
+      activateEvidence(activation);
     };
-    return <div id={`field-${args.key}`} data-review-row tabIndex={0} onFocus={() => setActive(activation)} onKeyDown={event => {
+    return <div id={`field-${args.key}`} data-review-row tabIndex={0} onKeyDown={event => {
       if (event.key === "Escape" && event.target !== event.currentTarget) { event.preventDefault(); event.currentTarget.focus(); return; }
       if (event.target !== event.currentTarget) return;
-      if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); const control = event.currentTarget.querySelector<HTMLElement>("input,button,select,textarea,[role='combobox']"); control?.focus(); return; }
+      if (event.key === "Enter") { event.preventDefault(); activateEvidence(activation); return; }
+      if (event.key === "F2") { event.preventDefault(); const control = event.currentTarget.querySelector<HTMLElement>("input,button,select,textarea,[role='combobox']"); control?.focus(); return; }
       if (event.key === "Tab") {
         const rows = [...event.currentTarget.parentElement?.querySelectorAll<HTMLElement>("[data-review-row]") ?? []];
         const index = rows.indexOf(event.currentTarget);
         const next = rows[index + (event.shiftKey ? -1 : 1)];
         if (next) { event.preventDefault(); next.focus(); }
       }
-    }} onClick={activateFromRow} className={`grid min-h-11 cursor-pointer grid-cols-[minmax(88px,0.4fr)_minmax(0,1.6fr)_auto] items-center gap-1.5 border-b px-2 py-1.5 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring last:border-b-0 sm:grid-cols-[minmax(105px,0.45fr)_minmax(0,1.55fr)_auto] sm:gap-2 ${activeField?.fieldKey === args.key ? "bg-amber-50 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/20" : ""} ${args.missing ? "bg-amber-50/70 dark:bg-amber-950/15" : ""}`}>
-      <div className="flex min-w-0 items-center gap-1"><Label className="truncate text-[11px] font-medium">{args.label}</Label>{args.missing && <Badge className="h-4 rounded-sm bg-amber-500 px-1 text-[8px] text-white">Mangler</Badge>}</div>
-      <div className="min-w-0">{args.children}</div>
-      <ContractSourceBadge source={args.source} />
+    }} onClick={activateFromRow} className={`grid min-h-[30px] cursor-pointer grid-cols-[130px_minmax(0,1fr)_130px] items-center gap-2 border-b border-border/40 px-2.5 py-0.5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring last:border-b-0 ${activeField?.fieldKey === args.key ? "bg-amber-400/20 ring-1 ring-inset ring-amber-500 dark:bg-amber-950/40 dark:ring-amber-500" : ""} ${args.missing ? "bg-rose-500/10 border-l-2 border-l-rose-500 dark:bg-rose-950/20" : ""}`}>
+      <div className="flex min-w-0 items-center gap-1.5"><Label className="truncate text-[11px] font-medium text-foreground">{args.label}</Label>{args.missing && <Badge className="h-3.5 rounded-sm bg-rose-600 px-1 text-[7.5px] font-semibold text-white dark:bg-rose-700">Mangler</Badge>}</div>
+      <div className="min-w-0 relative">{args.children}</div>
+      <div className="flex items-center justify-end gap-1 shrink-0">
+        <button type="button" onClick={() => activateEvidence(activation)} title="Se kilde i PDF">
+          <ContractSourceBadge source={args.source} />
+        </button>
+      </div>
     </div>;
   };
 
@@ -589,14 +644,33 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   const [validateAndNextRequested, setValidateAndNextRequested] = useState(false);
 
   async function completeValidation(goNext: boolean) {
-    const success = await save("valideret", !goNext);
+    const isSigned = triState(validationData.signatureStatus) === "yes";
+    // Vis ikke bekræftelses-popup ved validering - brugeren skal have en hurtig, flydende arbejdsgang
+    const success = await save("valideret", false);
     if (!success) return;
+    if (!isSigned) {
+      toast.info("Kontrakten er valideret uden underskrift", { duration: 2500 });
+    } else {
+      toast.success("Kontrakten er valideret", { duration: 2500 });
+    }
     if (queueId) await markAdminContractQueueItem(queueId, contract.id, "completed");
-    if (goNext) navigateTo(queue?.nextContractId ?? null);
+    if (goNext) {
+      // Lad den midlertidige besked vise sig kort før næste side loades
+      await new Promise(resolve => setTimeout(resolve, 600));
+      if (queue?.nextContractId) {
+        navigateTo(queue.nextContractId);
+      } else {
+        router.push(safeContractReturnTo(returnTo));
+      }
+    }
   }
 
   async function validate(goNext = false) {
-    if (allMissing.length) {
+    // Underskrift og underskriftsdato må aldrig blokere eller udløse bekræftelses-popup.
+    // Kun kritiske felter (valgte afsnit på serie, solo/medklipper, manglende værk, rettighedshaver, kontrakttype, producent) må blokere:
+    const CRITICAL_KEYS = new Set(["episodeNumbers", "collaboration", "work", "rightsHolder", "contractType", "producer"]);
+    const blockingMissing = allMissing.filter(item => CRITICAL_KEYS.has(item.key));
+    if (blockingMissing.length) {
       setValidateAndNextRequested(goNext);
       setValidateOpen(true);
       return;
@@ -642,12 +716,8 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   }
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      if (tab === "approve") document.getElementById("field-rightsHolder")?.focus();
-      else if (tab === "ownership") document.querySelector<HTMLElement>("[aria-labelledby='ownership-heading'] button")?.focus();
-      else document.querySelector<HTMLElement>(`[data-state='active'][data-slot='tabs-content'] [data-review-row], [data-state='active'][data-slot='tabs-content'] input, [data-state='active'][data-slot='tabs-content'] button`)?.focus();
-    });
-    return () => window.cancelAnimationFrame(frame);
+    // Ingen automatisk kildeaktivering eller fokus ved sideindlæsning.
+    // Kontrakten skal åbnes i neutral full-size visning uden forudvalgt kilde.
   }, [contract.id, tab]);
 
   async function reject() {
@@ -658,6 +728,28 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     if (await save("arkiveret")) {
       setRejectOpen(false);
       router.push(safeContractReturnTo(returnTo));
+    }
+  }
+
+  async function handleDeleteContract() {
+    setDeleting(true);
+    try {
+      const result = await deleteAdminContractsPermanently([contract.id]);
+      if (!result.success) {
+        toast.error(result.error ?? "Kontrakten kunne ikke slettes");
+        return;
+      }
+      toast.success("Kontrakten er slettet permanent");
+      setDeleteOpen(false);
+      if (queue?.nextContractId) {
+        navigateTo(queue.nextContractId);
+      } else {
+        router.push(safeContractReturnTo(returnTo));
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Kontrakten kunne ikke slettes");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -700,7 +792,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         if ((event.target as HTMLElement | null)?.closest("[role='dialog']")) return;
         event.preventDefault();
         if (tab === "ownership") setOwnershipCommand(value => value + 1);
-        else if (tab === "approve") void validate(Boolean(queue));
+        else if (tab === "approve" && queue?.nextContractId) void validate(true);
         return;
       }
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || blocksContractArrowNavigation(event.target)) return;
@@ -777,8 +869,8 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   const renderMissingSummary = (tabKey: string) => {
     const items = missingByTab[tabKey] ?? [];
     if (!items.length) return null;
-    return <div className="m-2 rounded-sm border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
-      <span className="font-medium">Mangler:</span> {items.map(item => item.label).join(" · ")}
+    return <div className="m-2 rounded-sm border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-950 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-100">
+      <span className="font-medium text-rose-900 dark:text-rose-200">Mangler:</span> {items.map(item => item.label).join(" · ")}
     </div>;
   };
 
@@ -800,9 +892,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         </div>
         {data.documents.original?.sourceUrl && <Button asChild size="icon" variant="outline" className="h-8 w-8 shrink-0" title="Download uændret original"><a href={data.documents.original.sourceUrl} download><Download className="h-3.5 w-3.5" /><span className="sr-only">Download uændret original</span></a></Button>}
         <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving || aiReading} onClick={() => void runAiReading()}>{aiReading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}AI-aflæsning</Button>
-        <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving} onClick={() => void save()}>{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}Gem</Button>
-        <Button size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving} onClick={() => void validate()} title="Genvej: ⌘/Ctrl + Enter"><CheckCircle2 className="h-3.5 w-3.5" />Valider <kbd className="hidden rounded border px-1 font-mono text-[9px] sm:inline">⌘⏎</kbd></Button>
-        <Button size="sm" variant="destructive" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving} onClick={() => setRejectOpen(true)}><XCircle className="h-3.5 w-3.5" />Afvis</Button>
+        <Button size="sm" variant="destructive" className="h-8 shrink-0 gap-1 px-2 text-xs" disabled={saving || deleting} onClick={() => setDeleteOpen(true)}><Trash2 className="h-3.5 w-3.5" />Slet kontrakt</Button>
       </div>
       {data.documents.original?.convertedForViewing && variant === "original" && <p className="mt-1 text-[10px] text-muted-foreground">Original konverteret PDF vises som en neutral visningskopi af Word-filen. Download-knappen henter den uændrede original.</p>}
       {!splitLayout && <div className="mt-1 flex gap-1"><Button size="sm" className="h-7 text-xs" variant={mobilePane === "document" ? "default" : "outline"} onClick={() => setMobilePane("document")}>Dokument</Button><Button size="sm" className="h-7 text-xs" variant={mobilePane === "data" ? "default" : "outline"} onClick={() => setMobilePane("data")}>Kilder og data</Button></div>}
@@ -856,20 +946,89 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         <div className="hidden flex-wrap items-center gap-1 border-b bg-muted/20 px-3 py-1 min-[1440px]:flex"><span className="mr-1 text-[10px] font-medium">Datakilde:</span>{(["contract", "agreement", "member", "work_archive", "dfi", "tmdb", "wikidata", "manual", "stored"] as ContractFieldSource[]).map(source => <ContractSourceBadge key={source} source={source} />)}</div>
         <Tabs value={tab} onValueChange={changeTab} className="min-h-0 gap-0">
           <TabsList variant="line" className="sticky top-0 z-20 h-8 w-full justify-start overflow-x-auto rounded-none border-b bg-background px-2 py-0.5">
-            {SECTIONS.filter(item => item.key !== "ownership" || data.canManageOwnership).map(item => <TabsTrigger key={item.key} value={item.key} className="h-7 flex-none px-2 py-1 text-xs font-medium">{item.label}{tabCounts[item.key] > 0 && <Badge className="ml-1 h-3.5 min-w-3.5 rounded-sm bg-amber-500 px-0.5 text-[8px] font-medium leading-none text-white">{tabCounts[item.key]}</Badge>}</TabsTrigger>)}
+            {SECTIONS.filter(item => item.key !== "ownership" || data.canManageOwnership).map(item => <TabsTrigger key={item.key} value={item.key} className="h-7 flex-none px-2.5 py-1 text-xs font-medium">{item.label}{tabCounts[item.key] > 0 ? <Badge className="ml-1 h-3.5 min-w-3.5 rounded-sm bg-rose-600 px-1 text-[8px] font-semibold leading-none text-white dark:bg-rose-700">{tabCounts[item.key]}</Badge> : item.key !== "messages" ? <span className="ml-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" title="Alle felter bekræftet" /> : null}</TabsTrigger>)}
           </TabsList>
 
           <TabsContent forceMount value="approve" className="m-0 data-[state=inactive]:hidden">
-            {missing.length > 0 && <div className="m-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"><span className="font-medium">{missing.length} mangler:</span> {missing.map(item => item.label).join(" · ")}</div>}
-            <div className="divide-y">
-              {baseRow({ key: "rightsHolder", label: "Rettighedshaver", sourceKey: "rightsHolderName", focusText: holder?.full_name ?? null, source: "unknown", missing: !contract.rights_holder_id, children: <div className="flex min-h-8 flex-col justify-center rounded-md border bg-muted/30 px-2 py-1"><span className="truncate text-sm font-medium">{holder?.full_name ?? "Ingen rettighedshaver tilknyttet"}</span>{data.canManageOwnership ? <button type="button" className="w-fit text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => changeTab("ownership")}>Åbn Ejerskab</button> : null}</div> })}
+            {missing.length > 0 && <div className="m-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-950 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-100"><span className="font-medium text-rose-900 dark:text-rose-200">{missing.length} mangler:</span> {missing.map(item => item.label).join(" · ")}</div>}
+            <div className="divide-y divide-border/40">
+              {baseRow({ key: "rightsHolder", label: "Rettighedshaver", sourceKey: "rightsHolderName", focusText: holder?.full_name ?? null, source: "unknown", missing: !contract.rights_holder_id, children: <div className="flex h-6 min-h-6 items-center rounded border bg-muted/30 px-2 text-[11px] font-medium"><span className="truncate flex-1">{holder?.full_name ?? "Ingen rettighedshaver tilknyttet"}</span>{data.canManageOwnership ? <button type="button" className="ml-1 shrink-0 text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => changeTab("ownership")}>Åbn Ejerskab</button> : null}</div> })}
               {baseRow({ key: "producer", label: "Producent", sourceKey: "employerName", focusText: producerSelections[0]?.canonicalName ?? (extractedProducerNames[0] || employer?.name || null), source: producerSelections.length ? (producerSelections[0]?.employerId === contract.employer_id ? "contract" : "manual") : data.sources.employerName ? "contract" : "unknown", missing: !producerSelections.length, children: <ProductionCompanyPicker value={producerSelections} onChange={setProducerSelections} suggestedNames={extractedProducerNames} canManageRegistry hideLabel compact /> })}
-              {baseRow({ key: "work", label: "Tilknyttet værk", sourceKey: "workTitle", focusText: form.workingTitle || displayedWorkTitle, source: form.workId ? "work_archive" : data.sources.workTitle ? "contract" : "manual", missing: !form.workId && !selectedWorkResult && !manualWorkMode, children: <div className="space-y-1"><div className="flex min-h-8 items-center gap-1 rounded-md border px-2 text-xs"><span className="min-w-0 flex-1 truncate">{form.workId || selectedWorkResult ? displayedWorkLabel : `Arbejdstitel: ${form.workingTitle || "Ingen"}`}</span>{form.workId || selectedWorkResult ? <><Button size="sm" variant="ghost" className="h-7 shrink-0 px-1.5 text-xs" onClick={() => setWorkPickerOpen(open => !open)}>{workPickerOpen ? "Luk" : "Skift"}</Button><button type="button" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Fjern tilknyttet værk" onClick={() => { setForm(current => ({ ...current, workId: "" })); setSelectedWorkResult(null); setManualWorkMode(false); }}><X className="h-3.5 w-3.5" /></button></> : <Button size="sm" variant="ghost" className="h-7 shrink-0 px-1.5 text-xs" onClick={workPickerOpen ? () => setWorkPickerOpen(false) : openWorkSearch}>{workPickerOpen ? "Luk" : "Søg værk"}</Button>}</div>{localWorkSuggestion && !workPickerOpen && <button type="button" className="flex w-full items-center justify-between rounded-sm border border-emerald-300 bg-emerald-50 px-2 py-1 text-left text-xs text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" onClick={() => { setForm(current => ({ ...current, workId: localWorkSuggestion.id, seasonNumber: parseSeasonNumberFromTitle(current.workingTitle) ?? current.seasonNumber })); setWorkQuery(localWorkSuggestion.title); }}><span className="truncate">Foreslået: {localWorkSuggestion.title}{parseSeasonNumberFromTitle(form.workingTitle) ? ` · sæson ${parseSeasonNumberFromTitle(form.workingTitle)}` : ""}</span><span className="ml-2 shrink-0 font-medium">Tilknyt</span></button>}{workPickerOpen && <WorkSelectionPanel query={workQuery} onQueryChange={setWorkQuery} onSearch={() => void searchWorks()} isSearching={workSearching} hasSearched={workSearched} searchError={workError} results={workResults} selectedId={selectedWorkResult?.id} onSelect={result => void chooseWork(result)} typeFilter={workTypeFilter} onTypeFilterChange={setWorkTypeFilter} manualMode={manualWorkMode} onManualModeChange={setManualMode} manualWork={manualWork} onManualWorkChange={setManualWork} locale="da" autoSelectManualProducer />}</div> })}
-              {baseRow({ key: "contractType", label: "Kontrakttype", sourceKey: "contractType", focusText: data.sources.contractType_focus, source: form.type !== contract.type ? "manual" : data.sources.contractType ? "contract" : contract.type ? "stored" : "unknown", missing: !form.type, children: <Select value={form.type} onValueChange={type => setForm(current => ({ ...current, type }))}><SelectTrigger className="h-8 w-fit min-w-36 gap-2 text-xs" aria-label="Kontrakttype">{form.type === "leverandør" ? <Building2 className="h-3.5 w-3.5" /> : <BriefcaseBusiness className="h-3.5 w-3.5" />}<span>{form.type === "leverandør" ? "Leverandøraftale" : "A-løn"}</span></SelectTrigger><SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandøraftale</SelectItem></SelectContent></Select> })}
-              {baseRow({ key: "agreement", label: "Overenskomst", sourceKey: "collectiveAgreement", source: form.overenskomst === contract.overenskomst ? "contract" : "manual", missing: !form.overenskomst, children: <Select value={form.overenskomst} onValueChange={overenskomst => setForm(current => ({ ...current, overenskomst }))}><SelectTrigger className="h-8 w-fit min-w-36 text-xs"><Scale className="h-3.5 w-3.5" /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem><SelectItem value="faf">FAF (fiktion)</SelectItem><SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem><SelectItem value="dj">DJ</SelectItem><SelectItem value="metal">Metal</SelectItem><SelectItem value="ingen">Ingen</SelectItem></SelectContent></Select> })}
+              {baseRow({ key: "work", label: "Tilknyttet værk", sourceKey: "workTitle", focusText: form.workingTitle || displayedWorkTitle, source: form.workId ? "work_archive" : data.sources.workTitle ? "contract" : "manual", missing: !form.workId && !selectedWorkResult && !manualWorkMode, children: <div className="space-y-1"><div className="flex h-6 min-h-6 items-center gap-1 rounded border px-2 text-[11px]"><span className="min-w-0 flex-1 truncate">{form.workId || selectedWorkResult ? displayedWorkLabel : `Arbejdstitel: ${form.workingTitle || "Ingen"}`}</span>{form.workId || selectedWorkResult ? <><Button size="sm" variant="ghost" className="h-5 shrink-0 px-1.5 text-[10px]" onClick={() => setWorkPickerOpen(open => !open)}>{workPickerOpen ? "Luk" : "Skift"}</Button><button type="button" className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Fjern tilknyttet værk" onClick={() => { setForm(current => ({ ...current, workId: "" })); setSelectedWorkResult(null); setManualWorkMode(false); }}><X className="h-3 w-3" /></button></> : <Button size="sm" variant="ghost" className="h-5 shrink-0 px-1.5 text-[10px]" onClick={workPickerOpen ? () => setWorkPickerOpen(false) : openWorkSearch}>{workPickerOpen ? "Luk" : "Søg værk"}</Button>}</div>{localWorkSuggestion && !workPickerOpen && <button type="button" className="flex w-full items-center justify-between rounded-sm border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-left text-[10px] text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" onClick={() => { setForm(current => ({ ...current, workId: localWorkSuggestion.id, seasonNumber: parseSeasonNumberFromTitle(current.workingTitle) ?? current.seasonNumber })); setWorkQuery(localWorkSuggestion.title); }}><span className="truncate">Foreslået: {localWorkSuggestion.title}{parseSeasonNumberFromTitle(form.workingTitle) ? ` · sæson ${parseSeasonNumberFromTitle(form.workingTitle)}` : ""}</span><span className="ml-2 shrink-0 font-medium">Tilknyt</span></button>}{workPickerOpen && <WorkSelectionPanel query={workQuery} onQueryChange={setWorkQuery} onSearch={() => void searchWorks()} isSearching={workSearching} hasSearched={workSearched} searchError={workError} results={workResults} selectedId={selectedWorkResult?.id} onSelect={result => void chooseWork(result)} typeFilter={workTypeFilter} onTypeFilterChange={setWorkTypeFilter} manualMode={manualWorkMode} onManualModeChange={setManualMode} manualWork={manualWork} onManualWorkChange={setManualWork} locale="da" autoSelectManualProducer />}</div> })}
+              {isSeries && baseRow({
+                key: "series",
+                label: "Serie og afsnit",
+                sourceKey: "workTitle",
+                source: form.episodeNumbers.length ? "contract" : "unknown",
+                missing: form.episodeNumbers.length === 0 || !soloConfirmed,
+                children: (
+                  <div className="flex h-6 min-h-6 items-center justify-between gap-1.5 text-[11px]">
+                    <div className="flex items-center gap-1.5 min-w-0 truncate">
+                      <span className="shrink-0 font-medium">Sæson {form.seasonNumber}</span>
+                      <span className="text-muted-foreground">·</span>
+                      {form.episodeNumbers.length === 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => changeTab("series")}
+                          className="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-rose-300/80 bg-rose-100/90 px-1.5 text-[9.5px] font-medium text-rose-800 shadow-none transition-colors hover:bg-rose-200/90 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-200"
+                          title="Afsnit mangler – tryk for at åbne Afsnit og medklippere"
+                        >
+                          <Tv className="h-3 w-3 shrink-0" aria-hidden />
+                          <span>Afsnit mangler</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => changeTab("series")}
+                          className="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-emerald-300 bg-emerald-50 px-1.5 text-[9.5px] font-medium text-emerald-800 transition-colors hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                          title="Tryk for at ændre afsnit"
+                        >
+                          <Tv className="h-3 w-3 shrink-0" aria-hidden />
+                          <span>Afsnit {form.episodeNumbers.join(", ")}</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {!soloConfirmed ? (
+                        <button
+                          type="button"
+                          onClick={() => changeTab("series")}
+                          className="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-rose-300/80 bg-rose-100/90 px-1.5 text-[9.5px] font-medium text-rose-800 shadow-none transition-colors hover:bg-rose-200/90 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-200"
+                          title="Medklipper mangler – tryk for at åbne Afsnit og medklippere"
+                        >
+                          <Scissors className="h-3 w-3 shrink-0" aria-hidden />
+                          <span>Medklipper mangler</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => changeTab("series")}
+                          className="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-emerald-300 bg-emerald-50 px-1.5 text-[9.5px] font-medium text-emerald-800 transition-colors hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                          title="Solo bekræftet – tryk for at ændre i Afsnit og medklippere"
+                        >
+                          <Scissors className="h-3 w-3 shrink-0" aria-hidden />
+                          <span>Solo klip</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ),
+              })}
+              {baseRow({ key: "contractType", label: "Kontrakttype", sourceKey: "contractType", focusText: data.sources.contractType_focus, source: form.type !== contract.type ? "manual" : data.sources.contractType ? "contract" : contract.type ? "stored" : "unknown", missing: !form.type, children: <Select value={form.type} onValueChange={type => setForm(current => ({ ...current, type }))}><SelectTrigger className="h-6 w-fit min-w-32 gap-1.5 text-[11px] py-0 px-2" aria-label="Kontrakttype">{form.type === "leverandør" ? <Building2 className="h-3 w-3" /> : <BriefcaseBusiness className="h-3 w-3" />}<span>{form.type === "leverandør" ? "Leverandøraftale" : "A-løn"}</span></SelectTrigger><SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandøraftale</SelectItem></SelectContent></Select> })}
+              {baseRow({ key: "agreement", label: "Overenskomst", sourceKey: "collectiveAgreement", source: form.overenskomst === contract.overenskomst ? "contract" : "manual", missing: !form.overenskomst, children: <Select value={form.overenskomst} onValueChange={overenskomst => setForm(current => ({ ...current, overenskomst }))}><SelectTrigger className="h-6 w-fit min-w-32 text-[11px] py-0 px-2"><Scale className="h-3 w-3" /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem><SelectItem value="faf">FAF (fiktion)</SelectItem><SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem><SelectItem value="dj">DJ</SelectItem><SelectItem value="metal">Metal</SelectItem><SelectItem value="ingen">Ingen</SelectItem></SelectContent></Select> })}
             </div>
-            <div className="border-t">{renderEditor("approve", "approval")}</div>
-            <div className="flex flex-wrap gap-2 border-t p-3"><Button onClick={() => void validate(false)} disabled={saving} title="Genvej: ⌘/Ctrl + Enter"><CheckCircle2 className="h-4 w-4" />Validér kontrakt <kbd className="rounded border px-1 font-mono text-[10px]">⌘⏎</kbd></Button><Button variant="outline" onClick={() => void validate(true)} disabled={saving || !queue?.nextContractId} title="Gemmer alle ændringer, validerer og åbner næste"><CheckCircle2 className="h-4 w-4" />Validér og næste <kbd className="rounded border px-1 font-mono text-[10px]">⌘⏎</kbd></Button></div>
+            <div className="flex flex-wrap items-center gap-2 border-t p-3">
+              {isValidationRecommended && (
+                <Badge className="bg-blue-600 text-white hover:bg-blue-600 text-xs px-2.5 py-1 shrink-0 font-medium">
+                  Validering anbefalet
+                </Badge>
+              )}
+              <Button onClick={() => void validate(false)} disabled={saving}><CheckCircle2 className="h-4 w-4" />Validér kontrakt</Button>
+              <Button variant="outline" onClick={() => void validate(true)} disabled={saving || !queue?.nextContractId} title="Gemmer alle ændringer, validerer og åbner næste (⌘⏎)"><CheckCircle2 className="h-4 w-4" />Validér og næste <kbd className="rounded border px-1 font-mono text-[10px]">⌘⏎</kbd></Button>
+              <Button variant="outline" disabled={saving} onClick={() => void save()}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Gem</Button>
+              <Button variant="destructive" disabled={saving} onClick={() => setRejectOpen(true)}><XCircle className="h-4 w-4" />Afvis</Button>
+            </div>
           </TabsContent>
           {data.canManageOwnership ? <TabsContent forceMount value="ownership" className="m-0 data-[state=inactive]:hidden">{visitedTabs.has("ownership") ? <ContractOwnershipEditor contractId={contract.id} canManage={data.canManageOwnership} inOwnershipQueue={queue?.kind === "ownership"} hasNext={Boolean(queue?.nextContractId)} commandTrigger={ownershipCommand} onEvidenceActivate={setActive} onCompleted={handleOwnershipCompleted} /> : null}</TabsContent> : null}
           <TabsContent forceMount value="messages" className="m-0 p-3 data-[state=inactive]:hidden">
@@ -887,7 +1046,54 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
               sendLabel="Send besked"
             /> : null}
           </TabsContent>
-          {SECTIONS.filter(item => item.section).map(item => <TabsContent forceMount key={item.key} value={item.key} className="m-0 p-2 data-[state=inactive]:hidden">{visitedTabs.has(item.key) ? item.key === "series" && !isSeries ? <div className="rounded-md border p-4 text-sm text-muted-foreground">Seriedata er ikke relevant for denne kontrakt.</div> : <>{renderMissingSummary(item.key)}{renderEditor(item.key, item.section!, undefined, item.key === "rights" ? APPROVAL_RIGHT_KEYS : item.key === "signature" ? APPROVAL_SIGNATURE_KEYS : undefined)}</> : null}</TabsContent>)}
+          {SECTIONS.filter(item => item.section).map(item => (
+            <TabsContent forceMount key={item.key} value={item.key} className="m-0 p-2 data-[state=inactive]:hidden">
+              {visitedTabs.has(item.key) ? (
+                item.key === "series" && !isSeries ? (
+                  <div className="rounded-md border p-4 text-sm text-muted-foreground">
+                    Afsnit og medklippere er ikke relevant for denne kontrakt.
+                  </div>
+                ) : (
+                  <>
+                    {renderMissingSummary(item.key)}
+                    {item.key === "series" && (
+                      <div className="mb-3 rounded-lg border bg-muted/20 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold">Medklippere og solo klip</span>
+                          <span className={`text-[10px] font-medium ${soloConfirmed ? "text-emerald-700 dark:text-emerald-300" : "text-rose-600 dark:text-rose-400"}`}>
+                            {soloConfirmed ? "Solo bekræftet" : "Mangler stillingtagen"}
+                          </span>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={soloConfirmed}
+                            onChange={event => {
+                              const next = event.target.checked;
+                              setSoloConfirmed(next);
+                              setValidationData(curr => ({ ...curr, soloConfirmed: next }));
+                            }}
+                            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                          />
+                          <span>Rettighedshaver har klippet alene (solo - ingen medklippere)</span>
+                        </label>
+                      </div>
+                    )}
+                    {renderEditor(
+                      item.key,
+                      item.section!,
+                      undefined,
+                      item.key === "rights"
+                        ? APPROVAL_RIGHT_KEYS
+                        : item.key === "signature"
+                        ? APPROVAL_SIGNATURE_KEYS
+                        : undefined
+                    )}
+                  </>
+                )
+              ) : null}
+            </TabsContent>
+          ))}
         </Tabs>
       </section>
     </main>
@@ -936,8 +1142,110 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
       </DialogContent>
     </Dialog>
 
-    <Dialog open={validateOpen} onOpenChange={setValidateOpen}><DialogContent><DialogHeader><DialogTitle>Valider med manglende oplysninger?</DialogTitle><DialogDescription>Følgende oplysninger er ikke afklaret: {allMissing.map(item => item.label).join(", ")}. Du kan stadig validere efter bekræftelse.</DialogDescription></DialogHeader><div className="space-y-1">{allMissing.map(item => <button key={`${item.tab}-${item.key}`} className="block text-sm text-amber-700 underline" onClick={() => { changeTab(item.tab); setValidateOpen(false); window.setTimeout(() => window.document.getElementById(`field-${item.key}`)?.scrollIntoView({ behavior: "smooth" }), 0); }}>{item.label}</button>)}</div><DialogFooter><Button variant="outline" onClick={() => setValidateOpen(false)}>Tilbage</Button><Button onClick={() => { setValidateOpen(false); void completeValidation(validateAndNextRequested); }}>Valider alligevel{validateAndNextRequested ? " og gå videre" : ""}</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={validateOpen} onOpenChange={setValidateOpen}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Mangler før validering</DialogTitle>
+          <DialogDescription>
+            Følgende oplysninger er endnu ikke afklaret:
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1 rounded-md border border-rose-200 bg-rose-50/50 p-2.5 dark:border-rose-900/60 dark:bg-rose-950/20">
+          {allMissing.filter(item => item.key !== "signatureStatus" && item.key !== "signatureDate").map(item => (
+            <button
+              key={`${item.tab}-${item.key}`}
+              type="button"
+              className="flex w-full items-center justify-between text-left text-xs font-medium text-rose-800 hover:underline dark:text-rose-300"
+              onClick={() => {
+                changeTab(item.tab);
+                setValidateOpen(false);
+                window.setTimeout(() => window.document.getElementById(`field-${item.key}`)?.scrollIntoView({ behavior: "smooth" }), 0);
+              }}
+            >
+              <span>• {item.label}</span>
+              <span className="text-[10px] text-muted-foreground">Gå til felt →</span>
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Du kan gemme dine ændringer på kontrakten og fortsætte redigeringen, eller gemme og gå videre til næste kontrakt.
+        </p>
+        <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <Button variant="outline" size="sm" onClick={() => setValidateOpen(false)}>
+            Tilbage
+          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={saving}
+              onClick={async () => {
+                setValidateOpen(false);
+                await save();
+              }}
+            >
+              Gem
+            </Button>
+            <Button
+              size="sm"
+              disabled={saving}
+              onClick={async () => {
+                setValidateOpen(false);
+                const saved = await save();
+                if (saved) {
+                  if (queue?.nextContractId) {
+                    navigateTo(queue.nextContractId);
+                  } else {
+                    router.push(safeContractReturnTo(returnTo));
+                  }
+                }
+              }}
+            >
+              Gem og gå videre
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                setValidateOpen(false);
+                void completeValidation(validateAndNextRequested);
+              }}
+            >
+              Validér alligevel
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     <Dialog open={rejectOpen} onOpenChange={setRejectOpen}><DialogContent><DialogHeader><DialogTitle>Afvis kontrakten</DialogTitle><DialogDescription>Du kan sende en forklaring til brugeren. Kontrakten markeres som afvist i arkivet.</DialogDescription></DialogHeader><Textarea value={rejectMessage} onChange={event => setRejectMessage(event.target.value)} placeholder="Besked til brugeren (valgfri)" rows={5} />{!rejectMessage.trim() && <p className="text-xs text-amber-700">Der sendes ingen forklaring, hvis feltet er tomt.</p>}<DialogFooter><Button variant="outline" onClick={() => setRejectOpen(false)}>Annuller</Button><Button variant="destructive" disabled={saving} onClick={() => void reject()}>Afvis</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+            <Trash2 className="h-5 w-5" />
+            Slet kontrakt permanent?
+          </DialogTitle>
+          <DialogDescription className="space-y-2 pt-2">
+            <span>
+              Er du sikker på, at du vil slette denne kontrakt{holder?.full_name ? ` for ${holder.full_name}` : ""}?
+            </span>
+            <span className="block rounded-md border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-950 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-200">
+              <strong>Advarsel:</strong> Handlingen kan ikke fortrydes. Kontraktfilen, OCR-data og alle tilknyttede oplysninger slettes permanent.
+            </span>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button variant="outline" disabled={deleting} onClick={() => setDeleteOpen(false)}>
+            Annuller
+          </Button>
+          <Button variant="destructive" disabled={deleting} onClick={() => void handleDeleteContract()}>
+            {deleting ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1.5 h-4 w-4" />}
+            Slet permanent
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     <Dialog open={validatedOpen} onOpenChange={setValidatedOpen}><DialogContent><DialogHeader><DialogTitle>Kontrakten er valideret</DialogTitle><DialogDescription>Du kan gå videre til næste kontrakt på listen eller vende tilbage til arkivet.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => router.push(safeContractReturnTo(returnTo))}>Tilbage til listen</Button><Button onClick={() => void openNext()}>Næste kontrakt</Button></DialogFooter></DialogContent></Dialog>
     <Dialog open={Boolean(pendingNavigation)} onOpenChange={open => { if (!open) setPendingNavigation(null); }}><DialogContent><DialogHeader><DialogTitle>Du har ændringer, der ikke er gemt</DialogTitle><DialogDescription>Gem ændringerne før du skifter kontrakt, kassér dem, eller bliv på kontrakten.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setPendingNavigation(null)}>Annuller</Button><Button variant="outline" onClick={() => { const target = pendingNavigation; setPendingNavigation(null); if (target) navigateTo(target); }}>Kassér</Button><Button onClick={() => void (async () => { const target = pendingNavigation; if (!target) return; if (await save()) { setPendingNavigation(null); navigateTo(target); } })()}>Gem og fortsæt</Button></DialogFooter></DialogContent></Dialog>
   </div>;

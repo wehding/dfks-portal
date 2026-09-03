@@ -1117,44 +1117,52 @@ export default function RettighedshavereAdminPage() {
                 </div>
             )}
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="relative w-full sm:max-w-xs">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg navn, email, telefon eller medlemsnummer..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
-                    {search && <button type="button" aria-label="Ryd søgning" className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSearch("")}><X className="h-4 w-4" /></button>}
+            {/* Command Strip & Filters */}
+            <div className="flex flex-col gap-3 rounded-lg border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative w-full sm:w-64">
+                        <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                        <Input placeholder="Søg navn, email, tlf..." className="h-8 pl-8 pr-8 text-xs" value={search} onChange={e => setSearch(e.target.value)} />
+                        {search && <button type="button" aria-label="Ryd søgning" className="absolute right-2 top-2 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSearch("")}><X className="h-3.5 w-3.5" /></button>}
+                    </div>
+                    <Select value={filter} onValueChange={v => applyListFilter(v as Filter)}>
+                        <SelectTrigger className="h-8 text-xs w-full sm:w-44"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="alle">Alle</SelectItem>
+                            <SelectItem value="medlemmer">Kun medlemmer</SelectItem>
+                            <SelectItem value="ikke-medlemmer">Ikke-medlemmer</SelectItem>
+                            <SelectItem value="betatestere">Betatestere</SelectItem>
+                            <SelectItem value="inviteret">Inviteret</SelectItem>
+                            <SelectItem value="afventer">Afventer onboarding</SelectItem>
+                            <SelectItem value="ikke-inviteret">Ikke inviteret</SelectItem>
+                            <SelectItem value="registreret">Færdiggjort onboarding</SelectItem>
+                            <SelectItem value="alle-kontrakter-valideret">Alle kontrakter valideret</SelectItem>
+                            <SelectItem value="arkiverede">Arkiverede</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs sm:hidden"
+                        onClick={() => toggleAllVisible(!allVisibleSelected)}
+                        disabled={visibleIds.length === 0}
+                    >
+                        {allVisibleSelected ? "Fravælg alle viste" : "Vælg alle viste"}
+                    </Button>
                 </div>
-                <Select value={filter} onValueChange={v => applyListFilter(v as Filter)}>
-                    <SelectTrigger className="w-full sm:w-40"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="alle">Alle</SelectItem>
-                        <SelectItem value="medlemmer">Kun medlemmer</SelectItem>
-                        <SelectItem value="ikke-medlemmer">Ikke-medlemmer</SelectItem>
-                        <SelectItem value="betatestere">Betatestere</SelectItem>
-                        <SelectItem value="inviteret">Inviteret</SelectItem>
-                        <SelectItem value="afventer">Afventer onboarding</SelectItem>
-                        <SelectItem value="ikke-inviteret">Ikke inviteret</SelectItem>
-                        <SelectItem value="registreret">Færdiggjort onboarding</SelectItem>
-                        <SelectItem value="alle-kontrakter-valideret">Alle kontrakter valideret</SelectItem>
-                        <SelectItem value="arkiverede">Arkiverede</SelectItem>
-                    </SelectContent>
-                </Select>
-                <Button
-                    type="button"
-                    variant="outline"
-                    className="sm:hidden"
-                    onClick={() => toggleAllVisible(!allVisibleSelected)}
-                    disabled={visibleIds.length === 0}
-                >
-                    {allVisibleSelected ? "Fravælg alle viste" : "Vælg alle viste"}
-                </Button>
-            </div>
 
-            <ListResultSummary
-                filteredCount={filter === "alle" ? filteredResultCount : visible.length}
-                totalCount={Math.max(rightsHolderSummary.total, visible.length)}
-                selectedCount={selectedIds.size}
-                loading={loadingMore}
-            />
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground sm:justify-end">
+                    <ListResultSummary
+                        filteredCount={filter === "alle" ? filteredResultCount : visible.length}
+                        totalCount={Math.max(rightsHolderSummary.total, visible.length)}
+                        selectedCount={selectedIds.size}
+                        loading={loadingMore}
+                        className="text-xs"
+                    />
+                    <AdminListTools className="flex shrink-0 flex-nowrap" pageKey="rights-holders" title="Rettighedshavere" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"name",label:"Navn",index:2,required:true},...(canSeeAllOrganisations?[{id:"organisation",label:"Organisation",index:3}]:[]),{id:"email",label:"E-mail",index:canSeeAllOrganisations?4:3},{id:"phone",label:"Telefon",index:canSeeAllOrganisations?5:4},{id:"member",label:"Medlemsnr.",index:canSeeAllOrganisations?6:5},{id:"contracts",label:"Kontrakter",index:canSeeAllOrganisations?7:6},{id:"works",label:"Værker",index:canSeeAllOrganisations?8:7},{id:"status",label:"Status",index:canSeeAllOrganisations?9:8},{id:"portal",label:"Portaladgang",index:canSeeAllOrganisations?10:9},{id:"onboarding",label:"Onboarding",index:canSeeAllOrganisations?11:10}]} />
+                </div>
+            </div>
 
             {selectedIds.size > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
@@ -1281,7 +1289,6 @@ export default function RettighedshavereAdminPage() {
                 })}
             </MobileCardList>
 
-            <AdminListTools pageKey="rights-holders" title="Rettighedshavere" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"name",label:"Navn",index:2,required:true},...(canSeeAllOrganisations?[{id:"organisation",label:"Organisation",index:3}]:[]),{id:"email",label:"E-mail",index:canSeeAllOrganisations?4:3},{id:"phone",label:"Telefon",index:canSeeAllOrganisations?5:4},{id:"member",label:"Medlemsnr.",index:canSeeAllOrganisations?6:5},{id:"contracts",label:"Kontrakter",index:canSeeAllOrganisations?7:6},{id:"works",label:"Værker",index:canSeeAllOrganisations?8:7},{id:"status",label:"Status",index:canSeeAllOrganisations?9:8},{id:"portal",label:"Portaladgang",index:canSeeAllOrganisations?10:9},{id:"onboarding",label:"Onboarding",index:canSeeAllOrganisations?11:10}]} />
             <ResponsiveTableFrame className="rounded-md">
                 <Table>
                     <TableHeader>
