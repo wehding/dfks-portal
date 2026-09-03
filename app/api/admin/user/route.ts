@@ -34,7 +34,7 @@ import {
 } from "@/lib/rights-holder-invitation-templates"
 import { renderInvitationTemplate } from "@/lib/work-share-reconciliation"
 import { DEFAULT_BETA_INVITE_SUBJECT, DEFAULT_BETA_INVITE_TEXT, renderBetaInviteTemplate, todayInCopenhagen, validateBetaPeriod } from "@/lib/beta-test"
-import { formatInvitationWorks, type InvitationWorkLookup } from "@/lib/invitation-works"
+import { formatInvitationWorks, formatInvitationWorkTitles, type InvitationWorkLookup } from "@/lib/invitation-works"
 import { resolveInvitationWorks } from "@/lib/server/invitation-work-resolver"
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit"
 
@@ -149,7 +149,9 @@ export async function POST(req: NextRequest) {
             const bodyTemplate = isMember
                 ? org?.member_work_invite_text ?? MEMBER_WORK_INVITE_TEXT
                 : org?.non_member_work_invite_text ?? NON_MEMBER_WORK_INVITE_TEXT
-            const worksText = formatInvitationWorks(workLookup.works)
+            const worksText = isBetaPreview
+                ? formatInvitationWorkTitles(workLookup.works)
+                : formatInvitationWorks(workLookup.works)
             const values = { name: holder.full_name ?? "", organisation: org?.name ?? brand.long_name, worksText, primaryWork: works[0]?.title ?? "et værk" }
             const requestedEndDate = typeof body.betaEndDate === "string" ? body.betaEndDate : ""
             const betaDurationDays = Math.min(365, Math.max(1, Number(org?.beta_default_duration_days ?? 10)))
@@ -315,7 +317,9 @@ export async function POST(req: NextRequest) {
                 ? await resolveInvitationWorks({ db: admin, orgId, rightsHolderId: rhId, preferredWorkId: typeof body.workId === "string" ? body.workId : null })
                 : EMPTY_WORK_LOOKUP
             const works = workLookup.works.slice(0, 10)
-            const worksText = formatInvitationWorks(workLookup.works)
+            const worksText = isBetaInvitation
+                ? formatInvitationWorkTitles(workLookup.works)
+                : formatInvitationWorks(workLookup.works)
             const isWorkInvitation = !isStaff && body.includeWorks !== false && body.action !== "reminder" && !isBetaInvitation
             const isMember = affiliation?.is_member === true
             const workSubjectTemplate = isMember

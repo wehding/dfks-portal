@@ -100,3 +100,13 @@ export function formatInvitationWorks(works: readonly InvitationWork[], maximum 
   if (works.length > shown.length) lines.push(`• ${works.length - shown.length} øvrige titler kan ses i portalen`);
   return lines.join("\n");
 }
+
+export function formatInvitationWorkTitles(works: readonly InvitationWork[], maximum = 10) {
+  const shown = works.slice(0, maximum);
+  if (!shown.length) {
+    return "Vi kunne ikke hente en værksliste nu. Du kan gennemgå og tilføje dine værker i portalen.";
+  }
+  const lines = shown.map(work => `• ${work.title}`);
+  if (works.length > shown.length) lines.push(`• ${works.length - shown.length} øvrige titler kan ses i portalen`);
+  return lines.join("\n");
+}

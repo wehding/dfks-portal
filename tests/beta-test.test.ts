@@ -56,6 +56,11 @@ test("betainvitationens audit-event skelner mellem status og maillevering", () =
 
 test("masseinvitation viser én eksempelmail og sender til alle valgte i begrænsede batches", () => {
   const page = readFileSync("app/admin/rettighedshavere/page.tsx", "utf8");
+  assert.match(page, /const selectedHolders = useMemo/);
+  assert.match(page, /currentRowsById\.get\(id\) \?\? snapshot/);
+  assert.match(page, /openBetaInvite\(selectedHolders\)/);
+  assert.doesNotMatch(page, /openBetaInvite\(visible\.filter/);
+  assert.match(page, /const selected = selectedHolders/);
   assert.match(page, /betaInviteTargets\.length === 0/);
   assert.match(page, /rhId: betaInviteTargets\[0\]\.id/);
   assert.match(page, /Kun én eksempelmail vises/);
