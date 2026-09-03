@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildConnectSources } from "../next.config";
+import { buildConnectSources, buildFrameSources } from "../next.config";
 
 test("CSP tillader kun lokal HTTP-Supabase på loopback-adresser", () => {
   assert.deepEqual(buildConnectSources(undefined), ["'self'", "https:"]);
@@ -18,5 +18,20 @@ test("CSP tillader kun lokal HTTP-Supabase på loopback-adresser", () => {
     "https:",
     "http://localhost:54321",
     "ws://localhost:54321",
+  ]);
+});
+
+test("frame-src tillader blob-preview og Supabase Storage signed URLs", () => {
+  assert.deepEqual(buildFrameSources(undefined), ["'self'", "blob:"]);
+  assert.deepEqual(buildFrameSources("ikke-en-url"), ["'self'", "blob:"]);
+  assert.deepEqual(buildFrameSources("https://icxywdymyaxluaxxcpye.supabase.co"), [
+    "'self'",
+    "blob:",
+    "https://icxywdymyaxluaxxcpye.supabase.co",
+  ]);
+  assert.deepEqual(buildFrameSources("http://localhost:54321"), [
+    "'self'",
+    "blob:",
+    "http://localhost:54321",
   ]);
 });
