@@ -421,10 +421,6 @@ function AdminKontrakterContent({
     const [sortKey, setSortKey] = useState<SortKey>((initialQuery?.sortKey as SortKey) ?? "status")
     const [sortDir, setSortDir] = useState<SortDir>(initialQuery?.sortDir ?? "asc")
     const [selectedIds, setSelectedIds] = useState<string[]>([])
-    const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
-    const [isSuperadmin, setIsSuperadmin] = useState(initialResult?.success && initialResult.context?.role === "superadmin")
-    const [bulkDeleteStep, setBulkDeleteStep] = useState(0) // 0 = lukket, 1-3 = advarselstrin
-    const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState("")
     const [duplicatesOpen, setDuplicatesOpen] = useState(false)
     const [archiveEditOpen, setArchiveEditOpen] = useState(false)
     const [deleteEditOpen, setDeleteEditOpen] = useState(false)
@@ -734,7 +730,6 @@ function AdminKontrakterContent({
             const resolvedOrgId = contractsRes.context?.orgId ?? null
             if (!resolvedOrgId) throw new Error("Din bruger er ikke knyttet til en organisation.")
             setOrgId(resolvedOrgId)
-            setIsSuperadmin(contractsRes.context?.role === "superadmin")
             setContracts(contractsRes.contracts as unknown as ContractRow[])
             setTotalCount(contractsRes.totalCount ?? 0)
             if (typeof contractsRes.totalAllCount === "number") {
@@ -1023,27 +1018,6 @@ function AdminKontrakterContent({
             setSelectedIds([])
         } catch (err: unknown) {
             toast.error(err instanceof Error ? err.message : "Kunne ikke validere kontrakter")
-        } finally {
-            setSaving(false)
-        }
-    }
-
-    const handleDeleteSelectedPermanently = async () => {
-        if (selectedIds.length === 0) return
-        setSaving(true)
-        try {
-            const idsToDelete = [...selectedIds]
-            const res = await deleteAdminContractsPermanently(idsToDelete)
-            if (!res.success) throw new Error(res.error ?? "Kunne ikke slette kontrakter")
-            setContracts(prev => prev.filter(c => !idsToDelete.includes(c.id)))
-            toast.success(`${res.deletedCount ?? idsToDelete.length} kontrakt(er) er slettet permanent`)
-            if (res.warning) toast.warning(res.warning)
-            setSelectedIds([])
-            setBatchDeleteOpen(false)
-            setBulkDeleteStep(0)
-            setBulkDeleteConfirmText("")
-        } catch (err: unknown) {
-            toast.error(err instanceof Error ? err.message : "Kunne ikke slette kontrakter")
         } finally {
             setSaving(false)
         }
@@ -1593,10 +1567,6 @@ function AdminKontrakterContent({
         return contracts
     }, [contracts])
     const visibleContracts = filtered
-    const selectedContracts = useMemo(
-        () => contracts.filter(contract => selectedIds.includes(contract.id)),
-        [contracts, selectedIds]
-    )
     const allFilteredSelected = filtered.length > 0 && filtered.every(contract => selectedIds.includes(contract.id))
     const duplicateGroups = useMemo(() => {
         const groups = new Map<string, ContractRow[]>()
@@ -1913,27 +1883,6 @@ function AdminKontrakterContent({
                     <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={handleMarkSelectedMessagesRead} disabled={saving}>
                         <MessageSquare className="h-3.5 w-3.5" />
                         Besked læst
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="destructive"
-                        className="h-7 gap-1.5 text-xs"
-                        onClick={() => {
-                            if (selectedIds.length > 20) {
-                                if (!isSuperadmin) {
-                                    toast.error("Kun superadmin kan slette mere end 20 kontrakter ad gangen.")
-                                    return
-                                }
-                                setBulkDeleteConfirmText("")
-                                setBulkDeleteStep(1)
-                            } else {
-                                setBatchDeleteOpen(true)
-                            }
-                        }}
-                        disabled={saving}
-                    >
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        Slet permanent
                     </Button>
                 </div>
             )}
@@ -2812,99 +2761,6 @@ function AdminKontrakterContent({
                             {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                             Slet permanent
                         </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            <Dialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen}>
-                <DialogContent className="max-w-lg">
-                    <DialogHeader>
-                        <DialogTitle>Slet valgte kontrakter permanent</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-3 text-sm">
-                        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900">
-                            <div className="mb-1 flex items-center gap-2 font-medium">
-                                <AlertTriangle className="h-4 w-4" />
-                                Permanent sletning
-                            </div>
-                            <p>
-                                Du er ved at slette {selectedContracts.length} kontrakt(er) permanent. Dette kan ikke fortrydes.
-                            </p>
-                            <ul className="mt-2 max-h-32 overflow-y-auto list-disc pl-5 text-xs text-red-800">
-                                {selectedContracts.map(contract => (
-                                    <li key={contract.id}>{contract.work_title ?? contract.working_title ?? "Kontrakt"}</li>
-                                ))}
-                            </ul>
-                        </div>
-                        <p className="text-muted-foreground">
-                            PDF-filer for de valgte kontrakter slettes også fra storage, hvis de findes.
-                        </p>
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setBatchDeleteOpen(false)}>Annuller</Button>
-                        <Button variant="destructive" onClick={handleDeleteSelectedPermanently} disabled={saving}>
-                            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            Slet permanent
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            {/* Masse-sletning >20: kun superadmin, 3 sekventielle advarsler, sidste med indtastning */}
-            <Dialog open={bulkDeleteStep > 0} onOpenChange={open => { if (!open) { setBulkDeleteStep(0); setBulkDeleteConfirmText("") } }}>
-                <DialogContent className="max-w-lg">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2 text-red-700">
-                            <AlertTriangle className="h-5 w-5" />
-                            Advarsel {bulkDeleteStep}/3 — masse-sletning
-                        </DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-3 text-sm">
-                        {bulkDeleteStep === 1 && (
-                            <p>
-                                Du er ved at slette <strong>{selectedIds.length}</strong> kontrakter permanent (mere end 20 ad gangen).
-                                Dette kan <strong>ikke</strong> fortrydes, og PDF-filerne slettes også. Er du sikker?
-                            </p>
-                        )}
-                        {bulkDeleteStep === 2 && (
-                            <p>
-                                Bekræft igen: alle <strong>{selectedIds.length}</strong> kontrakter og deres bilag/allonger,
-                                valideringer og kommentarer slettes for altid. Der er ingen fortrydelse.
-                            </p>
-                        )}
-                        {bulkDeleteStep === 3 && (
-                            <div className="space-y-2">
-                                <p>
-                                    Sidste bekræftelse. Skriv <strong>SLET</strong> nedenfor for at slette
-                                    de {selectedIds.length} kontrakter permanent.
-                                </p>
-                                <Input
-                                    value={bulkDeleteConfirmText}
-                                    onChange={e => setBulkDeleteConfirmText(e.target.value)}
-                                    placeholder="Skriv SLET"
-                                    autoFocus
-                                />
-                            </div>
-                        )}
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => { setBulkDeleteStep(0); setBulkDeleteConfirmText("") }} disabled={saving}>
-                            Annuller
-                        </Button>
-                        {bulkDeleteStep < 3 ? (
-                            <Button variant="destructive" onClick={() => setBulkDeleteStep(bulkDeleteStep + 1)}>
-                                Fortsæt
-                            </Button>
-                        ) : (
-                            <Button
-                                variant="destructive"
-                                onClick={handleDeleteSelectedPermanently}
-                                disabled={saving || bulkDeleteConfirmText.trim().toUpperCase() !== "SLET"}
-                            >
-                                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                Slet {selectedIds.length} permanent
-                            </Button>
-                        )}
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

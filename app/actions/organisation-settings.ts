@@ -91,7 +91,13 @@ function normalizeRoles(value: unknown): string[] {
   return Array.from(new Set(cleaned)).slice(0, 12);
 }
 
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
+
 async function currentAdminOrg() {
+  const context = await getRequestAppAccessContext();
+  if (context && context.role && ADMIN_ORG_ROLES.includes(context.role as (typeof ADMIN_ORG_ROLES)[number]) && context.orgId) {
+    return context.orgId;
+  }
   const supabase = await createClient();
   const caller = await assertAdminRole(supabase, ADMIN_ORG_ROLES);
   if (!caller?.orgId) throw new Error("Din bruger er ikke knyttet til en organisation.");

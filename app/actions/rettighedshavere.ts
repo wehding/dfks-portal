@@ -13,6 +13,7 @@ import type { RettighedshaverWithAffiliation } from "@/lib/db/rettighedshavere";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
 import { postgrestIlikePattern } from "@/lib/postgrest-search";
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
 
 export type AdminRightsHolderListItem = RettighedshaverWithAffiliation & {
   organisation_names: string[];
@@ -156,8 +157,14 @@ export async function getAdminRightsHolders(options: {
   search?: string;
   includeSummary?: boolean;
 } = {}) {
-  const supabase = await createClient();
-  const caller = await assertAdminRole(supabase, ADMIN_ROLES);
+  const context = await getRequestAppAccessContext();
+  let caller: { orgId: string; role: string; userId: string } | null = null;
+  if (context && context.role && ADMIN_ROLES.includes(context.role as (typeof ADMIN_ROLES)[number]) && context.orgId && context.userId) {
+    caller = { orgId: context.orgId, role: context.role, userId: context.userId };
+  } else {
+    const supabase = await createClient();
+    caller = await assertAdminRole(supabase, ADMIN_ROLES);
+  }
   if (!caller) throw new Error("Du har ikke adgang til rettighedshaverlisten.");
 
   const db = createServiceClient();

@@ -13,9 +13,17 @@ const ALLOWED_GENDERS = new Set(["male", "female", "other"]);
 const ALLOWED_CATEGORIES = new Set(["feature", "tvSeries", "documentary", "docSeries", "short", "tvEntertainment", "reality", "other"]);
 const ALLOWED_CONTRACT_TYPES = new Set(["a-løn", "leverandør"]);
 
+import { getRequestAppAccessContext } from "@/lib/server/request-app-access-context";
+
 export async function GET(req: NextRequest) {
-  const session = await createClient();
-  const caller = await assertAdminRole(session, USER_ADMIN_ROLES);
+  const context = await getRequestAppAccessContext();
+  let caller: { orgId: string; role: string; userId: string } | null = null;
+  if (context && context.role && USER_ADMIN_ROLES.includes(context.role as (typeof USER_ADMIN_ROLES)[number]) && context.orgId && context.userId) {
+    caller = { orgId: context.orgId, role: context.role, userId: context.userId };
+  } else {
+    const session = await createClient();
+    caller = await assertAdminRole(session, USER_ADMIN_ROLES);
+  }
   if (!caller) return NextResponse.json({ error: "Ingen statistikadgang" }, { status: 403 });
   const params = req.nextUrl.searchParams;
   const years = params.getAll("year").flatMap(value => value.split(","))
