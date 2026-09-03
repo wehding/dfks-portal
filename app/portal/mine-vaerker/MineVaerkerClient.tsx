@@ -1634,11 +1634,6 @@ export default function MineVaerkerClient({
 
               {/* Poster + titel */}
               <div className="flex items-center gap-3">
-                {isSeriesParent ? (
-                  <span onClick={event => event.stopPropagation()}><ExpandableListTrigger expanded={isExpanded} onToggle={() => void toggleSeries(w)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} /></span>
-                ) : (
-                  <span className="w-4 shrink-0" />
-                )}
                 <button type="button" onClick={() => { if (isSeriesParent) void openSeasonEdit(w); else void openEdit(a); }} className="flex w-8 shrink-0 items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={isSeriesParent ? `Rediger ${w.title} sæson ${w.season_number}` : `Rediger ${w.title}`}>
                   {posterSrc ? (
                     <div className="w-8 h-11 rounded overflow-hidden shrink-0">
@@ -1649,6 +1644,9 @@ export default function MineVaerkerClient({
                     <Film className="h-4 w-4 text-muted-foreground/50" />
                   )}
                 </button>
+                {isSeriesParent && (
+                  <span onClick={event => event.stopPropagation()}><ExpandableListTrigger expanded={isExpanded} onToggle={() => void toggleSeries(w)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} /></span>
+                )}
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button type="button" onClick={() => { if (isSeriesParent) void openSeasonEdit(w); else void openEdit(a); }} className="rounded text-left text-sm font-semibold leading-snug text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{w.title}{w.season_number != null ? ` - S${String(w.season_number).padStart(2, "0")}` : ""}</button>
