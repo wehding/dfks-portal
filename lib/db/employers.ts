@@ -10,6 +10,7 @@
  *   employer_producer_types — many-to-many producer assignments
  */
 
+import type { SupabaseClient } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
 
 export interface DbEmployer {
@@ -251,25 +252,80 @@ export async function removeFromGroup(employerId: string, groupName: string): Pr
 }
 
 /**
- * Slår op om et firma er underselskab af et ProF-medlem.
- * Returnerer moderselskabets navn hvis fundet, ellers null.
+ * Normaliserer et selskabsnavn til sammenligning: små bogstaver, uden accenter,
+ * uden tegnsætning og uden efterstillet selskabsform (ApS, A/S, IVS, P/S, K/S).
+ * "Sequoia Sommerdahl ApS" og "sequoia sommerdahl" giver samme streng.
  */
-export async function findParentMember(companyName: string): Promise<string | null> {
-    const supabase = createClient()
-    // Find firma ved navn (case-insensitiv)
-    const { data: company } = await supabase
-        .from("employers")
-        .select("id, name, parent_id")
-        .ilike("name", companyName.trim())
-        .maybeSingle()
-    if (!company?.parent_id) return null
-    // Hent moderselskab
+function normalizeCompanyName(name: string): string {
+    return name
+        .toLowerCase()
+        .normalize("NFKD")
+        .replace(/[̀-ͯ]/g, "")
+        .replace(/[.,]/g, "")
+        .replace(/\s*\b(aps|a\/s|ivs|p\/s|k\/s)\b\.?\s*$/i, "")
+        .replace(/[^a-z0-9æøå ]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+}
+
+/**
+ * Slår op om et firma er underselskab af et ProF-medlem.
+ * Returnerer moderselskabets navn hvis entydigt fundet, ellers null.
+ *
+ * Matcher på både `employers.name` og `employer_aliases.alias` via en
+ * normaliseret sammenligning, så små forskelle i stavning/selskabsform ikke
+ * spolerer opslaget. Ved flere forskellige kandidat-selskaber returneres null
+ * (tvetydigt — hellere ingen påstand end en forkert).
+ *
+ * @param client Valgfri Supabase-klient. Server-side SKAL der sendes en
+ *   service/admin-klient — browser-klienten har ingen session og blokeres af RLS.
+ */
+export async function findParentMember(
+    companyName: string,
+    client?: SupabaseClient,
+): Promise<string | null> {
+    const supabase = client ?? (createClient() as unknown as SupabaseClient)
+
+    const target = normalizeCompanyName(companyName)
+    if (!target) return null
+
+    const firstWord = companyName.trim().split(/\s+/)[0]?.replace(/[%_,()\\*]/g, "") ?? ""
+    if (firstWord.length < 2) return null
+    const pattern = `%${firstWord}%`
+
+    const [{ data: byName }, { data: byAlias }] = await Promise.all([
+        supabase
+            .from("employers")
+            .select("id, name, parent_id")
+            .ilike("name", pattern)
+            .limit(25),
+        supabase
+            .from("employer_aliases")
+            .select("alias, employers!inner(id, name, parent_id)")
+            .ilike("alias", pattern)
+            .limit(25),
+    ])
+
+    const candidates = new Map<string, { id: string; name: string; parent_id: string | null }>()
+    for (const e of (byName ?? []) as any[]) {
+        if (normalizeCompanyName(e.name) === target) candidates.set(e.id, e)
+    }
+    for (const row of (byAlias ?? []) as any[]) {
+        const e = Array.isArray(row.employers) ? row.employers[0] : row.employers
+        if (e && normalizeCompanyName(row.alias) === target) candidates.set(e.id, e)
+    }
+
+    const withParent = [...candidates.values()].filter(c => c.parent_id)
+    if (withParent.length !== 1) return null // 0 = intet underselskabs-match, >1 = tvetydigt
+    const parentId = withParent[0].parent_id as string
+
     const { data: parent } = await supabase
         .from("employers")
         .select("id, name")
-        .eq("id", company.parent_id)
-        .single()
+        .eq("id", parentId)
+        .maybeSingle()
     if (!parent) return null
+
     // Tjek om moderselskabet er aktivt ProF-medlem
     const { count } = await supabase
         .from("employer_producer_types")

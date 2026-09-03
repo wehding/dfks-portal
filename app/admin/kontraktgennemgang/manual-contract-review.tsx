@@ -992,7 +992,11 @@ export function ManuelGennemgang() {
                         {producer && (
                             <p className="text-xs text-muted-foreground">
                                 {producer.name}
-                                {producer.isOverenskomstBound === true && " · ✓ Overenskomstbundet"}
+                                {producer.isOverenskomstBound === true && (
+                                    producer.boundViaParent && producer.parentName
+                                        ? ` · ✓ Overenskomstbundet via moderselskab (${producer.parentName})`
+                                        : " · ✓ Overenskomstbundet"
+                                )}
                                 {producer.isOverenskomstBound === false && " · ✗ Ikke overenskomstbundet"}
                                 {producer.source === "manual" && " · (fritekst)"}
                             </p>

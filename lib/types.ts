@@ -36,6 +36,10 @@ export interface ProducerSelection {
     dfksId?: string
     dfiId?: string
     isOverenskomstBound?: boolean
+    /** Overenskomstbundet fordi producenten er underselskab af et ProF-medlem. */
+    boundViaParent?: boolean
+    /** Moderselskabets navn når boundViaParent er sat. */
+    parentName?: string
     source: "dfks" | "dfi" | "manual"
 }
 

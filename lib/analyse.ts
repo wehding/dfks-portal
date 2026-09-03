@@ -177,8 +177,23 @@ Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan
 
 function byggAbsolutteRegler(
     klassifikation: Klassifikation,
-    satser: Array<{ beskrivelse: string; vaerdi: number | string; enhed: string }>
+    satser: Array<{ beskrivelse: string; vaerdi: number | string; enhed: string }>,
+    overenskomst?: {
+        /** Autoritativt svar fra DFKS-registeret/uploaden. Vinder over klassifikatorens gæt. */
+        resolved: boolean | null
+        /** Navn på ProF-medlem hvis producenten er et underselskab heraf. */
+        parentMemberName: string | null
+    }
 ): string {
+    // Autoritativ rækkefølge: moderselskabs-binding → DFKS-flag → klassifikatorens gæt.
+    const erOverenskomst: boolean = overenskomst?.parentMemberName
+        ? true
+        : (overenskomst?.resolved ?? klassifikation.er_overenskomst)
+
+    const overenskomstFaktaLinje = overenskomst?.parentMemberName
+        ? `JA — producenten er underselskab af ${overenskomst.parentMemberName} (ProF-medlem) og er bundet af overenskomsten på lige fod med moderselskabet`
+        : erOverenskomst ? "JA" : "NEJ"
+
     const hent = (søgeord: string) =>
         satser.find(s => s.beskrivelse?.toLowerCase().includes(søgeord.toLowerCase()))
 
@@ -254,14 +269,16 @@ og Producenten."
         ? "⚠ ROYALTY PÅKRÆVET: Dette er en fiktionsproduktion. Tjek eksplicit om kontrakten nævner royalty. Hvis ikke — det SKAL kommenteres som et selvstændigt punkt."
         : ""
 
-    const overenskomstRegler = klassifikation.er_overenskomst
-        ? "✓ OVERENSKOMSTDÆKKET — overenskomst-referencer er tilladt i snippets til producenten."
+    const overenskomstRegler = erOverenskomst
+        ? (overenskomst?.parentMemberName
+            ? `✓ OVERENSKOMSTDÆKKET VIA MODERSELSKAB — producenten er underselskab af ${overenskomst.parentMemberName} (ProF-medlem). Behandl producenten som fuldt overenskomstdækket: overenskomst-referencer er tilladt som bindende hjemmel i snippets til producenten, og du må IKKE skrive at producenten ikke er medlem / at overenskomsten ikke gælder.`
+            : "✓ OVERENSKOMSTDÆKKET — overenskomst-referencer er tilladt i snippets til producenten.")
         : "🚫 IKKE OVERENSKOMSTDÆKKET — ABSOLUT FORBUD: Citer ALDRIG De4/FAF som bindende hjemmel i snippets til producenten. Brug 'branchepraksis' og 'standard i branchen' i stedet."
 
     return `
 KONTRAKTFAKTA — VERIFICERET I TRIN 1. TILSIDESÆT IKKE DISSE:
 Kontrakttype:        ${klassifikation.kontrakttype}
-Overenskomstdækket:  ${klassifikation.er_overenskomst ? "JA" : "NEJ"}
+Overenskomstdækket:  ${overenskomstFaktaLinje}
 Medlemmets navn:     ${fornavn} ${efternavn}
 Aftalt løn:          ${loenInfo}
 Producent:           ${klassifikation.producent_navn || "[ikke fundet]"}
@@ -271,7 +288,7 @@ ${normallonLinjer.length > 0
     ? normallonLinjer.map(s => `${s.beskrivelse}: ${s.vaerdi} ${s.enhed}`).join("\n")
     : "Normalløn: [ikke tilgængelig — verificér mod overenskomst]"}
 ${satsLinje("Pension", pension)}
-${klassifikation.er_overenskomst && klassifikation.kontrakttype === "a-loen"
+${erOverenskomst && klassifikation.kontrakttype === "a-loen"
     ? satsLinje("BETA-fond", beta) + "\n" + satsLinje("Helligdagsbetaling", helligdag)
     : "BETA-fond og helligdagsbetaling: Ikke relevant — kun ved overenskomstdækket A-løn"}
 ${satsLinje("Feriepenge", feriepenge)}
@@ -632,12 +649,16 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         producerOverenskomst === "false" ? "Nej (registreret i DFKS-database)" :
         "Ukendt"
 
-    // Tjek om producenten er underselskab af et ProF-medlem
+    // Tjek om producenten er underselskab af et ProF-medlem.
+    // Bruger admin-klienten — findParentMember rammer RLS-beskyttede tabeller
+    // og browser-klienten har ingen session server-side.
     let parentMemberName: string | null = null
     if (producerName && producerOverenskomst !== "true") {
         try {
-            parentMemberName = await findParentMember(producerName)
-        } catch { /* ignorér — fortsætter uden */ }
+            parentMemberName = await findParentMember(producerName, supabaseAdmin)
+        } catch (e) {
+            logWarn("analyse", "Moderselskabs-opslag fejlede", { error: errorMessage(e) })
+        }
     }
 
     // Hvis producenten er underselskab, behandles de som overenskomstbundne
@@ -698,7 +719,14 @@ anbefalinger og juridiske referencer — leveres på engelsk.
     }
 
     if (klassifikation) {
-        activeSystemPrompt += byggAbsolutteRegler(klassifikation, dbSatser) + "\n\n"
+        const overenskomstResolved: boolean | null =
+            producerOverenskomst === "true" ? true :
+            producerOverenskomst === "false" ? false :
+            null
+        activeSystemPrompt += byggAbsolutteRegler(klassifikation, dbSatser, {
+            resolved: overenskomstResolved,
+            parentMemberName,
+        }) + "\n\n"
     } else if (dbSatser.length > 0) {
         activeSystemPrompt +=
             "AKTUELLE SATSER FRA DATABASE — BRUG KUN DISSE TAL:\n" +
