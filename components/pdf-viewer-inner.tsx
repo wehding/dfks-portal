@@ -85,20 +85,22 @@ function ensureHighlightCSS() {
     style.id = id
     style.textContent = `
         .react-pdf__Page__textContent span[data-hl="match"] {
-            background: rgba(253,224,71,0.55) !important;
-            box-shadow: 0 0 0 1px rgba(202,138,4,0.45) !important;
+            background: rgba(253,224,71,0.30) !important;
+            box-shadow: 0 0 0 1px rgba(202,138,4,0.35) !important;
         }
         .react-pdf__Page__textContent span[data-hl="active"] {
-            background: rgba(250,204,21,0.65) !important;
-            box-shadow: 0 0 0 2px rgba(202,138,4,0.65) !important;
+            background: rgba(250,204,21,0.35) !important;
+            box-shadow: 0 0 0 2px rgba(202,138,4,0.80) !important;
         }
         .react-pdf__Page [data-exact-hl="active"] {
             position: absolute;
             z-index: 12;
             pointer-events: none;
-            border: 2px solid rgba(202,138,4,0.75);
-            border-radius: 2px;
-            background: rgba(250,204,21,0.42);
+            border: 2px solid rgba(217,119,6,0.95);
+            border-radius: 3px;
+            background: rgba(251,191,36,0.15);
+            mix-blend-mode: multiply;
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.85);
         }
     `
     document.head.appendChild(style)
@@ -338,9 +340,8 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     const activeBbox: ContractEvidenceBbox | null = useMemo(() => activeEvidence?.bbox
         ?? (legacyBbox ? { ...legacyBbox, space: "pdf_bottom_left" } : null), [activeEvidence?.bbox, legacyBbox])
     const activeBboxes = useMemo(() => activeEvidence?.bboxes?.length ? activeEvidence.bboxes : activeBbox ? [activeBbox] : [], [activeBbox, activeEvidence?.bboxes])
-    const hasCoordinateBox = Boolean(activeBbox)
-    // En verificeret koordinatboks er den autoritative markering. Tekstlaget
-    // må ikke samtidig tegne ekstra bokse over de enkelte ord eller linjer.
+    const hasCoordinateBox = Boolean(activeBbox && pageViewport && (contractEvidencePage(activeEvidence) ?? 1) === pageNumber)
+    // En verificeret koordinatboks er den autoritative markering på den aktuelle side.
     const effectiveActiveHighlight = hasCoordinateBox ? null : activeHighlight
     const effectivePreciseFocusText = hasCoordinateBox ? "" : preciseFocusText
     const effectiveSectionHighlights = useMemo(
@@ -409,23 +410,21 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             containerHeight: containerRef.current.clientHeight,
             boxWidth,
             boxHeight,
+            pdfWidth: pageViewport.pdfWidth,
         })
         zoomedEvidence.current = key
         setFitMode("manual")
         setScale(targetScale)
     }, [activeBbox, activeEvidence, pageNumber, pageViewport])
 
-    // Lag 5: naviger til klausulens side ved activeClauseId-skift
+    // Naviger til evidensens eller klausulens side ved skift
     useEffect(() => {
-        if (!activeClauseId || !layout) return
-        const clause = layout.clauses.find(c => c.id === activeClauseId)
-        if (!clause) return
-        const targetPage = clause.page ?? 1
-        if (targetPage !== pageNumber) {
+        const targetPage = activeEvidence?.page ?? activeEvidence?.clause?.page ?? (activeClauseId && layout ? layout.clauses.find(c => c.id === activeClauseId)?.page : null)
+        if (targetPage && targetPage >= 1 && targetPage !== pageNumber) {
             setPageRendered(false)
             setPageNumber(targetPage)
         }
-    }, [activeClauseId, layout]) // eslint-disable-line
+    }, [activeClauseId, activeEvidence, layout, pageNumber])
 
     // Hent sidedimensioner fra PDF-viewporten ved den aktuelle skala.
     // Kører når pdfDoc skifter ELLER side/scale ændres — kræver IKKE pageRendered
@@ -475,23 +474,20 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     }, [highlights, effectiveActiveHighlight, effectiveSectionHighlights, pageNumber, pageRendered, activeClauseId, layout, effectivePreciseFocusText])
 
     useEffect(() => {
-        if (!pageRendered || !activeBbox || !containerRef.current) return
-        const frame = requestAnimationFrame(() => {
+        if (!pageRendered || !activeBbox || !containerRef.current || !pageViewport) return
+        let cancelled = false
+        const timer = setTimeout(() => {
+            if (cancelled) return
             const container = containerRef.current
             const highlight = container?.querySelector<HTMLElement>('[data-coordinate-hl="active"]')
             if (!container || !highlight) return
-            const containerRect = container.getBoundingClientRect()
-            const highlightRect = highlight.getBoundingClientRect()
-            const targetLeft = container.scrollLeft + highlightRect.left - containerRect.left - (container.clientWidth - highlightRect.width) / 2
-            const targetTop = container.scrollTop + highlightRect.top - containerRect.top - (container.clientHeight - highlightRect.height) / 2
-            container.scrollTo({
-                left: Math.max(0, Math.min(targetLeft, container.scrollWidth - container.clientWidth)),
-                top: Math.max(0, Math.min(targetTop, container.scrollHeight - container.clientHeight)),
-                behavior: "smooth",
-            })
-        })
-        return () => cancelAnimationFrame(frame)
-    }, [activeBbox, pageNumber, pageRendered, scale])
+            highlight.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" })
+        }, 80)
+        return () => {
+            cancelled = true
+            clearTimeout(timer)
+        }
+    }, [activeBbox, pageNumber, pageRendered, scale, pageViewport])
 
 
     if (error) {
@@ -537,7 +533,17 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                                 return (
                                     <div key={`${activeEvidence?.fieldKey ?? activeClauseId}-${pageNumber}-${index}`}
                                         data-coordinate-hl="active"
-                                        style={{ ...style, scrollMargin: 80, background: "rgba(250,204,21,0.3)", border: "2px solid rgba(202,138,4,0.7)", borderRadius: 2, zIndex: 10 }}
+                                        className="pointer-events-none transition-all duration-200"
+                                        style={{
+                                            ...style,
+                                            scrollMargin: 80,
+                                            background: "rgba(251,191,36,0.15)",
+                                            mixBlendMode: "multiply",
+                                            border: "2px solid rgba(217,119,6,0.95)",
+                                            boxShadow: "0 0 0 1px rgba(255,255,255,0.85)",
+                                            borderRadius: 3,
+                                            zIndex: 10,
+                                        }}
                                         title="Kilde i kontrakten"
                                     />
                                 )

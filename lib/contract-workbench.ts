@@ -360,3 +360,148 @@ export function findContractTypeEvidence(contractType: string | null | undefined
     page: best.clause.page,
   };
 }
+
+export function findCopydanEvidence(layout: ContractLayout | null | undefined) {
+  if (!layout?.clauses.length) return null;
+  const patterns = [
+    { pattern: /\b(?:copy-?dan|aftalelicens)\b/iu, score: 10 },
+    { pattern: /\bophavsretsloven\s*§\s*50\b/iu, score: 9 },
+    { pattern: /\bvederlag,\s*forvaltet\s*af\s*copy-?dan\b/iu, score: 10 },
+    { pattern: /\bkopiering\s+til\s+privat\s+brug\b/iu, score: 7 },
+  ];
+  const candidates = layout.clauses.map(clause => {
+    const matches = patterns.filter(item => item.pattern.test(clause.text));
+    return {
+      clause,
+      score: matches.reduce((sum, item) => sum + item.score, 0),
+      focusText: matches[0]?.pattern.exec(clause.text)?.[0] ?? null,
+    };
+  }).filter(candidate => candidate.score >= 7);
+
+  candidates.sort((left, right) => right.score - left.score);
+  const best = candidates[0];
+  if (!best) return null;
+  return {
+    quote: best.clause.text.slice(0, 320).trim(),
+    focusText: best.focusText,
+    clauseId: best.clause.id,
+    page: best.clause.page,
+  };
+}
+
+export function findSvodEvidence(layout: ContractLayout | null | undefined) {
+  if (!layout?.clauses.length) return null;
+  const patterns = [
+    { pattern: /\b(?:svod|create\s+denmark)\b/iu, score: 10 },
+    { pattern: /\b(?:kompensation\s+for\s+netflix|netflixs?\s+manglende\s+anerkendelse)\b/iu, score: 10 },
+    { pattern: /\b(?:streaming|on-demand)\s*(?:forbehold|aftale|kompensation|vederlag)\b/iu, score: 9 },
+    { pattern: /\bvendedistribution\s+af\s+netflix\b/iu, score: 8 },
+    { pattern: /\bnetflix\b/iu, score: 5 },
+  ];
+  const candidates = layout.clauses.map(clause => {
+    const matches = patterns.filter(item => item.pattern.test(clause.text));
+    return {
+      clause,
+      score: matches.reduce((sum, item) => sum + item.score, 0),
+      focusText: matches[0]?.pattern.exec(clause.text)?.[0] ?? null,
+    };
+  }).filter(candidate => candidate.score >= 7);
+
+  candidates.sort((left, right) => right.score - left.score);
+  const best = candidates[0];
+  if (!best) return null;
+  return {
+    quote: best.clause.text.slice(0, 320).trim(),
+    focusText: best.focusText,
+    clauseId: best.clause.id,
+    page: best.clause.page,
+  };
+}
+
+export function findSignatureEvidence(layout: ContractLayout | null | undefined) {
+  if (!layout?.clauses.length) return null;
+  const lastPage = Math.max(1, ...(layout.clauses.map(c => Number(c.page) || 1)));
+  // Underskrifter og datoangivelser findes altid på sidste eller næstsidste side
+  const candidates = layout.clauses.filter(clause => (clause.page ?? 1) >= Math.max(1, lastPage - 1));
+  const patterns = [
+    { pattern: /\bfor\s+(?:producenten|arbejdsgiveren)\b/iu, score: 10 },
+    { pattern: /\bfor\s+(?:lønmodtageren|medarbejderen|klipperen|leverandøren)\b/iu, score: 10 },
+    { pattern: /\b(?:penneo|docusign|adobe\s*sign|digitalt\s+signeret|mitid)\b/iu, score: 10 },
+    { pattern: /\b(?:dato\s*[,:]\s*sted|sted\s*[,:]\s*dato|dato\s+og\s+underskrift)\b/iu, score: 9 },
+    { pattern: /_{3,}/, score: 6 },
+    { pattern: /\bunderskrift\b/iu, score: 4 },
+  ];
+  const scored = candidates.map(clause => {
+    const matches = patterns.filter(item => item.pattern.test(clause.text));
+    return {
+      clause,
+      score: matches.reduce((sum, item) => sum + item.score, 0),
+    };
+  }).filter(c => c.score >= 5);
+
+  scored.sort((a, b) => b.score - a.score || b.clause.page - a.clause.page);
+  const best = scored[0];
+  if (!best) {
+    return {
+      quote: "",
+      clauseId: null,
+      page: lastPage,
+    };
+  }
+  return {
+    quote: best.clause.text.slice(0, 320).trim(),
+    clauseId: best.clause.id,
+    page: best.clause.page,
+  };
+}
+
+export function findProducerEvidence(layout: ContractLayout | null | undefined, workingTitle?: string | null) {
+  if (!layout?.clauses?.length && !workingTitle) return null;
+
+  // 1. Prøv fra workingTitle, hvis titlen følger formatet: "Værktitel, Producent, Funktion, Medlem..."
+  const titleParts = workingTitle ? workingTitle.split(",").map(part => part.trim()).filter(Boolean) : [];
+  const candidateFromTitle = titleParts.length >= 2 ? titleParts[1] : null;
+
+  // 2. Søg i layout klausuler på side 1 og 2
+  const p1Clauses = layout?.clauses?.filter(c => (c.page ?? 1) <= 2) ?? [];
+  const prodIndex = p1Clauses.findIndex(c => /herefter\s*kaldet\s*(?:producenten|arbejdsgiveren|selskabet)/i.test(c.text));
+
+  if (prodIndex > 0) {
+    // Klausulerne foran "herefter kaldet Producenten" indeholder firmanavn og evt. CVR
+    const preceding = p1Clauses.slice(0, prodIndex);
+    // Find klausul med ApS / A/S / Productions / Film / Entertainment eller som matcher title-kandidat
+    const nameClause = preceding.find(c => {
+      const t = c.text.toLocaleLowerCase("da");
+      if (candidateFromTitle && (t.includes(candidateFromTitle.replace(/\s+/g, "").toLocaleLowerCase("da")) || t.includes(candidateFromTitle.toLocaleLowerCase("da")))) {
+        return true;
+      }
+      return /(?:aps|a\/s|productions?|film|entertainment|media|pictures)\b/i.test(c.text);
+    }) ?? preceding[1] ?? preceding[0];
+
+    if (nameClause) {
+      const cleanName = candidateFromTitle && nameClause.text.toLocaleLowerCase("da").includes(candidateFromTitle.replace(/\s+/g, "").toLocaleLowerCase("da"))
+        ? candidateFromTitle
+        : nameClause.text.replace(/^[–—\s*•-]+/, "").trim();
+
+      return {
+        quote: nameClause.text.slice(0, 320).trim(),
+        clauseId: nameClause.id,
+        page: nameClause.page,
+        producerName: cleanName,
+      };
+    }
+  }
+
+  // 3. Fallback til kandidat fra titlen
+  if (candidateFromTitle && candidateFromTitle.length > 2) {
+    const matchingClause = p1Clauses.find(c => c.text.toLocaleLowerCase("da").includes(candidateFromTitle.replace(/\s+/g, "").toLocaleLowerCase("da")));
+    return {
+      quote: matchingClause ? matchingClause.text.slice(0, 320).trim() : candidateFromTitle,
+      clauseId: matchingClause?.id ?? null,
+      page: matchingClause?.page ?? 1,
+      producerName: candidateFromTitle,
+    };
+  }
+
+  return null;
+}

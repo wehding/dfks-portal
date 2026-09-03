@@ -2190,71 +2190,86 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
         </button>
       </SummaryGrid>
 
-      <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
-        <div className="relative w-full lg:w-auto">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Søg titel, DFI-id, TMDB-id, type..." className="w-full pl-8 pr-8 lg:w-[320px]" value={search} onChange={e => setSearch(e.target.value)} />
-          {search && (
-            <button
-              type="button"
-              onClick={() => setSearch("")}
-              className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
-              aria-label="Tøm søgefelt"
-            >
-              <XCircle className="h-4 w-4" />
-            </button>
-          )}
+      {/* Command Strip & Filters */}
+      <div className="flex flex-col gap-3 rounded-lg border bg-card p-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-auto">
+            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+            <Input placeholder="Søg titel, DFI-id, TMDB-id..." className="h-8 w-full pl-8 pr-8 sm:w-60 text-xs" value={search} onChange={e => setSearch(e.target.value)} />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+                aria-label="Tøm søgefelt"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <Select value={filterStatus} onValueChange={setFilterStatus}>
+            <SelectTrigger className="h-8 text-xs w-full sm:w-[150px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Status</SelectItem>
+              <SelectItem value="til_godkendelse">Til godkendelse</SelectItem>
+              <SelectItem value="godkendt">Godkendt</SelectItem>
+              <SelectItem value="arkiveret">Arkiveret</SelectItem>
+              <SelectItem value="beskeder">Beskeder</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={filterType} onValueChange={setFilterType}>
+            <SelectTrigger className="h-8 text-xs w-full sm:w-[150px]"><SelectValue placeholder="Type" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Type</SelectItem>
+              {WORK_TYPES.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filterConnection} onValueChange={value => { setFilterConnection(value); if (value === "local") setFilterMissingConnection("none"); }}>
+            <SelectTrigger className="h-8 text-xs w-full sm:w-[140px]"><SelectValue placeholder="Kobling" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Alle koblinger</SelectItem>
+              <SelectItem value="withContract">Med kontrakt</SelectItem>
+              <SelectItem value="missingContract">Mangler kontrakt</SelectItem>
+              <SelectItem value="dfi">DFI</SelectItem>
+              <SelectItem value="tmdb">TMDB</SelectItem>
+              <SelectItem value="imdb">IMDb</SelectItem>
+              <SelectItem value="local">Kun lokal</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={filterMissingConnection} onValueChange={value => { setFilterMissingConnection(value); if (value !== "none" && filterConnection === "local") setFilterConnection("all"); }}>
+            <SelectTrigger className="h-8 text-xs w-full sm:w-[140px]"><SelectValue placeholder="Mangler kobling" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Ingen modsat filter</SelectItem>
+              <SelectItem value="dfi">Ikke DFI</SelectItem>
+              <SelectItem value="tmdb">Ikke TMDB</SelectItem>
+              <SelectItem value="imdb">Ikke IMDb</SelectItem>
+            </SelectContent>
+          </Select>
+          <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
+          <ResetFiltersButton
+            active={Boolean(search || filterStatus !== "all" || filterType !== "all" || filterConnection !== "all" || filterMissingConnection !== "none" || activeRh)}
+            onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterConnection("all"); setFilterMissingConnection("none"); setActiveRh(null); setSelectedIds([]); setPageSize(20); setCurrentPage(1); }}
+          />
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs w-full sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
+            <Search className="h-3.5 w-3.5" />
+            Find dubletter
+          </Button>
         </div>
-        <Select value={filterStatus} onValueChange={setFilterStatus}>
-          <SelectTrigger className="w-full lg:w-[180px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Status</SelectItem>
-            <SelectItem value="til_godkendelse">Til godkendelse</SelectItem>
-            <SelectItem value="godkendt">Godkendt</SelectItem>
-            <SelectItem value="arkiveret">Arkiveret</SelectItem>
-            <SelectItem value="beskeder">Beskeder</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={filterType} onValueChange={setFilterType}>
-          <SelectTrigger className="w-full lg:w-[180px]"><SelectValue placeholder="Type" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Type</SelectItem>
-            {WORK_TYPES.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={filterConnection} onValueChange={value => { setFilterConnection(value); if (value === "local") setFilterMissingConnection("none"); }}>
-          <SelectTrigger className="w-full lg:w-[170px]"><SelectValue placeholder="Kobling" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle koblinger</SelectItem>
-            <SelectItem value="withContract">Med kontrakt</SelectItem>
-            <SelectItem value="missingContract">Mangler kontrakt</SelectItem>
-            <SelectItem value="dfi">DFI</SelectItem>
-            <SelectItem value="tmdb">TMDB</SelectItem>
-            <SelectItem value="imdb">IMDb</SelectItem>
-            <SelectItem value="local">Kun lokal</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={filterMissingConnection} onValueChange={value => { setFilterMissingConnection(value); if (value !== "none" && filterConnection === "local") setFilterConnection("all"); }}>
-          <SelectTrigger className="w-full lg:w-[170px]"><SelectValue placeholder="Mangler kobling" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">Ingen modsat filter</SelectItem>
-            <SelectItem value="dfi">Ikke DFI</SelectItem>
-            <SelectItem value="tmdb">Ikke TMDB</SelectItem>
-            <SelectItem value="imdb">Ikke IMDb</SelectItem>
-          </SelectContent>
-        </Select>
-        <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
-        <ResetFiltersButton
-          active={Boolean(search || filterStatus !== "all" || filterType !== "all" || filterConnection !== "all" || filterMissingConnection !== "none" || activeRh)}
-          onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterConnection("all"); setFilterMissingConnection("none"); setActiveRh(null); setSelectedIds([]); setPageSize(20); setCurrentPage(1); }}
-        />
-        <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
-          <Search className="h-4 w-4" />
-          Find dubletter
-        </Button>
+
+        <div className="flex flex-wrap items-center justify-between gap-2.5 text-xs text-muted-foreground lg:justify-end">
+          <ListResultSummary filteredCount={totalCount} totalCount={totalAllCount} selectedCount={selectedIds.length} loading={loading} className="text-xs" />
+          <label className="flex shrink-0 items-center gap-1.5 text-xs">
+            Vis
+            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border bg-background px-2 text-xs text-foreground">
+              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
+          <AdminListTools className="flex shrink-0 flex-nowrap" pageKey="works" title="Værker" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"work",label:"Værk",index:2,required:true},{id:"type",label:"Type",index:3},{id:"year",label:"Premiereår",index:4},{id:"data",label:"Data",index:5},{id:"broadcast",label:"Broadcast/stream",index:6},{id:"status",label:"Status",index:7}]} />
+        </div>
+
         <div className="grid w-full grid-cols-[1fr_auto] gap-2 lg:hidden">
           <Select value={sortKey} onValueChange={value => setSortKey(value as SortKey)}>
-            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
+            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="status">Status</SelectItem>
               <SelectItem value="title">Værk</SelectItem>
@@ -2264,25 +2279,17 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
               <SelectItem value="broadcaster">Broadcast/stream</SelectItem>
             </SelectContent>
           </Select>
-          <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-9 px-3">
+          <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-8 px-3 text-xs">
             {sortDir === "asc" ? "A-Z" : "Z-A"}
           </Button>
         </div>
-        <label className="flex items-center gap-2 text-sm text-muted-foreground lg:ml-auto">
-          Vis
-          <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
-            {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
-          </select>
-        </label>
         {filtered.length > 0 && (
-          <Button type="button" variant="outline" className="w-full sm:w-auto lg:hidden" onClick={toggleAllFiltered}>
+          <Button type="button" variant="outline" className="w-full sm:w-auto lg:hidden text-xs h-8" onClick={toggleAllFiltered}>
             {allFilteredSelected ? "Fravælg alle" : "Vælg alle"}
             {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
           </Button>
         )}
       </div>
-
-      <ListResultSummary filteredCount={totalCount} totalCount={totalAllCount} selectedCount={selectedIds.length} loading={loading} />
 
       {selectedIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
@@ -2423,7 +2430,6 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
         })}
       </MobileCardList>
 
-      <AdminListTools pageKey="works" title="Værker" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"work",label:"Værk",index:2,required:true},{id:"type",label:"Type",index:3},{id:"year",label:"Premiereår",index:4},{id:"data",label:"Data",index:5},{id:"broadcast",label:"Broadcast/stream",index:6},{id:"status",label:"Status",index:7}]} />
       <ResponsiveTableFrame>
         <Table>
           <TableHeader>
@@ -2495,22 +2501,35 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
                   <TableCell className="text-sm">{workTypeLabel(work.type)}</TableCell>
                   <TableCell className="text-sm tabular-nums text-muted-foreground">{work.year ?? "-"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
-                    <div>{isSeason ? `${work.episode_count ?? 0} afsnit` : `DFI: ${work.dfi_id ?? "-"} · TMDB: ${work.tmdb_id ?? "-"}`}</div>
-                    <div>
-                      Varighed: {work.duration_minutes ?? "-"}
-                      {isSeriesType(work.type) && <> · Sæson: {work.season_count ?? "-"} · Afsnit: {work.episode_count ?? "-"}</>}
+                    <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                      {isSeason ? (
+                        <span className="font-medium text-foreground">{work.episode_count ?? 0} afsnit</span>
+                      ) : (
+                        <span>DFI: {work.dfi_id ?? "–"} · TMDB: {work.tmdb_id ?? "–"}</span>
+                      )}
+                      {work.duration_minutes && <span>· {work.duration_minutes} min</span>}
                     </div>
-                    <div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                       {isMissingContract ? (
-                        <button type="button" className="font-medium text-amber-700 underline underline-offset-2" onClick={() => openContractUploadForWork(work)}>Mangler kontrakt</button>
-                      ) : `Kontrakter: ${contractCount}`}
+                        <button type="button" className="rounded bg-amber-50 px-1 py-0.5 text-[10px] font-medium text-amber-700 hover:underline dark:bg-amber-950/40 dark:text-amber-300" onClick={() => openContractUploadForWork(work)}>
+                          Mangler kontrakt
+                        </button>
+                      ) : (
+                        <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-foreground">
+                          {contractCount} {contractCount === 1 ? "kontrakt" : "kontrakter"}
+                        </span>
+                      )}
+                      {(() => {
+                        const coEditors = [...new Set((work.work_assignments ?? [])
+                          .map(a => a.rettighedshavere?.full_name)
+                          .filter((name): name is string => Boolean(name)))];
+                        return coEditors.length > 0 ? (
+                          <span className="truncate max-w-[170px] text-[10px]" title={`Klippere: ${coEditors.join(", ")}`}>
+                            Klippere: {coEditors.join(", ")}
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
-                    {(() => {
-                      const coEditors = [...new Set((work.work_assignments ?? [])
-                        .map(a => a.rettighedshavere?.full_name)
-                        .filter((name): name is string => Boolean(name)))];
-                      return coEditors.length > 0 ? <div>Klippere: {coEditors.join(", ")}</div> : null;
-                    })()}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {broadcaster ? (

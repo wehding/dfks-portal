@@ -1294,9 +1294,9 @@ export default function MineKontrakterClient({
       {/* Tabel */}
       <div className="rounded-lg border bg-card text-card-foreground overflow-hidden">
 
-        {/* Søgefelt */}
-        <div className="flex flex-col gap-3 px-5 py-3.5 border-b sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        {/* Toolbar & Søgefelt */}
+        <div className="flex flex-col gap-3 px-4 py-3 border-b sm:px-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             {selectedIds.length > 0 ? (
               <>
                 <span className="text-sm font-semibold text-red-700">{selectedIds.length} {t("common.selected")}</span>
@@ -1307,13 +1307,13 @@ export default function MineKontrakterClient({
               </>
             ) : (
               <>
-                <div className="relative w-full sm:max-w-xs">
+                <div className="relative w-full sm:w-64">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                   <Input
                     placeholder={t("contracts.searchPlaceholder")}
                     value={search}
                     onChange={e => setSearch(e.target.value)}
-                    className="h-8 w-full pl-8 pr-8 text-sm sm:w-72"
+                    className="h-8 w-full pl-8 pr-8 text-sm"
                   />
                   {search && (
                     <button
@@ -1365,28 +1365,28 @@ export default function MineKontrakterClient({
               </>
             )}
           </div>
-	          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-	            {t("contracts.show")}
-	            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
-	              {[20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
-	            </select>
-	          </label>
-	          {filtered.length > 0 && (
-	            <Button type="button" variant="outline" className="w-full sm:w-auto md:hidden" onClick={toggleAllFiltered}>
-	              {allFilteredSelected ? t("common.deselectAll") : t("common.selectAll")}
-	              {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
-	            </Button>
-	          )}
-	        </div>
-
-        <ListResultSummary filteredCount={pageResult?.filteredCount ?? filtered.length} totalCount={total} selectedCount={selectedIds.length} className="px-1" />
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground md:justify-end">
+            <ListResultSummary filteredCount={pageResult?.filteredCount ?? filtered.length} totalCount={total} selectedCount={selectedIds.length} className="text-xs" />
+            <label className="flex items-center gap-1.5 text-xs">
+              {t("contracts.show")}
+              <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
+                {[20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+            {filtered.length > 0 && (
+              <Button type="button" variant="outline" className="w-full sm:w-auto md:hidden text-xs h-8" onClick={toggleAllFiltered}>
+                {allFilteredSelected ? t("common.deselectAll") : t("common.selectAll")}
+                {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+              </Button>
+            )}
+          </div>
+        </div>
 
 	        {/* Kolonnehoveder */}
-	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.1fr_1.1fr_1.2fr_1fr_1fr_0.9fr]">
+	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2.4fr_1.3fr_1.4fr_1.1fr_1.1fr_1.4fr]">
           <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} className="h-4 w-4 cursor-pointer" />
           <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-foreground">{t("contracts.work")}{sortArrow("title")}</button>
-          <button type="button" onClick={() => handleSort("date")} className="text-left hover:text-foreground">Kontraktdato{sortArrow("date")}</button>
-          <span className="text-left">Uploaddato</span>
+          <button type="button" onClick={() => handleSort("date")} className="text-left hover:text-foreground">{t("contracts.date")}{sortArrow("date")}</button>
           <button type="button" onClick={() => handleSort("employer")} className="text-left hover:text-foreground">{t("contracts.producer")}{sortArrow("employer")}</button>
           <button type="button" onClick={() => handleSort("overenskomst")} className="text-left hover:text-foreground">{t("contracts.agreement")}{sortArrow("overenskomst")}</button>
           <button type="button" onClick={() => handleSort("rights")} className="text-left hover:text-foreground">{t("contracts.rights")}{sortArrow("rights")}</button>
@@ -1406,7 +1406,7 @@ export default function MineKontrakterClient({
           return (
             <React.Fragment key={c.id}>
               <div
-                className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.1fr_1.1fr_1.2fr_1fr_1fr_0.9fr]"
+                className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-3 border-b hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-2.5 md:[grid-template-columns:36px_2.4fr_1.3fr_1.4fr_1.1fr_1.1fr_1.4fr]"
               >
                 <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleSelected(c.id)} className="h-4 w-4 cursor-pointer" aria-label={`Vælg ${title}`} />
                 <button type="button" onClick={() => openContract(c)} className="min-w-0 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -1425,8 +1425,12 @@ export default function MineKontrakterClient({
                     <span>{overenskomstLabel(c.overenskomst)}</span>
                   </div>
                 </button>
-                <div className="hidden text-muted-foreground md:block">{c.contract_date ? c.contract_date.substring(0, 10) : "–"}</div>
-                <div className="hidden text-muted-foreground md:block">{c.created_at ? c.created_at.substring(0, 10) : "–"}</div>
+                <div className="hidden text-sm md:block">
+                  <div className="font-medium text-foreground">{c.contract_date ? c.contract_date.substring(0, 10) : "–"}</div>
+                  {c.created_at && (
+                    <div className="text-[11px] text-muted-foreground">Uploadet: {c.created_at.substring(0, 10)}</div>
+                  )}
+                </div>
                 <div className="hidden text-muted-foreground truncate md:block">{c.employers?.name ?? "–"}</div>
                 <div className="hidden text-muted-foreground md:block">{overenskomstLabel(c.overenskomst)}</div>
                 <div className="hidden gap-1 flex-wrap md:flex">
@@ -1441,7 +1445,7 @@ export default function MineKontrakterClient({
                     </>
                   ) : <span className="text-xs text-muted-foreground italic">Afventer</span>}
                 </div>
-                <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {shouldShowWorkLinkBadge(hasLinkedWork(c.work_id), c.status) && <WorkLinkBadge linked={hasLinkedWork(c.work_id)} />}
                   {c.works && <StatusBadge status={c.status} />}
                   {unreadMessages > 0 && <MessageStatusBadge count={unreadMessages} label="Ny besked" tone="attention" />}
@@ -1889,24 +1893,26 @@ export default function MineKontrakterClient({
                 </div>
               )}
 
-              <StatusBadge status={selectedContract.status} />
-              {shouldShowWorkLinkBadge(hasLinkedWork(selectedContract.work_id), selectedContract.status) && <WorkLinkBadge linked={hasLinkedWork(selectedContract.work_id)} />}
-              {unreadAdminMessageCount(selectedContract.contract_comments) > 0 && <MessageStatusBadge count={unreadAdminMessageCount(selectedContract.contract_comments)} label="Ny besked" tone="attention" />}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <StatusBadge status={selectedContract.status} />
+                {shouldShowWorkLinkBadge(hasLinkedWork(selectedContract.work_id), selectedContract.status) && <WorkLinkBadge linked={hasLinkedWork(selectedContract.work_id)} />}
+                {unreadAdminMessageCount(selectedContract.contract_comments) > 0 && <MessageStatusBadge count={unreadAdminMessageCount(selectedContract.contract_comments)} label="Ny besked" tone="attention" />}
+              </div>
 
-              {/* Metadata-rækker */}
-              <div className="flex flex-col gap-2">
+              {/* Metadata-grid */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
                 {[
                   { label: "Producent",    value: selectedContract.employers?.name },
                   { label: "Arbejdstitel",  value: selectedContract.working_title },
                   { label: "Overenskomst", value: overenskomstLabel(selectedContract.overenskomst) },
                   { label: "Kontrakttype", value: selectedContract.type },
-                  { label: "Kontraktdato",value: selectedContract.contract_date?.substring(0, 10) },
+                  { label: "Kontraktdato", value: selectedContract.contract_date?.substring(0, 10) },
                   { label: "Startdato",   value: selectedContract.start_date?.substring(0, 10) },
                   { label: "Slutdato",    value: selectedContract.end_date?.substring(0, 10) },
                 ].filter(r => r.value).map(row => (
-                  <div key={row.label} className="flex justify-between text-sm bg-muted rounded-md px-3 py-2">
-                    <span className="text-muted-foreground">{row.label}</span>
-                    <span className="font-medium text-foreground">{row.value}</span>
+                  <div key={row.label} className="rounded-md border bg-muted/40 px-2.5 py-1.5">
+                    <span className="block text-[11px] font-medium text-muted-foreground">{row.label}</span>
+                    <span className="mt-0.5 block font-semibold text-foreground truncate" title={row.value ?? undefined}>{row.value}</span>
                   </div>
                 ))}
               </div>

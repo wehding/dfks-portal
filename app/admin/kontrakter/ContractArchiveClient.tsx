@@ -1801,71 +1801,86 @@ function AdminKontrakterContent({
             )}
 
             {view === "archive" && <>
-            {/* Filters */}
-            <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
-                <div className="relative w-full lg:w-auto">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg titel, klipper, producent..." className="w-full pl-8 pr-8 lg:w-[280px]" value={search} onChange={e => setSearch(e.target.value)} />
-                    {search && (
-                        <button
-                            type="button"
-                            onClick={() => setSearch("")}
-                            className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
-                            aria-label="Tøm søgefelt"
-                        >
-                            <X className="h-4 w-4 rounded-full border border-current p-0.5" />
-                        </button>
-                    )}
+            {/* Filters & Command Strip */}
+            <div className="flex flex-col gap-3 rounded-lg border bg-card p-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative w-full sm:w-auto">
+                        <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                        <Input placeholder="Søg titel, klipper, producent..." className="h-8 w-full pl-8 pr-8 sm:w-60 text-xs" value={search} onChange={e => setSearch(e.target.value)} />
+                        {search && (
+                            <button
+                                type="button"
+                                onClick={() => setSearch("")}
+                                className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+                                aria-label="Tøm søgefelt"
+                            >
+                                <X className="h-3.5 w-3.5 rounded-full border border-current p-0.5" />
+                            </button>
+                        )}
+                    </div>
+                    <Select value={filterStatus} onValueChange={setFilterStatus}>
+                        <SelectTrigger className="h-8 text-xs w-full sm:w-[140px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">Status</SelectItem>
+                            <SelectItem value="kladde">Kladde</SelectItem>
+                            <SelectItem value="validationPending">Afventer validering</SelectItem>
+                            <SelectItem value="validationRecommended">Validering anbefalet</SelectItem>
+                            <SelectItem value="documentProcessing">Dokument behandles</SelectItem>
+                            <SelectItem value="documentReady">Dokument klar</SelectItem>
+                            <SelectItem value="documentNeedsReview">Dokument kræver kontrol</SelectItem>
+                            <SelectItem value="documentFailed">Dokumentbehandling fejlede</SelectItem>
+                            <SelectItem value="missingWork">Mangler værk</SelectItem>
+                            <SelectItem value="valideret">Valideret</SelectItem>
+                            <SelectItem value="arkiveret">Arkiveret</SelectItem>
+                            <SelectItem value="beskeder">Beskeder</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    {canManageOwnership ? <Select value={filterOwnership} onValueChange={value => setFilterOwnership(value as typeof filterOwnership)}>
+                        <SelectTrigger className="h-8 text-xs w-full sm:w-[170px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">Alle ejerskaber</SelectItem>
+                            <SelectItem value="missing">Mangler ejer</SelectItem>
+                            <SelectItem value="proposed">Forslag klar</SelectItem>
+                            <SelectItem value="review">Ejerskab skal afklares</SelectItem>
+                            <SelectItem value="conflict">Modstridende oplysninger</SelectItem>
+                            <SelectItem value="confirmed">Bekræftet ejer</SelectItem>
+                            <SelectItem value="corrected">Ejer rettet</SelectItem>
+                        </SelectContent>
+                    </Select> : null}
+                    <Select value={filterType} onValueChange={setFilterType}>
+                        <SelectTrigger className="h-8 text-xs w-full sm:w-[130px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">Type</SelectItem>
+                            <SelectItem value="a-løn">A-løn</SelectItem>
+                            <SelectItem value="leverandør">Leverandør</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
+                    <ResetFiltersButton
+                        active={Boolean(search || filterStatus !== "all" || filterType !== "all" || filterOwnership !== "all" || activeRh)}
+                        onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterOwnership("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20); setCurrentPage(1) }}
+                    />
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs w-full sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
+                        <Search className="h-3.5 w-3.5" />
+                        Find dubletter
+                    </Button>
                 </div>
-                <Select value={filterStatus} onValueChange={setFilterStatus}>
-                    <SelectTrigger className="w-full lg:w-[150px]"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Status</SelectItem>
-                        <SelectItem value="kladde">Kladde</SelectItem>
-                        <SelectItem value="validationPending">Afventer validering</SelectItem>
-                        <SelectItem value="validationRecommended">Validering anbefalet</SelectItem>
-                        <SelectItem value="documentProcessing">Dokument behandles</SelectItem>
-                        <SelectItem value="documentReady">Dokument klar</SelectItem>
-                        <SelectItem value="documentNeedsReview">Dokument kræver kontrol</SelectItem>
-                        <SelectItem value="documentFailed">Dokumentbehandling fejlede</SelectItem>
-                        <SelectItem value="missingWork">Mangler værk</SelectItem>
-                        <SelectItem value="valideret">Valideret</SelectItem>
-                        <SelectItem value="arkiveret">Arkiveret</SelectItem>
-                        <SelectItem value="beskeder">Beskeder</SelectItem>
-                    </SelectContent>
-                </Select>
-                {canManageOwnership ? <Select value={filterOwnership} onValueChange={value => setFilterOwnership(value as typeof filterOwnership)}>
-                    <SelectTrigger className="w-full lg:w-[210px]"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Alle ejerskaber</SelectItem>
-                        <SelectItem value="missing">Mangler ejer</SelectItem>
-                        <SelectItem value="proposed">Forslag klar</SelectItem>
-                        <SelectItem value="review">Ejerskab skal afklares</SelectItem>
-                        <SelectItem value="conflict">Modstridende oplysninger</SelectItem>
-                        <SelectItem value="confirmed">Bekræftet ejer</SelectItem>
-                        <SelectItem value="corrected">Ejer rettet</SelectItem>
-                    </SelectContent>
-                </Select> : null}
-                <Select value={filterType} onValueChange={setFilterType}>
-                    <SelectTrigger className="w-full lg:w-[160px]"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Type</SelectItem>
-                        <SelectItem value="a-løn">A-løn</SelectItem>
-                        <SelectItem value="leverandør">Leverandør</SelectItem>
-                    </SelectContent>
-                </Select>
-                <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
-                <ResetFiltersButton
-                    active={Boolean(search || filterStatus !== "all" || filterType !== "all" || filterOwnership !== "all" || activeRh)}
-                    onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterOwnership("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20); setCurrentPage(1) }}
-                />
-                <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
-                    <Search className="h-4 w-4" />
-                    Find dubletter
-                </Button>
+
+                <div className="flex flex-wrap items-center justify-between gap-2.5 text-xs text-muted-foreground lg:justify-end">
+                    <span>{loading ? "Indlæser listen…" : `${totalCount} på listen`}</span>
+                    {selectedIds.length > 0 && <span className="font-semibold text-primary">{selectedIds.length} valgt</span>}
+                    <label className="flex shrink-0 items-center gap-1.5 text-xs">
+                        Vis
+                        <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border bg-background px-2 text-xs text-foreground">
+                            {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+                        </select>
+                    </label>
+                    <AdminListTools className="flex shrink-0 flex-nowrap" pageKey="contracts" title="Kontrakter" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"production",label:"Produktion",index:2,required:true},{id:"holder",label:"Klipper",index:3},{id:"producer",label:"Producent",index:4},{id:"type",label:"Type",index:5},{id:"agreement",label:"Overenskomst",index:6},{id:"period",label:"Periode",index:7},{id:"status",label:"Status",index:8},{id:"document",label:"Dokument",index:9}]} />
+                </div>
+
                 <div className="grid w-full grid-cols-[1fr_auto] gap-2 lg:hidden">
                     <Select value={sortKey} onValueChange={value => setSortKey(value as SortKey)}>
-                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="status">Status</SelectItem>
                             <SelectItem value="production">Værk</SelectItem>
@@ -1876,12 +1891,12 @@ function AdminKontrakterContent({
                             <SelectItem value="period">Periode</SelectItem>
                         </SelectContent>
                     </Select>
-                    <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-9 px-3">
+                    <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-8 px-3 text-xs">
                         {sortDir === "asc" ? "A-Z" : "Z-A"}
                     </Button>
                 </div>
                 {filtered.length > 0 && (
-                    <Button type="button" variant="outline" className="w-full sm:w-auto lg:hidden" onClick={toggleAllFiltered}>
+                    <Button type="button" variant="outline" className="w-full sm:w-auto lg:hidden text-xs h-8" onClick={toggleAllFiltered}>
                         {allFilteredSelected ? "Fravælg alle" : "Vælg alle"}
                         {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
                     </Button>
@@ -1889,20 +1904,20 @@ function AdminKontrakterContent({
             </div>
 
             {selectedIds.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
-                    <span className="text-sm font-medium">{selectedIds.length} valgt</span>
-                    <Button size="sm" variant="outline" className="gap-2" onClick={handleApproveSelected} disabled={saving}>
-                        <CheckCircle2 className="h-4 w-4" />
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs">
+                    <span className="text-xs font-semibold">{selectedIds.length} valgt</span>
+                    <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={handleApproveSelected} disabled={saving}>
+                        <CheckCircle2 className="h-3.5 w-3.5" />
                         Valider valgte
                     </Button>
-                    <Button size="sm" variant="outline" className="gap-2" onClick={handleMarkSelectedMessagesRead} disabled={saving}>
-                        <MessageSquare className="h-4 w-4" />
+                    <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={handleMarkSelectedMessagesRead} disabled={saving}>
+                        <MessageSquare className="h-3.5 w-3.5" />
                         Besked læst
                     </Button>
                     <Button
                         size="sm"
                         variant="destructive"
-                        className="gap-2"
+                        className="h-7 gap-1.5 text-xs"
                         onClick={() => {
                             if (selectedIds.length > 20) {
                                 if (!isSuperadmin) {
@@ -1917,25 +1932,11 @@ function AdminKontrakterContent({
                         }}
                         disabled={saving}
                     >
-                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTriangle className="h-3.5 w-3.5" />
                         Slet permanent
                     </Button>
                 </div>
             )}
-
-            <div className="overflow-x-auto rounded-lg border bg-card px-3 py-2 print:hidden">
-                <div className="flex min-w-max items-center justify-end gap-3 text-sm text-muted-foreground" aria-live="polite">
-                    <span>{loading ? "Indlæser listen…" : `${totalCount} på listen`}</span>
-                    <span>{selectedIds.length} valgt</span>
-                    <label className="flex shrink-0 items-center gap-2">
-                        Vis
-                        <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border bg-background px-2 text-sm text-foreground">
-                            {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
-                        </select>
-                    </label>
-                    <AdminListTools className="flex shrink-0 flex-nowrap" pageKey="contracts" title="Kontrakter" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"production",label:"Produktion",index:2,required:true},{id:"holder",label:"Klipper",index:3},{id:"producer",label:"Producent",index:4},{id:"type",label:"Type",index:5},{id:"agreement",label:"Overenskomst",index:6},{id:"period",label:"Periode",index:7},{id:"status",label:"Status",index:8},{id:"document",label:"Dokument",index:9}]} />
-                </div>
-            </div>
 
 		            {/* Table */}
 		            <MobileCardList>

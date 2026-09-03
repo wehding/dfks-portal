@@ -161,10 +161,12 @@ const EVIDENCE_FOCUS_TERMS: Record<string, string[]> = {
   hasCreditClause: ["krediter"],
   royalty: ["royalty"],
   svod: ["streaming", "SVOD"],
-  signatureStatus: ["signeret", "underskrift"],
 };
 
 function evidenceFocusText(field: Field, quote: string | null, value: unknown) {
+  if (field.key === "signatureStatus" || field.key === "signatureDate") {
+    return null; // Underskrift skal vise underskriftsfeltet, ikke markere ordet "underskrift" i brødtekst
+  }
   if (field.type === "text" || field.type === "number" || field.type === "date") {
     return value == null ? null : String(value);
   }
@@ -495,8 +497,8 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
       };
       const evidenceButton = (fieldKey: string, label: string, text: string) => {
         const evidence = makeEvidence(fieldKey, label);
-        return <button key={fieldKey} type="button" onClick={event => { event.stopPropagation(); props.onEvidenceActivate?.(evidence); }} className="inline-flex h-7 items-center gap-1 rounded-sm border bg-background px-2 text-[10px] font-medium hover:bg-muted">
-          {text}<ContractSourceBadge source={sourceFor(fieldKey)} />
+        return <button key={fieldKey} type="button" onClick={event => { event.stopPropagation(); props.onEvidenceActivate?.(evidence); }} className="inline-flex h-5 items-center gap-1 rounded-sm border bg-background px-1.5 text-[9.5px] font-medium hover:bg-muted">
+          {text}
         </button>;
       };
       const rights = [
@@ -510,31 +512,40 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
         return value === undefined || value === null || value === "" || value === "unknown";
       });
       const signatureState = triState(sectionValues.signatureStatus);
-      const compactChoice = (key: string, label: string) => <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">{label}</Label><select className="h-8 rounded-md border bg-background px-2 text-xs" value={triState(sectionValues[key])} onChange={event => setField(section, key, event.target.value)}><option value="unknown">Ukendt</option><option value="yes">Ja</option><option value="no">Nej</option><option value="implicit">Via overenskomst</option></select></div>;
-      return <div className="divide-y">
-        <div id="field-rights" className={`grid min-h-11 grid-cols-[88px_minmax(0,1fr)_auto] items-center gap-1.5 px-2 py-1.5 sm:grid-cols-[105px_minmax(0,1fr)_auto] ${unknownRights.length ? "bg-amber-50/70 dark:bg-amber-950/15" : ""}`}>
-          <div className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5" /><Label className="text-[11px] font-medium">Rettigheder</Label>{unknownRights.length > 0 && <Badge className="h-4 rounded-sm bg-amber-500 px-1 text-[8px] text-white">{unknownRights.length}</Badge>}</div>
-          <div className="flex min-w-0 flex-wrap gap-1">{rights.length ? rights : <span className="text-xs text-muted-foreground">Ingen registrerede rettigheder</span>}</div>
-          <Popover><PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-[10px]"><Pencil className="h-3 w-3" />Rediger</Button></PopoverTrigger><PopoverContent align="end" className="w-72 space-y-2">
-            {compactChoice("copydan", "Copydan")}{compactChoice("svod", "Streaming")}
-            <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">Royalty</Label><CompactYesNo value={sectionValues.royalty} label="Royalty" onChange={next => setField(section, "royalty", next === "yes")} /></div>
-            <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">Royalty %</Label><Input className="h-8 text-xs" inputMode="decimal" value={String(sectionValues.royaltyPercent ?? "")} onChange={event => setField(section, "royaltyPercent", event.target.value)} /></div>
-            <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">Kreditering</Label><CompactYesNo value={sectionValues.hasCreditClause} label="Kreditering" onChange={next => setField(section, "hasCreditClause", next === "yes")} /></div>
-          </PopoverContent></Popover>
+      const compactChoice = (key: string, label: string) => <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">{label}</Label><select className="h-7 rounded-md border bg-background px-2 text-xs" value={triState(sectionValues[key])} onChange={event => setField(section, key, event.target.value)}><option value="unknown">Ukendt</option><option value="yes">Ja</option><option value="no">Nej</option><option value="implicit">Via overenskomst</option></select></div>;
+      return <div className="divide-y divide-border/40">
+        <div id="field-rights" onClick={event => activateEvidence(event, makeEvidence("copydan", "Rettigheder"))} className={`grid min-h-[30px] cursor-pointer grid-cols-[130px_minmax(0,1fr)_130px] items-center gap-2 px-2.5 py-0.5 transition-colors hover:bg-muted/50 ${props.activeEvidenceFieldKey === "copydan" || props.activeEvidenceFieldKey === "rights" ? "bg-amber-400/20 ring-1 ring-inset ring-amber-500 dark:bg-amber-950/40 dark:ring-amber-500" : ""} ${unknownRights.length ? "bg-rose-500/10 border-l-2 border-l-rose-500 dark:bg-rose-950/20" : ""}`}>
+          <div className="flex min-w-0 items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /><Label className="truncate text-[11px] font-medium text-foreground">Rettigheder</Label>{unknownRights.length > 0 && <Badge className="h-3.5 rounded-sm bg-rose-600 px-1 text-[7.5px] font-semibold text-white dark:bg-rose-700">{unknownRights.length}</Badge>}</div>
+          <div className="flex min-w-0 flex-wrap items-center gap-1">{rights.length ? rights : <span className="text-[11px] text-muted-foreground">Ingen registrerede rettigheder</span>}</div>
+          <div className="flex items-center justify-end gap-1 shrink-0">
+            <Popover><PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-6 gap-1 px-1.5 text-[10px]"><Pencil className="h-2.5 w-2.5" />Rediger</Button></PopoverTrigger><PopoverContent align="end" className="w-72 space-y-2">
+              {compactChoice("copydan", "Copydan")}{compactChoice("svod", "Streaming")}
+              <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">Royalty</Label><CompactYesNo value={sectionValues.royalty} label="Royalty" onChange={next => setField(section, "royalty", next === "yes")} /></div>
+              <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">Royalty %</Label><Input className="h-7 text-xs" inputMode="decimal" value={String(sectionValues.royaltyPercent ?? "")} onChange={event => setField(section, "royaltyPercent", event.target.value)} /></div>
+              <div className="grid grid-cols-[1fr_110px] items-center gap-2"><Label className="text-xs">Kreditering</Label><CompactYesNo value={sectionValues.hasCreditClause} label="Kreditering" onChange={next => setField(section, "hasCreditClause", next === "yes")} /></div>
+            </PopoverContent></Popover>
+            <button type="button" onClick={() => props.onEvidenceActivate?.(makeEvidence("copydan", "Rettigheder"))} title="Se kilde i PDF">
+              <ContractSourceBadge source={sourceFor("copydan")} />
+            </button>
+          </div>
         </div>
-        <div id="field-signature" className={`grid min-h-11 grid-cols-[88px_minmax(0,1fr)_auto] items-center gap-1.5 px-2 py-1.5 sm:grid-cols-[105px_minmax(0,1fr)_auto] ${signatureState === "unknown" || !dates.contractDate || !sectionValues.signatureDate ? "bg-amber-50/70 dark:bg-amber-950/15" : ""}`}>
-          <div className="flex items-center gap-1"><Signature className="h-3.5 w-3.5" /><Label className="text-[11px] font-medium">Underskrift</Label></div>
-          <button type="button" onClick={() => props.onEvidenceActivate?.(makeEvidence("signatureStatus", "Underskrift"))} className="flex min-w-0 flex-wrap items-center gap-1 text-left">
-            <Badge variant="outline" className={`h-6 rounded-sm text-[10px] ${signatureState === "yes" ? "border-emerald-400 bg-emerald-50 text-emerald-800" : "border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-950/20 dark:text-rose-100"}`}>{signatureState === "yes" ? "Underskrevet" : "Kontrakt ikke underskrevet"}</Badge>
-            {dates.contractDate && <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><CalendarDays className="h-3 w-3" />Kontrakt {dates.contractDate}</span>}
+        <div id="field-signature" onClick={event => activateEvidence(event, makeEvidence("signatureStatus", "Underskrift"))} className={`grid min-h-[30px] cursor-pointer grid-cols-[130px_minmax(0,1fr)_130px] items-center gap-2 px-2.5 py-0.5 transition-colors hover:bg-muted/50 ${props.activeEvidenceFieldKey === "signatureStatus" || props.activeEvidenceFieldKey === "signatureDate" ? "bg-amber-400/20 ring-1 ring-inset ring-amber-500 dark:bg-amber-950/40 dark:ring-amber-500" : ""} ${signatureState === "unknown" ? "bg-rose-500/10 border-l-2 border-l-rose-500 dark:bg-rose-950/20" : ""}`}>
+          <div className="flex min-w-0 items-center gap-1.5"><Signature className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /><Label className="truncate text-[11px] font-medium text-foreground">Underskrift</Label></div>
+          <button type="button" onClick={() => props.onEvidenceActivate?.(makeEvidence("signatureStatus", "Underskrift"))} className="flex min-w-0 flex-wrap items-center gap-1.5 text-left">
+            <Badge variant="outline" className={`h-5 rounded-sm px-1.5 text-[9.5px] font-medium ${signatureState === "yes" ? "border-emerald-400 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200" : "border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-950/20 dark:text-rose-100"}`}>{signatureState === "yes" ? "Underskrevet" : "Ikke underskrevet"}</Badge>
+            {dates.contractDate && <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground"><CalendarDays className="h-2.5 w-2.5" />Kontrakt {dates.contractDate}</span>}
             {sectionValues.signatureDate && <span className="text-[10px] text-muted-foreground">Underskrift {String(sectionValues.signatureDate)}</span>}
-            <ContractSourceBadge source={sourceFor("signatureStatus")} />
           </button>
-          <Popover><PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-[10px]"><Pencil className="h-3 w-3" />Rediger</Button></PopoverTrigger><PopoverContent align="end" className="w-72 space-y-2">
-            {compactChoice("signatureStatus", "Underskrevet")}
-            <div className="space-y-1"><Label className="text-xs">Kontraktdato</Label><Input className="h-8 text-xs" type="date" value={dates.contractDate} onChange={event => props.onDatesChange?.({ ...dates, contractDate: event.target.value })} /></div>
-            <div className="space-y-1"><Label className="text-xs">Underskriftsdato</Label><Input className="h-8 text-xs" type="date" value={String(sectionValues.signatureDate ?? "").slice(0, 10)} onChange={event => setField(section, "signatureDate", event.target.value)} /></div>
-          </PopoverContent></Popover>
+          <div className="flex items-center justify-end gap-1 shrink-0">
+            <Popover><PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-6 gap-1 px-1.5 text-[10px]"><Pencil className="h-2.5 w-2.5" />Rediger</Button></PopoverTrigger><PopoverContent align="end" className="w-72 space-y-2">
+              {compactChoice("signatureStatus", "Underskrevet")}
+              <div className="space-y-1"><Label className="text-xs">Kontraktdato</Label><Input className="h-7 text-xs" type="date" value={dates.contractDate} onChange={event => props.onDatesChange?.({ ...dates, contractDate: event.target.value })} /></div>
+              <div className="space-y-1"><Label className="text-xs">Underskriftsdato</Label><Input className="h-7 text-xs" type="date" value={String(sectionValues.signatureDate ?? "").slice(0, 10)} onChange={event => setField(section, "signatureDate", event.target.value)} /></div>
+            </PopoverContent></Popover>
+            <button type="button" onClick={() => props.onEvidenceActivate?.(makeEvidence("signatureStatus", "Underskrift"))} title="Se kilde i PDF">
+              <ContractSourceBadge source={sourceFor("signatureStatus")} />
+            </button>
+          </div>
         </div>
       </div>;
     }
@@ -546,10 +557,10 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
         const hasRight = sectionValues[right.key] !== undefined && sectionValues[right.key] !== null && sectionValues[right.key] !== "";
         return Number(hasRight) - Number(hasLeft);
       });
-    return <div className="space-y-3">
-      {pensionTag && <div className={`rounded-md border px-3 py-2 text-sm sm:col-span-2 ${pensionStatus === "inferred_agreement" ? "border-emerald-300 bg-emerald-50 text-emerald-900" : pensionStatus === "review_required" ? "border-amber-300 bg-amber-50 text-amber-900" : "bg-muted/40"}`}>
-        <div className="font-medium">{pensionTag}</div>
-        {pensionUrl && <a className="mt-1 inline-block text-xs underline underline-offset-2" href={pensionUrl} target="_blank" rel="noreferrer">Se den officielle kilde</a>}
+    return <div className="space-y-0.5">
+      {pensionTag && <div className={`rounded border px-2.5 py-1 text-xs mb-1 ${pensionStatus === "inferred_agreement" ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200" : pensionStatus === "review_required" ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200" : "bg-muted/40"}`}>
+        <div className="font-medium text-[11px]">{pensionTag}</div>
+        {pensionUrl && <a className="text-[10px] underline underline-offset-2" href={pensionUrl} target="_blank" rel="noreferrer">Se den officielle kilde</a>}
       </div>}
       {configuredFields.map(field => {
       const sourceKey = SOURCE_KEYS[field.key] ?? field.key;
@@ -583,22 +594,24 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
         clauseId: sources[`${sourceKey}_clause_id`] ?? null,
         page: pageValue && Number.isFinite(Number(pageValue)) ? Number(pageValue) : null,
       };
-      return <div id={`field-${field.key}`} key={field.key} onClick={event => activateEvidence(event, evidence)} className={`${props.onEvidenceActivate ? "grid min-h-10 cursor-pointer grid-cols-[minmax(82px,0.4fr)_minmax(0,1.6fr)_auto] items-center gap-1 border-b px-2 py-1 transition-colors hover:bg-muted/40 min-[760px]:grid-cols-[minmax(96px,0.4fr)_minmax(0,1.6fr)_auto]" : "space-y-1"} ${props.activeEvidenceFieldKey === field.key ? "bg-amber-50 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/20" : ""} ${missingRequired ? "bg-amber-50/70 dark:bg-amber-950/15" : ""}`}>
-        <div className="flex min-w-0 items-center gap-1"><Label className="truncate text-[11px] font-medium">{field.label}</Label>{missingRequired ? <Badge className="h-4 rounded-sm bg-amber-500 px-1 text-[8px] text-white">Mangler</Badge> : null}</div>
+      return <div id={`field-${field.key}`} key={field.key} onClick={event => activateEvidence(event, evidence)} className={`grid min-h-[30px] cursor-pointer grid-cols-[130px_minmax(0,1fr)_130px] items-center gap-2 border-b border-border/40 px-2.5 py-0.5 transition-colors hover:bg-muted/50 ${props.activeEvidenceFieldKey === field.key ? "bg-amber-400/20 ring-1 ring-inset ring-amber-500 dark:bg-amber-950/40 dark:ring-amber-500" : ""} ${missingRequired ? "bg-rose-500/10 border-l-2 border-l-rose-500 dark:bg-rose-950/20" : ""}`}>
+        <div className="flex min-w-0 items-center gap-1.5"><Label className="truncate text-[11px] font-medium text-foreground">{field.label}</Label>{missingRequired ? <Badge className="h-3.5 rounded-sm bg-rose-600 px-1 text-[7.5px] font-semibold text-white dark:bg-rose-700">Mangler</Badge> : null}</div>
         <div className="min-w-0">
-        {field.type === "date" ? <Input className="h-8 text-xs" type="date" value={dates.contractDate} onChange={event => props.onDatesChange?.({ ...dates, contractDate: event.target.value })} />
-          : field.type === "textarea" ? <Textarea className="min-h-16 text-xs" disabled={field.readOnly} value={String(sectionValues[field.key] ?? "")} onChange={event => setField(section, field.key, event.target.value)} />
-          : field.type === "triState" ? <select className="h-8 w-full rounded-md border bg-background px-2 text-sm" value={triState(sectionValues[field.key])} onChange={event => setField(section, field.key, event.target.value)}><option value="unknown">Ukendt</option><option value="yes">Ja</option><option value="no">Nej</option>{field.key !== "agreementReferenceStatus" && <option value="implicit">Implicit via overenskomst</option>}</select>
-          : field.type === "signatureMethod" ? <select className="h-8 w-full rounded-md border bg-background px-2 text-sm" value={String(sectionValues[field.key] || "unknown")} onChange={event => setField(section, field.key, event.target.value)}><option value="unknown">Ukendt</option><option value="handwritten">Håndskrevet</option><option value="digital">Digital</option><option value="none">Ingen</option></select>
-          : field.type === "bool" ? <button type="button" onClick={() => setField(section, field.key, sectionValues[field.key] === undefined ? true : !sectionValues[field.key])} className={`h-8 w-full rounded-md border px-2 text-left text-sm ${sectionValues[field.key] === true ? "border-emerald-500 bg-emerald-50 text-emerald-700" : sectionValues[field.key] === false ? "bg-background text-foreground" : "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/20 dark:text-amber-100"}`}>{sectionValues[field.key] === undefined ? "Ikke vurderet" : sectionValues[field.key] ? "Ja" : "Nej"}</button>
-          : <Input className="h-8 text-xs" disabled={field.readOnly} inputMode={field.type === "number" ? "decimal" : undefined} value={String(sectionValues[field.key] ?? "")} onChange={event => setField(section, field.key, event.target.value)} />}
+        {field.type === "date" ? <Input className="h-6 text-[11px] px-2" type="date" value={dates.contractDate} onChange={event => props.onDatesChange?.({ ...dates, contractDate: event.target.value })} />
+          : field.type === "textarea" ? <Textarea className="min-h-12 text-[11px] px-2 py-1" disabled={field.readOnly} value={String(sectionValues[field.key] ?? "")} onChange={event => setField(section, field.key, event.target.value)} />
+          : field.type === "triState" ? <select className="h-6 w-full rounded border bg-background px-2 text-[11px] outline-none" value={triState(sectionValues[field.key])} onChange={event => setField(section, field.key, event.target.value)}><option value="unknown">Ukendt</option><option value="yes">Ja</option><option value="no">Nej</option>{field.key !== "agreementReferenceStatus" && <option value="implicit">Implicit via overenskomst</option>}</select>
+          : field.type === "signatureMethod" ? <select className="h-6 w-full rounded border bg-background px-2 text-[11px] outline-none" value={String(sectionValues[field.key] || "unknown")} onChange={event => setField(section, field.key, event.target.value)}><option value="unknown">Ukendt</option><option value="handwritten">Håndskrevet</option><option value="digital">Digital</option><option value="none">Ingen</option></select>
+          : field.type === "bool" ? <button type="button" onClick={() => setField(section, field.key, sectionValues[field.key] === undefined ? true : !sectionValues[field.key])} className={`h-6 w-full rounded border px-2 text-left text-[11px] ${sectionValues[field.key] === true ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : sectionValues[field.key] === false ? "bg-background text-foreground" : "border-rose-400/60 bg-rose-500/10 text-rose-900 dark:text-rose-200"}`}>{sectionValues[field.key] === undefined ? "Ikke vurderet" : sectionValues[field.key] ? "Ja" : "Nej"}</button>
+          : <Input className="h-6 text-[11px] px-2" disabled={field.readOnly} inputMode={field.type === "number" ? "decimal" : undefined} value={String(sectionValues[field.key] ?? "")} onChange={event => setField(section, field.key, event.target.value)} />}
         </div>
-        <div className="flex items-center justify-end gap-1">
-          <ContractSourceBadge source={source} />
+        <div className="flex items-center justify-end gap-1 shrink-0">
+          <button type="button" onClick={event => activateEvidence(event, evidence)} title="Se kilde i PDF">
+            <ContractSourceBadge source={source} />
+          </button>
           {!field.readOnly && <>
             {quote && !props.onEvidenceActivate && <SourceBtn quote={quote} active={props.activeHighlight === quote} onClick={() => props.onHighlightClick(quote)} />}
-            <button type="button" title={locked ? "Feltet er låst for AI-overskrivning" : "Lås felt for AI-overskrivning"} aria-label={locked ? "Lås feltet op for AI-overskrivning" : "Beskyt feltet mod AI-overskrivning"} onClick={() => toggleLock(section, field.key)} className="p-1 text-muted-foreground hover:text-foreground">
-              {locked ? <Lock className="h-3.5 w-3.5 text-amber-600" /> : <Unlock className="h-3.5 w-3.5 opacity-30" />}
+            <button type="button" title={locked ? "Feltet er låst for AI-overskrivning" : "Lås felt for AI-overskrivning"} aria-label={locked ? "Lås feltet op for AI-overskrivning" : "Beskyt feltet mod AI-overskrivning"} onClick={() => toggleLock(section, field.key)} className="p-0.5 text-muted-foreground hover:text-foreground">
+              {locked ? <Lock className="h-3 w-3 text-amber-600 dark:text-amber-400" /> : <Unlock className="h-3 w-3 opacity-30" />}
             </button>
           </>}
         </div>
@@ -607,7 +620,7 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
   };
 
   const renderSection = (section: ContractValidationSectionKey) => {
-    if (section === "dates") return <div className="space-y-3">{[
+    if (section === "dates") return <div className="space-y-0.5">{[
       ["startDate", "Startdato", dates.startDate],
       ["endDate", "Slutdato", dates.endDate],
     ].map(([key, label, value]) => {
@@ -615,28 +628,34 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
       const quote = dateSources[key] ?? dateSources.dates ?? null;
       const pageValue = dateSources[`${key}_page`] ?? dateSources.dates_page;
       const evidence: ContractEvidenceActivation = { fieldKey: key, label, sourceKey: key, quote: quote ?? "", focusText: value, clauseId: dateSources[`${key}_clause_id`] ?? dateSources.dates_clause_id ?? null, page: pageValue && Number.isFinite(Number(pageValue)) ? Number(pageValue) : null };
-      return <div key={key} onClick={event => activateEvidence(event, evidence)} className={props.onEvidenceActivate ? `grid min-h-11 cursor-pointer grid-cols-[minmax(88px,0.4fr)_minmax(0,1.6fr)_auto] items-center gap-1.5 border-b px-2 py-1.5 transition-colors hover:bg-muted/40 last:border-b-0 sm:grid-cols-[minmax(105px,0.45fr)_minmax(0,1.55fr)_auto] sm:gap-2 ${props.activeEvidenceFieldKey === key ? "bg-amber-50 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/20" : ""}` : "space-y-1"}>
-      <Label className="truncate text-[11px] font-medium">{label}</Label><Input className="h-8 text-xs" type="date" value={value} onChange={event => props.onDatesChange?.({ ...dates, [key]: event.target.value })} /><ContractSourceBadge source={quote ? "contract" : "unknown"} />
+      return <div key={key} onClick={event => activateEvidence(event, evidence)} className={`grid min-h-[30px] cursor-pointer grid-cols-[130px_minmax(0,1fr)_130px] items-center gap-2 border-b border-border/40 px-2.5 py-0.5 transition-colors hover:bg-muted/50 last:border-b-0 ${props.activeEvidenceFieldKey === key ? "bg-amber-400/20 ring-1 ring-inset ring-amber-500 dark:bg-amber-950/40 dark:ring-amber-500" : ""}`}>
+      <Label className="truncate text-[11px] font-medium text-foreground">{label}</Label>
+      <Input className="h-6 text-[11px] px-2" type="date" value={value} onChange={event => props.onDatesChange?.({ ...dates, [key]: event.target.value })} />
+      <div className="flex items-center justify-end gap-1 shrink-0">
+        <button type="button" onClick={event => activateEvidence(event, evidence)} title="Se kilde i PDF">
+          <ContractSourceBadge source={quote ? "contract" : "unknown"} />
+        </button>
+      </div>
     </div>})}</div>;
-    if (section === "series") return <div className="space-y-3">
+    if (section === "series") return <div className="space-y-2">
       <SeasonStepper value={season} onChange={value => props.onSeasonChange?.(value)} compact />
-      {props.episodesLoading || loading.has("series") ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter afsnit…</div>
-        : props.episodesError ? <p className="text-sm text-destructive">{props.episodesError}</p>
+      {props.episodesLoading || loading.has("series") ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Henter afsnit…</div>
+        : props.episodesError ? <p className="text-xs text-destructive">{props.episodesError}</p>
         : <SeriesEpisodeSelector season={season} onSeasonChange={value => props.onSeasonChange?.(value)} options={props.episodeOptions ?? []} selected={props.selectedEpisodes ?? []} onSelectedChange={values => props.onSelectedEpisodesChange?.(values)} showSeason={false} compact />}
       {renderFields(section)}
     </div>;
     if (section === "ids") {
       const sectionValues = values.ids ?? {};
       const hasExternalId = ["dfiId", "tmdbId", "imdbId"].some(key => String(sectionValues[key] ?? "").trim());
-      return <div>{[["dfiId", "DFI-id"], ["tmdbId", "TMDB-id"], ["imdbId", "IMDb-id"]].map(([key, label]) => <div key={key} className="grid min-h-11 grid-cols-[minmax(105px,0.45fr)_minmax(0,1.55fr)_auto] items-center gap-2 border-b px-2 py-1.5"><Label className="text-xs">{label}</Label><Input readOnly value={String(sectionValues[key] ?? "")} className="h-8 bg-muted/30" /><ContractSourceBadge source={sectionValues[key] ? "work_archive" : "unknown"} /></div>)}{!hasExternalId && <div className="p-2"><Button type="button" variant="outline" disabled={findingIds} onClick={async () => { setFindingIds(true); try { const result = await findContractWorkExternalIds(props.contractId); if (!result.success || !result.ids) toast.error(result.error ?? "ID-opslaget gav intet sikkert match"); else { setValues(current => ({ ...current, ids: { ...(current.ids ?? {}), ...result.ids } })); toast.success("Eksterne ID’er blev fundet og gemt"); } } finally { setFindingIds(false); } }}>{findingIds && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Find ID’er i eksterne databaser</Button></div>}</div>;
+      return <div>{[["dfiId", "DFI-id"], ["tmdbId", "TMDB-id"], ["imdbId", "IMDb-id"]].map(([key, label]) => <div key={key} className="grid min-h-[30px] grid-cols-[130px_minmax(0,1fr)_130px] items-center gap-2 border-b border-border/40 px-2.5 py-0.5 hover:bg-muted/50 transition-colors"><Label className="truncate text-[11px] font-medium text-foreground">{label}</Label><Input readOnly value={String(sectionValues[key] ?? "")} className="h-6 text-[11px] px-2 bg-muted/30" /><div className="flex items-center justify-end gap-1 shrink-0"><ContractSourceBadge source={sectionValues[key] ? "work_archive" : "unknown"} /></div></div>)}{!hasExternalId && <div className="p-2"><Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={findingIds} onClick={async () => { setFindingIds(true); try { const result = await findContractWorkExternalIds(props.contractId); if (!result.success || !result.ids) toast.error(result.error ?? "ID-opslaget gav intet sikkert match"); else { setValues(current => ({ ...current, ids: { ...(current.ids ?? {}), ...result.ids } })); toast.success("Eksterne ID’er blev fundet og gemt"); } } finally { setFindingIds(false); } }}>{findingIds && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}Find ID’er i eksterne databaser</Button></div>}</div>;
     }
     if (section === "work") return <div>
       <div onClick={event => {
         const sources = ((rawData.work?._sources ?? {}) as Record<string, string | null>);
         const quote = sources.workTitle;
         activateEvidence(event, { fieldKey: "workingTitle", label: "Arbejdstitel", sourceKey: "workTitle", quote: quote ?? "", focusText: props.workingTitle, clauseId: sources.workTitle_clause_id ?? null, page: sources.workTitle_page && Number.isFinite(Number(sources.workTitle_page)) ? Number(sources.workTitle_page) : null });
-      }} className={props.onEvidenceActivate ? `grid min-h-11 cursor-pointer grid-cols-[minmax(88px,0.4fr)_minmax(0,1.6fr)_auto] items-center gap-1.5 border-b px-2 py-1.5 transition-colors hover:bg-muted/40 sm:grid-cols-[minmax(105px,0.45fr)_minmax(0,1.55fr)_auto] sm:gap-2 ${props.activeEvidenceFieldKey === "workingTitle" ? "bg-amber-50 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/20" : ""}` : "space-y-1"}>
-        <Label className="truncate text-xs">Arbejdstitel</Label><Input className="h-8" value={props.workingTitle ?? ""} placeholder="Produktionens arbejdstitel…" onChange={event => props.onWorkingTitleChange?.(event.target.value)} /><ContractSourceBadge source={props.workingTitle ? "contract" : "unknown"} />
+      }} className={`grid min-h-[30px] cursor-pointer grid-cols-[130px_minmax(0,1fr)_130px] items-center gap-2 border-b border-border/40 px-2.5 py-0.5 transition-colors hover:bg-muted/50 ${props.activeEvidenceFieldKey === "workingTitle" ? "bg-amber-500/10 ring-1 ring-inset ring-amber-400/40 dark:bg-amber-950/30" : ""}`}>
+        <Label className="truncate text-[11px] font-medium text-foreground">Arbejdstitel</Label><Input className="h-6 text-[11px] px-2" value={props.workingTitle ?? ""} placeholder="Produktionens arbejdstitel…" onChange={event => props.onWorkingTitleChange?.(event.target.value)} /><div className="flex items-center justify-end gap-1 shrink-0"><ContractSourceBadge source={props.workingTitle ? "contract" : "unknown"} /></div>
       </div>
       {renderFields(section)}
     </div>;

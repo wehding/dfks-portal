@@ -17,6 +17,8 @@ import type {
   ContractOwnerVerificationDetail,
 } from "@/lib/contract-owner-verification-types";
 import type { ContractEvidenceActivation } from "@/app/admin/kontrakter/ContractAiDataEditor";
+import { ContractSourceBadge } from "@/components/contracts/contract-source-badge";
+import type { ContractFieldSource } from "@/lib/contract-workbench";
 
 type Props = {
   contractId: string;
@@ -35,10 +37,21 @@ function confidenceLabel(value: number | null | undefined) {
   return `Lav · ${Math.round(value * 100)} %`;
 }
 
-function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="grid gap-1 border-b py-3 sm:grid-cols-[12rem_minmax(0,1fr)] sm:items-start">
-    <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-    <dd className="min-w-0 text-sm">{children}</dd>
+function InfoRow({ label, children, source, onSourceClick }: { label: string; children: React.ReactNode; source?: ContractFieldSource; onSourceClick?: () => void }) {
+  return <div className="grid min-h-[30px] grid-cols-[130px_minmax(0,1fr)_130px] items-center gap-2 border-b border-border/40 px-2.5 py-0.5 hover:bg-muted/40 transition-colors last:border-b-0">
+    <dt className="truncate text-[11px] font-medium text-muted-foreground">{label}</dt>
+    <dd className="min-w-0 text-[11px] font-medium text-foreground">{children}</dd>
+    <div className="flex items-center justify-end gap-1 shrink-0">
+      {source && (
+        onSourceClick ? (
+          <button type="button" onClick={onSourceClick} title="Se kilde i PDF">
+            <ContractSourceBadge source={source} />
+          </button>
+        ) : (
+          <ContractSourceBadge source={source} />
+        )
+      )}
+    </div>
   </div>;
 }
 
@@ -164,19 +177,24 @@ export function ContractOwnershipEditor({
       <div><h2 id="ownership-heading" className="font-semibold">Ejerskab</h2><p className="text-xs text-muted-foreground">Kontrollér navnet i kontrakten og godkend eller ret ejeren.</p></div>
       <Badge variant="outline">{contractOwnerStatusLabel(detail.verification.status)}</Badge>
     </div>
-    <dl className="rounded-md border px-3">
-      <InfoRow label="Nuværende registreret ejer">{assignedOwner?.name ?? "Mangler ejer"}</InfoRow>
+    <dl className="rounded border divide-y divide-border/40">
+      <InfoRow label="Registreret ejer" source={assignedOwner ? "member" : "unknown"}>
+        {assignedOwner?.name ?? "Mangler ejer"}
+      </InfoRow>
     </dl>
 
-    <details className="mt-3 rounded-md border bg-muted/10">
-      <summary className="cursor-pointer px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Vis ejerskabsgrundlag</summary>
-      <dl className="border-t px-3">
-        <InfoRow label="Navn aflæst fra PDF'en"><button type="button" className="text-left font-medium underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onEvidenceActivate(sourceActivation)}>{extractedName ?? "Ikke aflæst"}</button>{sourceQuote ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{sourceQuote}</p> : null}</InfoRow>
-        <InfoRow label="Foreslået ejer">{proposedOwner?.name ?? "Intet særskilt forslag"}</InfoRow>
-        <InfoRow label="Sikkerhed">{confidenceLabel(confidence)}</InfoRow>
-        <InfoRow label="Matchbegrundelse">{detail.verification.reasonCode ?? "Ingen begrundelse registreret"}</InfoRow>
-        <InfoRow label="Datakilde">{detail.aiEvidence ? `${detail.aiEvidence.provider ?? "AI"}${detail.aiEvidence.model ? ` · ${detail.aiEvidence.model}` : ""}` : "Ingen AI-kilde"}</InfoRow>
-        <InfoRow label="Manuel kontrol">{["pending", "conflict", "correction_proposed", "blocked"].includes(detail.verification.status) ? "Ja" : "Nej"}</InfoRow>
+    <details className="mt-2 rounded border bg-muted/10">
+      <summary className="cursor-pointer px-2.5 py-1.5 text-xs font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">Vis ejerskabsgrundlag</summary>
+      <dl className="border-t border-border/40 divide-y divide-border/40">
+        <InfoRow label="Aflæst i PDF" source="contract" onSourceClick={() => onEvidenceActivate(sourceActivation)}>
+          <button type="button" className="text-left font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => onEvidenceActivate(sourceActivation)}>{extractedName ?? "Ikke aflæst"}</button>
+          {sourceQuote ? <p className="line-clamp-1 text-[10px] text-muted-foreground">{sourceQuote}</p> : null}
+        </InfoRow>
+        <InfoRow label="Foreslået ejer" source="work_archive">{proposedOwner?.name ?? "Intet særskilt forslag"}</InfoRow>
+        <InfoRow label="Sikkerhed" source="contract">{confidenceLabel(confidence)}</InfoRow>
+        <InfoRow label="Matchbegrundelse" source="stored">{detail.verification.reasonCode ?? "Ingen begrundelse registreret"}</InfoRow>
+        <InfoRow label="Datakilde" source="contract">{detail.aiEvidence ? `${detail.aiEvidence.provider ?? "AI"}${detail.aiEvidence.model ? ` · ${detail.aiEvidence.model}` : ""}` : "Ingen AI-kilde"}</InfoRow>
+        <InfoRow label="Manuel kontrol" source="stored">{["pending", "conflict", "correction_proposed", "blocked"].includes(detail.verification.status) ? "Ja" : "Nej"}</InfoRow>
       </dl>
     </details>
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { contractDocumentPresentation, contractEpisodeNumbersFromLayout, contractEvidencePage, contractSeriesBaseTitle, fieldEvidence, findContractTypeEvidence, pdfBboxToViewportRect, safeContractReturnTo, suggestLocalContractWork } from "../lib/contract-workbench";
+import { contractDocumentPresentation, contractEpisodeNumbersFromLayout, contractEvidencePage, contractSeriesBaseTitle, fieldEvidence, findContractTypeEvidence, findCopydanEvidence, findSvodEvidence, findSignatureEvidence, findProducerEvidence, pdfBboxToViewportRect, safeContractReturnTo, suggestLocalContractWork } from "../lib/contract-workbench";
 import { calculatePdfEvidenceScale, calculatePdfFitWidthScale, CONTRACT_WORKBENCH_SPLIT_MIN_WIDTH, usesContractWorkbenchSplitLayout } from "../lib/contract-workbench-responsive";
 
 test("kontraktarbejdsfladen accepterer kun retur-URL'er i kontraktadministrationen", () => {
@@ -100,8 +100,10 @@ test("PDF-skalaen holder hele siden inden for dokumentkolonnens bredde", () => {
   assert.equal(calculatePdfFitWidthScale(120, 600), 0.26666666666666666);
 });
 
-test("PDF-kildefokus bevarer margen omkring teksten og undgår for kraftig zoom", () => {
-  assert.equal(calculatePdfEvidenceScale({ containerWidth: 900, containerHeight: 700, boxWidth: 80, boxHeight: 18 }), 1.35);
+test("PDF-kildefokus zoomer navnet så det fylder ca. to tredjedele af skærmområdet", () => {
+  const tabletScale = calculatePdfEvidenceScale({ containerWidth: 480, containerHeight: 700, boxWidth: 140, boxHeight: 18 });
+  assert.ok(Math.abs(tabletScale - 2.285) < 0.05);
+  assert.equal(calculatePdfEvidenceScale({ containerWidth: 900, containerHeight: 700, boxWidth: 80, boxHeight: 18 }), 2.4);
   assert.ok(calculatePdfEvidenceScale({ containerWidth: 900, containerHeight: 700, boxWidth: 520, boxHeight: 110 }) < 1.2);
   assert.equal(calculatePdfEvidenceScale({ containerWidth: 0, containerHeight: 700, boxWidth: 80, boxHeight: 18 }), 1);
 });
@@ -211,4 +213,66 @@ test("afsnitsnumre kan aflæses fra kontraktens egen episodepassage", () => {
     fragmentCount: 1,
     clauses: [{ id: "ocr", page: 1, text: "KLIPPERAF2EPISODER(5+6)samtsammenklip", bold: false, numbered: false }],
   }), [5, 6]);
+});
+
+test("Copydan-klausul identificeres automatisk ud fra layout-klausuler", () => {
+  const evidence = findCopydanEvidence({
+    type: "pdf",
+    pageCount: 4,
+    fragmentCount: 2,
+    clauses: [
+      { id: "c1", page: 1, text: "Ansættelsesaftale for klipper", bold: true, numbered: false },
+      { id: "c2", page: 4, text: "Parterne bevarer hver især deres ret til at oppebære vederlag, forvaltet af Copy-Dan i henhold til ophavsretsloven § 50 stk. 1 jf. §§ 13,17, 35 og 39", bold: false, numbered: false },
+    ],
+  });
+  assert.equal(evidence?.clauseId, "c2");
+  assert.equal(evidence?.page, 4);
+});
+
+test("SVOD- og Netflix-kompensationsklausul identificeres automatisk ud fra layout", () => {
+  const evidence = findSvodEvidence({
+    type: "pdf",
+    pageCount: 4,
+    fragmentCount: 2,
+    clauses: [
+      { id: "c1", page: 1, text: "TV-serien produceres for Netflix", bold: false, numbered: false },
+      { id: "c14", page: 4, text: "10. Copydan Kompensation. Filmarbejderen modtager en kompensation for Netflixs manglende anerkendelse af et Copydan forbehold", bold: false, numbered: true },
+    ],
+  });
+  assert.equal(evidence?.clauseId, "c14");
+  assert.equal(evidence?.page, 4);
+});
+
+test("Underskriftssektion målretter sidste side og underskriftsfelt frem for isolerede ord i teksten", () => {
+  const evidence = findSignatureEvidence({
+    type: "pdf",
+    pageCount: 7,
+    fragmentCount: 3,
+    clauses: [
+      { id: "intro", page: 1, text: "Nærværende kontrakt træder i kraft ved parternes underskrift.", bold: false, numbered: false },
+      { id: "attest", page: 6, text: "Filmarbejderen accepterer ved underskrift af denne aftale at der indhentes børneattest.", bold: false, numbered: false },
+      { id: "sig_block", page: 7, text: "København, den ______________\nFor Producenten:\n\nKøbenhavn, den ______________\nFor Lønmodtageren:", bold: false, numbered: false },
+    ],
+  });
+  assert.equal(evidence?.clauseId, "sig_block");
+  assert.equal(evidence?.page, 7);
+});
+
+test("Producent identificeres automatisk på side 1 ud fra layout og kontraktens upload-titel", () => {
+  const evidence = findProducerEvidence({
+    type: "pdf",
+    pageCount: 7,
+    fragmentCount: 5,
+    clauses: [
+      { id: "s1_c1", page: 1, text: "Mellem:", bold: false, numbered: false },
+      { id: "s1_c2", page: 1, text: "AppleTreeProductionsApS", bold: false, numbered: false },
+      { id: "s1_c3", page: 1, text: "Store Kongensgade 77", bold: false, numbered: false },
+      { id: "s1_c5", page: 1, text: "CVR: 39075598", bold: false, numbered: false },
+      { id: "s1_c6", page: 1, text: "herefter kaldet Producenten", bold: false, numbered: false },
+    ],
+  }, "EQUINOX, Apple Tree Productions, Klipper, Peter Winther Jørgensen, DFKS");
+
+  assert.equal(evidence?.clauseId, "s1_c2");
+  assert.equal(evidence?.page, 1);
+  assert.equal(evidence?.producerName, "Apple Tree Productions");
 });
