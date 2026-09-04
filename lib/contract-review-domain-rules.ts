@@ -55,6 +55,75 @@ type ContractReviewFeedbackPoint = {
   [key: string]: unknown;
 };
 
+type ContractReviewResult = {
+  overblik?: { periode?: unknown; [key: string]: unknown };
+  oversigt?: { periode?: unknown; [key: string]: unknown };
+  feedbackpunkter?: ContractReviewFeedbackPoint[];
+  [key: string]: unknown;
+};
+
+const DANISH_MONTH = "januar|februar|marts|april|maj|juni|juli|august|september|oktober|november|december";
+
+function productionDateYearCounts(contractText: string) {
+  const counts = new Map<number, number>();
+  const datePattern = new RegExp(
+    `(?:\\b(?:[0-3]?\\d)[. ]+(?:${DANISH_MONTH})\\s+|\\b(?:[0-3]?\\d)[./-](?:[01]?\\d)[./-])((?:19|20)\\d{2})\\b`,
+    "gi",
+  );
+  for (const match of contractText.matchAll(datePattern)) {
+    const year = Number(match[1]);
+    counts.set(year, (counts.get(year) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export function detectDominantContractPeriodYear(contractText: string) {
+  const ranked = [...productionDateYearCounts(contractText)].sort((a, b) => b[1] - a[1]);
+  const [dominant, runnerUp] = ranked;
+  if (!dominant || dominant[1] < 3 || dominant[1] < (runnerUp?.[1] ?? 0) * 2) return null;
+  return {
+    year: dominant[0],
+    conflictingYears: ranked
+      .filter(([year]) => year < dominant[0] && dominant[0] - year <= 2)
+      .map(([year]) => year),
+  };
+}
+
+export function reconcileContractReviewDates<T extends ContractReviewResult>(result: T, contractText: string): T {
+  const detected = detectDominantContractPeriodYear(contractText);
+  if (!detected?.conflictingYears.length) return result;
+
+  const overview = result.overblik ?? result.oversigt;
+  if (overview && typeof overview.periode === "string") {
+    const conflicts = new Set(detected.conflictingYears);
+    overview.periode = overview.periode.replace(/\b(?:19|20)\d{2}\b/g, value => (
+      conflicts.has(Number(value)) ? String(detected.year) : value
+    ));
+  }
+
+  const feedbackPoints = Array.isArray(result.feedbackpunkter) ? result.feedbackpunkter : [];
+  result.feedbackpunkter = feedbackPoints.filter(point => {
+    const text = `${String(point.titel ?? "")} ${String(point.beskrivelse ?? "")}`;
+    if (!/over\s+(?:to|2)\s+år|langt\s+fremskudt/i.test(text)) return true;
+    const mentionedYears = [...text.matchAll(/\b((?:19|20)\d{2})\b/g)].map(match => Number(match[1]));
+    return !mentionedYears.some(year => year >= detected.year && year - detected.year < 2);
+  });
+
+  const alreadyFlagged = result.feedbackpunkter.some(point => /modstridende årstal|datokonflikt/i.test(String(point.titel ?? "")));
+  if (!alreadyFlagged) {
+    result.feedbackpunkter.push({
+      id: `fp${result.feedbackpunkter.length + 1}`,
+      type: "advarsel",
+      titel: "Modstridende årstal i produktionsperioden",
+      beskrivelse: `Den detaljerede datoplan peger på ${detected.year}, men kontrakten indeholder også ${detected.conflictingYears.join("/")}. Årstallet bør rettes eller bekræftes.`,
+      anbefaling: `Bekræft produktionsperioden og ret de modstridende årstal til ${detected.year}, hvis den detaljerede plan er korrekt.`,
+      citat: "",
+      paragraf: "kontraktens produktionsperiode",
+    });
+  }
+  return result;
+}
+
 function hasDe4FictionAgreementReference(input: De4AgreementReferenceInput) {
   return input.agreementName === "de4-fiktion"
     || (input.agreementCovered && input.agreementName == null)

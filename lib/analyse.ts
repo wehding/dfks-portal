@@ -12,6 +12,7 @@ import { extractWordText } from "@/lib/word-text"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import {
+    reconcileContractReviewDates,
     resolveContractReviewProductionType,
     removeInvalidDe4RoyaltyWarnings,
     royaltyRequirementForContract,
@@ -978,6 +979,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             contractText,
         },
     )
+    parsed = reconcileContractReviewDates(parsed, contractText)
 
     // ── Navnetjek mod DFKS-register ──────────────────────────
     const rightsHolderName: string | null =
