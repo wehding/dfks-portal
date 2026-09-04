@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/select"
 import { getMyOrgRole } from "@/lib/db/organisations"
 import type { DbContractReview } from "@/lib/db/types"
-import { isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus } from "@/lib/contract-review-job-status"
+import { canTriggerContractReviewAnalysis, isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus } from "@/lib/contract-review-job-status"
 import { useI18n } from "@/lib/i18n"
 
 // ── Types ─────────────────────────────────────────────────────
@@ -258,6 +258,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         })
     }, [review])
     const isAnalysing = analysisStatus != null && isActiveContractReviewAnalysis(analysisStatus)
+    const canTriggerAnalysis = analysisStatus != null && canTriggerContractReviewAnalysis(analysisStatus)
 
     // Soft-timeout: hvis analysen har kørt usædvanligt længe (fx et hængende
     // job der først samles op af den daglige cron), vis en forklarende note
@@ -599,12 +600,12 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             size="sm"
                             variant="outline"
                             className="gap-1.5 text-xs h-7"
-                            disabled={reanalysing || isAnalysing}
+                            disabled={reanalysing || !canTriggerAnalysis}
                             title="Kør ny AI-analyse"
                             onClick={() => handleReanalyse()}
                         >
-                            <RotateCcw className={`h-3.5 w-3.5 ${reanalysing || isAnalysing ? "animate-spin" : ""}`} />
-                            {reanalysing || isAnalysing ? t("admin.reviewDetail.analysing") : t("admin.reviewDetail.reanalyse")}
+                            <RotateCcw className={`h-3.5 w-3.5 ${reanalysing || analysisStatus === "processing" ? "animate-spin" : ""}`} />
+                            {reanalysing || analysisStatus === "processing" ? t("admin.reviewDetail.analysing") : t("admin.reviewDetail.reanalyse")}
                         </Button>
                         {/* Skjult fil-input — trigges automatisk hvis storage_path mangler */}
                         <input

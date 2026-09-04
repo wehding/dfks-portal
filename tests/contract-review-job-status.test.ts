@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus } from "../lib/contract-review-job-status";
+import { canTriggerContractReviewAnalysis, isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus } from "../lib/contract-review-job-status";
 
 test("review-jobstatus skelner ko, behandling, retry, fejl og klar", () => {
   assert.equal(normalizeContractReviewAnalysisStatus({ aiStatus: "analyserer", intakeStatus: "queued", job: { status: "queued", attempts: 0, next_attempt_at: null, error_message: null } }), "queued");
@@ -16,4 +17,19 @@ test("kun aktive reviewtilstande polles", () => {
   assert.equal(isActiveContractReviewAnalysis("retrying"), true);
   assert.equal(isActiveContractReviewAnalysis("failed"), false);
   assert.equal(isActiveContractReviewAnalysis("ready"), false);
+});
+
+test("job i kø kan startes igen, mens aktiv behandling forbliver låst", () => {
+  assert.equal(canTriggerContractReviewAnalysis("queued"), true);
+  assert.equal(canTriggerContractReviewAnalysis("retrying"), true);
+  assert.equal(canTriggerContractReviewAnalysis("failed"), true);
+  assert.equal(canTriggerContractReviewAnalysis("ready"), true);
+  assert.equal(canTriggerContractReviewAnalysis("processing"), false);
+});
+
+test("review-intake begrænser både worker-kald og inline fallback", () => {
+  const source = readFileSync("lib/contract-review-intake.ts", "utf8");
+  assert.match(source, /signal: AbortSignal\.timeout\(5_000\)/);
+  assert.match(source, /processPendingContractReviewJobs\(1\)/);
+  assert.doesNotMatch(source, /processPendingContractReviewJobs\(3\)/);
 });

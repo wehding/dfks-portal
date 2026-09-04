@@ -5,35 +5,33 @@ export type KeyPageTiming = {
   key: string;
   name: string;
   route: string;
-  averageMs: number;
-  p90Ms: number;
+  averageMs: number | null;
+  p90Ms: number | null;
   sampleCount: number;
-  status: "fast" | "moderate" | "slow";
+  status: "fast" | "moderate" | "slow" | "unavailable";
   statusLabel: string;
 };
 
-const KEY_PAGES_META: Array<{ key: string; name: string; route: string; defaultAvgMs: number }> = [
-  { key: "admin-contracts", name: "Kontraktarkiv", route: "/admin/kontrakter", defaultAvgMs: 240 },
-  { key: "admin-works", name: "Værksarkiv", route: "/admin/vaerker", defaultAvgMs: 195 },
-  { key: "member-contracts", name: "Mine kontrakter", route: "/portal/mine-kontrakter", defaultAvgMs: 165 },
-  { key: "member-works", name: "Mine værker", route: "/portal/mine-vaerker", defaultAvgMs: 180 },
+const KEY_PAGES_META: Array<{ key: string; name: string; route: string }> = [
+  { key: "admin-contracts", name: "Kontraktarkiv", route: "/admin/kontrakter" },
+  { key: "admin-works", name: "Værksarkiv", route: "/admin/vaerker" },
+  { key: "member-contracts", name: "Mine kontrakter", route: "/portal/mine-kontrakter" },
+  { key: "member-works", name: "Mine værker", route: "/portal/mine-vaerker" },
 ];
 
 export function getKeyPageTimingStats(): KeyPageTiming[] {
   return KEY_PAGES_META.map(meta => {
     const samples = timingSamples.get(meta.key) ?? [];
     if (samples.length === 0) {
-      const avg = meta.defaultAvgMs;
-      const p90 = Math.round(avg * 1.35);
       return {
         key: meta.key,
         name: meta.name,
         route: meta.route,
-        averageMs: avg,
-        p90Ms: p90,
+        averageMs: null,
+        p90Ms: null,
         sampleCount: 0,
-        status: avg < 400 ? "fast" : avg <= 1000 ? "moderate" : "slow",
-        statusLabel: avg < 400 ? "Hurtig" : avg <= 1000 ? "Acceptabel" : "Langsom",
+        status: "unavailable",
+        statusLabel: "Ingen målinger",
       };
     }
     const sum = samples.reduce((acc, v) => acc + v, 0);

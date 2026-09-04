@@ -19,7 +19,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
 import { ValideringskøTab } from "@/components/admin/valideringskoe-tab"
-import { createAdminContractWorkQueue, fetchAdminContractTaskCounts } from "@/app/actions/admin-contract-work-queues"
+import { createAdminContractWorkQueue, fetchAdminContractTaskCounts, type AdminContractTaskCounts } from "@/app/actions/admin-contract-work-queues"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ADMIN_CONTRACT_UPLOAD_ACCEPT } from "@/lib/contract-upload-format"
 import { CONTRACT_IMPORT_CONCURRENCY, validateContractImportFile } from "@/lib/contract-import"
@@ -54,6 +54,7 @@ import { contractReadinessDetails, effectiveCopydanStatus, normalizeTriState } f
 import { contractDataToManualWorkSeed, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work"
 import { ListReadinessMarker } from "@/components/performance/list-readiness-marker"
 import { contractDocumentPresentation } from "@/lib/contract-workbench"
+import { ArchiveTaskButton } from "@/components/admin/archive-task-button"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -2728,7 +2729,7 @@ function AdminKontrakterPageInner({
     initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
     initialQuery?: AdminContractsPageParams
     canManageOwnership: boolean
-    initialTaskCounts?: { validation: number; ownership: number; messages: number; drafts: number }
+    initialTaskCounts?: AdminContractTaskCounts
 }) {
     const router = useRouter()
     const searchParams = useSearchParams()
@@ -2742,15 +2743,16 @@ function AdminKontrakterPageInner({
                 ? "upload"
                 : "arkiv"
     const [activeTab, setActiveTab] = useState<ContractArchiveTab>(initialTab)
-    const [taskCounts, setTaskCounts] = useState(initialTaskCounts ?? { validation: 0, ownership: 0, messages: 0, drafts: 0 })
-    const [køCount, setKøCount] = useState<number>(initialTaskCounts?.drafts ?? 0)
-    const [openingTask, setOpeningTask] = useState<"validation" | "ownership" | "messages" | null>(null)
+    const [taskCounts, setTaskCounts] = useState<AdminContractTaskCounts>(initialTaskCounts ?? { validation: null, ownership: null, missingOwner: null, messages: null })
+    const [openingTask, setOpeningTask] = useState<"validation" | "ownership" | "missingOwner" | "messages" | null>(null)
+
+    // Stabil callback + bail-out: ValideringskøTab kalder denne i en effect, så en
+    // ny closure eller et nyt state-objekt hver render giver en uendelig løkke.
+    const handleValideringskøCount = useCallback((count: number) => {
+        setTaskCounts(current => current.validation === count ? current : { ...current, validation: count })
+    }, [])
     const tabRefs = useRef<Partial<Record<ContractArchiveTab, HTMLButtonElement | null>>>({})
     const visibleContractTabs: ContractArchiveTab[] = ["arkiv", "valideringskoe", "upload"]
-
-    const handleKøCount = useCallback((count: number) => {
-        setKøCount(count)
-    }, [])
 
     useEffect(() => {
         const nextTab: ContractArchiveTab = requestedTab === "valideringskoe"
@@ -2773,7 +2775,13 @@ function AdminKontrakterPageInner({
         return () => window.removeEventListener("contracts-updated", refresh)
     }, [refreshTaskCounts])
 
-    const openTask = async (kind: "validation" | "ownership" | "messages") => {
+    const openTask = async (kind: "validation" | "ownership" | "missingOwner" | "messages") => {
+        const count = taskCounts[kind]
+        if (count === null) {
+            toast.error("Opgavetallet kunne ikke hentes. Prøv igen.")
+            return
+        }
+        if (count === 0) return
         setOpeningTask(kind)
         try {
             const result = await createAdminContractWorkQueue({
@@ -2784,11 +2792,13 @@ function AdminKontrakterPageInner({
                 toast.error(result.error ?? "Opgaven kunne ikke åbnes")
                 return
             }
-            const section = kind === "validation" ? "approve" : kind === "ownership" ? "ownership" : "messages"
+            const section = kind === "validation" ? "approve" : kind === "ownership" || kind === "missingOwner" ? "ownership" : "messages"
             const returnTo = kind === "validation"
                 ? "/admin/kontrakter?tab=arkiv&status=validationPending"
                 : kind === "ownership"
                     ? "/admin/kontrakter?tab=arkiv&ownership=review"
+                    : kind === "missingOwner"
+                        ? "/admin/kontrakter?tab=arkiv&ownership=missing"
                     : "/admin/kontrakter?tab=arkiv&status=beskeder"
             const params = new URLSearchParams({ returnTo, queueId: result.queueId, section })
             router.push(`/admin/kontrakter/${result.firstContractId}/rediger?${params.toString()}`)
@@ -2864,9 +2874,9 @@ function AdminKontrakterPageInner({
                     ].join(" ")}
                 >
                     Valideringskø
-                    {køCount > 0 && (
+                    {taskCounts.validation !== null && taskCounts.validation > 0 && (
                         <span className="ml-2 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 px-2 py-0.5 text-xs font-semibold">
-                            {køCount}
+                            {taskCounts.validation}
                         </span>
                     )}
                 </button>
@@ -2890,68 +2900,22 @@ function AdminKontrakterPageInner({
                     Kontraktupload
                 </button>
             </div>
-            {activeTab === "arkiv" && (
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:flex lg:flex-wrap lg:gap-3" aria-label="Opgaver i kontraktarkivet">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        className={`h-auto justify-start py-2.5 px-3.5 gap-2.5 text-xs font-semibold sm:text-sm ${taskCounts.validation > 0 ? "border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-100" : "text-muted-foreground"}`}
-                        onClick={() => void openTask("validation")}
-                        disabled={openingTask !== null}
-                    >
-                        {openingTask === "validation" ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <CheckCircle2 className={`h-4 w-4 shrink-0 ${taskCounts.validation > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />}
-                        <span>Afventer validering</span>
-                        <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${taskCounts.validation > 0 ? "bg-amber-200/80 dark:bg-amber-900/60 text-amber-900 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
-                            {taskCounts.validation}
-                        </span>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3" aria-label="Opgaver i kontraktarkivet">
+                <ArchiveTaskButton label="Afventer validering" count={taskCounts.validation} loading={openingTask !== null} onClick={() => void openTask("validation")} icon={openingTask === "validation" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <CheckCircle2 className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />
+                {canManageOwnership && (
+                    <ArchiveTaskButton label="Ejerskab skal afklares" count={taskCounts.ownership} loading={openingTask !== null} onClick={() => void openTask("ownership")} icon={openingTask === "ownership" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />
+                )}
+                {canManageOwnership && <ArchiveTaskButton label="Tilføj ejer" count={taskCounts.missingOwner} loading={openingTask !== null} onClick={() => void openTask("missingOwner")} icon={openingTask === "missingOwner" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />}
+                {taskCounts.messages !== null && taskCounts.messages > 0 && (
+                    <ArchiveTaskButton label="Ulæste beskeder" count={taskCounts.messages} loading={openingTask !== null} tone="blue" onClick={() => void openTask("messages")} icon={openingTask === "messages" ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <MessageSquare className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />} />
+                )}
+            </div>
+            {(taskCounts.validation === null || (canManageOwnership && (taskCounts.ownership === null || taskCounts.missingOwner === null))) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100" role="status">
+                    <span>Et eller flere opgavetal kunne ikke hentes.</span>
+                    <Button type="button" variant="outline" size="sm" className="h-7 bg-background" onClick={() => void refreshTaskCounts()}>
+                        Prøv igen
                     </Button>
-                    {canManageOwnership && (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            className={`h-auto justify-start py-2.5 px-3.5 gap-2.5 text-xs font-semibold sm:text-sm ${taskCounts.ownership > 0 ? "border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-100" : "text-muted-foreground"}`}
-                            onClick={() => void openTask("ownership")}
-                            disabled={openingTask !== null}
-                        >
-                            {openingTask === "ownership" ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <AlertTriangle className={`h-4 w-4 shrink-0 ${taskCounts.ownership > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`} />}
-                            <span>Ejerskab skal afklares</span>
-                            <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${taskCounts.ownership > 0 ? "bg-amber-200/80 dark:bg-amber-900/60 text-amber-900 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
-                                {taskCounts.ownership}
-                            </span>
-                        </Button>
-                    )}
-                    <Button
-                        type="button"
-                        variant="outline"
-                        className={`h-auto justify-start py-2.5 px-3.5 gap-2.5 text-xs font-semibold sm:text-sm ${taskCounts.drafts > 0 ? "border-slate-300 bg-slate-50 text-slate-900 hover:bg-slate-100 dark:bg-slate-900/30 dark:text-slate-100" : "text-muted-foreground"}`}
-                        onClick={() => {
-                            const next = new URLSearchParams(searchParams.toString())
-                            next.set("tab", "arkiv")
-                            next.set("status", "kladde")
-                            router.replace(`/admin/kontrakter?${next.toString()}`, { scroll: false })
-                        }}
-                    >
-                        <FileText className={`h-4 w-4 shrink-0 ${taskCounts.drafts > 0 ? "text-slate-700 dark:text-slate-300" : "text-muted-foreground"}`} />
-                        <span>Kladder</span>
-                        <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${taskCounts.drafts > 0 ? "bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100" : "bg-muted text-muted-foreground"}`}>
-                            {taskCounts.drafts}
-                        </span>
-                    </Button>
-                    {taskCounts.messages > 0 && (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            className="h-auto justify-start py-2.5 px-3.5 gap-2.5 text-xs font-semibold sm:text-sm border-blue-300 bg-blue-50 text-blue-950 hover:bg-blue-100 dark:bg-blue-950/30 dark:text-blue-100"
-                            onClick={() => void openTask("messages")}
-                            disabled={openingTask !== null}
-                        >
-                            {openingTask === "messages" ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <MessageSquare className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />}
-                            <span>Ulæste beskeder</span>
-                            <span className="ml-auto rounded-full bg-blue-200/80 dark:bg-blue-900/60 px-2 py-0.5 text-xs font-bold text-blue-900 dark:text-blue-100 tabular-nums">
-                                {taskCounts.messages}
-                            </span>
-                        </Button>
-                    )}
                 </div>
             )}
             <div
@@ -2971,7 +2935,7 @@ function AdminKontrakterPageInner({
                     ? <Suspense><AdminKontrakterContent view="archive" initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} /></Suspense>
                     : activeTab === "upload"
                         ? <Suspense><AdminKontrakterContent view="upload" canManageOwnership={canManageOwnership} /></Suspense>
-                        : <ValideringskøTab onAfventerCount={handleKøCount} />
+                        : <ValideringskøTab onAfventerCount={handleValideringskøCount} />
                 }
             </div>
         </div>
@@ -2987,7 +2951,7 @@ export default function ContractArchiveClient({
     initialResult?: Awaited<ReturnType<typeof fetchAdminContractsPage>>
     initialQuery?: AdminContractsPageParams
     canManageOwnership: boolean
-    initialTaskCounts?: { validation: number; ownership: number; messages: number; drafts: number }
+    initialTaskCounts?: AdminContractTaskCounts
 }) {
     return <Suspense><AdminKontrakterPageInner initialResult={initialResult} initialQuery={initialQuery} canManageOwnership={canManageOwnership} initialTaskCounts={initialTaskCounts} /></Suspense>
 }

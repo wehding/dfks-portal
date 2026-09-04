@@ -21,6 +21,13 @@ import { isUuid } from "@/lib/uuid";
 
 const MAX_QUEUE_ITEMS = 5000;
 const MAX_SELECTED_ITEMS = 1000;
+
+export type AdminContractTaskCounts = {
+  validation: number | null;
+  ownership: number | null;
+  missingOwner: number | null;
+  messages: number | null;
+};
 const VALID_STATUSES = new Set([
   "all", "kladde", "valideret", "arkiveret", "beskeder", "missingWork",
   "validationPending", "validationRecommended", "documentProcessing", "documentReady",
@@ -52,6 +59,7 @@ type QueueRow = {
   label: string;
   current_position: number;
   expires_at: string;
+  filter_context: Record<string, unknown> | null;
 };
 
 async function requireQueueCaller(requireOwnership = false): Promise<QueueCaller | null> {
@@ -84,8 +92,9 @@ function normalizeFilters(input: AdminContractFilterParams | undefined): AdminCo
 }
 
 function queueLabel(kind: CreateAdminContractQueueInput["kind"], count: number) {
-  if (kind === "validation") return `Afventer validering · ${count}`;
+  if (kind === "validation") return `Valideringsafklaring · ${count}`;
   if (kind === "ownership") return `Ejerskab skal afklares · ${count}`;
+  if (kind === "missingOwner") return `Tilføj ejer · ${count}`;
   if (kind === "messages") return `Ulæste beskeder · ${count}`;
   if (kind === "selected") return `Valgte kontrakter · ${count}`;
   return `Aktuel liste · ${count}`;
@@ -105,12 +114,16 @@ async function existingScopedContractIds(
   return new Set((result.data ?? []).map(row => row.id));
 }
 
-async function ownershipTaskIds(db: ReturnType<typeof createServiceClient>, orgId: string) {
-  const [missing, review] = await Promise.all([
-    matchingAdminContractIds(db, orgId, { ownership: "missing" }),
-    matchingAdminContractIds(db, orgId, { ownership: "review" }),
-  ]);
-  return existingScopedContractIds(db, orgId, new Set([...(missing ?? []), ...(review ?? [])]));
+async function ownershipTaskIds(db: ReturnType<typeof createServiceClient>, orgId: string, kind: "missing" | "review") {
+  const matches = await matchingAdminContractIds(db, orgId, { ownership: kind });
+  const scoped = await existingScopedContractIds(db, orgId, matches);
+  if (kind === "missing" || scoped.size === 0) return scoped;
+  const assigned = await db.from("contracts").select("id")
+    .eq("org_id", orgId)
+    .not("rights_holder_id", "is", null)
+    .in("id", [...scoped]);
+  if (assigned.error) throw new Error(assigned.error.message);
+  return new Set((assigned.data ?? []).map(row => row.id));
 }
 
 function applyQueueOrder(query: any, params: AdminContractFilterParams) {
@@ -147,13 +160,13 @@ async function resolveQueueContracts(
           ownership: "all",
           rightsHolderId: null,
         }
-      : input.kind === "ownership"
+        : input.kind === "ownership" || input.kind === "missingOwner"
         ? {
             ...filters,
             search: "",
             status: "all",
             type: "all",
-            ownership: "review",
+            ownership: input.kind === "missingOwner" ? "missing" : "review",
             rightsHolderId: null,
           }
         : input.kind === "messages"
@@ -166,8 +179,8 @@ async function resolveQueueContracts(
               rightsHolderId: null,
             }
         : filters;
-    matchedIds = input.kind === "ownership"
-      ? await ownershipTaskIds(db, caller.orgId)
+    matchedIds = input.kind === "ownership" || input.kind === "missingOwner"
+      ? await ownershipTaskIds(db, caller.orgId, input.kind === "missingOwner" ? "missing" : "review")
       : await matchingAdminContractIds(db, caller.orgId, queueFilters);
     filters = queueFilters;
   }
@@ -203,24 +216,33 @@ export async function fetchAdminContractTaskCounts() {
   const caller = await requireQueueCaller(false);
   if (!caller) return { success: false as const, error: "Ikke autoriseret" };
   const db = createServiceClient();
-  try {
-    const [validationRaw, messagesRaw, ownership, draftsResult] = await Promise.all([
-      matchingAdminContractIds(db, caller.orgId, { status: "validationPending" }),
-      matchingAdminContractIds(db, caller.orgId, { status: "beskeder" }),
-      caller.canManageOwnership ? ownershipTaskIds(db, caller.orgId) : Promise.resolve(new Set<string>()),
-      db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", caller.orgId).is("superseded_by_contract_id", null).eq("status", "kladde"),
-    ]);
-    const [validation, messages] = await Promise.all([
-      existingScopedContractIds(db, caller.orgId, validationRaw),
-      existingScopedContractIds(db, caller.orgId, messagesRaw),
-    ]);
-    return {
-      success: true as const,
-      counts: { validation: validation.size, ownership: ownership.size, messages: messages.size, drafts: draftsResult.count ?? 0 },
-    };
-  } catch (error) {
-    return { success: false as const, error: error instanceof Error ? error.message : "Opgaverne kunne ikke hentes" };
-  }
+  const countFiltered = async (status: "validationPending" | "beskeder") => {
+    const raw = await matchingAdminContractIds(db, caller.orgId, { status });
+    return (await existingScopedContractIds(db, caller.orgId, raw)).size;
+  };
+  const results = await Promise.allSettled([
+    countFiltered("validationPending"),
+    caller.canManageOwnership ? ownershipTaskIds(db, caller.orgId, "review").then(ids => ids.size) : Promise.resolve(0),
+    caller.canManageOwnership ? ownershipTaskIds(db, caller.orgId, "missing").then(ids => ids.size) : Promise.resolve(0),
+    countFiltered("beskeder"),
+  ]);
+  (["validation", "ownership", "missingOwner", "messages"] as const).forEach((task, index) => {
+    if (results[index]?.status === "rejected") {
+      console.error("[admin-contract-tasks] count unavailable", { task });
+    }
+  });
+  const countAt = (index: number) => results[index]?.status === "fulfilled"
+    ? results[index].value
+    : null;
+  return {
+    success: true as const,
+    counts: {
+      validation: countAt(0),
+      ownership: countAt(1),
+      missingOwner: countAt(2),
+      messages: countAt(3),
+    } satisfies AdminContractTaskCounts,
+  };
 }
 
 async function deleteQueue(db: ReturnType<typeof createServiceClient>, queueId: string) {
@@ -231,7 +253,7 @@ export async function createAdminContractWorkQueue(input: CreateAdminContractQue
   if (!input || typeof input !== "object" || Array.isArray(input) || !(ADMIN_CONTRACT_QUEUE_KINDS as readonly string[]).includes(input.kind)) {
     return { success: false as const, error: "Ugyldig kø" };
   }
-  const caller = await requireQueueCaller(input.kind === "ownership");
+  const caller = await requireQueueCaller(input.kind === "ownership" || input.kind === "missingOwner");
   if (!caller) return { success: false as const, error: "Ikke autoriseret" };
   const filters = normalizeFilters(input.filters);
   if (!filters) return { success: false as const, error: "Ugyldige filtre" };
@@ -244,7 +266,9 @@ export async function createAdminContractWorkQueue(input: CreateAdminContractQue
     const queueResult = await db.from("admin_contract_work_queues").insert({
       org_id: caller.orgId,
       created_by: caller.userId,
-      kind: input.kind,
+      // The database enum remains backwards compatible. The UI subtype is
+      // stored as harmless workflow metadata and reconstructed on read.
+      kind: input.kind === "missingOwner" ? "ownership" : input.kind,
       label: queueLabel(input.kind, rows.length),
       filter_context: {
         status: filters.status ?? "all",
@@ -254,6 +278,7 @@ export async function createAdminContractWorkQueue(input: CreateAdminContractQue
         sortDir: filters.sortDir ?? "asc",
         hasSearch: Boolean(filters.search),
         rightsHolderScoped: Boolean(filters.rightsHolderId),
+        workflowKind: input.kind,
       },
     }).select("id").single();
     if (queueResult.error || !queueResult.data?.id) throw new Error(queueResult.error?.message ?? "Køen kunne ikke oprettes");
@@ -322,39 +347,28 @@ export async function fetchAdminContractWorkQueue(queueId: string, currentContra
   const currentIndex = rawItems.findIndex(item => item.contract_id === currentContractId);
   if (currentIndex < 0) return { success: false as const, error: "Kontrakten findes ikke i køen" };
   const contractIds = rawItems.map(item => item.contract_id);
-  const [contractsResult, ownershipResult] = await Promise.all([
-    db.from("contracts").select("id,working_title,status,rights_holder_id,works(title)").eq("org_id", caller.orgId).in("id", contractIds),
-    db.from("contract_owner_verifications")
-      .select("contract_id,status,proposed_rights_holder_id,proposed_rights_holder:rettighedshavere!contract_owner_verifications_proposed_rights_holder_id_fkey(full_name)")
-      .eq("org_id", caller.orgId).in("contract_id", contractIds),
-  ]);
-  const readError = contractsResult.error ?? ownershipResult.error;
-  if (readError) return { success: false as const, error: "Køen kunne ikke hentes" };
+  const contractsResult = await db.from("contracts").select("id,working_title,works(title)").eq("org_id", caller.orgId).in("id", contractIds);
+  if (contractsResult.error) return { success: false as const, error: "Køen kunne ikke hentes" };
   const contractById = new Map((contractsResult.data ?? []).map(row => [row.id, row]));
-  const ownerByContract = new Map((ownershipResult.data ?? []).map(row => [row.contract_id, row]));
   const items: AdminContractQueueItem[] = rawItems.flatMap(item => {
     const contract = contractById.get(item.contract_id);
     if (!contract) return [];
-    const ownership = ownerByContract.get(item.contract_id);
     const work = one(contract.works);
-    const proposed = one(ownership?.proposed_rights_holder);
     return [{
       contractId: item.contract_id,
       position: item.position,
       status: item.status as AdminContractQueueItem["status"],
-      title: work?.title ?? contract.working_title ?? "Kontrakt",
-      contractStatus: contract.status,
-      rightsHolderId: contract.rights_holder_id ?? null,
-      ownershipStatus: ownership?.status ?? null,
-      proposedRightsHolderId: ownership?.proposed_rights_holder_id ?? null,
-      proposedRightsHolderName: proposed?.full_name ?? null,
+      contractTitle: contract.working_title ?? "Kontrakt",
+      workTitle: work?.title ?? null,
     }];
   });
   const currentPosition = rawItems[currentIndex]!.position;
   await db.from("admin_contract_work_queues").update({ current_position: currentPosition, updated_at: new Date().toISOString() }).eq("id", queue.id);
   const context: AdminContractQueueContext = {
     id: queue.id,
-    kind: queue.kind as AdminContractQueueContext["kind"],
+    kind: queue.kind === "ownership" && queue.filter_context?.workflowKind === "missingOwner"
+      ? "missingOwner"
+      : queue.kind as AdminContractQueueContext["kind"],
     label: queue.label,
     position: currentPosition,
     total: rawItems.length,
