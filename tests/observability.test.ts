@@ -31,6 +31,22 @@ test("drain parser accepterer både JSON-array og NDJSON uden at bevare rå URL"
   assert.doesNotMatch(JSON.stringify(events), /Steen/);
 });
 
+test("drain parser accepterer Vercels officielle Speed Insights v1-format", () => {
+  const [event] = sanitiseDrainEvents([{
+    schema: "vercel.speed_insights.v1",
+    timestamp: "2026-09-04T10:00:00.000Z",
+    metricType: "LCP",
+    value: 1.75,
+    path: "/admin/kontrakter",
+    deviceType: "desktop",
+  }]);
+
+  assert.equal(event?.source, "vercel_speed_insights");
+  assert.equal(event?.metricName, "LCP");
+  assert.equal(event?.route, "/admin/kontrakter");
+  assert.equal(event?.deviceClass, "desktop");
+});
+
 test("runtimefejl redigerer mail, id, token og URL", () => {
   const safe = sanitiseRuntimeMessage("Fejl for x@y.dk 8a5f1d7e-86f5-4f16-99cb-3e7af329ea64 https://secret.test/path eyJabcdefghijklmnopqrstuvwxyz1234567890");
   assert.equal(safe, "Fejl for [email] [id] [url] [token]");

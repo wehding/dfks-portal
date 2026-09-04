@@ -8,8 +8,8 @@ Manglende data vises som **Mangler data**. Det betyder ikke nul fejl eller god h
 
 1. Anvend migrationen `20260904062455_insights_observability.sql`.
 2. Deploy appen, så `@vercel/analytics` og `@vercel/speed-insights` begynder at indsamle privatlivsfiltrerede målinger.
-3. Opret et Vercel Drain for Web Analytics og Speed Insights til `/api/internal/observability/vercel-drain`. Runtime Logs må ikke sendes til samme app via drainet, fordi det kan skabe en logsløjfe.
-4. Gem drainets delte hemmelighed som `VERCEL_DRAIN_SECRET` i Vercel.
+3. Opret to Vercel Drains til `/api/internal/observability/vercel-drain`: ét med skemaet `analytics/v1` og ét med `speed_insights/v1`. Vercel tillader kun én datatype pr. drain. Runtime Logs må ikke sendes til samme app via et drain, fordi det kan skabe en logsløjfe.
+4. Brug den samme eksplicit valgte signaturhemmelighed for begge drains, og gem den som `VERCEL_DRAIN_SECRET` i Vercel.
 5. Opret en begrænset Vercel API-token til læsning af deployments og runtime-logs. Gem den som `VERCEL_OBSERVABILITY_TOKEN`, og sæt `VERCEL_OBSERVABILITY_PROJECT_ID` og `VERCEL_OBSERVABILITY_TEAM_ID`.
 6. Bekræft, at cron-ruten `/api/internal/observability/vercel-runtime` kaldes hvert 15. minut med `CRON_SECRET`.
 7. Opret en tilfældig `PERFORMANCE_INGEST_SECRET` både i Vercel og GitHub Actions. Opret GitHub-secret `INSIGHTS_INGEST_URL` med den fulde URL til `/api/internal/observability/performance`.

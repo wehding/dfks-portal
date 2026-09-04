@@ -37,17 +37,21 @@ export function sanitiseDrainEvents(payloads: unknown[]): SafeObservabilityEvent
     const item = record(value);
     if (!item) return [];
     const nested = record(item.payload) ?? record(item.data) ?? item;
+    const schema = stringValue(item.schema, nested.schema)?.toLowerCase() ?? "";
     const type = stringValue(item.type, nested.type, nested.eventType)?.toLowerCase() ?? "";
-    const metric = stringValue(nested.metric, nested.name, nested.metricName)?.toUpperCase();
-    const isSpeed = type.includes("speed") || Boolean(metric && ["LCP", "INP", "CLS", "FCP", "TTFB"].includes(metric));
-    const isAnalytics = type.includes("analytics") || type.includes("pageview") || type.includes("page_view");
+    const metric = stringValue(nested.metric, nested.name, nested.metricName, nested.metricType)?.toUpperCase();
+    const isSpeed = schema.includes("speed_insights") || type.includes("speed")
+      || Boolean(metric && ["LCP", "INP", "CLS", "FCP", "TTFB", "FID"].includes(metric));
+    const isAnalytics = schema.includes("analytics") || type.includes("analytics")
+      || type.includes("pageview") || type.includes("page_view");
     if (!isSpeed && !isAnalytics) return [];
     const route = normalizeRoute(stringValue(nested.url, nested.path, nested.route));
     if (!route) return [];
     const observedAt = timestampValue(nested.timestamp, nested.timestampInMs, item.timestamp);
     const identity = stringValue(item.id, nested.id, nested.eventId)
       ?? createHash("sha256").update(`${type}:${route}:${observedAt}:${index}`).digest("hex");
-    const device = stringValue(nested.device, nested.deviceType)?.toLowerCase();
+    const deviceInfo = record(nested.device);
+    const device = stringValue(nested.deviceType, deviceInfo?.type, deviceInfo?.category)?.toLowerCase();
     const deviceClass = device === "desktop" || device === "mobile" || device === "tablet" ? device : "unknown";
     return [{
       source: isSpeed ? "vercel_speed_insights" : "vercel_analytics",
