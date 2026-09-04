@@ -49,5 +49,9 @@ const payload = JSON.stringify({
 });
 const signature = createHmac("sha256", secret).update(payload).digest("hex");
 const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json", "x-dfks-signature": signature }, body: payload });
+if (response.status === 404 && process.env.GITHUB_EVENT_NAME === "pull_request") {
+  console.log("Insights-endpointet er endnu ikke deployet på PR'ens målbranch; artifact bevares, og planlagte kørsler fejler fortsat hårdt.");
+  process.exit(0);
+}
 if (!response.ok) throw new Error(`Insights-ingestion fejlede med HTTP ${response.status}`);
 console.log(`Publicerede ${results.length} performance-resultater til Insights.`);
