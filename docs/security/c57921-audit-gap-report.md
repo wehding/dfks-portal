@@ -6,7 +6,7 @@ Genereret for registry-review 2026-09-03 fra schema version 3. Tilstand: enforci
 
 - Registrerede flows: 36
 - Registrerede dataflows: 3
-- Dokumenterede udeladelser: 2
+- Dokumenterede udeladelser: 5
 - Automatisk fundne følsomme kandidater: 108
 - Rapporterede fund: 0
 - Strukturelle fejl: 0

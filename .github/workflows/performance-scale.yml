@@ -55,6 +55,12 @@ jobs:
           done
           exit 1
       - run: npm run test:performance-smoke
+      - name: Publicér målinger til Insights
+        if: always()
+        env:
+          INSIGHTS_INGEST_URL: ${{ secrets.INSIGHTS_INGEST_URL }}
+          PERFORMANCE_INGEST_SECRET: ${{ secrets.PERFORMANCE_INGEST_SECRET }}
+        run: node scripts/publish-performance-results.mjs
       - if: always()
         uses: actions/upload-artifact@v4
         with:

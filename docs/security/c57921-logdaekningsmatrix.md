@@ -147,3 +147,6 @@ Maskingenereret fra `config/audit-coverage.json`. Senest kontrolleret: 2026-09-0
 |---|---|---|---|
 | app/api/admin/contracts/status/route.ts | Returnerer kun teknisk jobstatus for allerede synlige, organisationsafgrænsede review-id'er. Den smalle polling må ikke oprette gentagne læseaudit-events. | tests/list-load-performance.test.ts | Portalteam |
 | app/api/admin/statistics/cpi/route.ts | Synkroniserer kun offentligt Danmarks Statistik-prisindeks og behandler ingen medlemsdata. | tests/statistics-cpi.test.ts | Statistikteam |
+| app/api/internal/observability/performance/route.ts | Indlæser signerede, syntetiske GitHub-testmålinger uden produktions- eller medlemsdata. | tests/observability.test.ts | Portal- og driftsteam |
+| app/api/internal/observability/vercel-drain/route.ts | Indlæser kun dataminimeret driftstelemetri uden medlems-id, rå URL, søgetekst eller dokumentdata; endpointet er HMAC-verificeret og er ikke en medlemsbehandling. | tests/observability.test.ts | Portal- og driftsteam |
+| app/api/internal/observability/vercel-runtime/route.ts | Henter redigerede driftsfejl og normaliserede ruter via et CRON_SECRET-beskyttet serverflow; ingen rå fejl eller medlemssubjekter gemmes. | tests/observability.test.ts | Portal- og driftsteam |
