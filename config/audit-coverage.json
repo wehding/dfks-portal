@@ -186,7 +186,8 @@
   "dataStores": [
     { "id": "STORE-SUPABASE-DB", "type": "database", "organisationScoped": true, "encryption": "managed_at_rest_and_tls", "retention": "table_specific", "owner": "Portalteam" },
     { "id": "STORE-SUPABASE-STORAGE", "type": "object_storage", "organisationScoped": true, "encryption": "managed_at_rest_and_tls", "retention": "bucket_specific", "owner": "Portalteam" },
-    { "id": "STORE-AUDIT-WORM", "type": "external_worm", "organisationScoped": true, "encryption": "kms_signed_batches", "retention": "governance_controlled", "owner": "Sikkerhedsteam" }
+    { "id": "STORE-AUDIT-WORM", "type": "external_worm", "organisationScoped": true, "encryption": "kms_signed_batches", "retention": "governance_controlled", "owner": "Sikkerhedsteam" },
+    { "id": "STORE-OBSERVABILITY", "type": "operational_telemetry", "organisationScoped": false, "encryption": "managed_at_rest_and_tls", "retention": "90_days", "owner": "Portal- og driftsteam", "dataMinimisation": "Kun normaliserede ruter, aggregérbare målinger og redigerede fejl-fingerprints; ingen medlems-id'er, rå URL'er, søgetekster eller dokumentindhold" }
   ],
   "coverageRoots": [
     "app/api/admin/contracts",
@@ -196,7 +197,10 @@
   ],
   "exclusions": [
     { "path": "app/api/admin/statistics/cpi/route.ts", "reason": "Synkroniserer kun offentligt Danmarks Statistik-prisindeks og behandler ingen medlemsdata.", "test": "tests/statistics-cpi.test.ts", "owner": "Statistikteam" },
-    { "path": "app/api/admin/contracts/status/route.ts", "reason": "Returnerer kun teknisk jobstatus for allerede synlige, organisationsafgrænsede review-id'er. Den smalle polling må ikke oprette gentagne læseaudit-events.", "test": "tests/list-load-performance.test.ts", "owner": "Portalteam" }
+    { "path": "app/api/admin/contracts/status/route.ts", "reason": "Returnerer kun teknisk jobstatus for allerede synlige, organisationsafgrænsede review-id'er. Den smalle polling må ikke oprette gentagne læseaudit-events.", "test": "tests/list-load-performance.test.ts", "owner": "Portalteam" },
+    { "path": "app/api/internal/observability/vercel-drain/route.ts", "reason": "Indlæser kun dataminimeret driftstelemetri uden medlems-id, rå URL, søgetekst eller dokumentdata; endpointet er HMAC-verificeret og er ikke en medlemsbehandling.", "test": "tests/observability.test.ts", "owner": "Portal- og driftsteam" },
+    { "path": "app/api/internal/observability/vercel-runtime/route.ts", "reason": "Henter redigerede driftsfejl og normaliserede ruter via et CRON_SECRET-beskyttet serverflow; ingen rå fejl eller medlemssubjekter gemmes.", "test": "tests/observability.test.ts", "owner": "Portal- og driftsteam" },
+    { "path": "app/api/internal/observability/performance/route.ts", "reason": "Indlæser signerede, syntetiske GitHub-testmålinger uden produktions- eller medlemsdata.", "test": "tests/observability.test.ts", "owner": "Portal- og driftsteam" }
   ],
   "entries": [
     { "path": "app/(member)/onboarding/page.tsx", "auditImplementation": "lib/sensitive-flow-audit.ts", "processing": "Onboarding viser organisationsafgrænsede juridiske tekster med personens navn og registrerede værker indsat i godkendte dynamiske felter", "lifecycleStage": "use", "status": "implemented", "categories": ["identity_data", "work_data", "union_membership_data"], "members": "det autentificerede medlems egen rettighedshaverprofil", "purpose": "onboarding og juridisk transparens", "legalBasis": "GDPR Art. 6(1)(b), Art. 9(2)(d)", "action": "read", "component": "portal.onboarding.legal-texts", "targetResolution": "sessionens rettighedshaver-id og aktive organisation fastlægges server-side før udlevering", "failClosed": true, "test": "tests/organisation-text-templates.test.ts", "owner": "Portal- og sikkerhedsteam" },

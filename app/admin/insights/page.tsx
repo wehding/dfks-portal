@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { fetchSuperadminInsights } from "@/lib/server/superadmin-overview";
-import { InsightsPanel } from "@/components/admin/insights-panel";
+import { InsightsDashboard } from "@/components/admin/insights-dashboard";
 
 export const dynamic = "force-dynamic";
 
@@ -22,5 +22,5 @@ export default async function SuperadminInsightsPage({
   const requestedOrg = (await searchParams).org;
   const orgId = requestedOrg && UUID_PATTERN.test(requestedOrg) ? requestedOrg : null;
   const data = await fetchSuperadminInsights({ caller, orgId });
-  return <InsightsPanel data={data} />;
+  return <InsightsDashboard data={data} />;
 }

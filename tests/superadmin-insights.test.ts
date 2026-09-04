@@ -93,10 +93,11 @@ test("beregner nøglesiders loadhastighed og opdaterer ved nye målinger", async
   assert.equal(contracts?.status, "fast");
 });
 
-test("superadmin insights viser ikke konstrueret Vercel-telemetri som produktionsdata", async () => {
+test("superadmin insights viser kun vedvarende, verificerbar Vercel-telemetri som produktionsdata", async () => {
   const source = await readFile(new URL("../lib/server/superadmin-overview.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /desktop:\s*74/);
   assert.doesNotMatch(source, /value:\s*"1\.1s"/);
   assert.match(source, /get_superadmin_insights_summary/);
-  assert.match(source, /systemHealth:\s*issues\.length === 0 \? "healthy" : "degraded"/);
+  assert.match(source, /fetchObservabilityInsights/);
+  assert.match(source, /!observability\.available \? "unknown"/);
 });
