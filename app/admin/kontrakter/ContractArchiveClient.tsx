@@ -2744,12 +2744,14 @@ function AdminKontrakterPageInner({
                 : "arkiv"
     const [activeTab, setActiveTab] = useState<ContractArchiveTab>(initialTab)
     const [taskCounts, setTaskCounts] = useState<AdminContractTaskCounts>(initialTaskCounts ?? { validation: null, ownership: null, missingOwner: null, messages: null })
+    const [køCount, setKøCount] = useState<number | null>(null)
     const [openingTask, setOpeningTask] = useState<"validation" | "ownership" | "missingOwner" | "messages" | null>(null)
 
     // Stabil callback + bail-out: ValideringskøTab kalder denne i en effect, så en
     // ny closure eller et nyt state-objekt hver render giver en uendelig løkke.
+    // Tælleren tilhører udelukkende Martins valideringskø-faneblad og påvirker ikke taskCounts.
     const handleValideringskøCount = useCallback((count: number) => {
-        setTaskCounts(current => current.validation === count ? current : { ...current, validation: count })
+        setKøCount(current => current === count ? current : count)
     }, [])
     const tabRefs = useRef<Partial<Record<ContractArchiveTab, HTMLButtonElement | null>>>({})
     const visibleContractTabs: ContractArchiveTab[] = ["arkiv", "valideringskoe", "upload"]
@@ -2874,9 +2876,9 @@ function AdminKontrakterPageInner({
                     ].join(" ")}
                 >
                     Valideringskø
-                    {taskCounts.validation !== null && taskCounts.validation > 0 && (
+                    {køCount !== null && køCount > 0 && (
                         <span className="ml-2 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 px-2 py-0.5 text-xs font-semibold">
-                            {taskCounts.validation}
+                            {køCount}
                         </span>
                     )}
                 </button>
@@ -2900,23 +2902,27 @@ function AdminKontrakterPageInner({
                     Kontraktupload
                 </button>
             </div>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3" aria-label="Opgaver i kontraktarkivet">
-                <ArchiveTaskButton label="Afventer validering" count={taskCounts.validation} loading={openingTask !== null} onClick={() => void openTask("validation")} icon={openingTask === "validation" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <CheckCircle2 className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />
-                {canManageOwnership && (
-                    <ArchiveTaskButton label="Ejerskab skal afklares" count={taskCounts.ownership} loading={openingTask !== null} onClick={() => void openTask("ownership")} icon={openingTask === "ownership" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />
-                )}
-                {canManageOwnership && <ArchiveTaskButton label="Tilføj ejer" count={taskCounts.missingOwner} loading={openingTask !== null} onClick={() => void openTask("missingOwner")} icon={openingTask === "missingOwner" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />}
-                {taskCounts.messages !== null && taskCounts.messages > 0 && (
-                    <ArchiveTaskButton label="Ulæste beskeder" count={taskCounts.messages} loading={openingTask !== null} tone="blue" onClick={() => void openTask("messages")} icon={openingTask === "messages" ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <MessageSquare className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />} />
-                )}
-            </div>
-            {(taskCounts.validation === null || (canManageOwnership && (taskCounts.ownership === null || taskCounts.missingOwner === null))) && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100" role="status">
-                    <span>Et eller flere opgavetal kunne ikke hentes.</span>
-                    <Button type="button" variant="outline" size="sm" className="h-7 bg-background" onClick={() => void refreshTaskCounts()}>
-                        Prøv igen
-                    </Button>
-                </div>
+            {activeTab === "arkiv" && (
+                <>
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3" aria-label="Opgaver i kontraktarkivet">
+                        <ArchiveTaskButton label="Afventer validering" count={taskCounts.validation} loading={openingTask !== null} onClick={() => void openTask("validation")} icon={openingTask === "validation" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <CheckCircle2 className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />
+                        {canManageOwnership && (
+                            <ArchiveTaskButton label="Ejerskab skal afklares" count={taskCounts.ownership} loading={openingTask !== null} onClick={() => void openTask("ownership")} icon={openingTask === "ownership" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />
+                        )}
+                        {canManageOwnership && <ArchiveTaskButton label="Tilføj ejer" count={taskCounts.missingOwner} loading={openingTask !== null} onClick={() => void openTask("missingOwner")} icon={openingTask === "missingOwner" ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />} />}
+                        {taskCounts.messages !== null && taskCounts.messages > 0 && (
+                            <ArchiveTaskButton label="Ulæste beskeder" count={taskCounts.messages} loading={openingTask !== null} tone="blue" onClick={() => void openTask("messages")} icon={openingTask === "messages" ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <MessageSquare className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />} />
+                        )}
+                    </div>
+                    {(taskCounts.validation === null || (canManageOwnership && (taskCounts.ownership === null || taskCounts.missingOwner === null))) && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100" role="status">
+                            <span>Et eller flere opgavetal kunne ikke hentes.</span>
+                            <Button type="button" variant="outline" size="sm" className="h-7 bg-background" onClick={() => void refreshTaskCounts()}>
+                                Prøv igen
+                            </Button>
+                        </div>
+                    )}
+                </>
             )}
             <div
                 id={activeTab === "arkiv"
