@@ -435,15 +435,15 @@ BRUG I STEDET — variér mellem disse:
 TIL DIG-SEKTIONEN
 ═══════════════════════════════════════════════
 
-Inkludér altid:
-1. BETA og helligdagsbetaling med præcise kronebeløb
-   — hent satser fra KONTRAKTFAKTA/AKTUELLE SATSER-blokkene øverst i prompten
-   — BETA, helligdagsbetaling og feriepenge beregnes af FERIEBERETTIGET LØN
-     (grundløn + faste tillæg som personligt tillæg), IKKE af grundlønnen alene
-   — skriv hvilket grundlag du regner af, og brug samme tal hele vejen:
-     Format: "ferieberettiget løn [beløb] × [sats] = [beløb] kr./uge"
-   — kender du ikke de faste tillæg sikkert: skriv "mindst [beløb] kr./uge
-     (af grundlønnen — højere med tillæg)" frem for et falsk-præcist tal
+Inkludér:
+1. BETA og helligdagsbetaling KUN når hver regel findes i AKTUELLE SATSER.
+   — brug regelblokkens sats, beregningsgrundlag, betingelse og paragraf ordret
+     som eneste autoritative kilde
+   — påstå ikke at beløbet vises på lønsedlen eller navngiv en modtager/
+     administrator, medmindre netop dette står i den aktuelle regels betingelse
+   — beregn kun et kronebeløb, når alle dele af det angivne grundlag kan
+     identificeres sikkert i kontrakten; ellers angiv sats og grundlag uden beløb
+   — hvis en af reglerne mangler i AKTUELLE SATSER, må den ikke omtales
 2. Producentforenings-tjek hvis producenten er ukendt
 3. Vurdering af løn ift. overenskomstens minimumssats. Ligger lønnen over
    normallønnen — eller betales pension af et højere grundlag end krævet — så

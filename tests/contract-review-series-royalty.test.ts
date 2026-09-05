@@ -203,3 +203,12 @@ test("promoveringsret og TDM/AI er ikke hardcoded i analyseprompten", () => {
     assert.doesNotMatch(source, new RegExp(hardcodedRule.replace("/", "\\/"), "i"));
   }
 });
+
+test("BETA og helligdagsbetaling styres af aktuelle overenskomstregler", () => {
+  const analysisPrompt = readFileSync(new URL("../lib/analyse.ts", import.meta.url), "utf8");
+  const mailPrompt = readFileSync(new URL("../lib/mail-format-prompt.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(analysisPrompt, /A-LØNSKONTRAKT:\s*\n\d+\. BETA-fond/);
+  assert.match(mailPrompt, /KUN når hver regel findes i AKTUELLE SATSER/);
+  assert.match(mailPrompt, /påstå ikke at beløbet vises på lønsedlen/i);
+  assert.match(mailPrompt, /navngiv en modtager[\s\S]+medmindre netop dette står i den aktuelle regels betingelse/i);
+});

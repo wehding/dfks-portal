@@ -484,10 +484,6 @@ BETALINGSKLAUSULER:
 12. Manglende betalingsfrekvens (type: advarsel)
 13. Månedlig betaling (type: info) — anbefal 14-dages acontocyklus
 
-A-LØNSKONTRAKT:
-14. BETA-fond og helligdagsbetaling (type: info)
-    Hent satser UDELUKKENDE fra AKTUELLE SATSER øverst. Aldrig hardcodede tal.
-
 PENSION MANGLER — BEREGNING SOM FORHANDLINGSARGUMENT (type: kritisk/advarsel):
     Gælder BÅDE leverandørkontrakter OG A-lønskontrakter uden overenskomstdækning.
     Inkludér beregning i feedbackpunktet: "Kontrakten nævner ikke pension. Det svarer til at du mister ca. [løn × pensionsprocent] kr./uge — over [X uger] er det ca. [total] kr."
