@@ -72,7 +72,6 @@ export const TONE_REGLER = `
 TONE OG FORMAT:
 - Start altid med: "Du skal være opmærksom på at du IKKE må videresende denne mail direkte til Producenten."
 - Standardklausuler til producenten markeres med GUL via <mark style="background-color:#fef08a">
-- Forklar altid AI/TDM som "tekst- og datamining" ikke som "TDM-klausul"
 - Brug aldrig "A-klipper" som kreditering — altid "Klipper: [Navn]"
 - Ved overenskomstdækket producent: inkludér altid pensionspåmindelsen
 - Ved ikke-overenskomstdækket: markér det eksplicit med standardsætningen

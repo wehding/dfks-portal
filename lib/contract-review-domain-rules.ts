@@ -37,6 +37,25 @@ export function resolveContractReviewProductionType(
     : "ukendt";
 }
 
+export function contractUsesIdentifiedAgreement(classification: {
+  kontrakttype?: unknown;
+  er_overenskomst?: unknown;
+  overenskomst_navn?: unknown;
+} | null) {
+  if (classification?.kontrakttype !== "a-loen") return false;
+  return classification.er_overenskomst === true
+    || (typeof classification.overenskomst_navn === "string"
+      && classification.overenskomst_navn.length > 0
+      && classification.overenskomst_navn !== "ingen");
+}
+
+export function legalNoteAppliesToContract(
+  note: { exclude_for_overenskomst?: string[] | null },
+  usesIdentifiedAgreement: boolean,
+) {
+  return !usesIdentifiedAgreement || !(note.exclude_for_overenskomst?.length);
+}
+
 type RoyaltyRequirementInput = {
   productionType: ContractReviewProductionType;
   agreementCovered: boolean;
@@ -59,6 +78,7 @@ type ContractReviewResult = {
   overblik?: { periode?: unknown; [key: string]: unknown };
   oversigt?: { periode?: unknown; [key: string]: unknown };
   feedbackpunkter?: ContractReviewFeedbackPoint[];
+  feedbackmail?: { tekst?: unknown; [key: string]: unknown };
   [key: string]: unknown;
 };
 
@@ -99,6 +119,13 @@ export function reconcileContractReviewDates<T extends ContractReviewResult>(res
     overview.periode = overview.periode.replace(/\b(?:19|20)\d{2}\b/g, value => (
       conflicts.has(Number(value)) ? String(detected.year) : value
     ));
+  }
+
+  if (result.feedbackmail && typeof result.feedbackmail.tekst === "string") {
+    result.feedbackmail.tekst = result.feedbackmail.tekst
+      .replace(/[^.!?\n]*(?:over\s+(?:to|2)\s+år|om\s+(?:to|2)\s+år|næsten\s+et\s+år\s+efter)[^.!?\n]*[.!?]?/gi, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
 
   const feedbackPoints = Array.isArray(result.feedbackpunkter) ? result.feedbackpunkter : [];

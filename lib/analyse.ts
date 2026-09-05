@@ -12,6 +12,8 @@ import { extractWordText } from "@/lib/word-text"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import {
+    contractUsesIdentifiedAgreement,
+    legalNoteAppliesToContract,
     reconcileContractReviewDates,
     resolveContractReviewProductionType,
     removeInvalidDe4RoyaltyWarnings,
@@ -709,18 +711,14 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
 
     // ── Fravalg ved overenskomst-kontrakter ───────────────────
     // En notering markeret "Fravalgt ved overenskomst-kontrakter" i AI-
-    // kontrolrummet skal ikke injiceres når kontrakten er en A-lønskontrakt
-    // hvor overenskomsten reelt er bindende (ProF-bundet producent eller
-    // underselskab heraf). Der gælder overenskomstens egne vilkår, og DFKS-
-    // indsatser rettet mod leverandør-/ikke-overenskomstkontrakter må ikke
-    // flyde ind over det område. Bemærk: at kontrakten blot HENVISER til en
-    // overenskomst er ikke nok — er producenten ikke bundet, skal indsatserne
-    // netop gælde.
-    const erAloenUnderOverenskomst =
-        klassifikation?.kontrakttype === "a-loen" && erOverenskomstDaekket
+    // kontrolrummet skal ikke injiceres i en A-lønskontrakt, der anvender en
+    // identificeret overenskomst. Kontrolrummets kontrakttypefilter handler om
+    // dokumentets aftalegrundlag, ikke producentregisterets separate vurdering
+    // af om producenten juridisk er bundet.
+    const erAloenUnderOverenskomst = contractUsesIdentifiedAgreement(klassifikation)
 
     const noteringGaelder = (n: { exclude_for_overenskomst?: string[] | null }) =>
-        !erAloenUnderOverenskomst || !(n.exclude_for_overenskomst?.length)
+        legalNoteAppliesToContract(n, erAloenUnderOverenskomst)
 
     // ── Hent aktiv-indsats- og altid-noteringer ───────────────
     let aktivIndsatsNoteringer: Array<{ title: string; body: string }> = []
