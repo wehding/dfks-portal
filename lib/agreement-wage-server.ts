@@ -112,7 +112,7 @@ export async function getAgreementSatserForContext(
       .eq("agreements.code", agreementCode),
     db
       .from("agreement_percentage_rules")
-      .select("label,label_key,percent,basis,trigger_condition,category,section_reference,agreements!inner(code)")
+      .select("label,label_key,percent,basis,trigger_condition,category,section_reference,source_note,source_url,agreements!inner(code)")
       .in("status", ["approved", "archived"])
       .eq("agreements.code", agreementCode)
       .order("category")
@@ -152,8 +152,10 @@ export async function getAgreementSatserForContext(
   };
   for (const row of pctRows ?? []) {
     const prefix = row.label_key ? `${labelKeyPrefix[row.label_key]}: ` : "";
+    const source = row.source_url ? ` Kilde: ${row.source_url}.` : "";
+    const note = row.source_note ? ` Fortolkning: ${row.source_note}` : "";
     satser.push({
-      beskrivelse: `${prefix}${row.label}${row.section_reference ? ` (${row.section_reference})` : ""} — gælder ved: ${row.trigger_condition}`,
+      beskrivelse: `${prefix}${row.label}${row.section_reference ? ` (${row.section_reference})` : ""} — gælder ved: ${row.trigger_condition}${source}${note}`,
       vaerdi: Number(row.percent),
       enhed: `% af ${row.basis}`,
     });

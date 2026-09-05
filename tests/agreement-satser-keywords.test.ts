@@ -9,6 +9,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { wageRulesToSatser, type AgreementWageRule } from "../lib/agreement-wage";
 
 // ── Hjælper: simulér label_key-præfiksering (som agreement-wage-server.ts gør det) ──
@@ -104,6 +105,13 @@ test("label_key: beta_pulje-regel matches via label_key", () => {
   };
   const satser = [{ beskrivelse: pctRuleToBeskrivelse(rule), vaerdi: 0.5, enhed: "% af ferieberettiget løn" }];
   assert.ok(hent(satser, "beta"), "hent('beta') fandt ikke reglen");
+});
+
+test("satskonteksten videresender procentreglernes kilde og fortolkningsnote", () => {
+  const source = readFileSync(new URL("../lib/agreement-wage-server.ts", import.meta.url), "utf8");
+  assert.match(source, /section_reference,source_note,source_url/);
+  assert.match(source, /Kilde: \$\{row\.source_url\}/);
+  assert.match(source, /Fortolkning: \$\{row\.source_note\}/);
 });
 
 test("label_key: helligdagsbetaling-regel matches via label_key", () => {
