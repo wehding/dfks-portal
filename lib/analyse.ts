@@ -12,7 +12,10 @@ import { extractWordText } from "@/lib/word-text"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import {
+    contractUsesIdentifiedAgreement,
+    legalNoteAppliesToContract,
     reconcileContractReviewDates,
+    removeFeedbackMatchingExcludedLegalNotes,
     resolveContractReviewProductionType,
     removeInvalidDe4RoyaltyWarnings,
     royaltyRequirementForContract,
@@ -481,10 +484,6 @@ BETALINGSKLAUSULER:
 12. Manglende betalingsfrekvens (type: advarsel)
 13. Månedlig betaling (type: info) — anbefal 14-dages acontocyklus
 
-A-LØNSKONTRAKT:
-14. BETA-fond og helligdagsbetaling (type: info)
-    Hent satser UDELUKKENDE fra AKTUELLE SATSER øverst. Aldrig hardcodede tal.
-
 PENSION MANGLER — BEREGNING SOM FORHANDLINGSARGUMENT (type: kritisk/advarsel):
     Gælder BÅDE leverandørkontrakter OG A-lønskontrakter uden overenskomstdækning.
     Inkludér beregning i feedbackpunktet: "Kontrakten nævner ikke pension. Det svarer til at du mister ca. [løn × pensionsprocent] kr./uge — over [X uger] er det ca. [total] kr."
@@ -709,22 +708,19 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
 
     // ── Fravalg ved overenskomst-kontrakter ───────────────────
     // En notering markeret "Fravalgt ved overenskomst-kontrakter" i AI-
-    // kontrolrummet skal ikke injiceres når kontrakten er en A-lønskontrakt
-    // hvor overenskomsten reelt er bindende (ProF-bundet producent eller
-    // underselskab heraf). Der gælder overenskomstens egne vilkår, og DFKS-
-    // indsatser rettet mod leverandør-/ikke-overenskomstkontrakter må ikke
-    // flyde ind over det område. Bemærk: at kontrakten blot HENVISER til en
-    // overenskomst er ikke nok — er producenten ikke bundet, skal indsatserne
-    // netop gælde.
-    const erAloenUnderOverenskomst =
-        klassifikation?.kontrakttype === "a-loen" && erOverenskomstDaekket
+    // kontrolrummet skal ikke injiceres i en A-lønskontrakt, der anvender en
+    // identificeret overenskomst. Kontrolrummets kontrakttypefilter handler om
+    // dokumentets aftalegrundlag, ikke producentregisterets separate vurdering
+    // af om producenten juridisk er bundet.
+    const erAloenUnderOverenskomst = contractUsesIdentifiedAgreement(klassifikation)
 
     const noteringGaelder = (n: { exclude_for_overenskomst?: string[] | null }) =>
-        !erAloenUnderOverenskomst || !(n.exclude_for_overenskomst?.length)
+        legalNoteAppliesToContract(n, erAloenUnderOverenskomst)
 
     // ── Hent aktiv-indsats- og altid-noteringer ───────────────
     let aktivIndsatsNoteringer: Array<{ title: string; body: string }> = []
     let altidNoteringer: Array<{ title: string; body: string }> = []
+    let fravalgteNoteringer: Array<{ title: string }> = []
     try {
         const admin = createAdminClient(
             process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -736,6 +732,7 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
             .in("priority", ["aktiv-indsats", "altid"])
             .eq("active", true)
         const gaeldende = (noter ?? []).filter(noteringGaelder)
+        fravalgteNoteringer = (noter ?? []).filter(note => !noteringGaelder(note))
         aktivIndsatsNoteringer = gaeldende.filter(n => n.priority === "aktiv-indsats")
         altidNoteringer = gaeldende.filter(n => n.priority === "altid")
     } catch (e) {
@@ -978,6 +975,10 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             agreementName: klassifikation?.overenskomst_navn ?? null,
             contractText,
         },
+    )
+    parsed.feedbackpunkter = removeFeedbackMatchingExcludedLegalNotes(
+        parsed.feedbackpunkter,
+        fravalgteNoteringer,
     )
     parsed = reconcileContractReviewDates(parsed, contractText)
 

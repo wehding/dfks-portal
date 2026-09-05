@@ -2,13 +2,53 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  contractUsesIdentifiedAgreement,
   detectDominantContractPeriodYear,
   hasExplicitSeriesEpisodeScope,
+  legalNoteAppliesToContract,
   reconcileContractReviewDates,
+  removeFeedbackMatchingExcludedLegalNotes,
   removeInvalidDe4RoyaltyWarnings,
   resolveContractReviewProductionType,
   royaltyRequirementForContract,
 } from "../lib/contract-review-domain-rules";
+
+test("kontrolrumsfravalg respekteres for en kontrakt med identificeret overenskomst", () => {
+  const usesAgreement = contractUsesIdentifiedAgreement({
+    kontrakttype: "a-loen",
+    er_overenskomst: true,
+    overenskomst_navn: "de4-fiktion",
+  });
+  assert.equal(usesAgreement, true);
+  assert.equal(legalNoteAppliesToContract({ exclude_for_overenskomst: ["alle"] }, usesAgreement), false);
+});
+
+test("producentregisterets binding er ikke nødvendig for kontrolrummets kontraktfilter", () => {
+  assert.equal(contractUsesIdentifiedAgreement({
+    kontrakttype: "a-loen",
+    er_overenskomst: false,
+    overenskomst_navn: "de4-fiktion",
+  }), true);
+});
+
+test("feedbackkort fra fravalgte kontrolrumsnoteringer fjernes deterministisk", () => {
+  const points = [
+    { type: "advarsel", titel: "Promoveringsret mangler", beskrivelse: "Tavshedspligten er bred" },
+    { type: "advarsel", titel: "AI-beskyttelsesklausul mangler", beskrivelse: "AI-træning er ikke reguleret" },
+    { type: "positiv", titel: "Pension er på plads", beskrivelse: "Korrekt pensionsgrundlag" },
+  ];
+  assert.deepEqual(removeFeedbackMatchingExcludedLegalNotes(points, [
+    { title: "Promoveringsret for klipper" },
+    { title: "AI og udnyttelse" },
+  ]), [points[2]]);
+});
+
+test("andre feedbackkort bevares ved snævert titelmatch", () => {
+  const points = [{ type: "positiv", titel: "Streaming er dækket", beskrivelse: "Create Denmark er nævnt" }];
+  assert.deepEqual(removeFeedbackMatchingExcludedLegalNotes(points, [
+    { title: "Promoveringsret for klipper" },
+  ]), points);
+});
 
 const conflictingDateContract = `
 Arbejdsperioden starter 31. august og slutter 26. november 2024.
@@ -29,6 +69,7 @@ test("detaljerede datoer identificerer det dominerende produktionsår", () => {
 test("modstridende periodeår rettes og umulig flerårs-advarsel fjernes", () => {
   const result = {
     overblik: { periode: "31. august 2024 – 26. november 2024" },
+    feedbackmail: { tekst: "Mixdagen er over to år efter kontraktstart. Vilkårene bør præciseres. Så I ikke skal genforhandle om to år." },
     feedbackpunkter: [
       { type: "advarsel", titel: "Mixdag planlagt januar 2027 — langt fremskudt", beskrivelse: "Mixdagen ligger over to år efter produktionsstart." },
       { type: "positiv", titel: "Løn", beskrivelse: "Korrekt" },
@@ -38,6 +79,8 @@ test("modstridende periodeår rettes og umulig flerårs-advarsel fjernes", () =>
   assert.equal(result.overblik.periode, "31. august 2026 – 26. november 2026");
   assert.equal(result.feedbackpunkter.some(point => /Mixdag planlagt/.test(String(point.titel))), false);
   assert.equal(result.feedbackpunkter.some(point => /Modstridende årstal/.test(String(point.titel))), true);
+  assert.doesNotMatch(result.feedbackmail.tekst, /over to år|om to år/i);
+  assert.match(result.feedbackmail.tekst, /Vilkårene bør præciseres/);
 });
 
 test("aftaleår alene udløser ikke korrektion af produktionsperioden", () => {
@@ -142,14 +185,30 @@ test("eksplicit De4-reference i kontraktteksten aktiverer efterfilteret", () => 
 });
 
 test("promoveringsret og TDM/AI er ikke hardcoded i analyseprompten", () => {
-  const source = readFileSync(new URL("../lib/analyse.ts", import.meta.url), "utf8");
+  const source = ["analyse.ts", "mail-format-prompt.ts", "few-shot-examples.ts"]
+    .map(file => readFileSync(new URL(`../lib/${file}`, import.meta.url), "utf8"))
+    .join("\n");
   for (const hardcodedRule of [
     "Ingen TDM-nævnelse",
     "Manglende TDM/AI-klausul",
     "Manglende promoveringsret",
     "Tavshedspligt og selvpromovering",
     "1,5% af nettoindtægter",
+    "AI-beskyttelsesklausulen",
+    "tekst- og datamining",
+    "DSM-direktivets artikel 4",
+    "promoveringsret — tilføjes",
+    "1% royalty",
   ]) {
     assert.doesNotMatch(source, new RegExp(hardcodedRule.replace("/", "\\/"), "i"));
   }
+});
+
+test("BETA og helligdagsbetaling styres af aktuelle overenskomstregler", () => {
+  const analysisPrompt = readFileSync(new URL("../lib/analyse.ts", import.meta.url), "utf8");
+  const mailPrompt = readFileSync(new URL("../lib/mail-format-prompt.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(analysisPrompt, /A-LØNSKONTRAKT:\s*\n\d+\. BETA-fond/);
+  assert.match(mailPrompt, /KUN når hver regel findes i AKTUELLE SATSER/);
+  assert.match(mailPrompt, /påstå ikke at beløbet vises på lønsedlen/i);
+  assert.match(mailPrompt, /navngiv en modtager[\s\S]+medmindre netop dette står i den aktuelle regels betingelse/i);
 });

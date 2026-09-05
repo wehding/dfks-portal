@@ -37,6 +37,54 @@ export function resolveContractReviewProductionType(
     : "ukendt";
 }
 
+export function contractUsesIdentifiedAgreement(classification: {
+  kontrakttype?: unknown;
+  er_overenskomst?: unknown;
+  overenskomst_navn?: unknown;
+} | null) {
+  if (classification?.kontrakttype !== "a-loen") return false;
+  return classification.er_overenskomst === true
+    || (typeof classification.overenskomst_navn === "string"
+      && classification.overenskomst_navn.length > 0
+      && classification.overenskomst_navn !== "ingen");
+}
+
+export function legalNoteAppliesToContract(
+  note: { exclude_for_overenskomst?: string[] | null },
+  usesIdentifiedAgreement: boolean,
+) {
+  return !usesIdentifiedAgreement || !(note.exclude_for_overenskomst?.length);
+}
+
+const NOTE_MATCH_STOP_WORDS = new Set([
+  "for", "fra", "med", "mod", "mangler", "kontrakt", "kontrakten", "klipper", "filmklipper",
+  "rettighed", "rettigheder", "standard", "produktion", "producent", "og", "eller", "den", "det",
+]);
+
+function legalNoteMatchTokens(value: unknown) {
+  return new Set(String(value ?? "")
+    .toLocaleLowerCase("da-DK")
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .match(/[a-z0-9]+/g)
+    ?.filter(token => (token.length >= 4 || token === "ai" || token === "tdm") && !NOTE_MATCH_STOP_WORDS.has(token)) ?? []);
+}
+
+export function removeFeedbackMatchingExcludedLegalNotes<T extends ContractReviewFeedbackPoint>(
+  feedbackPoints: T[],
+  excludedNotes: Array<{ title?: unknown }>,
+) {
+  const excludedTokenSets = excludedNotes
+    .map(note => legalNoteMatchTokens(note.title))
+    .filter(tokens => tokens.size > 0);
+  if (!excludedTokenSets.length) return feedbackPoints;
+
+  return feedbackPoints.filter(point => {
+    const pointTokens = legalNoteMatchTokens(`${String(point.titel ?? "")} ${String(point.beskrivelse ?? "")}`);
+    return !excludedTokenSets.some(excluded => [...excluded].some(token => pointTokens.has(token)));
+  });
+}
+
 type RoyaltyRequirementInput = {
   productionType: ContractReviewProductionType;
   agreementCovered: boolean;
@@ -59,6 +107,7 @@ type ContractReviewResult = {
   overblik?: { periode?: unknown; [key: string]: unknown };
   oversigt?: { periode?: unknown; [key: string]: unknown };
   feedbackpunkter?: ContractReviewFeedbackPoint[];
+  feedbackmail?: { tekst?: unknown; [key: string]: unknown };
   [key: string]: unknown;
 };
 
@@ -99,6 +148,13 @@ export function reconcileContractReviewDates<T extends ContractReviewResult>(res
     overview.periode = overview.periode.replace(/\b(?:19|20)\d{2}\b/g, value => (
       conflicts.has(Number(value)) ? String(detected.year) : value
     ));
+  }
+
+  if (result.feedbackmail && typeof result.feedbackmail.tekst === "string") {
+    result.feedbackmail.tekst = result.feedbackmail.tekst
+      .replace(/[^.!?\n]*(?:over\s+(?:to|2)\s+år|om\s+(?:to|2)\s+år|næsten\s+et\s+år\s+efter)[^.!?\n]*[.!?]?/gi, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
 
   const feedbackPoints = Array.isArray(result.feedbackpunkter) ? result.feedbackpunkter : [];
