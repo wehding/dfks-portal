@@ -37,6 +37,10 @@
     {
       "path": "/api/admin/statistics/cpi",
       "schedule": "30 4 11 * *"
+    },
+    {
+      "path": "/api/internal/observability/vercel-runtime",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

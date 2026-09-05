@@ -123,7 +123,6 @@ type ValidatingContract = {
     displayTitle: string
     displayEmployer: string | null
     displayMember: string
-    signedPdfUrl: string | null
 }
 
 const statusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
@@ -156,6 +155,7 @@ function AdminValideringPageInner() {
     const [activeField, setActiveField] = useState<string | null>(null)     // felt-ID til knap-highlight
     const [storedDocxText, setStoredDocxText] = useState<string | null>(null)
     const [storedDocxLoading, setStoredDocxLoading] = useState(false)
+    const [reviewingSignedUrl, setReviewingSignedUrl] = useState<string | null>(null)
     const [showMaskingConfirm, setShowMaskingConfirm] = useState(false)
     const [maskingPreview, setMaskingPreview] = useState<{ count: number; types: string[] }>({ count: 0, types: [] })
     const [maskedText, setMaskedText] = useState("")
@@ -372,15 +372,14 @@ function AdminValideringPageInner() {
                 chunk?.forEach((v: any) => validationMap.set(v.contract_id, v))
             }
 
-            // Signed URLs genereres KUN for den åbne kontrakt (se effekten nedenfor),
-            // ikke for hele listen — listen viser dem aldrig.
+            // Signed URL genereres kun for den åbne kontrakt i effekten nedenfor;
+            // listen viser den aldrig.
             const mapped: ValidatingContract[] = data.map((c: any) => ({
                 ...c,
                 validation: validationMap.get(c.id) ?? null,
                 displayTitle: c.works?.title ?? c.working_title ?? c.employers?.name ?? "—",
                 displayEmployer: (c.works?.title || c.working_title) ? (c.employers?.name ?? null) : null,
                 displayMember: c.rettighedshavere?.full_name ?? "—",
-                signedPdfUrl: null,
             }))
 
             setContracts(mapped)
@@ -390,20 +389,6 @@ function AdminValideringPageInner() {
     }, [])
 
     useEffect(() => { loadContracts() }, [loadContracts])
-
-    // Signed URL for den åbne kontrakt — on-demand, så vi ikke laver hundredvis
-    // af storage-kald på sidens load.
-    useEffect(() => {
-        if (!reviewingId) return
-        const target = contracts.find(c => c.id === reviewingId)
-        if (!target || !target.pdf_url || target.signedPdfUrl) return
-        let cancelled = false
-        void getContractSignedUrl(target.pdf_url).then(signed => {
-            if (cancelled || !signed?.url) return
-            setContracts(prev => prev.map(c => c.id === reviewingId ? { ...c, signedPdfUrl: signed.url } : c))
-        })
-        return () => { cancelled = true }
-    }, [reviewingId, contracts])
 
     // Pre-fill form when opening a contract that has existing validation data
     useEffect(() => {
@@ -498,16 +483,24 @@ function AdminValideringPageInner() {
     const reviewedContracts = contracts.filter(c => c.status === "valideret" || c.status === "arkiveret")
     const reviewingContract = contracts.find(c => c.id === reviewingId) ?? null
 
+    // Hent signed URL kun for den kontrakt der aktivt gennemgås — ikke for hele listen
+    useEffect(() => {
+        setReviewingSignedUrl(null)
+        const pdfUrl = reviewingContract?.pdf_url
+        if (!pdfUrl) return
+        getContractSignedUrl(pdfUrl).then(res => setReviewingSignedUrl(res.url))
+    }, [reviewingContract?.id, reviewingContract?.pdf_url])
+
     // Hent DOCX-tekst fra Storage når kontrakten åbnes
     useEffect(() => {
         setStoredDocxText(null)
-        if (!reviewingContract?.signedPdfUrl) return
-        const url = reviewingContract.pdf_url ?? ""
+        if (!reviewingSignedUrl) return
+        const url = reviewingContract?.pdf_url ?? ""
         const isDocx = url.toLowerCase().endsWith(".docx") || url.toLowerCase().endsWith(".doc")
         if (!isDocx) return
 
         setStoredDocxLoading(true)
-        fetch(reviewingContract.signedPdfUrl)
+        fetch(reviewingSignedUrl)
             .then(r => r.arrayBuffer())
             .then(async buf => {
                 const mammoth = await import("mammoth")
@@ -516,7 +509,7 @@ function AdminValideringPageInner() {
             })
             .catch(e => console.error("[validering] DOCX hentning fejlede:", e))
             .finally(() => setStoredDocxLoading(false))
-    }, [reviewingContract?.id, reviewingContract?.pdf_url, reviewingContract?.signedPdfUrl])
+    }, [reviewingContract?.id, reviewingContract?.pdf_url, reviewingSignedUrl])
 
     const leaveReview = () => {
         if (cameFromQueue) {
@@ -946,7 +939,7 @@ setActiveField(fieldId)
 
     // ── Review view ───────────────────────────────────────────
     if (reviewingContract) {
-        const pdfUrl = localPdfUrl ?? reviewingContract.signedPdfUrl
+        const pdfUrl = localPdfUrl ?? reviewingSignedUrl
 
         // Pre-processér sources med resolveAnker() + gem metadata til UI-indikatorer
         const resolveWithMeta = (s: string | null | undefined) => {

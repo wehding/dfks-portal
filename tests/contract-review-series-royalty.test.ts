@@ -2,11 +2,48 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  detectDominantContractPeriodYear,
   hasExplicitSeriesEpisodeScope,
+  reconcileContractReviewDates,
   removeInvalidDe4RoyaltyWarnings,
   resolveContractReviewProductionType,
   royaltyRequirementForContract,
 } from "../lib/contract-review-domain-rules";
+
+const conflictingDateContract = `
+Arbejdsperioden starter 31. august og slutter 26. november 2024.
+Uge 1: 31. august 2026 - 4. september 2026.
+Uge 2: 7. september 2026 - 11. september 2026.
+Uge 3: 14. september 2026 - 18. september 2026.
+Mixdag: 28. januar 2027.
+Overenskomst af 7. oktober 2022.
+`;
+
+test("detaljerede datoer identificerer det dominerende produktionsår", () => {
+  assert.deepEqual(detectDominantContractPeriodYear(conflictingDateContract), {
+    year: 2026,
+    conflictingYears: [2024],
+  });
+});
+
+test("modstridende periodeår rettes og umulig flerårs-advarsel fjernes", () => {
+  const result = {
+    overblik: { periode: "31. august 2024 – 26. november 2024" },
+    feedbackpunkter: [
+      { type: "advarsel", titel: "Mixdag planlagt januar 2027 — langt fremskudt", beskrivelse: "Mixdagen ligger over to år efter produktionsstart." },
+      { type: "positiv", titel: "Løn", beskrivelse: "Korrekt" },
+    ],
+  };
+  reconcileContractReviewDates(result, conflictingDateContract);
+  assert.equal(result.overblik.periode, "31. august 2026 – 26. november 2026");
+  assert.equal(result.feedbackpunkter.some(point => /Mixdag planlagt/.test(String(point.titel))), false);
+  assert.equal(result.feedbackpunkter.some(point => /Modstridende årstal/.test(String(point.titel))), true);
+});
+
+test("aftaleår alene udløser ikke korrektion af produktionsperioden", () => {
+  const contract = "Overenskomst af 7. oktober 2022. Ansættelsen løber fra 1. juni 2026 til 2. juli 2026.";
+  assert.equal(detectDominantContractPeriodYear(contract), null);
+});
 
 const sommerdahlContract = `
 KLIPPER AF 2 EPISODER (5+6) samt sammenklip af FILM 3,

@@ -4,8 +4,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { createServiceClient } from "@/lib/supabase/service";
 import { calculateResponseTimeStats, formatUserActionDescription, type ResponseEvent } from "@/lib/admin-dashboard";
-import { getKeyPageTimingStats, type KeyPageTiming } from "@/lib/server/key-page-timing-stats";
 import { recordSensitiveFlow } from "@/lib/sensitive-flow-audit";
+import { fetchObservabilityInsights, type ObservabilityInsights } from "@/lib/server/observability-insights";
+import type { KeyPageTiming } from "@/lib/server/key-page-timing-stats";
 
 export type ActionCategoryDetail = {
   key: string;
@@ -16,6 +17,7 @@ export type ActionCategoryDetail = {
 };
 
 export type SuperadminInsightsData = {
+  observability: ObservabilityInsights;
   analytics: {
     activeUsers24h: number;
     activeUsers7d: number;
@@ -48,7 +50,7 @@ export type SuperadminInsightsData = {
       ttfb: { value: string | null; score: "good" | "needs-improvement" | "poor" | "unavailable"; target: string; explanation: string };
     };
     keyPages: KeyPageTiming[];
-    systemHealth: "healthy" | "degraded";
+    systemHealth: "healthy" | "degraded" | "unknown";
     sourceLabel: string;
   };
   collection: {
@@ -243,6 +245,7 @@ export async function fetchSuperadminInsights(input: {
     organisationsRes,
     errorLogsRes,
     commentsRes,
+    observability,
   ] = await Promise.all([
     db.rpc("get_superadmin_insights_summary", {
       p_actor_user_id: input.caller.userId,
@@ -256,6 +259,7 @@ export async function fetchSuperadminInsights(input: {
     db.from("organisations").select("id, name").order("name"),
     errorLogsQuery,
     commentsQuery,
+    fetchObservabilityInsights(db, t30d),
   ]);
 
   const queryResults = [summaryRes, adminLogsRes, userLogsRes, organisationsRes, errorLogsRes, commentsRes];
@@ -324,7 +328,6 @@ export async function fetchSuperadminInsights(input: {
     createdAt: c.created_at,
   }));
   const speedStats = calculateResponseTimeStats(responseEvents, t30d);
-  const keyPages = getKeyPageTimingStats();
 
   // Admin logs mapping
   type RawAuditLogRow = {
@@ -432,6 +435,7 @@ export async function fetchSuperadminInsights(input: {
   });
 
   return {
+    observability,
     analytics: {
       activeUsers24h: Number(summary.activeUsers24h ?? 0),
       activeUsers7d: Number(summary.activeUsers7d ?? 0),
@@ -447,11 +451,7 @@ export async function fetchSuperadminInsights(input: {
         adminEvents: adminEventsCount,
       },
       actionCategories,
-      deviceBreakdown: {
-        desktop: null,
-        mobile: null,
-        tablet: null,
-      },
+      deviceBreakdown: observability.traffic.deviceBreakdown,
     },
     speedInsights: {
       medianResponseTimeMs: speedStats.medianMs,
@@ -463,14 +463,14 @@ export async function fetchSuperadminInsights(input: {
         fcp: { value: null, score: "unavailable", target: "< 1.8s", explanation: "Tidspunkt hvor det første indhold vises på skærmen" },
         ttfb: { value: null, score: "unavailable", target: "< 800ms", explanation: "Serverens svartid fra forespørgsel til første datapakke" },
       },
-      keyPages,
-      systemHealth: issues.length === 0 ? "healthy" : "degraded",
-      sourceLabel: "Auditdatabase og proceslokale servermålinger",
+      keyPages: [],
+      systemHealth: !observability.available ? "unknown" : issues.length === 0 && observability.sources.every(source => source.state !== "degraded") ? "healthy" : "degraded",
+      sourceLabel: "Vercel Speed Insights og GitHub Actions",
     },
     collection: {
       collectedAt: new Date(now).toISOString(),
-      complete: issues.length === 0,
-      issues: issues.map(() => "En datakilde kunne ikke læses"),
+      complete: issues.length === 0 && observability.available,
+      issues: [...issues.map(() => "En datakilde kunne ikke læses"), ...(observability.issue ? [observability.issue] : [])],
       selectedOrgId,
     },
     adminActivityLog,

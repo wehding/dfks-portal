@@ -1,6 +1,6 @@
 import type { AdminContractFilterParams } from "@/lib/server/admin-contract-filtering";
 
-export const ADMIN_CONTRACT_QUEUE_KINDS = ["filtered", "selected", "validation", "ownership", "messages"] as const;
+export const ADMIN_CONTRACT_QUEUE_KINDS = ["filtered", "selected", "validation", "ownership", "missingOwner", "messages"] as const;
 export type AdminContractQueueKind = typeof ADMIN_CONTRACT_QUEUE_KINDS[number];
 
 export type CreateAdminContractQueueInput = {
@@ -13,12 +13,8 @@ export type AdminContractQueueItem = {
   contractId: string;
   position: number;
   status: "pending" | "completed" | "skipped";
-  title: string;
-  contractStatus: string;
-  rightsHolderId: string | null;
-  ownershipStatus: string | null;
-  proposedRightsHolderId: string | null;
-  proposedRightsHolderName: string | null;
+  contractTitle: string;
+  workTitle: string | null;
 };
 
 export type AdminContractQueueContext = {

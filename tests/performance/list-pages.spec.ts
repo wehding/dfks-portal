@@ -77,11 +77,13 @@ for (const [routeName, path] of routes) {
     // Første-række-tiden ligger lokalt langt under grænsen; tillad bundet CI
     // browser-/runner-varians (samme margin som filter-scenarierne nedenfor),
     // mens den faste 3 s SLA for den komplette liste holdes uændret.
-    expect(median.firstRowMs).toBeLessThan(mobile ? 2_500 : DESKTOP_INITIAL_RENDER_LIMIT_MS);
-    expect(median.completeMs).toBeLessThan(mobile ? 4_000 : 3_000);
+    const thresholds = { firstRowMs: mobile ? 2_500 : DESKTOP_INITIAL_RENDER_LIMIT_MS, completeMs: mobile ? 4_000 : 3_000 };
+    const passed = median.firstRowMs < thresholds.firstRowMs && median.completeMs < thresholds.completeMs;
     await mkdir("performance-report/results", { recursive: true });
-    await writeFile(`performance-report/results/${testInfo.project.name}-${routeName}.json`, JSON.stringify({ routeName, project: testInfo.project.name, median, samples }, null, 2));
+    await writeFile(`performance-report/results/${testInfo.project.name}-${routeName}.json`, JSON.stringify({ routeName, project: testInfo.project.name, median, samples, thresholds, passed }, null, 2));
     await testInfo.attach("performance", { body: JSON.stringify({ median, samples }, null, 2), contentType: "application/json" });
+    expect(median.firstRowMs).toBeLessThan(thresholds.firstRowMs);
+    expect(median.completeMs).toBeLessThan(thresholds.completeMs);
   });
 }
 
@@ -117,12 +119,14 @@ for (const [scenario, query] of [
     samples.sort((left, right) => left.firstRowMs - right.firstRowMs);
     const median = samples[1];
     const mobile = testInfo.project.name === "mobile-4g";
+    const thresholds = { firstRowMs: mobile ? 2_500 : DESKTOP_INITIAL_RENDER_LIMIT_MS, completeMs: mobile ? 4_000 : 3_000 };
+    const passed = median.firstRowMs < thresholds.firstRowMs && median.completeMs < thresholds.completeMs;
     await mkdir("performance-report/results", { recursive: true });
-    await writeFile(`performance-report/results/${testInfo.project.name}-member-works-${scenario}.json`, JSON.stringify({ routeName: "member-works", scenario, project: testInfo.project.name, median, samples }, null, 2));
+    await writeFile(`performance-report/results/${testInfo.project.name}-member-works-${scenario}.json`, JSON.stringify({ routeName: "member-works", scenario, project: testInfo.project.name, median, samples, thresholds, passed }, null, 2));
     // The local database stages remain well below 600 ms. Allow bounded CI
     // browser/runner variance while preserving the fixed 3 s completed-list SLA.
-    expect(median.firstRowMs).toBeLessThan(mobile ? 2_500 : DESKTOP_INITIAL_RENDER_LIMIT_MS);
-    expect(median.completeMs).toBeLessThan(mobile ? 4_000 : 3_000);
+    expect(median.firstRowMs).toBeLessThan(thresholds.firstRowMs);
+    expect(median.completeMs).toBeLessThan(thresholds.completeMs);
   });
 }
 
@@ -153,9 +157,11 @@ test("organisation settings indlæser grunddata før tekstskabeloner", async ({ 
   // Shell-tiden ligger lokalt langt under grænsen; tillad bundet CI-varians
   // (samme margin som listesiderne), mens den faste 3 s SLA for tekstskabeloner
   // holdes uændret.
-  expect(median.shellMs).toBeLessThan(mobile ? 2_500 : DESKTOP_INITIAL_RENDER_LIMIT_MS);
-  expect(median.textsMs).toBeLessThan(mobile ? 4_000 : 3_000);
+  const thresholds = { firstRowMs: mobile ? 2_500 : DESKTOP_INITIAL_RENDER_LIMIT_MS, completeMs: mobile ? 4_000 : 3_000 };
+  const passed = median.shellMs < thresholds.firstRowMs && median.textsMs < thresholds.completeMs;
   await mkdir("performance-report/results", { recursive: true });
-  await writeFile(`performance-report/results/${testInfo.project.name}-organisation-settings.json`, JSON.stringify({ routeName: "organisation-settings", project: testInfo.project.name, median, samples }, null, 2));
+  await writeFile(`performance-report/results/${testInfo.project.name}-organisation-settings.json`, JSON.stringify({ routeName: "organisation-settings", project: testInfo.project.name, median, samples, thresholds, passed }, null, 2));
   await testInfo.attach("performance", { body: JSON.stringify({ median, samples }, null, 2), contentType: "application/json" });
+  expect(median.shellMs).toBeLessThan(thresholds.firstRowMs);
+  expect(median.textsMs).toBeLessThan(thresholds.completeMs);
 });

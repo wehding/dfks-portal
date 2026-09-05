@@ -197,8 +197,8 @@ export async function POST(req: NextRequest) {
             })
         }
 
-        // ── Invite / reminder: opret eller gensend link ──────────
-        if (body.action === "invite" || body.action === "reminder" || body.action === "beta_invite") {
+        // ── Invite / reminder / resend_link: opret eller gensend link ──────────
+        if (body.action === "invite" || body.action === "reminder" || body.action === "beta_invite" || body.action === "resend_link") {
             const { rhId, role: inviteRole, title } = body
             if (!rhId) return NextResponse.json({ error: "rhId er påkrævet" }, { status: 400 })
 
@@ -317,10 +317,13 @@ export async function POST(req: NextRequest) {
                 ? await resolveInvitationWorks({ db: admin, orgId, rightsHolderId: rhId, preferredWorkId: typeof body.workId === "string" ? body.workId : null })
                 : EMPTY_WORK_LOOKUP
             const works = workLookup.works.slice(0, 10)
+            const isResendLink = body.action === "resend_link"
+            const customMessage = typeof body.customMessage === "string" ? body.customMessage.trim() : ""
+            const customSubject = typeof body.customSubject === "string" ? body.customSubject.trim() : ""
             const worksText = isBetaInvitation
                 ? formatInvitationWorkTitles(workLookup.works)
                 : formatInvitationWorks(workLookup.works)
-            const isWorkInvitation = !isStaff && body.includeWorks !== false && body.action !== "reminder" && !isBetaInvitation
+            const isWorkInvitation = !isStaff && body.includeWorks !== false && body.action !== "reminder" && !isBetaInvitation && !isResendLink
             const isMember = affiliation?.is_member === true
             const workSubjectTemplate = isMember
                 ? ((org as { member_work_invite_subject?: string | null } | null)?.member_work_invite_subject ?? MEMBER_WORK_INVITE_SUBJECT)
@@ -335,11 +338,15 @@ export async function POST(req: NextRequest) {
                 accessType,
             )
             const templateValues = { name: name || "", organisation: org?.name ?? brand.long_name, worksText, primaryWork: works[0]?.title ?? "et værk", invitationLink: inviteUrl }
+            const defaultResendSubject = `Nyt link til ${brand.long_name}s portal`
+            const defaultResendMessage = `Her følger et nyt link til ${brand.long_name}s portal. Klik på knappen herunder for at få adgang.`
             const mail = await sendEmail({
                 to: email,
                 fromName: resolveEmailSenderName(orgForMail as never),
                 replyTo: resolveReplyToEmail(orgForMail as never),
-                subject: isBetaInvitation
+                subject: isResendLink
+                    ? (customSubject || defaultResendSubject)
+                    : isBetaInvitation
                     ? renderBetaInviteTemplate((org as { beta_invite_subject?: string | null } | null)?.beta_invite_subject ?? DEFAULT_BETA_INVITE_SUBJECT, { name: name || "", organisation: org?.name ?? brand.long_name, startDate: betaStartDate, endDate: effectiveBetaEndDate, invitationLink: inviteUrl, primaryWork: templateValues.primaryWork, worksText: templateValues.worksText })
                     : isWorkInvitation
                     ? renderInvitationTemplate(workSubjectTemplate, templateValues)
@@ -351,7 +358,10 @@ export async function POST(req: NextRequest) {
                     inviteUrl,
                     orgName: brand.long_name,
                     primaryColor: brand.primary_color,
-                    bodyText: isBetaInvitation
+                    title: isResendLink ? (customSubject || defaultResendSubject) : undefined,
+                    bodyText: isResendLink
+                        ? (customMessage || defaultResendMessage)
+                        : isBetaInvitation
                         ? renderBetaInviteTemplate((org as { beta_invite_text?: string | null } | null)?.beta_invite_text ?? DEFAULT_BETA_INVITE_TEXT, { name: name || "", organisation: org?.name ?? brand.long_name, startDate: betaStartDate, endDate: effectiveBetaEndDate, invitationLink: inviteUrl, primaryWork: templateValues.primaryWork, worksText: templateValues.worksText })
                         : isWorkInvitation
                         ? renderInvitationTemplate(workBodyTemplate, templateValues)
@@ -359,7 +369,7 @@ export async function POST(req: NextRequest) {
                         ? renderInvitationTemplate(((org as { invite_reminder_text?: string | null } | null)?.invite_reminder_text ?? ""), templateValues) || null
                         : renderInvitationTemplate(((org as { invite_email_text?: string | null } | null)?.invite_email_text ?? ""), templateValues) || null,
                     bodyIncludesGreeting: isWorkInvitation || isBetaInvitation,
-                    variant: body.action === "reminder" ? "reminder" : "invite",
+                    variant: isResendLink ? "new_link" : (body.action === "reminder" ? "reminder" : "invite"),
                     accessType,
                 }),
             })
@@ -390,19 +400,20 @@ export async function POST(req: NextRequest) {
 
             if (!isBetaInvitation) await recordAuditEvent({
                 context: auditContext,
-                action: "invite",
+                action: isResendLink ? (accessType === "recovery" ? "reset_link" : "invite") : "invite",
                 entityType: isStaff ? "auth_users" : "rettighedshavere",
                 entityId: isStaff ? newUserId : String(rhId),
                 entityLabel: isBetaInvitation ? "Betatester" : name || (isStaff ? "Medarbejder" : "Rettighedshaver"),
                 targetMemberUuid: isStaff ? null : String(rhId),
                 orgIds: [orgId],
-                purposeCode: isBetaInvitation ? "beta_program_administration" : undefined,
-                legalBasis: isBetaInvitation ? "GDPR Art. 6(1)(f), Art. 9(2)(d)" : undefined,
-                dataCategories: isBetaInvitation ? ["identity_data", "contact_data", "union_membership_data"] : undefined,
-                systemComponent: isBetaInvitation ? "admin.user.beta-invite" : undefined,
+                purposeCode: isBetaInvitation ? "beta_program_administration" : "portal_user_administration",
+                legalBasis: isBetaInvitation ? "GDPR Art. 6(1)(f), Art. 9(2)(d)" : "GDPR Art. 6(1)(b)/(f)",
+                dataCategories: isBetaInvitation ? ["identity_data", "contact_data", "union_membership_data"] : ["identity_data", "contact_data"],
+                systemComponent: isBetaInvitation ? "admin.user.beta-invite" : (isResendLink ? "admin.user.resend-link" : "admin.user.invite"),
                 metadata: {
+                    resendLink: isResendLink,
                     reminder: body.action === "reminder",
-                    invitationType: isBetaInvitation ? "beta" : "standard",
+                    invitationType: isBetaInvitation ? "beta" : (isResendLink ? "resend_link" : "standard"),
                     linkType: accessType,
                     emailDelivered: mail.ok,
                     localWorks: workLookup.counts.local,

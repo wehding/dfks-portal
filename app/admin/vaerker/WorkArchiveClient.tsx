@@ -34,6 +34,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/data-skeletons";
 import { ListResultSummary } from "@/components/list-result-summary";
+import { ArchiveTaskButton } from "@/components/admin/archive-task-button";
 import {
   archiveAdminWorks,
   approveAdminWorks,
@@ -2218,7 +2219,23 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
         </div>
       )}
 
-      {activeTab === "oversigt" && <><SummaryGrid>
+      {activeTab === "oversigt" && <>
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2" aria-label="Opgaver i værksarkivet">
+        <ArchiveTaskButton
+          label="Mangler afstemning af arbejdsandele"
+          count={shareTaskCount}
+          onClick={() => selectTab("arbejdsandele")}
+          icon={<AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />}
+        />
+        {beskedCount > 0 && <ArchiveTaskButton
+          label="Ulæste beskeder"
+          count={beskedCount}
+          tone="blue"
+          onClick={() => selectTab("beskeder")}
+          icon={<MessageSquare className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />}
+        />}
+      </div>
+      <SummaryGrid>
         <SummaryCard
           label="Total værker"
           value={stats.total}
@@ -2237,21 +2254,6 @@ function VaerksadministrationContent({ initialResult, initialQuery, initialShare
           active={!search && filterStatus === "all" && filterType === "all" && filterConnection === "missingContract" && filterMissingConnection === "none" && !activeRh}
           onClick={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterConnection("missingContract"); setFilterMissingConnection("none"); setActiveRh(null); setCurrentPage(1); }}
         />
-        <button
-          type="button"
-          onClick={() => selectTab("arbejdsandele")}
-          className={[
-            "min-w-0 rounded-lg border px-3 py-3 text-left text-card-foreground transition-colors sm:flex sm:min-w-56 sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-2.5",
-            shareTaskCount > 0
-              ? "border-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/20 dark:hover:bg-amber-950/35"
-              : "bg-card hover:bg-muted/40",
-          ].join(" ")}
-        >
-          <span className="line-clamp-2 min-h-8 text-[11px] font-medium leading-4 text-muted-foreground sm:min-h-0 sm:line-clamp-1 sm:text-sm">
-            Mangler afstemning af arbejdsandele
-          </span>
-          <span className="mt-1 block text-xl font-bold tabular-nums text-foreground sm:mt-0">{shareTaskCount}</span>
-        </button>
       </SummaryGrid>
 
       {/* Command Strip & Filters */}

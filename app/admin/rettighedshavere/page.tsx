@@ -212,6 +212,10 @@ export default function RettighedshavereAdminPage() {
     const [betaInviteResult, setBetaInviteResult] = useState<BetaInviteResult | null>(null)
     const [betaInvitePreview, setBetaInvitePreview] = useState<AdminUserResponse | null>(null)
     const [betaInvitePreviewLoading, setBetaInvitePreviewLoading] = useState(false)
+    const [resendLinkOpen, setResendLinkOpen] = useState(false)
+    const [resendLinkSubject, setResendLinkSubject] = useState("")
+    const [resendLinkMessage, setResendLinkMessage] = useState("")
+    const [resendLinkSending, setResendLinkSending] = useState(false)
     const [betaTesterCount, setBetaTesterCount] = useState(0)
     const [betaMessageOpen, setBetaMessageOpen] = useState(false)
     const [betaMessageSending, setBetaMessageSending] = useState(false)
@@ -841,6 +845,60 @@ export default function RettighedshavereAdminPage() {
         await Promise.all([load(search.trim()), refreshBetaSummary()])
     }
 
+    function handleBulkSendNewLink() {
+        if (selectedIds.size === 0) return
+        setResendLinkSubject("Nyt link til portalen")
+        setResendLinkMessage("Her følger et nyt link til portalen. Klik på knappen herunder for at få adgang.")
+        setResendLinkOpen(true)
+    }
+
+    async function confirmBulkSendNewLink() {
+        const eligible = selectedHolders.filter(holder => holder.email)
+        if (eligible.length === 0) {
+            toast.error("Ingen af de valgte har en emailadresse.")
+            setResendLinkOpen(false)
+            return
+        }
+        setResendLinkSending(true)
+        let sent = 0
+        const emailErrors: string[] = []
+        for (const rh of eligible) {
+            try {
+                const response = await fetch("/api/admin/user", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        action: "resend_link",
+                        rhId: rh.id,
+                        email: rh.email,
+                        name: rh.full_name,
+                        customSubject: resendLinkSubject.trim() || undefined,
+                        customMessage: resendLinkMessage.trim() || undefined,
+                    }),
+                })
+                const result = await response.json() as AdminUserResponse
+                if (!response.ok) throw new Error(result.error || "Kunne ikke sende nyt link")
+                if (result.email_sent) {
+                    sent += 1
+                } else if (result.email_error) {
+                    emailErrors.push(`${rh.full_name}: ${result.email_error}`)
+                }
+            } catch (error) {
+                emailErrors.push(`${rh.full_name}: ${errorMessage(error)}`)
+            }
+        }
+        setResendLinkSending(false)
+        setResendLinkOpen(false)
+        if (sent > 0) {
+            toast.success(`${sent} nyt adgangslink${sent === 1 ? "" : "s"} sendt`)
+        }
+        if (emailErrors.length > 0 || sent < eligible.length) {
+            toast.warning(`${eligible.length - sent} link(s) kunne ikke sendes${emailErrors[0] ? `: ${emailErrors[0]}` : "."}`)
+        }
+        clearSelected()
+        void load(search.trim())
+    }
+
     async function sendBetaTesterMessage() {
         setBetaMessageSending(true)
         const result = await createAdminBetaTesterMessage(betaMessage)
@@ -1205,6 +1263,10 @@ export default function RettighedshavereAdminPage() {
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => void openBetaInvite(selectedHolders)} disabled={betaInviteSending || selectedIds.size > 50}>
                             <FlaskConical className="mr-1 h-4 w-4" />Send {selectedIds.size} {selectedIds.size === 1 ? "betainvitation" : "betainvitationer"}
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={handleBulkSendNewLink} disabled={resendLinkSending}>
+                            {resendLinkSending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <KeyRound className="mr-1 h-4 w-4" />}
+                            Send {selectedIds.size} {selectedIds.size === 1 ? "nyt link" : "nye links"}
                         </Button>
                         {filter === "arkiverede" ? (
                             <Button size="sm" variant="outline" onClick={handleRestoreSelected} disabled={restoringSelected}>
@@ -2001,6 +2063,72 @@ export default function RettighedshavereAdminPage() {
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setBetaInviteOpen(false)} disabled={betaInviteSending}>{betaInviteResult ? "Luk" : "Annuller"}</Button>
                         <Button onClick={confirmBetaInvite} disabled={betaInviteSending || !betaInviteEndDate}>{betaInviteSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{betaInviteResult ? "Prøv at sende igen" : `Send ${betaInviteTargets.length} ${betaInviteTargets.length === 1 ? "invitation" : "invitationer"}`}</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Send nyt link dialog */}
+            <Dialog open={resendLinkOpen} onOpenChange={open => { if (!resendLinkSending) setResendLinkOpen(open) }}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Send nyt adgangslink</DialogTitle>
+                        <DialogDescription>
+                            Send en mail med et nyt adgangslink til de valgte rettighedshavere. Linket er gyldigt i 7 dage og kan kun bruges én gang.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>Modtagere med e-mail:</span>
+                            <Badge variant="secondary">
+                                {selectedHolders.filter(h => h.email).length} af {selectedHolders.length}
+                            </Badge>
+                        </div>
+                        {selectedHolders.some(h => !h.email) && (
+                            <p className="text-xs text-amber-600 dark:text-amber-400">
+                                {selectedHolders.filter(h => !h.email).length} valgt(e) mangler e-mailadresse og springes over.
+                            </p>
+                        )}
+                        <div className="space-y-1">
+                            <Label htmlFor="resend-link-subject">Emne</Label>
+                            <Input
+                                id="resend-link-subject"
+                                maxLength={200}
+                                value={resendLinkSubject}
+                                onChange={event => setResendLinkSubject(event.target.value)}
+                                placeholder="Nyt link til portalen"
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <Label htmlFor="resend-link-message">Kort tekst / besked</Label>
+                            <Textarea
+                                id="resend-link-message"
+                                rows={4}
+                                maxLength={2000}
+                                value={resendLinkMessage}
+                                onChange={event => setResendLinkMessage(event.target.value)}
+                                placeholder="Her følger et nyt link til portalen. Klik på knappen herunder for at få adgang."
+                            />
+                        </div>
+                        <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
+                            <p className="font-medium text-foreground">Forhåndsvisning af mailtekst:</p>
+                            <p className="whitespace-pre-wrap">{resendLinkMessage || "Her følger et nyt link til portalen. Klik på knappen herunder for at få adgang."}</p>
+                            <p className="pt-2 text-[11px] text-muted-foreground">
+                                Linket indsættes som en knap under teksten. Mailen afsluttes automatisk med: &quot;Linket er gyldigt i 7 dage og kan kun bruges én gang.&quot;
+                            </p>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setResendLinkOpen(false)} disabled={resendLinkSending}>
+                            Annuller
+                        </Button>
+                        <Button
+                            onClick={confirmBulkSendNewLink}
+                            disabled={resendLinkSending || selectedHolders.filter(h => h.email).length === 0}
+                        >
+                            {resendLinkSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Send {selectedHolders.filter(h => h.email).length}{" "}
+                            {selectedHolders.filter(h => h.email).length === 1 ? "link" : "links"}
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
