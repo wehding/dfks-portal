@@ -7,6 +7,7 @@ import {
   hasExplicitSeriesEpisodeScope,
   legalNoteAppliesToContract,
   reconcileContractReviewDates,
+  removeFeedbackMatchingExcludedLegalNotes,
   removeInvalidDe4RoyaltyWarnings,
   resolveContractReviewProductionType,
   royaltyRequirementForContract,
@@ -28,6 +29,25 @@ test("producentregisterets binding er ikke nødvendig for kontrolrummets kontrak
     er_overenskomst: false,
     overenskomst_navn: "de4-fiktion",
   }), true);
+});
+
+test("feedbackkort fra fravalgte kontrolrumsnoteringer fjernes deterministisk", () => {
+  const points = [
+    { type: "advarsel", titel: "Promoveringsret mangler", beskrivelse: "Tavshedspligten er bred" },
+    { type: "advarsel", titel: "AI-beskyttelsesklausul mangler", beskrivelse: "AI-træning er ikke reguleret" },
+    { type: "positiv", titel: "Pension er på plads", beskrivelse: "Korrekt pensionsgrundlag" },
+  ];
+  assert.deepEqual(removeFeedbackMatchingExcludedLegalNotes(points, [
+    { title: "Promoveringsret for klipper" },
+    { title: "AI og udnyttelse" },
+  ]), [points[2]]);
+});
+
+test("andre feedbackkort bevares ved snævert titelmatch", () => {
+  const points = [{ type: "positiv", titel: "Streaming er dækket", beskrivelse: "Create Denmark er nævnt" }];
+  assert.deepEqual(removeFeedbackMatchingExcludedLegalNotes(points, [
+    { title: "Promoveringsret for klipper" },
+  ]), points);
 });
 
 const conflictingDateContract = `

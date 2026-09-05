@@ -15,6 +15,7 @@ import {
     contractUsesIdentifiedAgreement,
     legalNoteAppliesToContract,
     reconcileContractReviewDates,
+    removeFeedbackMatchingExcludedLegalNotes,
     resolveContractReviewProductionType,
     removeInvalidDe4RoyaltyWarnings,
     royaltyRequirementForContract,
@@ -723,6 +724,7 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
     // ── Hent aktiv-indsats- og altid-noteringer ───────────────
     let aktivIndsatsNoteringer: Array<{ title: string; body: string }> = []
     let altidNoteringer: Array<{ title: string; body: string }> = []
+    let fravalgteNoteringer: Array<{ title: string }> = []
     try {
         const admin = createAdminClient(
             process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -734,6 +736,7 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
             .in("priority", ["aktiv-indsats", "altid"])
             .eq("active", true)
         const gaeldende = (noter ?? []).filter(noteringGaelder)
+        fravalgteNoteringer = (noter ?? []).filter(note => !noteringGaelder(note))
         aktivIndsatsNoteringer = gaeldende.filter(n => n.priority === "aktiv-indsats")
         altidNoteringer = gaeldende.filter(n => n.priority === "altid")
     } catch (e) {
@@ -976,6 +979,10 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             agreementName: klassifikation?.overenskomst_navn ?? null,
             contractText,
         },
+    )
+    parsed.feedbackpunkter = removeFeedbackMatchingExcludedLegalNotes(
+        parsed.feedbackpunkter,
+        fravalgteNoteringer,
     )
     parsed = reconcileContractReviewDates(parsed, contractText)
 

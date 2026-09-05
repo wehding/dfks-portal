@@ -56,6 +56,35 @@ export function legalNoteAppliesToContract(
   return !usesIdentifiedAgreement || !(note.exclude_for_overenskomst?.length);
 }
 
+const NOTE_MATCH_STOP_WORDS = new Set([
+  "for", "fra", "med", "mod", "mangler", "kontrakt", "kontrakten", "klipper", "filmklipper",
+  "rettighed", "rettigheder", "standard", "produktion", "producent", "og", "eller", "den", "det",
+]);
+
+function legalNoteMatchTokens(value: unknown) {
+  return new Set(String(value ?? "")
+    .toLocaleLowerCase("da-DK")
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .match(/[a-z0-9]+/g)
+    ?.filter(token => (token.length >= 4 || token === "ai" || token === "tdm") && !NOTE_MATCH_STOP_WORDS.has(token)) ?? []);
+}
+
+export function removeFeedbackMatchingExcludedLegalNotes<T extends ContractReviewFeedbackPoint>(
+  feedbackPoints: T[],
+  excludedNotes: Array<{ title?: unknown }>,
+) {
+  const excludedTokenSets = excludedNotes
+    .map(note => legalNoteMatchTokens(note.title))
+    .filter(tokens => tokens.size > 0);
+  if (!excludedTokenSets.length) return feedbackPoints;
+
+  return feedbackPoints.filter(point => {
+    const pointTokens = legalNoteMatchTokens(`${String(point.titel ?? "")} ${String(point.beskrivelse ?? "")}`);
+    return !excludedTokenSets.some(excluded => [...excluded].some(token => pointTokens.has(token)));
+  });
+}
+
 type RoyaltyRequirementInput = {
   productionType: ContractReviewProductionType;
   agreementCovered: boolean;
