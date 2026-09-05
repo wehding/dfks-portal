@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowLeft, BriefcaseBusiness, Building2, CheckCircle2, ChevronLeft, ChevronRight, Download, GripVertical, Loader2, Save, Scale, Scissors, Sparkles, Trash2, Tv, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { addAdminContractComment, deleteAdminContractsPermanently, getAdminContractSeriesEpisodeOptions, markContractCommentsRead, queueAdminContractAiExtraction, updateAdminContract } from "@/app/actions/member-contracts";
+import { addAdminContractComment, deleteAdminContractsPermanently, getAdminContractSeriesEpisodeOptions, markContractCommentsRead, queueAdminContractAiExtraction, updateAdminContract, type AdminContractSnapshot } from "@/app/actions/member-contracts";
 import { createAdminContractWorkQueue, fetchAdminContractWorkQueue, markAdminContractQueueItem } from "@/app/actions/admin-contract-work-queues";
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management";
 import { resolveUnifiedSearchResultDetails, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
@@ -358,10 +358,12 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
   const coordinatesMatchDocument = variant === "commented" || !data.documents.commented?.url;
   const documentLayout = coordinatesMatchDocument ? data.layout : null;
   const activeWork = data.works.find(work => work.id === form.workId) ?? linkedWork;
-  const isSeries = (selectedWorkResult?.type ?? activeWork?.type ?? "").includes("serie");
-  const displayedWorkTitle = selectedWorkResult?.title ?? activeWork?.title ?? "Intet værk tilknyttet";
-  const displayedWorkLabel = isSeries && (form.workId || selectedWorkResult)
-    ? `${displayedWorkTitle} · sæson ${form.seasonNumber}`
+  const isSeries = (manualWorkMode ? manualWork.type : (selectedWorkResult?.type ?? activeWork?.type ?? "")).includes("serie");
+  const displayedWorkTitle = manualWorkMode
+    ? (manualWork.title.trim() || "Nyt manuelt værk")
+    : (selectedWorkResult?.title ?? activeWork?.title ?? "Intet værk tilknyttet");
+  const displayedWorkLabel = isSeries && (form.workId || selectedWorkResult || (manualWorkMode && manualWork.title.trim()))
+    ? `${displayedWorkTitle} · sæson ${manualWorkMode && manualWork.season_number ? manualWork.season_number : form.seasonNumber}`
     : displayedWorkTitle;
   const localWorkSuggestion = useMemo(
     () => form.workId || selectedWorkResult || manualWorkMode ? null : suggestLocalContractWork(form.workingTitle, data.works),
@@ -381,7 +383,8 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     if (triState(validationData.svod) === "unknown") add("approve", "svod", "Streaming-forbehold");
     if (!form.contractDate) add("approve", "contractDate", "Kontraktdato");
     if (validationData.salary == null) add("salary", "salary", "Ugeløn");
-    if (isSeries && form.episodeNumbers.length === 0) {
+    const hasEpisodes = form.episodeNumbers.length > 0 || (manualWorkMode && (manualWork.selected_episodes?.length ?? 0) > 0);
+    if (isSeries && !hasEpisodes) {
       add("approve", "episodeNumbers", "Valgte serieafsnit");
       add("series", "episodeNumbers", "Valgte afsnit");
     }
@@ -395,7 +398,7 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
     if (activeWork && !activeWork.dfi_id && !activeWork.tmdb_id && !activeWork.imdb_id) add("ids", "externalIds", "Eksternt værk-ID");
     if (!validationData.productionType && !validationData.director) add("work", "workDetails", "Produktionstype eller instruktør");
     return result;
-  }, [activeWork, contract.rights_holder_id, form, isSeries, manualWorkMode, producerSelections.length, selectedWorkResult, soloConfirmed, validationData]);
+  }, [activeWork, contract.rights_holder_id, form, isSeries, manualWork.selected_episodes, manualWorkMode, producerSelections.length, selectedWorkResult, soloConfirmed, validationData]);
   const missing = missingByTab.approve;
   const allMissing = useMemo(() => Object.values(missingByTab).flat(), [missingByTab]);
   const tabCounts = useMemo(() => Object.fromEntries(Object.entries(missingByTab).map(([key, items]) => [key, items.length])), [missingByTab]);
@@ -630,10 +633,39 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         if (!(await flush())) throw new Error("De udtrukne data kunne ikke gemmes");
       }
       const workId = await resolveWorkBeforeSave();
+
+      let baselineForm: any = null;
+      let baselineProducers: any = null;
+      try {
+        const parsed = JSON.parse(initialEditableSnapshotRef.current);
+        baselineForm = parsed.form;
+        baselineProducers = parsed.producerSelections;
+      } catch {}
+
+      const expected_snapshot: AdminContractSnapshot | undefined = baselineForm ? {
+        type: baselineForm.type,
+        overenskomst: baselineForm.overenskomst === "ingen" ? null : (baselineForm.overenskomst || null),
+        contract_date: baselineForm.contractDate || null,
+        start_date: baselineForm.startDate || null,
+        end_date: baselineForm.endDate || null,
+        work_id: baselineForm.workId || null,
+        working_title: baselineForm.workingTitle || null,
+        season_number: baselineForm.seasonNumber ?? null,
+        episode_numbers: baselineForm.episodeNumbers ?? [],
+        employer_id: baselineProducers?.[0]?.employerId ?? null,
+      } : undefined;
+
+      const effectiveSeasonNumber = isSeries
+        ? (manualWorkMode && manualWork.season_number ? Number(manualWork.season_number) || form.seasonNumber : form.seasonNumber)
+        : null;
+      const effectiveEpisodeNumbers = isSeries
+        ? (form.episodeNumbers.length > 0 ? form.episodeNumbers : (manualWorkMode && manualWork.selected_episodes?.length ? manualWork.selected_episodes : []))
+        : null;
+
       const result = await updateAdminContract(contract.id, {
         type: form.type,
         overenskomst: form.overenskomst === "ingen" ? null : form.overenskomst,
-        status: status ?? (contract.status === "valideret" ? "valideret" : "kladde"),
+        status: status,
         contract_date: form.contractDate || null,
         start_date: form.startDate || null,
         end_date: form.endDate || null,
@@ -641,12 +673,28 @@ export default function ContractWorkbenchClient({ data, returnTo, queueId: initi
         producer_selections: producerSelections,
         work_id: workId,
         working_title: form.workingTitle || null,
-        season_number: isSeries ? form.seasonNumber : null,
-        episode_numbers: isSeries ? form.episodeNumbers : null,
+        season_number: effectiveSeasonNumber,
+        episode_numbers: effectiveEpisodeNumbers,
+        expected_snapshot,
       });
-      if (!result.success) throw new Error(result.error);
-      setForm(current => ({ ...current, workId: workId ?? "" }));
-      initialEditableSnapshotRef.current = JSON.stringify({ form: { ...form, workId: workId ?? "" }, producerSelections });
+      if (!result.success) {
+        if (result.conflict) {
+          toast.error("Kontrakten er i mellemtiden blevet opdateret af en anden bruger eller proces. Genindlæs siden for at hente de nyeste ændringer.", { duration: 6000 });
+          return false;
+        }
+        throw new Error(result.error);
+      }
+      if (manualWorkMode) {
+        setManualWorkMode(false);
+      }
+      const nextFormState = {
+        ...form,
+        workId: workId ?? "",
+        seasonNumber: effectiveSeasonNumber ?? form.seasonNumber,
+        episodeNumbers: effectiveEpisodeNumbers ?? form.episodeNumbers,
+      };
+      setForm(nextFormState);
+      initialEditableSnapshotRef.current = JSON.stringify({ form: nextFormState, producerSelections });
       if (status === "valideret" && showValidatedDialog) setValidatedOpen(true);
       else toast.success(status === "arkiveret" ? "Kontrakten er afvist" : "Kontrakten er gemt");
       return true;

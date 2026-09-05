@@ -2277,6 +2277,19 @@ export async function addAdminContractComment(contractId: string, message: strin
   return { success: true, comment };
 }
 
+export type AdminContractSnapshot = {
+  type?: string;
+  overenskomst?: string | null;
+  contract_date?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  employer_id?: string | null;
+  work_id?: string | null;
+  working_title?: string | null;
+  season_number?: number | null;
+  episode_numbers?: number[] | null;
+};
+
 export type AdminContractUpdate = {
   type?: string;
   overenskomst?: string | null;
@@ -2291,6 +2304,8 @@ export type AdminContractUpdate = {
   season_number?: number | null;
   episode_numbers?: number[] | null;
   producer_selections?: ProductionCompanySelection[];
+  expected_updated_at?: string | null;
+  expected_snapshot?: AdminContractSnapshot;
 };
 
 export async function queueAdminContractAiExtraction(contractId: string) {
@@ -2598,15 +2613,58 @@ export async function fetchAdminContractEditorData(contractId: string) {
   };
 }
 
-export async function updateAdminContract(contractId: string, values: AdminContractUpdate) {
+export async function updateAdminContract(
+  contractId: string,
+  values: AdminContractUpdate,
+): Promise<{ success: boolean; error?: string; conflict?: boolean }> {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
   const db = createServiceClient();
   const orgId = await requireOrgId(db, user.id);
   const staffRole = await staffRoleForOrg(db, user.id, orgId);
   if (!staffRole) return { success: false, error: "Ikke autoriseret" };
-  const { data: existing } = await db.from("contracts").select("id,status,org_id,work_id,rights_holder_id,season_number,episode_numbers").eq("id", contractId).eq("org_id", orgId).maybeSingle();
+  const { data: existing } = await db.from("contracts")
+    .select("id,status,org_id,work_id,employer_id,rights_holder_id,season_number,episode_numbers,type,overenskomst,contract_date,start_date,end_date,working_title")
+    .eq("id", contractId)
+    .eq("org_id", orgId)
+    .maybeSingle();
   if (!existing) return { success: false, error: "Kontrakten blev ikke fundet" };
+
+  if (values.expected_snapshot) {
+    const s = values.expected_snapshot;
+    const hasConflict =
+      (s.type !== undefined && s.type !== (existing.type ?? undefined)) ||
+      (s.overenskomst !== undefined && s.overenskomst !== (existing.overenskomst ?? null)) ||
+      (s.work_id !== undefined && s.work_id !== (existing.work_id ?? null)) ||
+      (s.employer_id !== undefined && s.employer_id !== (existing.employer_id ?? null)) ||
+      (s.contract_date !== undefined && s.contract_date !== (existing.contract_date ?? null)) ||
+      (s.start_date !== undefined && s.start_date !== (existing.start_date ?? null)) ||
+      (s.end_date !== undefined && s.end_date !== (existing.end_date ?? null)) ||
+      (s.working_title !== undefined && s.working_title !== (existing.working_title ?? null)) ||
+      (s.season_number !== undefined && s.season_number !== (existing.season_number ?? null)) ||
+      (s.episode_numbers !== undefined && JSON.stringify(s.episode_numbers ?? []) !== JSON.stringify(existing.episode_numbers ?? []));
+
+    if (hasConflict) {
+      return {
+        success: false,
+        conflict: true,
+        error: "Kontrakten er i mellemtiden blevet opdateret af en anden bruger eller proces. Genindlæs siden for at hente de nyeste ændringer.",
+      };
+    }
+  }
+
+  if (values.expected_updated_at && "updated_at" in existing && (existing as Record<string, unknown>).updated_at) {
+    const expectedTime = new Date(values.expected_updated_at).getTime();
+    const existingTime = new Date(String((existing as Record<string, unknown>).updated_at)).getTime();
+    if (!Number.isNaN(expectedTime) && !Number.isNaN(existingTime) && existingTime - expectedTime > 1000) {
+      return {
+        success: false,
+        conflict: true,
+        error: "Kontrakten er i mellemtiden blevet opdateret af en anden bruger eller proces. Genindlæs siden for at hente de nyeste ændringer.",
+      };
+    }
+  }
+
   const requestedEpisodeScopeChange =
     (values.work_id !== undefined && values.work_id !== existing.work_id) ||
     (values.season_number !== undefined && values.season_number !== existing.season_number) ||
@@ -2636,6 +2694,8 @@ export async function updateAdminContract(contractId: string, values: AdminContr
   const {
     producer_selections: producerSelections,
     status: requestedStatus,
+    expected_updated_at: _ignoredExpectedUpdatedAt,
+    expected_snapshot: _ignoredExpectedSnapshot,
     // Ownership changes are only allowed through the dedicated, revision-
     // checked review RPC. The general editor may still send this legacy field
     // during the UI transition, but it is intentionally never persisted.
@@ -2643,9 +2703,16 @@ export async function updateAdminContract(contractId: string, values: AdminContr
     ...remainingContractValues
   } = values;
   void _ignoredRightsHolderId;
-  const contractValues = requestedStatus === undefined || requestedStatus === "valideret"
+  void _ignoredExpectedUpdatedAt;
+  void _ignoredExpectedSnapshot;
+
+  // Prevent accidental status downgrade from valideret to kladde
+  const shouldPreserveValidated = existing.status === "valideret" && requestedStatus === "kladde";
+  const effectiveStatus = shouldPreserveValidated ? undefined : requestedStatus;
+
+  const contractValues = effectiveStatus === undefined || effectiveStatus === "valideret"
     ? remainingContractValues
-    : { ...remainingContractValues, status: requestedStatus };
+    : { ...remainingContractValues, status: effectiveStatus };
   const { error } = await writeDb.from("contracts").update(contractValues).eq("id", contractId).eq("org_id", orgId);
   if (error) return { success: false, error: error.message };
   if (requestedStatus === "valideret" && existing.status !== "valideret") {
